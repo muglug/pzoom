@@ -1,0 +1,16 @@
+[package]
+name = "pzoom-analyzer"
+description = "Core analysis engine for pzoom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pzoom-str.workspace = true
+pzoom-code-info.workspace = true
+pzoom-syntax.workspace = true
+mago-span.workspace = true
+mago-syntax.workspace = true
+rustc-hash.workspace = true
+quick-xml.workspace = true
+indexmap.workspace = true

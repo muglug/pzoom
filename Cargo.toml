@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pzoom-str",
+    "crates/pzoom-syntax",
+    "crates/pzoom-code-info",
+    "crates/pzoom-analyzer",
+    "crates/pzoom-orchestrator",
+    "crates/pzoom-cli",
+    "crates/pzoom-test-runner",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/muglug/pzoom"
+
+[workspace.dependencies]
+# Internal crates
+pzoom-str = { path = "crates/pzoom-str" }
+pzoom-syntax = { path = "crates/pzoom-syntax" }
+pzoom-code-info = { path = "crates/pzoom-code-info" }
+pzoom-analyzer = { path = "crates/pzoom-analyzer" }
+pzoom-orchestrator = { path = "crates/pzoom-orchestrator" }
+
+# Mago crates (PHP parser) - using git dep to preserve mago's workspace resolution
+mago-syntax = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+mago-syntax-core = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+mago-span = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+mago-database = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+mago-php-version = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+mago-reporting = { git = "https://github.com/carthage-software/mago.git", rev = "c6e6bc3e2f7dc8179197d3782b1309356dd9c6d9" }
+
+# External dependencies
+rustc-hash = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bumpalo = { version = "3", features = ["collections"] }
+parking_lot = "0.12"
+rayon = "1"
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+glob = "0.3"
+quick-xml = "0.37"
+similar = "2"
+rust-embed = "8"
+indexmap = "2"
+itertools = "0.14"
+rand = "0.9"

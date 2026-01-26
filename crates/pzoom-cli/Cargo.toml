@@ -1,0 +1,17 @@
+[package]
+name = "pzoom-cli"
+description = "Command-line interface for pzoom static analyzer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pzoom"
+path = "src/main.rs"
+
+[dependencies]
+pzoom-str.workspace = true
+pzoom-code-info.workspace = true
+pzoom-analyzer.workspace = true
+pzoom-orchestrator.workspace = true
+clap.workspace = true

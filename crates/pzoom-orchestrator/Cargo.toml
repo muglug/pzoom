@@ -1,0 +1,18 @@
+[package]
+name = "pzoom-orchestrator"
+description = "Analysis pipeline orchestration for pzoom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pzoom-str.workspace = true
+pzoom-syntax.workspace = true
+pzoom-code-info.workspace = true
+pzoom-analyzer.workspace = true
+rustc-hash.workspace = true
+rayon.workspace = true
+walkdir.workspace = true
+bumpalo.workspace = true
+glob.workspace = true
+rust-embed.workspace = true

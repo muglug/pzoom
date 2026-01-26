@@ -1,0 +1,15 @@
+[package]
+name = "pzoom-syntax"
+description = "PHP syntax parsing for pzoom, wrapping the mago parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pzoom-str.workspace = true
+pzoom-code-info.workspace = true
+mago-syntax.workspace = true
+mago-span.workspace = true
+mago-database.workspace = true
+bumpalo.workspace = true
+rustc-hash.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "pzoom-str"
+description = "String interning for pzoom static analyzer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rustc-hash.workspace = true
+serde.workspace = true
+parking_lot.workspace = true

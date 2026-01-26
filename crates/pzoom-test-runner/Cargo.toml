@@ -1,0 +1,22 @@
+[package]
+name = "pzoom-test-runner"
+description = "Test runner for pzoom"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pzoom-test"
+path = "src/main.rs"
+
+[dependencies]
+pzoom-str.workspace = true
+pzoom-code-info.workspace = true
+pzoom-syntax.workspace = true
+pzoom-analyzer.workspace = true
+pzoom-orchestrator.workspace = true
+clap.workspace = true
+walkdir.workspace = true
+rustc-hash.workspace = true
+bumpalo.workspace = true
+similar = "2"

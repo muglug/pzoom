@@ -1,0 +1,7 @@
+<?php
+class A
+{
+    private const IS_PRIVATE = 1;
+}
+
+echo A::IS_PRIVATE;

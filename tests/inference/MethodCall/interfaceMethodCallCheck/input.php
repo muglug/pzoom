@@ -1,0 +1,20 @@
+<?php
+interface A {
+    function foo() : void;
+}
+
+interface B extends A {
+    function foo(string $a = "") : void;
+}
+
+class C implements B {
+    public function foo(string $a = "") : void {}
+}
+
+function takesWithoutArguments(A $a) : void {
+    if ($a instanceof B) {
+       $a->foo("");
+    }
+}
+
+takesWithoutArguments(new C);

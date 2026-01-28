@@ -1,0 +1,20 @@
+<?php
+class A
+{
+    public ?int $foo = null;
+
+    public function setFoo(): void
+    {
+        $this->foo = 5;
+    }
+}
+
+function bar(A $a): void {
+    $a->foo = null;
+
+    while (rand(0, 1)) {
+        if (rand(0, 1)) {
+            $a->setFoo();
+        } elseif ($a->foo !== null) {}
+    }
+}

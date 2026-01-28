@@ -1,0 +1,1 @@
+Argument 2 of ReflectionClass::resetAsLazyProxy expects callable(Foo):Foo, but pure-Closure(Foo):Bar provided

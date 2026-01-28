@@ -1,0 +1,1 @@
+A\B\Foo::$barBar is internal to A\B

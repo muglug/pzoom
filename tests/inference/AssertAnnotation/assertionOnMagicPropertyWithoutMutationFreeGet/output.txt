@@ -1,0 +1,1 @@
+A::__get is not mutation-free

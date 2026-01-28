@@ -1,0 +1,7 @@
+<?php
+/**
+ * @param int<0, FOO> $a
+ */
+function scope(int $a){
+    return $a;
+}

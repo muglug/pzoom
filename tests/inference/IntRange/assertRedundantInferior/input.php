@@ -1,0 +1,7 @@
+<?php
+/**
+ * @param int<min, 5> $a
+ */
+function scope(int $a): void{
+    assert($a < 10);
+}

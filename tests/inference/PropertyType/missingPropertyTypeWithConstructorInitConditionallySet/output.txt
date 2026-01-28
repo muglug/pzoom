@@ -1,0 +1,1 @@
+MissingPropertyType - input.php:3:12 - Property A::$foo does not have a declared type

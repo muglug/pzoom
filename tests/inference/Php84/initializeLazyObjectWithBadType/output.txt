@@ -1,0 +1,1 @@
+Argument 1 of ReflectionClass::initializeLazyObject expects Foo, but Bar provided

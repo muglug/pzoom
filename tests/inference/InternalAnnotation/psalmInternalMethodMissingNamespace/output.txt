@@ -1,0 +1,1 @@
+psalm-internal annotation used without specifying namespace

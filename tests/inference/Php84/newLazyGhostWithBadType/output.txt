@@ -1,0 +1,1 @@
+Argument 1 of ReflectionClass::newLazyGhost expects callable(Foo):void, but pure-Closure(Bar):void provided

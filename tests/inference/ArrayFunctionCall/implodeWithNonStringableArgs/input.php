@@ -1,0 +1,3 @@
+<?php
+implode(",", [new stdClass]);
+                

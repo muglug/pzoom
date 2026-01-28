@@ -1,0 +1,10 @@
+<?php
+class A {
+    const FOO = [
+        "bar" => 42
+    ];
+    /** @return key-of<A::FOO> */
+    public function getKey() {
+        return "bar";
+    }
+}

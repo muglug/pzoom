@@ -1,0 +1,26 @@
+<?php
+class A {}
+class AChild extends A {}
+
+/**
+ * @template T
+ * @param callable(T):void $c1
+ * @param callable(T):void $c2
+ * @param T $a
+ */
+function foo(callable $c1, callable $c2, $a): void {
+    $c1($a);
+    $c2($a);
+}
+
+foo(
+    function(A $_a) : void {},
+    function(A $_a) : void {},
+    new A()
+);
+
+foo(
+    function(A $_a) : void {},
+    function(A $_a) : void {},
+    new AChild()
+);

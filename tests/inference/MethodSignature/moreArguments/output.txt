@@ -1,0 +1,1 @@
+Method B::fooFoo has more required parameters than parent method A::fooFoo

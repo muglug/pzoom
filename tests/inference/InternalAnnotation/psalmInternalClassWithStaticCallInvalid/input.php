@@ -1,0 +1,18 @@
+<?php
+                    namespace A\B {
+                        /**
+                         * @psalm-internal A\B
+                         */
+                        class Foo {
+                            public static function barBar(): void {
+                            }
+                        }
+                    }
+
+                    namespace A\C {
+                        class Bat {
+                            public function batBat(): void {
+                                \A\B\Foo::barBar();
+                            }
+                        }
+                    }

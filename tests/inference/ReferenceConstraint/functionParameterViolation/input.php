@@ -1,0 +1,5 @@
+<?php
+/** @return void */
+function changeInt(int &$a) {
+  $a = "hello";
+}

@@ -1,0 +1,4 @@
+<?php
+function fooFoo(): string {
+    return 5;
+}

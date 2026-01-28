@@ -1,0 +1,2 @@
+<?php
+array_push();

@@ -1,0 +1,3 @@
+<?php
+$val = sprintf("", "abc");
+            

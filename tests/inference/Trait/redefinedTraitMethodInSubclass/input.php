@@ -1,0 +1,14 @@
+<?php
+trait T {
+    public function fooFoo(): void {
+    }
+}
+
+class B {
+    use T;
+}
+
+class C extends B {
+    public function fooFoo(string $a): void {
+    }
+}

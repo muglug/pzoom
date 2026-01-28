@@ -1,0 +1,1 @@
+Argument 1 of ReflectionClass::resetAsLazyGhost expects Foo, but Bar provided

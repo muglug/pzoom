@@ -1,0 +1,8 @@
+<?php
+trait T {
+    public $foo = 5;
+}
+
+class A {
+    use T;
+}

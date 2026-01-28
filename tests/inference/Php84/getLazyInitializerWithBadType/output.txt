@@ -1,0 +1,1 @@
+Argument 1 of ReflectionClass::getLazyInitializer expects Foo, but Bar provided

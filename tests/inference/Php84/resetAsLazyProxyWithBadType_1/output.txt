@@ -1,0 +1,1 @@
+Argument 1 of ReflectionClass::resetAsLazyProxy expects Foo, but Bar provided

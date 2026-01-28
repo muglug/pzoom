@@ -1,0 +1,1 @@
+Argument 2 of B::fooFoo has wrong type \

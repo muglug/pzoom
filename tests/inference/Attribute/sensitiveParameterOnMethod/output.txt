@@ -1,0 +1,1 @@
+Attribute SensitiveParameter cannot be used on a method

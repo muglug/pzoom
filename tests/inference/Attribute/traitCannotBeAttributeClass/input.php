@@ -1,0 +1,3 @@
+<?php
+#[Attribute]
+trait Foo {}

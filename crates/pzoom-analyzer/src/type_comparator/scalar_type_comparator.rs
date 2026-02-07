@@ -2,13 +2,13 @@
 //!
 //! Handles comparison of scalar types: int, float, string, bool, and their subtypes.
 
-use pzoom_code_info::{CodebaseInfo, TAtomic};
+use pzoom_code_info::{CodebaseInfo, TAtomic, t_atomic::NON_SPECIFIC_LITERAL_STRING_VALUE};
 
-use super::type_comparison_result::TypeComparisonResult;
+use super::{object_type_comparator, type_comparison_result::TypeComparisonResult};
 
 /// Check if an input scalar type is contained by a container scalar type.
 pub fn is_contained_by(
-    _codebase: &CodebaseInfo,
+    codebase: &CodebaseInfo,
     input_type_part: &TAtomic,
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
@@ -33,7 +33,13 @@ pub fn is_contained_by(
     // Float comparisons
     if matches!(container_type_part, TAtomic::TFloat) {
         match input_type_part {
-            TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => return true,
+            TAtomic::TFloat
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TPositiveInt
+            | TAtomic::TNegativeInt
+            | TAtomic::TIntRange { .. } => return true,
             _ => {}
         }
     }
@@ -61,12 +67,15 @@ pub fn is_contained_by(
             TAtomic::TNonEmptyString
             | TAtomic::TTruthyString
             | TAtomic::TNonEmptyNumericString
-            | TAtomic::TNonEmptyLowercaseString => return true,
-            TAtomic::TLiteralString { value: _ } => {
-                // Empty string doesn't match non-empty-string
-                // Note: value is StrId, we'd need interner to check if empty
-                // For now, assume literal strings are non-empty
-                return true;
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TClassString { .. }
+            | TAtomic::TLiteralClassString { .. } => return true,
+            TAtomic::TLiteralString { value } => {
+                if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+                return !value.is_empty();
             }
             TAtomic::TString | TAtomic::TLowercaseString | TAtomic::TNumericString => {
                 // These could be empty, so it's coerced
@@ -86,6 +95,11 @@ pub fn is_contained_by(
                 atomic_comparison_result.type_coerced = Some(true);
                 return false;
             }
+            TAtomic::TNumericString => {
+                // Numeric string can be "0", which is falsy
+                atomic_comparison_result.type_coerced = Some(true);
+                return false;
+            }
             _ => {}
         }
     }
@@ -94,6 +108,10 @@ pub fn is_contained_by(
     if matches!(container_type_part, TAtomic::TLowercaseString) {
         match input_type_part {
             TAtomic::TLowercaseString | TAtomic::TNonEmptyLowercaseString => return true,
+            TAtomic::TLiteralString { value } => {
+                return value != NON_SPECIFIC_LITERAL_STRING_VALUE
+                    && value.eq(&value.to_ascii_lowercase());
+            }
             _ => {}
         }
     }
@@ -106,6 +124,11 @@ pub fn is_contained_by(
                 atomic_comparison_result.type_coerced = Some(true);
                 return false;
             }
+            TAtomic::TLiteralString { value } => {
+                return !value.is_empty()
+                    && value != NON_SPECIFIC_LITERAL_STRING_VALUE
+                    && value.eq(&value.to_ascii_lowercase());
+            }
             _ => {}
         }
     }
@@ -114,8 +137,96 @@ pub fn is_contained_by(
     if matches!(container_type_part, TAtomic::TNumericString) {
         match input_type_part {
             TAtomic::TNumericString | TAtomic::TNonEmptyNumericString => return true,
+            TAtomic::TLiteralString { value } => {
+                if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+                return value.parse::<f64>().is_ok();
+            }
+            TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TNonEmptyLowercaseString => {
+                atomic_comparison_result.type_coerced = Some(true);
+                return false;
+            }
             _ => {}
         }
+    }
+
+    // Numeric comparisons (int|float|numeric-string)
+    if matches!(container_type_part, TAtomic::TNumeric) {
+        match input_type_part {
+            TAtomic::TNumeric
+            | TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TPositiveInt
+            | TAtomic::TNegativeInt
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString => return true,
+            TAtomic::TLiteralString { value } => {
+                if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+                return value.parse::<f64>().is_ok();
+            }
+            _ => {}
+        }
+    }
+
+    if let TAtomic::TLiteralString {
+        value: container_value,
+    } = container_type_part
+    {
+        if container_value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+            return matches!(input_type_part, TAtomic::TLiteralString { .. });
+        }
+    }
+
+    // Class-like string comparisons
+    if is_class_string_like_scalar(container_type_part)
+        && is_class_string_like_scalar(input_type_part)
+    {
+        return classlike_string_is_contained_by(
+            codebase,
+            input_type_part,
+            container_type_part,
+            atomic_comparison_result,
+        );
+    }
+
+    if is_class_string_like_scalar(container_type_part)
+        && let TAtomic::TLiteralString { value } = input_type_part
+    {
+        if value != NON_SPECIFIC_LITERAL_STRING_VALUE
+            && codebase.resolve_classlike_name(value).is_some()
+        {
+            let literal_class_string = TAtomic::TLiteralClassString {
+                name: value.clone(),
+            };
+
+            return classlike_string_is_contained_by(
+                codebase,
+                &literal_class_string,
+                container_type_part,
+                atomic_comparison_result,
+            );
+        }
+
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
+    }
+
+    if is_class_string_like_scalar(container_type_part) && is_plain_string_like_atomic(input_type_part)
+    {
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
     }
 
     // Bool comparisons
@@ -151,8 +262,25 @@ pub fn is_contained_by(
         value: container_value,
     } = container_type_part
     {
-        if let TAtomic::TLiteralString { value: input_value } = input_type_part {
-            return input_value == container_value;
+        match input_type_part {
+            TAtomic::TLiteralString { value: input_value } => {
+                return input_value == container_value;
+            }
+            TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TNonEmptyLowercaseString => {
+                atomic_comparison_result.type_coerced = Some(true);
+                return false;
+            }
+            TAtomic::TNumericString | TAtomic::TNonEmptyNumericString => {
+                if container_value.parse::<f64>().is_ok() {
+                    atomic_comparison_result.type_coerced = Some(true);
+                }
+                return false;
+            }
+            _ => {}
         }
     }
 
@@ -164,6 +292,9 @@ pub fn is_contained_by(
         if matches!(input_type_part, TAtomic::TPositiveInt) {
             return true;
         }
+        if let TAtomic::TIntRange { min, .. } = input_type_part {
+            return min.is_some_and(|min| min > 0);
+        }
     }
 
     // Negative int comparisons
@@ -173,6 +304,9 @@ pub fn is_contained_by(
         }
         if matches!(input_type_part, TAtomic::TNegativeInt) {
             return true;
+        }
+        if let TAtomic::TIntRange { max, .. } = input_type_part {
+            return max.is_some_and(|max| max < 0);
         }
     }
 
@@ -204,6 +338,22 @@ pub fn is_contained_by(
                 (None, _) => true,
             };
             return min_ok && max_ok;
+        }
+
+        if matches!(input_type_part, TAtomic::TPositiveInt) {
+            let min_ok = container_min.is_none_or(|m| m <= 1);
+            let max_ok = container_max.is_none();
+            return min_ok && max_ok;
+        }
+
+        if matches!(input_type_part, TAtomic::TNegativeInt) {
+            let min_ok = container_min.is_none();
+            let max_ok = container_max.is_none_or(|m| m >= -1);
+            return min_ok && max_ok;
+        }
+
+        if matches!(input_type_part, TAtomic::TInt) {
+            return container_min.is_none() && container_max.is_none();
         }
     }
 
@@ -255,6 +405,8 @@ pub fn is_contained_by(
             | TAtomic::TString
             | TAtomic::TLiteralInt { .. }
             | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TClassString { .. }
             | TAtomic::TPositiveInt
             | TAtomic::TNegativeInt
             | TAtomic::TNonEmptyString
@@ -264,4 +416,192 @@ pub fn is_contained_by(
     }
 
     false
+}
+
+fn object_like_atomic_is_contained_by(
+    codebase: &CodebaseInfo,
+    input_type_part: &TAtomic,
+    container_type_part: &TAtomic,
+) -> bool {
+    match container_type_part {
+        TAtomic::TObject => matches!(
+            input_type_part,
+            TAtomic::TNamedObject { .. }
+                | TAtomic::TObject
+                | TAtomic::TObjectIntersection { .. }
+                | TAtomic::TTemplateParam { .. }
+                | TAtomic::TTemplateParamClass { .. }
+        ),
+        TAtomic::TNamedObject {
+            name: container_name,
+            ..
+        } => match input_type_part {
+            TAtomic::TNamedObject {
+                name: input_name, ..
+            } => {
+                object_type_comparator::is_class_subtype_of(*input_name, *container_name, codebase)
+            }
+            TAtomic::TObjectIntersection { types } => types.iter().all(|atomic| {
+                object_like_atomic_is_contained_by(codebase, atomic, container_type_part)
+            }),
+            TAtomic::TTemplateParam { as_type, .. } => as_type.types.iter().all(|atomic| {
+                object_like_atomic_is_contained_by(codebase, atomic, container_type_part)
+            }),
+            TAtomic::TTemplateParamClass { as_type, .. } => {
+                object_like_atomic_is_contained_by(codebase, as_type, container_type_part)
+            }
+            _ => false,
+        },
+        TAtomic::TObjectIntersection { types } => types
+            .iter()
+            .all(|atomic| object_like_atomic_is_contained_by(codebase, input_type_part, atomic)),
+        TAtomic::TTemplateParam { as_type, .. } => as_type
+            .types
+            .iter()
+            .all(|atomic| object_like_atomic_is_contained_by(codebase, input_type_part, atomic)),
+        TAtomic::TTemplateParamClass { as_type, .. } => {
+            object_like_atomic_is_contained_by(codebase, input_type_part, as_type)
+        }
+        _ => false,
+    }
+}
+
+fn is_class_string_like_scalar(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. } | TAtomic::TTemplateParamClass { .. }
+    )
+}
+
+fn is_plain_string_like_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+    )
+}
+
+fn classlike_string_is_contained_by(
+    codebase: &CodebaseInfo,
+    input_type_part: &TAtomic,
+    container_type_part: &TAtomic,
+    atomic_comparison_result: &mut TypeComparisonResult,
+) -> bool {
+    if let TAtomic::TLiteralClassString { name: container_name } = container_type_part {
+        if let TAtomic::TLiteralClassString { name: input_name } = input_type_part {
+            return container_name == input_name;
+        }
+
+        let Some(container_class_id) = codebase.resolve_classlike_name(container_name) else {
+            atomic_comparison_result.type_coerced = Some(true);
+            return false;
+        };
+
+        let Some(fake_input_object) = classlike_string_to_object_bound(codebase, input_type_part)
+        else {
+            atomic_comparison_result.type_coerced = Some(true);
+            return false;
+        };
+
+        let fake_container_object = TAtomic::TNamedObject {
+            name: container_class_id,
+            type_params: None,
+        };
+
+        return object_like_atomic_is_contained_by(
+            codebase,
+            &fake_input_object,
+            &fake_container_object,
+        ) && object_like_atomic_is_contained_by(
+            codebase,
+            &fake_container_object,
+            &fake_input_object,
+        );
+    }
+
+    if matches!(
+        (container_type_part, input_type_part),
+        (TAtomic::TTemplateParamClass { .. }, TAtomic::TClassString { .. })
+    ) {
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
+    }
+
+    match container_type_part {
+        TAtomic::TClassString {
+            as_type: Some(container_bound),
+        } if class_string_bound_accepts_unbounded_input(container_bound.as_ref()) => {
+            return true;
+        }
+        TAtomic::TTemplateParamClass { as_type, .. }
+            if class_string_bound_accepts_unbounded_input(as_type.as_ref()) =>
+        {
+            return true;
+        }
+        _ => {}
+    }
+
+    if matches!(container_type_part, TAtomic::TClassString { as_type: None }) {
+        return true;
+    }
+
+    if class_string_is_unbounded(input_type_part) {
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
+    }
+
+    let Some(fake_container_object) = classlike_string_to_object_bound(codebase, container_type_part)
+    else {
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
+    };
+
+    let Some(fake_input_object) = classlike_string_to_object_bound(codebase, input_type_part) else {
+        atomic_comparison_result.type_coerced = Some(true);
+        return false;
+    };
+
+    object_like_atomic_is_contained_by(codebase, &fake_input_object, &fake_container_object)
+}
+
+fn class_string_is_unbounded(atomic: &TAtomic) -> bool {
+    matches!(atomic, TAtomic::TClassString { as_type: None })
+}
+
+fn class_string_bound_accepts_unbounded_input(bound: &TAtomic) -> bool {
+    match bound {
+        TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TObject => true,
+        TAtomic::TTemplateParam { as_type, .. } => {
+            as_type.is_mixed()
+                || as_type
+                    .types
+                    .iter()
+                    .any(class_string_bound_accepts_unbounded_input)
+        }
+        TAtomic::TTemplateParamClass { as_type, .. } => {
+            class_string_bound_accepts_unbounded_input(as_type)
+        }
+        _ => false,
+    }
+}
+
+fn classlike_string_to_object_bound(codebase: &CodebaseInfo, atomic: &TAtomic) -> Option<TAtomic> {
+    match atomic {
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => Some((**as_type).clone()),
+        TAtomic::TTemplateParamClass { as_type, .. } => Some((**as_type).clone()),
+        TAtomic::TLiteralClassString { name } => codebase.resolve_classlike_name(name).map(|class_id| {
+            TAtomic::TNamedObject {
+                name: class_id,
+                type_params: None,
+            }
+        }),
+        _ => None,
+    }
 }

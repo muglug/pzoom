@@ -34,7 +34,10 @@ pub fn analyze_property(
                     let (line, col) = analyzer.get_line_column(pos.0);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::InaccessibleProperty,
-                        format!("Cannot access private property {}::${}", class_name, prop_name),
+                        format!(
+                            "Cannot access private property {}::${}",
+                            class_name, prop_name
+                        ),
                         analyzer.file_path,
                         pos.0,
                         pos.1,
@@ -61,14 +64,17 @@ pub fn analyze_property(
             // Return the property's declared type
             return prop_info.get_type().cloned();
         } else {
-            // Property not found - might be a magic property via __get
-            // For now, report as undefined unless the class has __get
-            let has_magic_get = class_info
-                .methods
-                .keys()
-                .any(|m| analyzer.interner.lookup(*m).as_ref() == "__get");
-
-            if !has_magic_get {
+            // Property not found - fall back to magic __get return type when available.
+            let magic_get_id = analyzer.interner.intern("__get");
+            if let Some(magic_get_info) = class_info.methods.get(&magic_get_id) {
+                if let Some(return_type) = magic_get_info
+                    .return_type
+                    .as_ref()
+                    .or(magic_get_info.signature_return_type.as_ref())
+                {
+                    return Some(return_type.clone());
+                }
+            } else {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::UndefinedProperty,

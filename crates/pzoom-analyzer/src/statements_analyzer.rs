@@ -2,9 +2,14 @@
 //!
 //! This is a lightweight wrapper that provides context for analyzing statements.
 
-use pzoom_code_info::{CodebaseInfo, FunctionLikeInfo};
+use pzoom_code_info::{
+    CodebaseInfo, FunctionLikeInfo, InlineCallableTypeAnnotation, InlineTraceAnnotation,
+    InlineVarTypeAnnotation,
+};
 use pzoom_str::{Interner, StrId};
 use pzoom_syntax::ResolvedNames;
+
+use crate::config::Config;
 
 /// Analyzer context for a sequence of statements.
 ///
@@ -27,6 +32,9 @@ pub struct StatementsAnalyzer<'a> {
 
     /// Resolved names from preprocessing (offset -> resolved StrId).
     pub resolved_names: &'a ResolvedNames,
+
+    /// Analyzer configuration.
+    pub config: &'a Config,
 }
 
 impl<'a> StatementsAnalyzer<'a> {
@@ -36,6 +44,7 @@ impl<'a> StatementsAnalyzer<'a> {
         file_path: StrId,
         source: &'a str,
         resolved_names: &'a ResolvedNames,
+        config: &'a Config,
     ) -> Self {
         Self {
             codebase,
@@ -44,6 +53,7 @@ impl<'a> StatementsAnalyzer<'a> {
             file_path,
             source,
             resolved_names,
+            config,
         }
     }
 
@@ -99,6 +109,33 @@ impl<'a> StatementsAnalyzer<'a> {
     /// Look up a resolved name by its AST node offset.
     pub fn get_resolved_name(&self, offset: u32) -> Option<StrId> {
         self.resolved_names.get(&offset).copied()
+    }
+
+    /// Get preprocessed inline `@var` annotations for an expression offset.
+    pub fn get_inline_var_annotations(&self, offset: u32) -> Option<&Vec<InlineVarTypeAnnotation>> {
+        self.codebase
+            .files
+            .get(&self.file_path)
+            .and_then(|file| file.inline_annotations.var_annotations.get(&offset))
+    }
+
+    /// Get preprocessed inline callable (`@param`/`@return`) annotation for an offset.
+    pub fn get_inline_callable_annotation(
+        &self,
+        offset: u32,
+    ) -> Option<&InlineCallableTypeAnnotation> {
+        self.codebase
+            .files
+            .get(&self.file_path)
+            .and_then(|file| file.inline_annotations.callable_annotations.get(&offset))
+    }
+
+    /// Get preprocessed inline `@psalm-trace` annotations for a statement/expression offset.
+    pub fn get_inline_trace_annotations(&self, offset: u32) -> Option<&Vec<InlineTraceAnnotation>> {
+        self.codebase
+            .files
+            .get(&self.file_path)
+            .and_then(|file| file.inline_annotations.trace_annotations.get(&offset))
     }
 }
 

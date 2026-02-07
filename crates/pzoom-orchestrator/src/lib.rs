@@ -5,10 +5,10 @@
 //! 2. Populating - Resolve inheritance and build type info
 //! 3. Analyzing - Type check and detect issues
 
-pub mod scanner;
-pub mod populator;
 pub mod analyzer;
+pub mod populator;
+pub mod scanner;
 
-pub use scanner::{Scanner, ScanResult};
-pub use populator::Populator;
 pub use analyzer::Analyzer;
+pub use populator::Populator;
+pub use scanner::{ScanResult, Scanner};

@@ -95,10 +95,10 @@ impl Assertion {
             Assertion::Any => "any".to_string(),
             Assertion::Falsy => "falsy".to_string(),
             Assertion::Truthy => "truthy".to_string(),
-            Assertion::IsType(atomic) => atomic.get_id(),
-            Assertion::IsNotType(atomic) => format!("!{}", atomic.get_id()),
-            Assertion::IsEqual(atomic) => format!("={}", atomic.get_id()),
-            Assertion::IsNotEqual(atomic) => format!("!={}", atomic.get_id()),
+            Assertion::IsType(atomic) => atomic.get_id(None),
+            Assertion::IsNotType(atomic) => format!("!{}", atomic.get_id(None)),
+            Assertion::IsEqual(atomic) => format!("={}", atomic.get_id(None)),
+            Assertion::IsNotEqual(atomic) => format!("!={}", atomic.get_id(None)),
             Assertion::IsEqualIsset => "=isset".to_string(),
             Assertion::IsIsset => "isset".to_string(),
             Assertion::IsNotIsset => "!isset".to_string(),
@@ -114,8 +114,8 @@ impl Assertion {
             Assertion::DoesNotHaveNonnullEntryForKey(key) => {
                 format!("!=has-nonnull-entry-for-{}", key.to_string())
             }
-            Assertion::InArray(union) => format!("=in-array-{}", union.get_id()),
-            Assertion::NotInArray(union) => format!("!=in-array-{}", union.get_id()),
+            Assertion::InArray(union) => format!("=in-array-{}", union.get_id(None)),
+            Assertion::NotInArray(union) => format!("!=in-array-{}", union.get_id(None)),
             Assertion::NonEmptyCountable(negatable) => {
                 if *negatable {
                     "non-empty-countable".to_string()
@@ -195,7 +195,10 @@ impl Assertion {
             | Assertion::IsNotEqual(atomic)
             | Assertion::IsType(atomic)
             | Assertion::IsNotType(atomic) => {
-                matches!(atomic, TAtomic::TLiteralInt { .. } | TAtomic::TLiteralString { .. })
+                matches!(
+                    atomic,
+                    TAtomic::TLiteralInt { .. } | TAtomic::TLiteralString { .. }
+                )
             }
             _ => false,
         }

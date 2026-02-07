@@ -4,9 +4,9 @@ use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 
+use crate::TAtomic;
 use crate::t_atomic::ArrayKey;
 use crate::t_union::TUnion;
-use crate::TAtomic;
 
 /// Holds intermediate state while combining multiple atomic types into a union.
 #[derive(Debug)]
@@ -120,7 +120,10 @@ impl TypeCombination {
                     && self.ints.as_ref().map_or(true, |i| i.is_empty())
                     && self.floats.as_ref().map_or(true, |f| f.is_empty())
                     && self.class_string_types.is_empty()
-                    && self.named_object_types.as_ref().map_or(true, |n| n.is_empty());
+                    && self
+                        .named_object_types
+                        .as_ref()
+                        .map_or(true, |n| n.is_empty());
             }
         }
         false
@@ -131,36 +134,32 @@ impl TypeCombination {
     pub fn fallback_key_contains(&self, key: &ArrayKey) -> bool {
         if let Some(ref key_type) = self.objectlike_key_type {
             match key {
-                ArrayKey::Int(i) => {
-                    key_type.types.iter().any(|t| match t {
-                        TAtomic::TInt => true,
-                        TAtomic::TLiteralInt { value } => value == i,
-                        TAtomic::TArrayKey => true,
-                        TAtomic::TIntRange { min, max } => {
-                            let in_range = match (min, max) {
-                                (Some(min), Some(max)) => *i >= *min && *i <= *max,
-                                (Some(min), None) => *i >= *min,
-                                (None, Some(max)) => *i <= *max,
-                                (None, None) => true,
-                            };
-                            in_range
-                        }
-                        _ => false,
-                    })
-                }
-                ArrayKey::String(s) => {
-                    key_type.types.iter().any(|t| match t {
-                        TAtomic::TString => true,
-                        TAtomic::TLiteralString { value } => value == s,
-                        TAtomic::TArrayKey => true,
-                        TAtomic::TNonEmptyString
-                        | TAtomic::TNumericString
-                        | TAtomic::TTruthyString
-                        | TAtomic::TLowercaseString
-                        | TAtomic::TNonEmptyLowercaseString => true,
-                        _ => false,
-                    })
-                }
+                ArrayKey::Int(i) => key_type.types.iter().any(|t| match t {
+                    TAtomic::TInt => true,
+                    TAtomic::TLiteralInt { value } => value == i,
+                    TAtomic::TArrayKey => true,
+                    TAtomic::TIntRange { min, max } => {
+                        let in_range = match (min, max) {
+                            (Some(min), Some(max)) => *i >= *min && *i <= *max,
+                            (Some(min), None) => *i >= *min,
+                            (None, Some(max)) => *i <= *max,
+                            (None, None) => true,
+                        };
+                        in_range
+                    }
+                    _ => false,
+                }),
+                ArrayKey::String(s) => key_type.types.iter().any(|t| match t {
+                    TAtomic::TString => true,
+                    TAtomic::TLiteralString { value } => value == s,
+                    TAtomic::TArrayKey => true,
+                    TAtomic::TNonEmptyString
+                    | TAtomic::TNumericString
+                    | TAtomic::TTruthyString
+                    | TAtomic::TLowercaseString
+                    | TAtomic::TNonEmptyLowercaseString => true,
+                    _ => false,
+                }),
             }
         } else {
             false

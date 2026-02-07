@@ -2,12 +2,16 @@
 
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::TUnion;
+use pzoom_code_info::{Assertion, TUnion};
+use rustc_hash::FxHashSet;
 
+use crate::assertion_finder;
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::reconciler;
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::stmt::if_conditional_analyzer;
 
 /// Analyze a logical OR expression (||, 'or').
 ///
@@ -21,56 +25,115 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    // Create a context for analysis
-    let mut or_context = context.clone();
-
     // Analyze the left side
-    let left_pos = expr_analyzer::analyze(analyzer, left, analysis_data, &mut or_context);
+    let left_pos = expression_analyzer::analyze(analyzer, left, analysis_data, context);
+    if_conditional_analyzer::handle_paradoxical_condition(
+        analyzer,
+        left,
+        left_pos,
+        analysis_data,
+        false,
+        None,
+    );
 
-    // Apply negated type narrowing for the right side
-    // For $x || ..., the right side only executes if $x is falsy
-    // So in the right context, we narrow to falsy types
-    apply_falsiness_narrowing(analyzer, left, analysis_data, &mut or_context, left_pos);
+    // The right side executes only when the left side is falsy.
+    let mut right_context = context.clone();
+    right_context.inside_conditional = context.inside_conditional;
+    let assertions = assertion_finder::get_assertions(analyzer, left, analysis_data);
+    if !assertions.if_false.is_empty() {
+        let mut changed_var_ids = FxHashSet::default();
+        let inside_loop = right_context.inside_loop;
+        reconciler::reconcile_keyed_types(
+            &assertions.if_false,
+            &mut right_context,
+            &mut changed_var_ids,
+            analyzer,
+            analysis_data,
+            inside_loop,
+            true,
+            false,
+            None,
+        );
+        promote_asserted_vars_to_assigned(analyzer, &assertions.if_false, &mut right_context);
+    }
+    let right_pos =
+        expression_analyzer::analyze(analyzer, right, analysis_data, &mut right_context);
+    if context.inside_conditional || !matches!(right.unparenthesized(), Expression::Assignment(_))
+    {
+        if_conditional_analyzer::handle_paradoxical_condition(
+            analyzer,
+            right,
+            right_pos,
+            analysis_data,
+            false,
+            None,
+        );
+    }
 
-    // Analyze the right side
-    let _right_pos = expr_analyzer::analyze(analyzer, right, analysis_data, &mut or_context);
+    // If left is truthy, right is skipped but truthy assertions on left still apply.
+    let mut skipped_right_context = context.clone();
+    skipped_right_context.inside_conditional = context.inside_conditional;
+    if !assertions.if_true.is_empty() {
+        let mut changed_var_ids = FxHashSet::default();
+        let inside_loop = skipped_right_context.inside_loop;
+        reconciler::reconcile_keyed_types(
+            &assertions.if_true,
+            &mut skipped_right_context,
+            &mut changed_var_ids,
+            analyzer,
+            analysis_data,
+            inside_loop,
+            false,
+            false,
+            None,
+        );
+        promote_asserted_vars_to_assigned(
+            analyzer,
+            &assertions.if_true,
+            &mut skipped_right_context,
+        );
+    }
+
+    skipped_right_context.merge(&right_context);
+    *context = skipped_right_context;
 
     // The result type is always bool
     analysis_data.set_expr_type(pos, TUnion::bool());
 }
 
-/// Apply falsiness-based type narrowing.
-///
-/// When we know an expression is falsy (e.g., left side of || when right executes),
-/// we can narrow types accordingly.
-fn apply_falsiness_narrowing(
+fn promote_asserted_vars_to_assigned(
     analyzer: &StatementsAnalyzer<'_>,
-    expr: &Expression<'_>,
-    analysis_data: &FunctionAnalysisData,
+    assertions: &std::collections::BTreeMap<String, Vec<Assertion>>,
     context: &mut BlockContext,
-    expr_pos: Pos,
 ) {
-    // Handle simple variable checks: $x || ... means $x is falsy in right branch
-    if let Expression::Variable(var) = expr {
-        if let mago_syntax::ast::ast::variable::Variable::Direct(direct) = var {
-            let var_id = analyzer.interner.intern(direct.name);
+    for var_name in assertions.keys() {
+        if var_name.contains('[')
+            || var_name.contains("->")
+            || var_name.contains("::")
+            || var_name.contains('(')
+        {
+            continue;
+        }
 
-            if let Some(var_type) = analysis_data.get_expr_type(expr_pos) {
-                // In the right branch, the variable could be null, false, 0, "", etc.
-                // This is complex to narrow precisely, so we keep the falsy subset
-                let narrowed_types: Vec<_> = var_type
-                    .types
-                    .iter()
-                    .filter(|t| t.is_falsable())
-                    .cloned()
-                    .collect();
+        let mut candidates = vec![var_name.as_str()];
+        if let Some(stripped) = var_name.strip_prefix('$') {
+            candidates.push(stripped);
+        } else {
+            // Keep both `$x` and `x` spellings in sync.
+            let with_dollar = format!("${var_name}");
+            if let Some(var_id) = analyzer.interner.find(&with_dollar) {
+                if context.locals.contains_key(&var_id) {
+                    *context.assigned_var_ids.entry(var_id).or_insert(0) += 1;
+                    context.possibly_assigned_var_ids.remove(&var_id);
+                }
+            }
+        }
 
-                // Only update if we have falsy types, otherwise keep original
-                if !narrowed_types.is_empty() {
-                    context.locals.insert(var_id, TUnion::from_types(narrowed_types));
-                } else {
-                    // If no falsy types, the right side should be unreachable
-                    // For simplicity, we keep the original type
+        for candidate in candidates {
+            if let Some(var_id) = analyzer.interner.find(candidate) {
+                if context.locals.contains_key(&var_id) {
+                    *context.assigned_var_ids.entry(var_id).or_insert(0) += 1;
+                    context.possibly_assigned_var_ids.remove(&var_id);
                 }
             }
         }

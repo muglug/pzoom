@@ -5,7 +5,7 @@ use mago_syntax::ast::ast::construct::{DieConstruct, ExitConstruct};
 use pzoom_code_info::TUnion;
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
@@ -23,7 +23,8 @@ pub fn analyze_exit(
     // Analyze the arguments if present
     if let Some(ref args) = exit.arguments {
         for arg in args.arguments.iter() {
-            let _arg_pos = expr_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
+            let _arg_pos =
+                expression_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
         }
     }
 
@@ -45,7 +46,8 @@ pub fn analyze_die(
     // Analyze the arguments if present
     if let Some(ref args) = die.arguments {
         for arg in args.arguments.iter() {
-            let _arg_pos = expr_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
+            let _arg_pos =
+                expression_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
         }
     }
 

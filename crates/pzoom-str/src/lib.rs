@@ -13,20 +13,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct StrId(pub u32);
 
-impl StrId {
-    pub const EMPTY: StrId = StrId(0);
-    // Well-known strings - IDs 1-10 reserved for common types
-    pub const CLOSURE: StrId = StrId(1);
-    pub const TRAVERSABLE: StrId = StrId(2);
-    pub const ITERATOR: StrId = StrId(3);
-    pub const ITERATOR_AGGREGATE: StrId = StrId(4);
-    pub const THROWABLE: StrId = StrId(5);
-    pub const EXCEPTION: StrId = StrId(6);
-    pub const ERROR: StrId = StrId(7);
-    pub const STDCLASS: StrId = StrId(8);
-    pub const GENERATOR: StrId = StrId(9);
-    pub const COUNTABLE: StrId = StrId(10);
-}
+include!(concat!(env!("OUT_DIR"), "/interned_strings.rs"));
 
 impl Default for StrId {
     fn default() -> Self {
@@ -50,29 +37,9 @@ impl Interner {
             map: RwLock::new(FxHashMap::default()),
             vec: RwLock::new(Vec::new()),
         };
-        // Pre-intern well-known strings in order to match StrId constants
-        // StrId(0) = ""
-        interner.intern("");
-        // StrId(1) = Closure
-        interner.intern("Closure");
-        // StrId(2) = Traversable
-        interner.intern("Traversable");
-        // StrId(3) = Iterator
-        interner.intern("Iterator");
-        // StrId(4) = IteratorAggregate
-        interner.intern("IteratorAggregate");
-        // StrId(5) = Throwable
-        interner.intern("Throwable");
-        // StrId(6) = Exception
-        interner.intern("Exception");
-        // StrId(7) = Error
-        interner.intern("Error");
-        // StrId(8) = stdClass
-        interner.intern("stdClass");
-        // StrId(9) = Generator
-        interner.intern("Generator");
-        // StrId(10) = Countable
-        interner.intern("Countable");
+        for value in PRELOADED_STRINGS {
+            interner.intern(value);
+        }
         interner
     }
 

@@ -1,16 +1,21 @@
 //! Negated assertion reconciler.
 //!
-//! Handles negated assertions like `!truthy` (falsy), `!isset`, and type negations.
+//! Handles negated assertions like `!truthy`, `!isset`, `!== <literal>`, and `!is_<type>()`.
+//! This follows Psalm's reconciliation order more closely, using Hakana as the
+//! implementation style reference where needed.
 
+use pzoom_code_info::ttype::type_combiner;
 use pzoom_code_info::{Assertion, TAtomic, TUnion};
+use pzoom_str::StrId;
 
 use super::simple_negated_assertion_reconciler;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::type_comparator::atomic_type_comparator;
+use crate::type_comparator::object_type_comparator;
+use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 
 /// Reconciles a negated assertion with an existing type.
-///
-/// Subtracts the asserted type from the existing type.
 pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: &TUnion,
@@ -20,8 +25,41 @@ pub fn reconcile(
     analyzer: &StatementsAnalyzer<'_>,
     _inside_loop: bool,
 ) -> TUnion {
-    // First, try the simple negated assertion reconciler
-    if let Some(result) = simple_negated_assertion_reconciler::reconcile(
+    let is_equality = assertion.has_equality();
+
+    if is_equality {
+        if let Some(assertion_atomic) = assertion.get_type() {
+            if matches!(
+                assertion_atomic,
+                TAtomic::TLiteralInt { .. }
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TLiteralFloat { .. }
+                    | TAtomic::TEnumCase { .. }
+            ) {
+                if existing_var_type.is_mixed() {
+                    return existing_var_type.clone();
+                }
+
+                return handle_literal_negated_equality(
+                    existing_var_type,
+                    assertion_atomic,
+                    analyzer,
+                );
+            }
+        }
+    }
+
+    if !is_equality {
+        if let Some(assertion_atomic) = assertion.get_type() {
+            if let Some(adjusted) =
+                reconcile_calculation_numeric_negation(existing_var_type, assertion_atomic)
+            {
+                return adjusted;
+            }
+        }
+    }
+
+    if let Some(simple_result) = simple_negated_assertion_reconciler::reconcile(
         assertion,
         existing_var_type,
         key,
@@ -29,208 +67,181 @@ pub fn reconcile(
         analysis_data,
         analyzer,
     ) {
-        return result;
+        return with_existing_metadata(simple_result, existing_var_type, false);
     }
 
-    // Fall through to more specific handling
     match assertion {
-        Assertion::Falsy => reconcile_falsy(existing_var_type),
-        Assertion::IsNotIsset => reconcile_not_isset(existing_var_type),
-        Assertion::IsNotType(atomic) => subtract_type(existing_var_type, atomic),
-        Assertion::IsNotEqual(atomic) => subtract_literal(existing_var_type, atomic),
-        Assertion::EmptyCountable => reconcile_empty_countable(existing_var_type),
-        Assertion::NotInArray(array_type) => reconcile_not_in_array(existing_var_type, array_type),
-        Assertion::DoesNotHaveArrayKey(key) => {
-            reconcile_no_array_key(existing_var_type, key)
+        Assertion::IsNotType(atomic) => reconcile_not_type(existing_var_type, atomic, analyzer),
+        Assertion::IsNotEqual(atomic) => subtract_literal(existing_var_type, atomic, analyzer),
+        Assertion::NotInArray(array_type) => {
+            reconcile_not_in_array(existing_var_type, array_type, analyzer)
         }
-        Assertion::DoesNotHaveExactCount(_) => existing_var_type.clone(),
-        Assertion::DoesNotHaveNonnullEntryForKey(_) => existing_var_type.clone(),
-        Assertion::ArrayKeyDoesNotExist => existing_var_type.clone(),
+        Assertion::DoesNotHaveExactCount(_)
+        | Assertion::DoesNotHaveNonnullEntryForKey(_)
+        | Assertion::ArrayKeyDoesNotExist => existing_var_type.clone(),
         _ => existing_var_type.clone(),
     }
 }
 
-/// Reconciles a falsy assertion (the negation of truthy).
-///
-/// Keeps only falsy types (null, false, 0, "", []).
-fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
-    let mut acceptable_types = Vec::new();
+fn reconcile_not_type(
+    existing_var_type: &TUnion,
+    assertion_type: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
+    if let TAtomic::TClassString { .. } = assertion_type {
+        return subtract_class_string(existing_var_type);
+    }
 
+    if let TAtomic::TNamedObject { name, .. } = assertion_type {
+        if let Some(date_time_result) =
+            reconcile_datetime_interface_negation(existing_var_type, *name, analyzer)
+        {
+            return date_time_result;
+        }
+    }
+
+    let subtracted = subtract_type(existing_var_type, assertion_type, analyzer);
+
+    if let TAtomic::TNamedObject { name, .. } = assertion_type {
+        return remove_matching_enum_cases(&subtracted, *name);
+    }
+
+    subtracted
+}
+
+fn reconcile_datetime_interface_negation(
+    existing_var_type: &TUnion,
+    assertion_class_name: StrId,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> Option<TUnion> {
+    if assertion_class_name != StrId::DATE_TIME
+        && assertion_class_name != StrId::DATE_TIME_IMMUTABLE
+    {
+        return None;
+    }
+
+    let date_time_interface_id = analyzer.interner.intern("DateTimeInterface");
+    if !existing_var_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TNamedObject { name, .. } if *name == date_time_interface_id
+        )
+    }) {
+        return None;
+    }
+
+    let mut acceptable_types = Vec::new();
     for atomic in &existing_var_type.types {
-        // If the type is always truthy, exclude it
-        if atomic.is_truthy() {
+        if matches!(
+            atomic,
+            TAtomic::TNamedObject { name, .. } if *name == date_time_interface_id
+        ) {
             continue;
         }
 
-        // For types that might be truthy, narrow to falsy variants
-        match atomic {
-            TAtomic::TBool => {
-                acceptable_types.push(TAtomic::TFalse);
-            }
-            TAtomic::TString => {
-                // Could be empty string - add literal empty string
-                acceptable_types.push(TAtomic::TLiteralString {
-                    value: String::new(),
-                });
-            }
-            TAtomic::TInt => {
-                // Could be 0
-                acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
-            }
-            TAtomic::TArray { .. } => {
-                // Could be empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TList { .. } => {
-                // Could be empty list (which is empty array)
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TMixed => {
-                // Mixed could be any falsy value
-                acceptable_types.push(TAtomic::TNull);
-                acceptable_types.push(TAtomic::TFalse);
-                acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
-                acceptable_types.push(TAtomic::TLiteralString {
-                    value: String::new(),
-                });
-            }
-            TAtomic::TNonEmptyMixed => {
-                // Non-empty mixed but can still be falsy (0, "", false)
-                acceptable_types.push(TAtomic::TFalse);
-                acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
-                acceptable_types.push(TAtomic::TLiteralString {
-                    value: String::new(),
-                });
-            }
-            TAtomic::TNull | TAtomic::TFalse | TAtomic::TLiteralInt { value: 0 } => {
-                // These are falsy, keep them
-                acceptable_types.push(atomic.clone());
-            }
-            TAtomic::TLiteralString { value } if value.is_empty() => {
-                acceptable_types.push(atomic.clone());
-            }
-            TAtomic::TLiteralFloat { value } if *value == 0.0 => {
-                acceptable_types.push(atomic.clone());
-            }
-            TAtomic::TFloat => {
-                // Could be 0.0
-                acceptable_types.push(TAtomic::TLiteralFloat { value: 0.0 });
-            }
-            TAtomic::TTemplateParam { as_type, .. } => {
-                if !as_type.is_mixed() {
-                    let subtracted = reconcile_falsy(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
-                }
-            }
-            _ => {
-                // Other types - check if they could be falsy
-                if atomic.is_falsy() || !atomic.is_truthy() {
-                    acceptable_types.push(atomic.clone());
-                }
-            }
-        }
+        acceptable_types.push(atomic.clone());
     }
 
-    if acceptable_types.is_empty() {
+    let alternate = if assertion_class_name == StrId::DATE_TIME {
+        StrId::DATE_TIME_IMMUTABLE
+    } else {
+        StrId::DATE_TIME
+    };
+
+    push_unique_atomic(
+        &mut acceptable_types,
+        TAtomic::TNamedObject {
+            name: alternate,
+            type_params: None,
+        },
+    );
+
+    let result = if acceptable_types.is_empty() {
         TUnion::nothing()
     } else {
-        TUnion::from_types(acceptable_types)
-    }
+        TUnion::from_types(type_combiner::combine(acceptable_types, false))
+    };
+
+    Some(with_existing_metadata(result, existing_var_type, false))
 }
 
-/// Reconciles a !isset assertion.
-///
-/// Returns null type (the variable is not set).
-fn reconcile_not_isset(existing_var_type: &TUnion) -> TUnion {
-    // If the type already includes null, return just null
-    let has_null = existing_var_type
-        .types
-        .iter()
-        .any(|t| matches!(t, TAtomic::TNull));
-
-    if has_null || existing_var_type.is_nullable {
-        TUnion::new(TAtomic::TNull)
-    } else if existing_var_type.is_mixed() {
-        // Mixed can include null
-        TUnion::new(TAtomic::TNull)
-    } else {
-        // The variable wasn't set - this is an impossible type
-        TUnion::nothing()
-    }
-}
-
-/// Reconciles an empty countable assertion.
-///
-/// Narrows to empty arrays.
-fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
+fn subtract_class_string(existing_var_type: &TUnion) -> TUnion {
     let mut acceptable_types = Vec::new();
+    let mut removed_class_string = false;
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TArray { .. } => {
-                // Narrow to empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
+            TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. } => {
+                removed_class_string = true;
             }
-            TAtomic::TList { .. } => {
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
-                // Non-empty can't be empty, skip
-            }
-            TAtomic::TKeyedArray { properties, .. } if properties.is_empty() => {
-                acceptable_types.push(atomic.clone());
-            }
-            TAtomic::TKeyedArray { .. } => {
-                // Has properties, can't be empty
-            }
-            TAtomic::TMixed => {
-                // Could be empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TTemplateParam { as_type, .. } => {
-                if !as_type.is_mixed() {
-                    let subtracted = reconcile_empty_countable(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
-                } else {
-                    acceptable_types.push(atomic.clone());
-                }
-            }
-            _ => {
-                // Keep other types (they're not countable anyway)
-                acceptable_types.push(atomic.clone());
-            }
+            _ => acceptable_types.push(atomic.clone()),
         }
     }
 
-    if acceptable_types.is_empty() {
+    if removed_class_string
+        && !acceptable_types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TString))
+    {
+        acceptable_types.push(TAtomic::TString);
+    }
+
+    let result = if acceptable_types.is_empty() {
         TUnion::nothing()
     } else {
-        TUnion::from_types(acceptable_types)
-    }
+        TUnion::from_types(type_combiner::combine(acceptable_types, false))
+    };
+
+    with_existing_metadata(result, existing_var_type, false)
 }
 
-/// Reconciles a not-in-array assertion.
-fn reconcile_not_in_array(existing_var_type: &TUnion, array_type: &TUnion) -> TUnion {
-    // Get the literal values from the array type
+fn reconcile_calculation_numeric_negation(
+    existing_var_type: &TUnion,
+    assertion_type: &TAtomic,
+) -> Option<TUnion> {
+    if !existing_var_type.from_calculation || !existing_var_type.has_int() {
+        return None;
+    }
+
+    if !matches!(assertion_type, TAtomic::TInt | TAtomic::TFloat) {
+        return None;
+    }
+
+    let mut acceptable_types = Vec::new();
+
+    for atomic in &existing_var_type.types {
+        match assertion_type {
+            TAtomic::TInt if is_int_like_atomic(atomic) => {}
+            TAtomic::TFloat if is_float_like_atomic(atomic) => {}
+            _ => acceptable_types.push(atomic.clone()),
+        }
+    }
+
+    if matches!(assertion_type, TAtomic::TInt) {
+        if !acceptable_types
+            .iter()
+            .any(|atomic| is_float_like_atomic(atomic))
+        {
+            acceptable_types.push(TAtomic::TFloat);
+        }
+    } else if !acceptable_types.iter().any(is_int_like_atomic) {
+        acceptable_types.push(TAtomic::TInt);
+    }
+
+    let result = if acceptable_types.is_empty() {
+        TUnion::nothing()
+    } else {
+        TUnion::from_types(type_combiner::combine(acceptable_types, false))
+    };
+
+    Some(with_existing_metadata(result, existing_var_type, true))
+}
+
+fn reconcile_not_in_array(
+    existing_var_type: &TUnion,
+    array_type: &TUnion,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
     let mut values_to_remove = Vec::new();
 
     for atomic in &array_type.types {
@@ -244,6 +255,7 @@ fn reconcile_not_in_array(existing_var_type: &TUnion, array_type: &TUnion) -> TU
                             | TAtomic::TLiteralFloat { .. }
                             | TAtomic::TTrue
                             | TAtomic::TFalse
+                            | TAtomic::TEnumCase { .. }
                     ) {
                         values_to_remove.push(value_atomic.clone());
                     }
@@ -259,6 +271,7 @@ fn reconcile_not_in_array(existing_var_type: &TUnion, array_type: &TUnion) -> TU
                                 | TAtomic::TLiteralFloat { .. }
                                 | TAtomic::TTrue
                                 | TAtomic::TFalse
+                                | TAtomic::TEnumCase { .. }
                         ) {
                             values_to_remove.push(value_atomic.clone());
                         }
@@ -273,176 +286,195 @@ fn reconcile_not_in_array(existing_var_type: &TUnion, array_type: &TUnion) -> TU
         return existing_var_type.clone();
     }
 
-    // Remove the literal values from the existing type
     let mut result = existing_var_type.clone();
     for value in &values_to_remove {
-        result = subtract_literal(&result, value);
+        result = subtract_literal(&result, value, analyzer);
     }
 
     result
 }
 
-/// Reconciles a DoesNotHaveArrayKey assertion.
-fn reconcile_no_array_key(
-    existing_var_type: &TUnion,
-    key: &pzoom_code_info::ArrayKey,
-) -> TUnion {
-    let mut result_types = Vec::new();
-
-    for atomic in &existing_var_type.types {
-        match atomic {
-            TAtomic::TKeyedArray {
-                properties,
-                is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                // Remove the key from known items
-                let mut new_properties = properties.clone();
-                new_properties.remove(key);
-
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: new_properties,
-                    is_list: *is_list,
-                    sealed: *sealed,
-                    fallback_key_type: fallback_key_type.clone(),
-                    fallback_value_type: fallback_value_type.clone(),
-                });
-            }
-            TAtomic::TTemplateParam { as_type, .. } => {
-                let subtracted = reconcile_no_array_key(as_type, key);
-                if !subtracted.is_nothing() {
-                    result_types.push(atomic.clone());
-                }
-            }
-            _ => {
-                result_types.push(atomic.clone());
-            }
-        }
-    }
-
-    if result_types.is_empty() {
-        TUnion::nothing()
-    } else {
-        TUnion::from_types(result_types)
-    }
-}
-
 /// Subtracts a type from a union.
-///
-/// Removes the specified atomic type from the union.
-pub fn subtract_type(existing_var_type: &TUnion, type_to_remove: &TAtomic) -> TUnion {
+pub fn subtract_type(
+    existing_var_type: &TUnion,
+    type_to_remove: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
     let mut remaining_types = Vec::new();
 
     for atomic in &existing_var_type.types {
-        if let Some(narrowed) = narrow_after_subtraction(atomic, type_to_remove) {
-            remaining_types.push(narrowed);
-        } else if !should_subtract(atomic, type_to_remove) {
-            remaining_types.push(atomic.clone());
+        if let Some(narrowed) = narrow_after_subtraction(atomic, type_to_remove, analyzer) {
+            push_unique_atomic(&mut remaining_types, narrowed);
+            continue;
         }
+
+        if should_subtract(atomic, type_to_remove, analyzer) {
+            continue;
+        }
+
+        remaining_types.push(atomic.clone());
     }
 
-    if remaining_types.is_empty() {
+    let mut result = if remaining_types.is_empty() {
         TUnion::nothing()
     } else {
-        let mut result = TUnion::from_types(remaining_types);
+        TUnion::from_types(type_combiner::combine(remaining_types, false))
+    };
 
-        // Update nullable flag
-        if matches!(type_to_remove, TAtomic::TNull) {
-            result.is_nullable = false;
-        }
-
-        result
+    result = with_existing_metadata(result, existing_var_type, false);
+    if matches!(type_to_remove, TAtomic::TNull) {
+        result.is_nullable = false;
     }
+
+    result
 }
 
-/// Subtracts a literal value from a union.
-fn subtract_literal(existing_var_type: &TUnion, literal: &TAtomic) -> TUnion {
+fn subtract_literal(
+    existing_var_type: &TUnion,
+    literal: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
     let mut remaining_types = Vec::new();
 
     for atomic in &existing_var_type.types {
         match (atomic, literal) {
-            // Same literal values
+            (TAtomic::TLiteralInt { value: v1 }, TAtomic::TLiteralInt { value: v2 })
+                if v1 == v2 => {}
+            (TAtomic::TLiteralString { value: v1 }, TAtomic::TLiteralString { value: v2 })
+                if v1 == v2 => {}
+            (TAtomic::TLiteralFloat { value: v1 }, TAtomic::TLiteralFloat { value: v2 })
+                if v1 == v2 => {}
+            (TAtomic::TTrue, TAtomic::TTrue) => {}
+            (TAtomic::TFalse, TAtomic::TFalse) => {}
+            (TAtomic::TNull, TAtomic::TNull) => {}
             (
-                TAtomic::TLiteralInt { value: v1 },
-                TAtomic::TLiteralInt { value: v2 },
-            ) if v1 == v2 => {
-                // Remove
-            }
-            (
-                TAtomic::TLiteralString { value: v1 },
-                TAtomic::TLiteralString { value: v2 },
-            ) if v1 == v2 => {
-                // Remove
-            }
-            (
-                TAtomic::TLiteralFloat { value: v1 },
-                TAtomic::TLiteralFloat { value: v2 },
-            ) if v1 == v2 => {
-                // Remove
-            }
-            (TAtomic::TTrue, TAtomic::TTrue) => {
-                // Remove
-            }
-            (TAtomic::TFalse, TAtomic::TFalse) => {
-                // Remove
-            }
-            (TAtomic::TNull, TAtomic::TNull) => {
-                // Remove
-            }
-            // Bool narrowing
+                TAtomic::TEnumCase {
+                    enum_name: enum_name1,
+                    case_name: case_name1,
+                },
+                TAtomic::TEnumCase {
+                    enum_name: enum_name2,
+                    case_name: case_name2,
+                },
+            ) if enum_name1 == enum_name2 && case_name1 == case_name2 => {}
             (TAtomic::TBool, TAtomic::TTrue) => {
-                remaining_types.push(TAtomic::TFalse);
+                push_unique_atomic(&mut remaining_types, TAtomic::TFalse);
             }
             (TAtomic::TBool, TAtomic::TFalse) => {
-                remaining_types.push(TAtomic::TTrue);
+                push_unique_atomic(&mut remaining_types, TAtomic::TTrue);
             }
-            // Keep everything else
+            (TAtomic::TString, TAtomic::TLiteralString { value }) if value.is_empty() => {
+                push_unique_atomic(&mut remaining_types, TAtomic::TNonEmptyString);
+            }
+            (TAtomic::TInt, TAtomic::TLiteralInt { value }) => {
+                push_int_except_literal(&mut remaining_types, None, None, *value);
+            }
+            (TAtomic::TPositiveInt, TAtomic::TLiteralInt { value }) => {
+                push_int_except_literal(&mut remaining_types, Some(1), None, *value);
+            }
+            (TAtomic::TNegativeInt, TAtomic::TLiteralInt { value }) => {
+                push_int_except_literal(&mut remaining_types, None, Some(-1), *value);
+            }
+            (TAtomic::TIntRange { min, max }, TAtomic::TLiteralInt { value }) => {
+                push_int_except_literal(&mut remaining_types, *min, *max, *value);
+            }
+            (
+                TAtomic::TEnum { name },
+                TAtomic::TEnumCase {
+                    enum_name,
+                    case_name,
+                },
+            ) if name == enum_name => {
+                let mut pushed_any = false;
+                if let Some(enum_info) = analyzer.codebase.get_class(*enum_name) {
+                    for alt_case in enum_info.constants.keys() {
+                        if *alt_case == *case_name {
+                            continue;
+                        }
+
+                        push_unique_atomic(
+                            &mut remaining_types,
+                            TAtomic::TEnumCase {
+                                enum_name: *enum_name,
+                                case_name: *alt_case,
+                            },
+                        );
+                        pushed_any = true;
+                    }
+                }
+
+                if !pushed_any {
+                    remaining_types.push(atomic.clone());
+                }
+            }
             _ => {
                 remaining_types.push(atomic.clone());
             }
         }
     }
 
-    if remaining_types.is_empty() {
+    let result = if remaining_types.is_empty() {
         TUnion::nothing()
     } else {
         TUnion::from_types(remaining_types)
-    }
+    };
+
+    with_existing_metadata(result, existing_var_type, false)
 }
 
-/// Returns a narrowed type after subtraction, if narrowing is possible.
-fn narrow_after_subtraction(existing: &TAtomic, to_remove: &TAtomic) -> Option<TAtomic> {
+fn handle_literal_negated_equality(
+    existing_var_type: &TUnion,
+    assertion_type: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
+    subtract_literal(existing_var_type, assertion_type, analyzer)
+}
+
+fn remove_matching_enum_cases(existing_var_type: &TUnion, enum_name: StrId) -> TUnion {
+    let mut acceptable_types = Vec::new();
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TEnumCase {
+                enum_name: case_enum_name,
+                ..
+            } if *case_enum_name == enum_name => {}
+            _ => acceptable_types.push(atomic.clone()),
+        }
+    }
+
+    let result = if acceptable_types.is_empty() {
+        TUnion::nothing()
+    } else {
+        TUnion::from_types(type_combiner::combine(acceptable_types, false))
+    };
+
+    with_existing_metadata(result, existing_var_type, false)
+}
+
+fn narrow_after_subtraction(
+    existing: &TAtomic,
+    to_remove: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> Option<TAtomic> {
     match (existing, to_remove) {
-        // Bool - true = false
         (TAtomic::TBool, TAtomic::TTrue) => Some(TAtomic::TFalse),
-        // Bool - false = true
         (TAtomic::TBool, TAtomic::TFalse) => Some(TAtomic::TTrue),
-
-        // Scalar narrowing
-        (TAtomic::TScalar, TAtomic::TBool) => None, // Can't easily represent int|float|string
-        (TAtomic::TScalar, TAtomic::TInt) => None,
-        (TAtomic::TScalar, TAtomic::TFloat) => None,
-        (TAtomic::TScalar, TAtomic::TString) => None,
-
-        // array-key - int = string
         (TAtomic::TArrayKey, TAtomic::TInt) => Some(TAtomic::TString),
-        // array-key - string = int
         (TAtomic::TArrayKey, TAtomic::TString) => Some(TAtomic::TInt),
-
-        // numeric - int = float
         (TAtomic::TNumeric, TAtomic::TInt) => Some(TAtomic::TFloat),
-        // numeric - float = int
         (TAtomic::TNumeric, TAtomic::TFloat) => Some(TAtomic::TInt),
-
-        // Template params
-        (TAtomic::TTemplateParam { name, defining_entity, as_type }, _) => {
-            let subtracted = subtract_type(as_type, to_remove);
-            if subtracted.is_nothing() {
+        (
+            TAtomic::TTemplateParam {
+                name,
+                defining_entity,
+                as_type,
+            },
+            _,
+        ) => {
+            let subtracted = subtract_type(as_type, to_remove, analyzer);
+            if subtracted.is_nothing() || subtracted == **as_type {
                 None
-            } else if subtracted == *as_type.as_ref() {
-                None // No change
             } else {
                 Some(TAtomic::TTemplateParam {
                     name: *name,
@@ -451,104 +483,160 @@ fn narrow_after_subtraction(existing: &TAtomic, to_remove: &TAtomic) -> Option<T
                 })
             }
         }
-
+        (
+            TAtomic::TIterable {
+                key_type,
+                value_type,
+            },
+            TAtomic::TNamedObject { name, .. },
+        ) if object_type_comparator::is_class_subtype_of(
+            *name,
+            StrId::TRAVERSABLE,
+            analyzer.codebase,
+        ) =>
+        {
+            Some(TAtomic::TArray {
+                key_type: key_type.clone(),
+                value_type: value_type.clone(),
+            })
+        }
+        (
+            TAtomic::TCallable { .. },
+            TAtomic::TArray { .. }
+            | TAtomic::TNonEmptyArray { .. }
+            | TAtomic::TList { .. }
+            | TAtomic::TNonEmptyList { .. }
+            | TAtomic::TKeyedArray { .. }
+            | TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TClassString { .. }
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TClosure { .. },
+        ) => Some(TAtomic::TObject),
         _ => None,
     }
 }
 
-/// Determines if an existing type should be completely subtracted.
-fn should_subtract(existing: &TAtomic, to_remove: &TAtomic) -> bool {
-    match (existing, to_remove) {
-        // Exact matches
-        (a, b) if a == b => true,
+fn should_subtract(
+    existing: &TAtomic,
+    to_remove: &TAtomic,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> bool {
+    if existing == to_remove {
+        return true;
+    }
 
-        // Null removal
-        (TAtomic::TNull, TAtomic::TNull) => true,
+    let mut comparison_result = TypeComparisonResult::new();
+    if atomic_type_comparator::is_contained_by(
+        analyzer.codebase,
+        existing,
+        to_remove,
+        &mut comparison_result,
+    ) {
+        return true;
+    }
 
-        // Bool variants
-        (TAtomic::TTrue, TAtomic::TTrue) => true,
-        (TAtomic::TFalse, TAtomic::TFalse) => true,
-        (TAtomic::TBool, TAtomic::TBool) => true,
-        (TAtomic::TTrue, TAtomic::TBool) => true,
-        (TAtomic::TFalse, TAtomic::TBool) => true,
+    matches!(
+        (existing, to_remove),
+        (
+            TAtomic::TEnumCase { enum_name, .. },
+            TAtomic::TNamedObject { name, .. }
+        ) if enum_name == name
+    )
+}
 
-        // Integer removal
-        (TAtomic::TInt, TAtomic::TInt) => true,
-        (TAtomic::TLiteralInt { value: v1 }, TAtomic::TLiteralInt { value: v2 }) => v1 == v2,
-        (TAtomic::TLiteralInt { .. }, TAtomic::TInt) => true,
-        (TAtomic::TPositiveInt, TAtomic::TPositiveInt) => true,
-        (TAtomic::TPositiveInt, TAtomic::TInt) => true,
-        (TAtomic::TNegativeInt, TAtomic::TNegativeInt) => true,
-        (TAtomic::TNegativeInt, TAtomic::TInt) => true,
+fn push_int_except_literal(
+    target: &mut Vec<TAtomic>,
+    min: Option<i64>,
+    max: Option<i64>,
+    excluded: i64,
+) {
+    if let Some(lower_max) = excluded.checked_sub(1) {
+        if int_range_has_overlap(min, max, min, Some(lower_max)) {
+            push_unique_atomic(target, int_bounds_to_atomic(min, Some(lower_max)));
+        }
+    }
 
-        // String removal
-        (TAtomic::TString, TAtomic::TString) => true,
-        (TAtomic::TLiteralString { value: v1 }, TAtomic::TLiteralString { value: v2 }) => v1 == v2,
-        (TAtomic::TLiteralString { .. }, TAtomic::TString) => true,
-        (TAtomic::TNonEmptyString, TAtomic::TNonEmptyString) => true,
-        (TAtomic::TNonEmptyString, TAtomic::TString) => true,
-        (TAtomic::TNumericString, TAtomic::TString) => true,
-        (TAtomic::TClassString { .. }, TAtomic::TString) => true,
-
-        // Float removal
-        (TAtomic::TFloat, TAtomic::TFloat) => true,
-        (TAtomic::TLiteralFloat { value: v1 }, TAtomic::TLiteralFloat { value: v2 }) => v1 == v2,
-        (TAtomic::TLiteralFloat { .. }, TAtomic::TFloat) => true,
-
-        // Array removal
-        (TAtomic::TArray { .. }, TAtomic::TArray { .. }) => true,
-        (TAtomic::TNonEmptyArray { .. }, TAtomic::TArray { .. }) => true,
-        (TAtomic::TList { .. }, TAtomic::TArray { .. }) => true,
-        (TAtomic::TNonEmptyList { .. }, TAtomic::TArray { .. }) => true,
-        (TAtomic::TKeyedArray { .. }, TAtomic::TArray { .. }) => true,
-
-        // Object removal
-        (TAtomic::TObject, TAtomic::TObject) => true,
-        (TAtomic::TNamedObject { name: n1, .. }, TAtomic::TNamedObject { name: n2, .. }) => n1 == n2,
-        (TAtomic::TNamedObject { .. }, TAtomic::TObject) => true,
-        (TAtomic::TClosure { .. }, TAtomic::TObject) => true,
-
-        // Resource removal
-        (TAtomic::TResource, TAtomic::TResource) => true,
-        (TAtomic::TClosedResource, TAtomic::TClosedResource) => true,
-
-        // Callable removal
-        (TAtomic::TCallable { .. }, TAtomic::TCallable { .. }) => true,
-        (TAtomic::TClosure { .. }, TAtomic::TClosure { .. }) => true,
-        (TAtomic::TClosure { .. }, TAtomic::TCallable { .. }) => true,
-
-        // Numeric removal
-        (TAtomic::TNumeric, TAtomic::TNumeric) => true,
-        (TAtomic::TInt, TAtomic::TNumeric) => true,
-        (TAtomic::TFloat, TAtomic::TNumeric) => true,
-
-        // Scalar removal
-        (TAtomic::TScalar, TAtomic::TScalar) => true,
-        (TAtomic::TInt, TAtomic::TScalar) => true,
-        (TAtomic::TFloat, TAtomic::TScalar) => true,
-        (TAtomic::TString, TAtomic::TScalar) => true,
-        (TAtomic::TBool, TAtomic::TScalar) => true,
-
-        // ArrayKey removal
-        (TAtomic::TArrayKey, TAtomic::TArrayKey) => true,
-        (TAtomic::TInt, TAtomic::TArrayKey) => true,
-        (TAtomic::TString, TAtomic::TArrayKey) => true,
-
-        _ => false,
+    if let Some(upper_min) = excluded.checked_add(1) {
+        if int_range_has_overlap(min, max, Some(upper_min), max) {
+            push_unique_atomic(target, int_bounds_to_atomic(Some(upper_min), max));
+        }
     }
 }
 
-/// Subtracts null from a type union.
-pub fn subtract_null(existing_var_type: &TUnion) -> TUnion {
-    subtract_type(existing_var_type, &TAtomic::TNull)
+fn int_range_has_overlap(
+    existing_min: Option<i64>,
+    existing_max: Option<i64>,
+    candidate_min: Option<i64>,
+    candidate_max: Option<i64>,
+) -> bool {
+    let min = match (existing_min, candidate_min) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    };
+
+    let max = match (existing_max, candidate_max) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    };
+
+    if let (Some(min), Some(max)) = (min, max) {
+        return min <= max;
+    }
+
+    true
 }
 
-/// Subtracts false from a type union.
-pub fn subtract_false(existing_var_type: &TUnion) -> TUnion {
-    subtract_type(existing_var_type, &TAtomic::TFalse)
+fn int_bounds_to_atomic(min: Option<i64>, max: Option<i64>) -> TAtomic {
+    match (min, max) {
+        (None, None) => TAtomic::TInt,
+        (Some(1), None) => TAtomic::TPositiveInt,
+        (None, Some(-1)) => TAtomic::TNegativeInt,
+        (Some(min), Some(max)) if min == max => TAtomic::TLiteralInt { value: min },
+        _ => TAtomic::TIntRange { min, max },
+    }
 }
 
-/// Subtracts true from a type union.
-pub fn subtract_true(existing_var_type: &TUnion) -> TUnion {
-    subtract_type(existing_var_type, &TAtomic::TTrue)
+fn is_int_like_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TPositiveInt
+            | TAtomic::TNegativeInt
+            | TAtomic::TIntRange { .. }
+    )
+}
+
+fn is_float_like_atomic(atomic: &TAtomic) -> bool {
+    matches!(atomic, TAtomic::TFloat | TAtomic::TLiteralFloat { .. })
+}
+
+fn push_unique_atomic(target: &mut Vec<TAtomic>, atomic: TAtomic) {
+    if !target.contains(&atomic) {
+        target.push(atomic);
+    }
+}
+
+fn with_existing_metadata(
+    mut result: TUnion,
+    existing_var_type: &TUnion,
+    clear_from_calculation: bool,
+) -> TUnion {
+    result.from_docblock = existing_var_type.from_docblock;
+    result.from_calculation = if clear_from_calculation {
+        false
+    } else {
+        existing_var_type.from_calculation
+    };
+    result
 }

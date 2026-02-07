@@ -34,13 +34,24 @@ pub fn is_contained_by_with_codebase(
     container_type: &TUnion,
     codebase: &CodebaseInfo,
 ) -> bool {
+    is_contained_by_with_codebase_flags(input_type, container_type, codebase, false, false)
+}
+
+/// Check if input_type is contained by container_type with configurable null/false relaxation.
+pub fn is_contained_by_with_codebase_flags(
+    input_type: &TUnion,
+    container_type: &TUnion,
+    codebase: &CodebaseInfo,
+    ignore_null: bool,
+    ignore_false: bool,
+) -> bool {
     let mut result = TypeComparisonResult::new();
     union_type_comparator::is_contained_by(
         codebase,
         input_type,
         container_type,
-        false, // ignore_null
-        false, // ignore_false
+        ignore_null,
+        ignore_false,
         &mut result,
     )
 }

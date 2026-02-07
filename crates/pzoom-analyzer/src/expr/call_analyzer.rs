@@ -5,9 +5,7 @@
 use mago_syntax::ast::ast::call::Call;
 
 use crate::context::BlockContext;
-use crate::expr::call::{
-    function_call_analyzer, instance_call_analyzer, static_call_analyzer,
-};
+use crate::expr::call::{function_call_analyzer, method_call_analyzer, static_call_analyzer};
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
@@ -24,10 +22,10 @@ pub fn analyze(
             function_call_analyzer::analyze(analyzer, func_call, pos, analysis_data, context);
         }
         Call::Method(method_call) => {
-            instance_call_analyzer::analyze(analyzer, method_call, pos, analysis_data, context);
+            method_call_analyzer::analyze(analyzer, method_call, pos, analysis_data, context);
         }
         Call::NullSafeMethod(null_safe_call) => {
-            instance_call_analyzer::analyze_nullsafe(
+            method_call_analyzer::analyze_nullsafe(
                 analyzer,
                 null_safe_call,
                 pos,

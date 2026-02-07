@@ -79,14 +79,15 @@ pub fn is_contained_by(
                 for (key, value_type) in properties {
                     // Check key compatibility (if container has specific key type)
                     if !container_key.is_mixed() {
-                        let key_type = match key {
-                            pzoom_code_info::t_atomic::ArrayKey::Int(_) => TUnion::int(),
-                            pzoom_code_info::t_atomic::ArrayKey::String(_) => TUnion::string(),
-                        };
+                        let key_type = normalize_array_key_union_for_comparison(
+                            &array_key_to_literal_union(key),
+                        );
+                        let normalized_container_key =
+                            normalize_array_key_union_for_comparison(container_key);
                         if !union_type_comparator::is_contained_by(
                             codebase,
                             &key_type,
-                            container_key,
+                            &normalized_container_key,
                             false,
                             false,
                             atomic_comparison_result,
@@ -157,18 +158,28 @@ pub fn is_contained_by(
                 if properties.is_empty() {
                     return false;
                 }
+
+                // A shape with only optional keys can still be empty and is therefore
+                // not safely contained by non-empty array constraints.
+                if properties
+                    .values()
+                    .all(|property_type| property_type.possibly_undefined)
+                {
+                    return false;
+                }
                 // Check that all values in the keyed array are compatible
                 for (key, value_type) in properties {
                     // Check key compatibility
                     if !container_key.is_mixed() {
-                        let key_type = match key {
-                            pzoom_code_info::t_atomic::ArrayKey::Int(_) => TUnion::int(),
-                            pzoom_code_info::t_atomic::ArrayKey::String(_) => TUnion::string(),
-                        };
+                        let key_type = normalize_array_key_union_for_comparison(
+                            &array_key_to_literal_union(key),
+                        );
+                        let normalized_container_key =
+                            normalize_array_key_union_for_comparison(container_key);
                         if !union_type_comparator::is_contained_by(
                             codebase,
                             &key_type,
-                            container_key,
+                            &normalized_container_key,
                             false,
                             false,
                             atomic_comparison_result,
@@ -246,6 +257,41 @@ pub fn is_contained_by(
                 }
                 return true;
             }
+            TAtomic::TArray {
+                key_type: input_key,
+                value_type: input_value,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type: input_key,
+                value_type: input_value,
+            } => {
+                if !input_key.is_nothing() {
+                    let int_key = TUnion::int();
+                    if !union_type_comparator::is_contained_by(
+                        codebase,
+                        input_key,
+                        &int_key,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    ) {
+                        return false;
+                    }
+                }
+
+                if input_value.is_nothing() {
+                    return true;
+                }
+
+                return union_type_comparator::is_contained_by(
+                    codebase,
+                    input_value,
+                    container_value,
+                    false,
+                    false,
+                    atomic_comparison_result,
+                );
+            }
             _ => {}
         }
     }
@@ -280,6 +326,14 @@ pub fn is_contained_by(
                 if properties.is_empty() {
                     return false;
                 }
+
+                // A list-shape with only optional offsets may still be empty.
+                if properties
+                    .values()
+                    .all(|property_type| property_type.possibly_undefined)
+                {
+                    return false;
+                }
                 // Check that all values are compatible with container value type
                 for (_key, value_type) in properties {
                     if !union_type_comparator::is_contained_by(
@@ -294,6 +348,35 @@ pub fn is_contained_by(
                     }
                 }
                 return true;
+            }
+            TAtomic::TNonEmptyArray {
+                key_type: input_key,
+                value_type: input_value,
+            } => {
+                let int_key = TUnion::int();
+                if !union_type_comparator::is_contained_by(
+                    codebase,
+                    input_key,
+                    &int_key,
+                    false,
+                    false,
+                    atomic_comparison_result,
+                ) {
+                    return false;
+                }
+
+                if input_value.is_nothing() {
+                    return false;
+                }
+
+                return union_type_comparator::is_contained_by(
+                    codebase,
+                    input_value,
+                    container_value,
+                    false,
+                    false,
+                    atomic_comparison_result,
+                );
             }
             _ => {}
         }
@@ -314,32 +397,83 @@ pub fn is_contained_by(
             // Check that input has all required keys from container
             for (key, container_value_type) in container_props {
                 if let Some(input_value_type) = input_props.get(key) {
+                    if input_value_type.possibly_undefined && !container_value_type.possibly_undefined
+                    {
+                        atomic_comparison_result.type_coerced = Some(true);
+                        return false;
+                    }
+
+                    let mut normalized_input_value = input_value_type.clone();
+                    normalized_input_value.possibly_undefined = false;
+                    let mut normalized_container_value = container_value_type.clone();
+                    normalized_container_value.possibly_undefined = false;
+
                     if !union_type_comparator::is_contained_by(
                         codebase,
-                        input_value_type,
-                        container_value_type,
+                        &normalized_input_value,
+                        &normalized_container_value,
                         false,
                         false,
                         atomic_comparison_result,
                     ) {
                         return false;
                     }
-                } else {
+                } else if !container_value_type.possibly_undefined {
                     // Input is missing a required key
                     return false;
                 }
             }
 
-            // If container is sealed, input must have exactly the same keys
-            if *container_sealed && input_props.len() != container_props.len() {
-                return false;
-            }
+            // Psalm treats a shape with extra known fields as compatible with a
+            // shape requiring only a subset of those fields.
+            let _ = container_sealed;
 
             return true;
         }
     }
 
     false
+}
+
+fn array_key_to_literal_union(key: &pzoom_code_info::t_atomic::ArrayKey) -> TUnion {
+    match key {
+        pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
+            TUnion::new(TAtomic::TLiteralInt { value: *value })
+        }
+        pzoom_code_info::t_atomic::ArrayKey::String(value) => value
+            .parse::<i64>()
+            .map(|parsed_int| TUnion::new(TAtomic::TLiteralInt { value: parsed_int }))
+            .unwrap_or_else(|_| {
+                TUnion::new(TAtomic::TLiteralString {
+                    value: value.clone(),
+                })
+            }),
+    }
+}
+
+fn normalize_array_key_union_for_comparison(union: &TUnion) -> TUnion {
+    let mut normalized = Vec::new();
+
+    for atomic in &union.types {
+        let converted = match atomic {
+            TAtomic::TLiteralString { value } => value
+                .parse::<i64>()
+                .map(|as_int| TAtomic::TLiteralInt { value: as_int })
+                .unwrap_or_else(|_| atomic.clone()),
+            TAtomic::TNumericString | TAtomic::TNonEmptyNumericString => TAtomic::TInt,
+            _ => atomic.clone(),
+        };
+
+        if !normalized.contains(&converted) {
+            normalized.push(converted);
+        }
+    }
+
+    if normalized.is_empty() {
+        union.clone()
+    } else {
+        TUnion::from_types(normalized)
+    }
 }
 
 /// Compare array key and value types.
@@ -351,12 +485,20 @@ fn compare_array_params(
     container_value: &TUnion,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
+    // Empty arrays/lists are compatible with any generic array constraints.
+    if input_value.is_nothing() {
+        return true;
+    }
+
+    let normalized_input_key = normalize_array_key_union_for_comparison(input_key);
+    let normalized_container_key = normalize_array_key_union_for_comparison(container_key);
+
     // Check key compatibility
-    let key_ok = container_key.is_mixed()
+    let key_ok = normalized_container_key.is_mixed()
         || union_type_comparator::is_contained_by(
             codebase,
-            input_key,
-            container_key,
+            &normalized_input_key,
+            &normalized_container_key,
             false,
             false,
             atomic_comparison_result,

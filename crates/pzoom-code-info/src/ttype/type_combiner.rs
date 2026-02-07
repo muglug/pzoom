@@ -9,20 +9,17 @@
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 
+use crate::TAtomic;
 use crate::t_atomic::ArrayKey;
 use crate::t_union::TUnion;
-use crate::TAtomic;
 
-use super::type_combination::TypeCombination;
+use super::{extend_dataflow_uniquely, type_combination::TypeCombination};
 
 /// The maximum number of literal values before collapsing to a general type
 const LITERAL_LIMIT: usize = 500;
 
 /// Combine multiple atomic types into a simplified list of atomic types.
-pub fn combine(
-    types: Vec<TAtomic>,
-    overwrite_empty_array: bool,
-) -> Vec<TAtomic> {
+pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic> {
     if types.len() == 1 {
         return types;
     }
@@ -47,25 +44,31 @@ pub fn combine(
     if combination.value_types.contains_key("void") {
         combination.value_types.remove("void");
         if !combination.value_types.contains_key("null") {
-            combination.value_types.insert("null".to_string(), TAtomic::TNull);
+            combination
+                .value_types
+                .insert("null".to_string(), TAtomic::TNull);
         }
     }
 
     // Combine true + false = bool
-    if combination.value_types.contains_key("true")
-        && combination.value_types.contains_key("false")
+    if combination.value_types.contains_key("true") && combination.value_types.contains_key("false")
     {
         combination.value_types.remove("true");
         combination.value_types.remove("false");
-        combination.value_types.insert("bool".to_string(), TAtomic::TBool);
+        combination
+            .value_types
+            .insert("bool".to_string(), TAtomic::TBool);
     }
 
-    // Handle empty + non-empty mixed
+    // Handle mixed tracking
     if combination.empty_mixed && combination.non_empty_mixed {
-        combination.value_types.insert(
-            "mixed".to_string(),
-            TAtomic::TMixed,
-        );
+        combination
+            .value_types
+            .insert("mixed".to_string(), TAtomic::TMixed);
+    } else if combination.non_empty_mixed {
+        combination
+            .value_types
+            .insert("non-empty-mixed".to_string(), TAtomic::TNonEmptyMixed);
     }
 
     // Handle simple single-value-type case (must be after mixed handling)
@@ -83,7 +86,10 @@ pub fn combine(
 
     // Handle keyed arrays (shapes)
     if !combination.objectlike_entries.is_empty() {
-        new_types.extend(handle_keyed_array_entries(&mut combination, overwrite_empty_array));
+        new_types.extend(handle_keyed_array_entries(
+            &mut combination,
+            overwrite_empty_array,
+        ));
     }
 
     // Handle generic arrays
@@ -92,6 +98,7 @@ pub fn combine(
             &combination,
             key_type,
             value_type,
+            overwrite_empty_array,
         ));
     }
 
@@ -179,7 +186,9 @@ pub fn combine(
         combination.value_types.remove("int");
         combination.value_types.remove("bool");
         combination.value_types.remove("float");
-        combination.value_types.insert("scalar".to_string(), TAtomic::TScalar);
+        combination
+            .value_types
+            .insert("scalar".to_string(), TAtomic::TScalar);
     }
 
     // Add named object types
@@ -239,7 +248,9 @@ fn scrape_type_properties(
         // Handle never/nothing type - just track it, don't add to value_types
         // It will be filtered out later if there are other types
         TAtomic::TNothing => {
-            combination.value_types.insert("never".to_string(), TAtomic::TNothing);
+            combination
+                .value_types
+                .insert("never".to_string(), TAtomic::TNothing);
             None
         }
 
@@ -283,7 +294,10 @@ fn scrape_type_properties(
         }
 
         // Handle array types
-        TAtomic::TArray { key_type, value_type } => {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        } => {
             scrape_array_properties(
                 combination,
                 *key_type,
@@ -294,7 +308,10 @@ fn scrape_type_properties(
             None
         }
 
-        TAtomic::TNonEmptyArray { key_type, value_type } => {
+        TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => {
             scrape_array_properties(
                 combination,
                 *key_type,
@@ -337,7 +354,10 @@ fn scrape_type_properties(
         }
 
         // Handle iterable types
-        TAtomic::TIterable { key_type, value_type } => {
+        TAtomic::TIterable {
+            key_type,
+            value_type,
+        } => {
             // Merge with existing array params if present
             if combination.array_type_params.is_some() {
                 let (existing_key, existing_value) = combination.array_type_params.take().unwrap();
@@ -348,16 +368,22 @@ fn scrape_type_properties(
                         combine_union_types(&existing_value, &value_type, overwrite_empty_array),
                     ],
                 );
-            } else if let Some(existing_params) = combination.builtin_type_params.get_mut("iterable") {
+            } else if let Some(existing_params) =
+                combination.builtin_type_params.get_mut("iterable")
+            {
                 if existing_params.len() >= 2 {
-                    existing_params[0] = combine_union_types(&existing_params[0], &key_type, overwrite_empty_array);
-                    existing_params[1] = combine_union_types(&existing_params[1], &value_type, overwrite_empty_array);
+                    existing_params[0] =
+                        combine_union_types(&existing_params[0], &key_type, overwrite_empty_array);
+                    existing_params[1] = combine_union_types(
+                        &existing_params[1],
+                        &value_type,
+                        overwrite_empty_array,
+                    );
                 }
             } else {
-                combination.builtin_type_params.insert(
-                    "iterable".to_string(),
-                    vec![*key_type, *value_type],
-                );
+                combination
+                    .builtin_type_params
+                    .insert("iterable".to_string(), vec![*key_type, *value_type]);
             }
             None
         }
@@ -370,7 +396,10 @@ fn scrape_type_properties(
             None
         }
 
-        TAtomic::TNamedObject { ref name, ref type_params } => {
+        TAtomic::TNamedObject {
+            ref name,
+            ref type_params,
+        } => {
             // Track static qualifier
             if !combination.object_static.contains_key(name) {
                 combination.object_static.insert(*name, false);
@@ -384,31 +413,51 @@ fn scrape_type_properties(
                     } else {
                         "Generator".to_string()
                     };
-                    if let Some(existing_params) = combination.builtin_type_params.get_mut(&type_key) {
+                    if let Some(existing_params) =
+                        combination.builtin_type_params.get_mut(&type_key)
+                    {
                         for (i, type_param) in type_params.iter().enumerate() {
                             if let Some(existing) = existing_params.get_mut(i) {
-                                *existing = combine_union_types(existing, type_param, overwrite_empty_array);
+                                *existing = combine_union_types(
+                                    existing,
+                                    type_param,
+                                    overwrite_empty_array,
+                                );
                             }
                         }
                     } else {
-                        combination.builtin_type_params.insert(type_key, type_params.clone());
+                        combination
+                            .builtin_type_params
+                            .insert(type_key, type_params.clone());
                     }
                     return None;
                 }
 
                 // Generic object - use StrId numeric value for key uniqueness
-                let type_key = format!("{}#{}<{}>", name.0,
+                let type_key = format!(
+                    "{}#{}<{}>",
+                    name.0,
                     type_params.len(),
-                    type_params.iter().map(|t| t.get_id()).collect::<Vec<_>>().join(","));
+                    type_params
+                        .iter()
+                        .map(|t| t.get_id(None))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
 
-                if let Some((_, existing_params)) = combination.object_type_params.get_mut(&type_key) {
+                if let Some((_, existing_params)) =
+                    combination.object_type_params.get_mut(&type_key)
+                {
                     for (i, type_param) in type_params.iter().enumerate() {
                         if let Some(existing) = existing_params.get_mut(i) {
-                            *existing = combine_union_types(existing, type_param, overwrite_empty_array);
+                            *existing =
+                                combine_union_types(existing, type_param, overwrite_empty_array);
                         }
                     }
                 } else {
-                    combination.object_type_params.insert(type_key, (*name, type_params.clone()));
+                    combination
+                        .object_type_params
+                        .insert(type_key, (*name, type_params.clone()));
                 }
             } else {
                 // Non-generic named object
@@ -450,7 +499,9 @@ fn scrape_type_properties(
             combination.ints = None;
             combination.value_types.remove("string");
             combination.value_types.remove("int");
-            combination.value_types.insert("array-key".to_string(), atomic);
+            combination
+                .value_types
+                .insert("array-key".to_string(), atomic);
             None
         }
 
@@ -463,7 +514,9 @@ fn scrape_type_properties(
             combination.floats = None;
             combination.value_types.remove("int");
             combination.value_types.remove("float");
-            combination.value_types.insert("numeric".to_string(), atomic);
+            combination
+                .value_types
+                .insert("numeric".to_string(), atomic);
             None
         }
 
@@ -496,21 +549,32 @@ fn scrape_type_properties(
                 } else {
                     "class-string#object".to_string()
                 };
-                combination.class_string_types.insert(key, (**as_type).clone());
+                combination
+                    .class_string_types
+                    .insert(key, (**as_type).clone());
             } else {
-                combination.class_string_types.insert("class-string#object".to_string(), TAtomic::TObject);
+                combination
+                    .class_string_types
+                    .insert("class-string#object".to_string(), TAtomic::TObject);
             }
             None
         }
 
         TAtomic::TLiteralClassString { ref name } => {
-            // TLiteralClassString stores a string class name
-            // For class_string_types, we store a placeholder TObject since we don't
-            // have an interner to convert the string to StrId
-            combination.class_string_types.insert(
-                format!("literal-class-string#{}", name),
-                TAtomic::TObject,
-            );
+            if let Some(ref mut strings) = combination.strings {
+                if strings.len() < literal_limit {
+                    strings.insert(format!("literal-class-string#{}", name), atomic);
+                } else {
+                    combination.strings = None;
+                    combination
+                        .class_string_types
+                        .insert("class-string#object".to_string(), TAtomic::TObject);
+                }
+            } else {
+                combination
+                    .class_string_types
+                    .insert("class-string#object".to_string(), TAtomic::TObject);
+            }
             None
         }
 
@@ -557,7 +621,9 @@ fn scrape_type_properties(
                     floats.insert(key, atomic);
                 } else {
                     combination.floats = None;
-                    combination.value_types.insert("float".to_string(), TAtomic::TFloat);
+                    combination
+                        .value_types
+                        .insert("float".to_string(), TAtomic::TFloat);
                 }
             }
             None
@@ -566,12 +632,16 @@ fn scrape_type_properties(
         // Handle callable
         TAtomic::TCallable { .. } => {
             // Absorb callable-string and callable arrays
-            if combination.value_types.get("string").map_or(false, |t| {
-                matches!(t, TAtomic::TClassString { .. })
-            }) {
+            if combination
+                .value_types
+                .get("string")
+                .map_or(false, |t| matches!(t, TAtomic::TClassString { .. }))
+            {
                 combination.value_types.remove("string");
             }
-            combination.value_types.insert("callable".to_string(), atomic);
+            combination
+                .value_types
+                .insert("callable".to_string(), atomic);
             None
         }
 
@@ -582,7 +652,10 @@ fn scrape_type_properties(
             None
         }
 
-        TAtomic::TEnumCase { ref enum_name, ref case_name } => {
+        TAtomic::TEnumCase {
+            ref enum_name,
+            ref case_name,
+        } => {
             // If the full enum is already present, skip the case
             let enum_key = format!("enum#{}", enum_name.0);
             if combination.value_types.contains_key(&enum_key) {
@@ -595,7 +668,7 @@ fn scrape_type_properties(
 
         // Default: add to value_types
         _ => {
-            let key = atomic.get_id();
+            let key = atomic.get_id(None);
             combination.value_types.insert(key, atomic);
             None
         }
@@ -609,6 +682,8 @@ fn scrape_array_properties(
     non_empty: bool,
     overwrite_empty_array: bool,
 ) {
+    let is_empty_array = key_type.is_nothing() && value_type.is_nothing();
+
     if let Some((ref mut existing_key, ref mut existing_value)) = combination.array_type_params {
         *existing_key = combine_union_types(existing_key, &key_type, overwrite_empty_array);
         *existing_value = combine_union_types(existing_value, &value_type, overwrite_empty_array);
@@ -620,7 +695,9 @@ fn scrape_array_properties(
         combination.array_always_filled = false;
     }
 
-    combination.all_arrays_lists = false;
+    if !is_empty_array {
+        combination.all_arrays_lists = false;
+    }
     combination.all_arrays_callable = false;
 }
 
@@ -656,33 +733,66 @@ fn scrape_keyed_array_properties(
     fallback_value_type: Option<TUnion>,
     overwrite_empty_array: bool,
 ) {
-    let existing_entries = !combination.objectlike_entries.is_empty();
-    let mut missing_entries: Vec<ArrayKey> = combination.objectlike_entries.keys().cloned().collect();
+    let has_previous_keyed_array = combination
+        .array_counts
+        .as_ref()
+        .is_some_and(|counts| !counts.is_empty());
+    let existing_entries = !combination.objectlike_entries.is_empty() || has_previous_keyed_array;
+    let mut missing_entries: Vec<ArrayKey> =
+        combination.objectlike_entries.keys().cloned().collect();
 
     combination.objectlike_sealed = combination.objectlike_sealed && fallback_key_type.is_none();
 
     let mut has_defined_keys = false;
 
     for (key, value_type) in properties {
-        let is_possibly_undefined = value_type.types.iter().any(|t| matches!(t, TAtomic::TNothing));
+        let mut entry_value_type = value_type;
+
+        // If this key only appears in one branch, mark it as possibly undefined.
+        if !combination.objectlike_entries.contains_key(&key) && existing_entries {
+            if overwrite_empty_array {
+                if let Some(existing_fallback_value_type) =
+                    combination.objectlike_value_type.as_ref()
+                {
+                    entry_value_type = combine_union_types(
+                        existing_fallback_value_type,
+                        &entry_value_type,
+                        overwrite_empty_array,
+                    );
+                }
+            } else {
+                entry_value_type.possibly_undefined = true;
+            }
+        }
 
         if let Some(existing_type) = combination.objectlike_entries.get(&key) {
-            let combined = combine_union_types(existing_type, &value_type, overwrite_empty_array);
+            let combined =
+                combine_union_types(existing_type, &entry_value_type, overwrite_empty_array);
             combination.objectlike_entries.insert(key.clone(), combined);
         } else {
-            let entry_type = if existing_entries {
-                // Mark as possibly undefined since it wasn't in previous entries
-                value_type
-            } else {
-                value_type
-            };
-            combination.objectlike_entries.insert(key.clone(), entry_type);
+            combination
+                .objectlike_entries
+                .insert(key.clone(), entry_value_type);
         }
 
         missing_entries.retain(|k| k != &key);
 
+        let is_possibly_undefined = combination
+            .objectlike_entries
+            .get(&key)
+            .is_some_and(|entry_type| entry_type.possibly_undefined);
+
         if !is_possibly_undefined {
             has_defined_keys = true;
+        }
+    }
+
+    // Keys missing in this branch become possibly undefined after merge.
+    if !overwrite_empty_array {
+        for missing_key in missing_entries {
+            if let Some(existing_type) = combination.objectlike_entries.get_mut(&missing_key) {
+                existing_type.possibly_undefined = true;
+            }
         }
     }
 
@@ -693,7 +803,7 @@ fn scrape_keyed_array_properties(
                 combine_union_types(&existing, &fallback_key, overwrite_empty_array)
             } else {
                 fallback_key
-            }
+            },
         );
     }
 
@@ -703,7 +813,7 @@ fn scrape_keyed_array_properties(
                 combine_union_types(&existing, &fallback_value, overwrite_empty_array)
             } else {
                 fallback_value
-            }
+            },
         );
     }
 
@@ -742,12 +852,14 @@ fn scrape_string_properties(
                 }
                 TAtomic::TNonEmptyString => {
                     // Check if any existing strings are empty
-                    let has_empty = strings.values().any(|t| {
-                        matches!(t, TAtomic::TLiteralString { value } if value.is_empty())
-                    });
+                    let has_empty = strings.values().any(
+                        |t| matches!(t, TAtomic::TLiteralString { value } if value.is_empty()),
+                    );
                     combination.strings = None;
                     if has_empty {
-                        combination.value_types.insert("string".to_string(), TAtomic::TString);
+                        combination
+                            .value_types
+                            .insert("string".to_string(), TAtomic::TString);
                     } else {
                         combination.value_types.insert("string".to_string(), atomic);
                     }
@@ -763,26 +875,32 @@ fn scrape_string_properties(
                     });
                     combination.strings = None;
                     if has_non_numeric {
-                        combination.value_types.insert("string".to_string(), TAtomic::TString);
+                        combination
+                            .value_types
+                            .insert("string".to_string(), TAtomic::TString);
                     } else {
                         combination.value_types.insert("string".to_string(), atomic);
                     }
                 }
                 TAtomic::TTruthyString => {
                     // Check if any strings are falsy (empty or "0")
-                    let has_empty = strings.values().any(|t| {
-                        matches!(t, TAtomic::TLiteralString { value } if value.is_empty())
-                    });
-                    let has_zero = strings.values().any(|t| {
-                        matches!(t, TAtomic::TLiteralString { value } if value == "0")
-                    });
+                    let has_empty = strings.values().any(
+                        |t| matches!(t, TAtomic::TLiteralString { value } if value.is_empty()),
+                    );
+                    let has_zero = strings
+                        .values()
+                        .any(|t| matches!(t, TAtomic::TLiteralString { value } if value == "0"));
                     let has_falsy = has_empty || has_zero;
                     combination.strings = None;
                     if has_falsy {
                         if has_empty {
-                            combination.value_types.insert("string".to_string(), TAtomic::TString);
+                            combination
+                                .value_types
+                                .insert("string".to_string(), TAtomic::TString);
                         } else {
-                            combination.value_types.insert("string".to_string(), TAtomic::TNonEmptyString);
+                            combination
+                                .value_types
+                                .insert("string".to_string(), TAtomic::TNonEmptyString);
                         }
                     } else {
                         combination.value_types.insert("string".to_string(), atomic);
@@ -824,7 +942,9 @@ fn scrape_literal_string_properties(
             TAtomic::TString => return,
             TAtomic::TNonEmptyString => {
                 if value.is_empty() {
-                    combination.value_types.insert("string".to_string(), TAtomic::TString);
+                    combination
+                        .value_types
+                        .insert("string".to_string(), TAtomic::TString);
                 }
                 return;
             }
@@ -832,7 +952,9 @@ fn scrape_literal_string_properties(
                 if value.parse::<f64>().is_ok() {
                     return;
                 }
-                combination.value_types.insert("string".to_string(), TAtomic::TString);
+                combination
+                    .value_types
+                    .insert("string".to_string(), TAtomic::TString);
                 return;
             }
             TAtomic::TTruthyString => {
@@ -840,9 +962,13 @@ fn scrape_literal_string_properties(
                     return;
                 }
                 if value.is_empty() {
-                    combination.value_types.insert("string".to_string(), TAtomic::TString);
+                    combination
+                        .value_types
+                        .insert("string".to_string(), TAtomic::TString);
                 } else {
-                    combination.value_types.insert("string".to_string(), TAtomic::TNonEmptyString);
+                    combination
+                        .value_types
+                        .insert("string".to_string(), TAtomic::TNonEmptyString);
                 }
                 return;
             }
@@ -857,15 +983,14 @@ fn scrape_literal_string_properties(
         } else {
             // Exceeded limit, collapse to string
             combination.strings = None;
-            combination.value_types.insert("string".to_string(), TAtomic::TString);
+            combination
+                .value_types
+                .insert("string".to_string(), TAtomic::TString);
         }
     }
 }
 
-fn scrape_int_properties(
-    atomic: TAtomic,
-    combination: &mut TypeCombination,
-) {
+fn scrape_int_properties(atomic: TAtomic, combination: &mut TypeCombination) {
     if combination.value_types.contains_key("array-key")
         || combination.value_types.contains_key("scalar")
         || combination.value_types.contains_key("numeric")
@@ -908,7 +1033,10 @@ fn scrape_literal_int_properties(
                 };
                 combination.value_types.insert(
                     "int".to_string(),
-                    TAtomic::TIntRange { min: new_min, max: new_max },
+                    TAtomic::TIntRange {
+                        min: new_min,
+                        max: new_max,
+                    },
                 );
                 return;
             }
@@ -922,7 +1050,9 @@ fn scrape_literal_int_properties(
             ints.insert(key, atomic);
         } else {
             combination.ints = None;
-            combination.value_types.insert("int".to_string(), TAtomic::TInt);
+            combination
+                .value_types
+                .insert("int".to_string(), TAtomic::TInt);
         }
     }
 }
@@ -961,14 +1091,19 @@ fn scrape_int_range_properties(
         combination.ints = None;
         combination.value_types.insert(
             "int".to_string(),
-            TAtomic::TIntRange { min: new_min, max: new_max },
+            TAtomic::TIntRange {
+                min: new_min,
+                max: new_max,
+            },
         );
         return;
     }
 
     // Merge with existing int range
-    if let Some(TAtomic::TIntRange { min: existing_min, max: existing_max }) =
-        combination.value_types.get("int")
+    if let Some(TAtomic::TIntRange {
+        min: existing_min,
+        max: existing_max,
+    }) = combination.value_types.get("int")
     {
         // When merging ranges, the result is the union - broader range
         let new_min = match (min, *existing_min) {
@@ -981,16 +1116,18 @@ fn scrape_int_range_properties(
         };
         combination.value_types.insert(
             "int".to_string(),
-            TAtomic::TIntRange { min: new_min, max: new_max },
+            TAtomic::TIntRange {
+                min: new_min,
+                max: new_max,
+            },
         );
     } else if combination.value_types.contains_key("int") {
         // Already have TInt, which encompasses all ranges
     } else {
         combination.ints = None;
-        combination.value_types.insert(
-            "int".to_string(),
-            TAtomic::TIntRange { min, max },
-        );
+        combination
+            .value_types
+            .insert("int".to_string(), TAtomic::TIntRange { min, max });
     }
 }
 
@@ -1017,7 +1154,9 @@ fn merge_string_types(existing: &TAtomic, new: &TAtomic) -> TAtomic {
 
         // lowercase combinations
         (TAtomic::TLowercaseString, TAtomic::TNonEmptyLowercaseString)
-        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TLowercaseString) => TAtomic::TLowercaseString,
+        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TLowercaseString) => {
+            TAtomic::TLowercaseString
+        }
 
         (TAtomic::TLowercaseString, TAtomic::TLowercaseString) => TAtomic::TLowercaseString,
 
@@ -1039,33 +1178,53 @@ fn handle_keyed_array_entries(
 ) -> Vec<TAtomic> {
     let mut new_types = Vec::new();
 
-    // If we also have generic array params, we may need to merge
-    if let Some((ref _key_type, ref value_type)) = combination.array_type_params {
-        if !value_type.is_nothing() {
-            // Merge keyed array entries into generic array
-            for (key, entry_type) in &combination.objectlike_entries {
-                let key_atomic = match key {
-                    ArrayKey::Int(i) => TAtomic::TLiteralInt { value: *i },
-                    ArrayKey::String(s) => TAtomic::TLiteralString { value: s.clone() },
-                };
+    // If we also have generic array params, keep keyed entries and merge generic
+    // key/value information into fallback types. This preserves per-key precision.
+    if let Some((generic_key_type, generic_value_type)) = combination.array_type_params.take() {
+        if generic_value_type.is_nothing() {
+            // Union with an empty generic array means every known key can be absent.
+            for entry_type in combination.objectlike_entries.values_mut() {
+                entry_type.possibly_undefined = true;
+            }
+        } else {
+            let generic_key_for_entries = generic_key_type.clone();
+            let generic_value_for_entries = generic_value_type.clone();
 
-                if let Some((ref mut existing_key, ref mut existing_value)) = combination.array_type_params {
-                    *existing_key = combine_union_types(
-                        existing_key,
-                        &TUnion::new(key_atomic),
-                        overwrite_empty_array,
-                    );
-                    *existing_value = combine_union_types(
-                        existing_value,
+            // Generic arrays do not guarantee presence of specific keys when
+            // merged through control-flow unions.
+            if !overwrite_empty_array {
+                for entry_type in combination.objectlike_entries.values_mut() {
+                    entry_type.possibly_undefined = true;
+                }
+            }
+
+            combination.objectlike_sealed = false;
+            combination.objectlike_key_type = Some(
+                if let Some(existing) = combination.objectlike_key_type.take() {
+                    combine_union_types(&existing, &generic_key_type, overwrite_empty_array)
+                } else {
+                    generic_key_type
+                },
+            );
+            combination.objectlike_value_type = Some(
+                if let Some(existing) = combination.objectlike_value_type.take() {
+                    combine_union_types(&existing, &generic_value_type, overwrite_empty_array)
+                } else {
+                    generic_value_type
+                },
+            );
+
+            // Generic array branches may already contain any shaped key. Preserve that by
+            // widening keyed entries with generic value types where key types overlap.
+            for (array_key, entry_type) in &mut combination.objectlike_entries {
+                if array_key_may_be_contained_by_union(array_key, &generic_key_for_entries) {
+                    *entry_type = combine_union_types(
                         entry_type,
+                        &generic_value_for_entries,
                         overwrite_empty_array,
                     );
                 }
             }
-
-            // Return early - entries will be handled via generic array
-            combination.objectlike_entries.clear();
-            return new_types;
         }
     }
 
@@ -1100,8 +1259,11 @@ fn get_array_type_from_generic_params(
     combination: &TypeCombination,
     key_type: TUnion,
     value_type: TUnion,
+    overwrite_empty_array: bool,
 ) -> TAtomic {
-    if combination.array_always_filled || combination.array_sometimes_filled {
+    if combination.array_always_filled
+        || (combination.array_sometimes_filled && overwrite_empty_array)
+    {
         if combination.all_arrays_lists {
             TAtomic::TNonEmptyList {
                 value_type: Box::new(value_type),
@@ -1124,6 +1286,27 @@ fn get_array_type_from_generic_params(
     }
 }
 
+fn array_key_may_be_contained_by_union(key: &ArrayKey, key_union: &TUnion) -> bool {
+    key_union.types.iter().any(|atomic| match (key, atomic) {
+        (_, TAtomic::TMixed) => true,
+        (_, TAtomic::TArrayKey) => true,
+        (ArrayKey::Int(_), TAtomic::TInt) => true,
+        (ArrayKey::String(_), TAtomic::TString) => true,
+        (ArrayKey::Int(value), TAtomic::TLiteralInt { value: literal }) => value == literal,
+        (ArrayKey::String(value), TAtomic::TLiteralString { value: literal }) => value == literal,
+        (ArrayKey::Int(value), TAtomic::TLiteralString { value: literal }) => literal
+            .parse::<i64>()
+            .ok()
+            .is_some_and(|literal_int| literal_int == *value),
+        (ArrayKey::Int(value), TAtomic::TIntRange { min, max }) => {
+            let above_min = min.is_none_or(|min| *value >= min);
+            let below_max = max.is_none_or(|max| *value <= max);
+            above_min && below_max
+        }
+        _ => false,
+    })
+}
+
 /// Combine two union types into a new union type.
 pub fn combine_union_types(
     type_1: &TUnion,
@@ -1137,7 +1320,30 @@ pub fn combine_union_types(
     let mut all_atomic_types = type_1.types.clone();
     all_atomic_types.extend(type_2.types.clone());
 
-    TUnion::from_types(combine(all_atomic_types, overwrite_empty_array))
+    let mut combined_type = TUnion::from_types(combine(all_atomic_types, overwrite_empty_array));
+    combined_type.from_docblock = type_1.from_docblock || type_2.from_docblock;
+    combined_type.from_calculation = type_1.from_calculation || type_2.from_calculation;
+    combined_type.possibly_undefined = type_1.possibly_undefined || type_2.possibly_undefined;
+    combined_type.ignore_nullable_issues =
+        type_1.ignore_nullable_issues || type_2.ignore_nullable_issues;
+    combined_type.ignore_falsable_issues =
+        type_1.ignore_falsable_issues || type_2.ignore_falsable_issues;
+
+    let type_1_parent_nodes_empty = type_1.parent_nodes.is_empty();
+    let type_2_parent_nodes_empty = type_2.parent_nodes.is_empty();
+
+    if !type_1_parent_nodes_empty || !type_2_parent_nodes_empty {
+        if type_1_parent_nodes_empty {
+            combined_type.parent_nodes.clone_from(&type_2.parent_nodes);
+        } else if type_2_parent_nodes_empty {
+            combined_type.parent_nodes.clone_from(&type_1.parent_nodes);
+        } else {
+            combined_type.parent_nodes.clone_from(&type_1.parent_nodes);
+            extend_dataflow_uniquely(&mut combined_type.parent_nodes, type_2.parent_nodes.clone());
+        }
+    }
+
+    combined_type
 }
 
 /// Add a type to an existing union type.
@@ -1158,6 +1364,15 @@ pub fn add_union_type(
     // Update flags
     base_type.is_nullable = base_type.types.iter().any(|t| t.is_nullable());
     base_type.is_falsable = base_type.types.iter().any(|t| t.is_falsable());
+    base_type.from_docblock |= other_type.from_docblock;
+    base_type.from_calculation |= other_type.from_calculation;
+    base_type.possibly_undefined |= other_type.possibly_undefined;
+    base_type.ignore_nullable_issues |= other_type.ignore_nullable_issues;
+    base_type.ignore_falsable_issues |= other_type.ignore_falsable_issues;
+
+    if !other_type.parent_nodes.is_empty() {
+        extend_dataflow_uniquely(&mut base_type.parent_nodes, other_type.parent_nodes.clone());
+    }
 
     base_type
 }
@@ -1194,7 +1409,11 @@ mod tests {
         let types = vec![TAtomic::TNothing, TAtomic::TMixed];
         let result = combine(types, false);
         assert_eq!(result.len(), 1);
-        assert!(matches!(result[0], TAtomic::TMixed), "Expected TMixed but got {:?}", result[0]);
+        assert!(
+            matches!(result[0], TAtomic::TMixed),
+            "Expected TMixed but got {:?}",
+            result[0]
+        );
     }
 
     #[test]
@@ -1220,10 +1439,7 @@ mod tests {
 
     #[test]
     fn test_combine_positive_int_and_zero() {
-        let types = vec![
-            TAtomic::TPositiveInt,
-            TAtomic::TLiteralInt { value: 0 },
-        ];
+        let types = vec![TAtomic::TPositiveInt, TAtomic::TLiteralInt { value: 0 }];
         let result = combine(types, false);
         assert_eq!(result.len(), 1);
         if let TAtomic::TIntRange { min, max } = &result[0] {

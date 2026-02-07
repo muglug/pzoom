@@ -157,14 +157,16 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
                         clause_b.possibilities.get(clause_var)
                     {
                         if matching_clause_possibilities.contains_key(&negated_hash) {
-                            let mut clause_var_possibilities = matching_clause_possibilities.clone();
+                            let mut clause_var_possibilities =
+                                matching_clause_possibilities.clone();
 
                             clause_var_possibilities.retain(|k, _| k != &negated_hash);
 
                             removed_clause_hashes.insert(clause_b.hash);
 
                             if clause_var_possibilities.is_empty() {
-                                let maybe_updated_clause = clause_b.remove_possibilities(clause_var);
+                                let maybe_updated_clause =
+                                    clause_b.remove_possibilities(clause_var);
 
                                 if let Some(x) = maybe_updated_clause {
                                     added_clauses.push(x);
@@ -353,10 +355,12 @@ pub fn get_truths_from_formula(
 
                 truths.insert(
                     var_name.clone(),
-                    vec![possible_types
-                        .iter()
-                        .map(|(_, v)| v.clone())
-                        .collect::<Vec<_>>()],
+                    vec![
+                        possible_types
+                            .iter()
+                            .map(|(_, v)| v.clone())
+                            .collect::<Vec<_>>(),
+                    ],
                 );
 
                 if let Some(creating_conditional_id) = creating_conditional_id {

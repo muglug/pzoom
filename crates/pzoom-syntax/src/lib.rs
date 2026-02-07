@@ -10,7 +10,7 @@ pub mod name_resolver;
 pub mod type_resolver;
 
 pub use declaration_collector::DeclarationCollector;
-pub use name_resolver::{resolve_names, ResolvedNames};
+pub use name_resolver::{ResolvedNames, resolve_names};
 pub use type_resolver::resolve_hint;
 
 // Re-export mago types that consumers need

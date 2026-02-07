@@ -15,3 +15,4 @@ pzoom-code-info.workspace = true
 pzoom-analyzer.workspace = true
 pzoom-orchestrator.workspace = true
 clap.workspace = true
+rustc-hash.workspace = true

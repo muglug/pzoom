@@ -7,10 +7,10 @@ use std::path::Path;
 
 use bumpalo::Bump;
 use glob::Pattern;
-use pzoom_code_info::codebase_info::FileInfo;
 use pzoom_code_info::CodebaseInfo;
+use pzoom_code_info::codebase_info::FileInfo;
 use pzoom_str::{Interner, StrId};
-use pzoom_syntax::{parse_file_content, DeclarationCollector, FileId};
+use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content};
 use rust_embed::Embed;
 use rustc_hash::FxHashSet;
 use walkdir::WalkDir;
@@ -186,19 +186,26 @@ impl Scanner {
     /// Scan a directory for stub files (.phpstub).
     fn scan_directory_for_stubs(&mut self, dir: &Path) {
         let walker = WalkDir::new(dir).follow_links(true).into_iter();
+        let mut stub_paths = Vec::new();
 
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
 
             // Only process .phpstub files
             if path.extension().is_some_and(|ext| ext == "phpstub") {
-                if let Err(e) = self.scan_file_path(path) {
-                    self.errors.push(ScanError {
-                        file_path: path.display().to_string(),
-                        message: e.to_string(),
-                        line: None,
-                    });
-                }
+                stub_paths.push(path.to_path_buf());
+            }
+        }
+
+        stub_paths.sort();
+
+        for path in stub_paths {
+            if let Err(e) = self.scan_file_path(&path) {
+                self.errors.push(ScanError {
+                    file_path: path.display().to_string(),
+                    message: e.to_string(),
+                    line: None,
+                });
             }
         }
     }
@@ -206,6 +213,7 @@ impl Scanner {
     /// Scan a single directory recursively for PHP files.
     fn scan_directory(&mut self, dir: &Path) {
         let walker = WalkDir::new(dir).follow_links(true).into_iter();
+        let mut source_paths = Vec::new();
 
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -218,14 +226,20 @@ impl Scanner {
             // Process .php and .phpstub files
             if let Some(ext) = path.extension() {
                 if ext == "php" || ext == "phpstub" {
-                    if let Err(e) = self.scan_file_path(path) {
-                        self.errors.push(ScanError {
-                            file_path: path.display().to_string(),
-                            message: e.to_string(),
-                            line: None,
-                        });
-                    }
+                    source_paths.push(path.to_path_buf());
                 }
+            }
+        }
+
+        source_paths.sort();
+
+        for path in source_paths {
+            if let Err(e) = self.scan_file_path(&path) {
+                self.errors.push(ScanError {
+                    file_path: path.display().to_string(),
+                    message: e.to_string(),
+                    line: None,
+                });
             }
         }
     }
@@ -254,7 +268,8 @@ impl Scanner {
         let file_id = FileId::new(path);
 
         // Track stub files
-        if self.scanning_stubs || path.ends_with(".phpstub") {
+        let is_stub = self.scanning_stubs || path.ends_with(".phpstub");
+        if is_stub {
             self.stub_files.insert(file_path_id);
         }
 
@@ -274,8 +289,30 @@ impl Scanner {
         }
 
         // Collect declarations
-        let collector = DeclarationCollector::new(&mut self.interner, file_path_id, &program.trivia);
-        let declarations = collector.collect(program);
+        let collector = DeclarationCollector::new(
+            &mut self.interner,
+            file_path_id,
+            contents,
+            &self.codebase.type_aliases,
+            &program.trivia,
+        );
+        let mut declarations = collector.collect(program);
+        let inline_annotations = std::mem::take(&mut declarations.inline_annotations);
+
+        // Register file metadata first so symbol registration can resolve stub/project precedence.
+        self.codebase.files.insert(
+            file_path_id,
+            FileInfo {
+                path: file_path_id,
+                classes: Vec::new(),
+                functions: Vec::new(),
+                constants: Vec::new(),
+                content_hash: compute_hash(contents),
+                contents: contents.to_string(),
+                is_stub,
+                inline_annotations,
+            },
+        );
 
         // Track what's defined in this file
         let mut file_classes = Vec::new();
@@ -300,16 +337,18 @@ impl Scanner {
             self.codebase.constants.insert(constant.name, constant);
         }
 
-        // Record file info
-        let file_info = FileInfo {
-            path: file_path_id,
-            classes: file_classes,
-            functions: file_functions,
-            constants: file_constants,
-            content_hash: compute_hash(contents),
-            contents: contents.to_string(),
-        };
-        self.codebase.files.insert(file_path_id, file_info);
+        // Register type aliases
+        for type_alias in declarations.type_aliases {
+            self.codebase
+                .type_aliases
+                .insert(type_alias.name, type_alias);
+        }
+
+        if let Some(file_info) = self.codebase.files.get_mut(&file_path_id) {
+            file_info.classes = file_classes;
+            file_info.functions = file_functions;
+            file_info.constants = file_constants;
+        }
 
         self.file_count += 1;
     }

@@ -14,3 +14,4 @@ mago-syntax.workspace = true
 rustc-hash.workspace = true
 quick-xml.workspace = true
 indexmap.workspace = true
+bumpalo.workspace = true

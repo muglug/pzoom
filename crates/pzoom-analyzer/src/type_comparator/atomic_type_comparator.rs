@@ -3,13 +3,16 @@
 //! The main entry point for comparing atomic types. Delegates to specialized
 //! comparators for scalars, objects, arrays, and callables.
 
+use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_code_info::{CodebaseInfo, TAtomic};
 use pzoom_str::StrId;
+use rustc_hash::FxHashSet;
 
 use super::{
     array_type_comparator, callable_type_comparator, object_type_comparator,
     scalar_type_comparator, type_comparison_result::TypeComparisonResult,
 };
+use crate::type_comparator::union_type_comparator;
 
 /// Check if an input atomic type is contained by a container atomic type.
 ///
@@ -20,13 +23,131 @@ pub fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
+    if let TAtomic::TObjectIntersection { types } = container_type_part {
+        for intersection_type in types {
+            let mut intersection_result = TypeComparisonResult::new();
+            if !is_contained_by(
+                codebase,
+                input_type_part,
+                intersection_type,
+                &mut intersection_result,
+            ) {
+                if intersection_result.type_coerced.unwrap_or(false) {
+                    atomic_comparison_result.type_coerced = Some(true);
+                }
+                if intersection_result
+                    .type_coerced_from_nested_mixed
+                    .unwrap_or(false)
+                {
+                    atomic_comparison_result.type_coerced_from_nested_mixed = Some(true);
+                }
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    if let TAtomic::TObjectIntersection { types } = input_type_part {
+        for intersection_type in types {
+            if is_contained_by(
+                codebase,
+                intersection_type,
+                container_type_part,
+                atomic_comparison_result,
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Template params compare using their bound ("as") type.
+    if let TAtomic::TTemplateParam { as_type, .. } = input_type_part {
+        return union_type_comparator::is_contained_by(
+            codebase,
+            as_type,
+            &pzoom_code_info::TUnion::new(container_type_part.clone()),
+            false,
+            false,
+            atomic_comparison_result,
+        );
+    }
+
+    if let TAtomic::TTemplateParam { as_type, .. } = container_type_part {
+        return union_type_comparator::is_contained_by(
+            codebase,
+            &pzoom_code_info::TUnion::new(input_type_part.clone()),
+            as_type,
+            false,
+            false,
+            atomic_comparison_result,
+        );
+    }
+
+    if let TAtomic::TTemplateParamClass { as_type, .. } = input_type_part {
+        let class_string_input = TAtomic::TClassString {
+            as_type: Some(Box::new((**as_type).clone())),
+        };
+        return is_contained_by(
+            codebase,
+            &class_string_input,
+            container_type_part,
+            atomic_comparison_result,
+        );
+    }
+
+    if let TAtomic::TTemplateParamClass { as_type, .. } = container_type_part {
+        let class_string_container = TAtomic::TClassString {
+            as_type: Some(Box::new((**as_type).clone())),
+        };
+        return is_contained_by(
+            codebase,
+            input_type_part,
+            &class_string_container,
+            atomic_comparison_result,
+        );
+    }
+
     // Identical types are always contained
     if input_type_part == container_type_part {
         return true;
     }
 
+    // Enum cases are valid instances of their declaring enum class.
+    if let (
+        TAtomic::TEnumCase {
+            enum_name: input_enum,
+            ..
+        },
+        TAtomic::TNamedObject {
+            name: container_name,
+            ..
+        },
+    ) = (input_type_part, container_type_part)
+        && input_enum == container_name
+    {
+        return true;
+    }
+
+    if let (
+        TAtomic::TEnum { name: input_enum },
+        TAtomic::TNamedObject {
+            name: container_name,
+            ..
+        },
+    ) = (input_type_part, container_type_part)
+        && input_enum == container_name
+    {
+        return true;
+    }
+
     // Mixed contains everything
-    if matches!(container_type_part, TAtomic::TMixed | TAtomic::TNonEmptyMixed) {
+    if matches!(
+        container_type_part,
+        TAtomic::TMixed | TAtomic::TNonEmptyMixed
+    ) {
         return true;
     }
 
@@ -67,6 +188,13 @@ pub fn is_contained_by(
     // Scalar is contained by TScalar
     if matches!(container_type_part, TAtomic::TScalar) && is_scalar_type(input_type_part) {
         return true;
+    }
+
+    // Arrays satisfy Countable.
+    if let TAtomic::TNamedObject { name, .. } = container_type_part {
+        if *name == StrId::COUNTABLE && is_array_type(input_type_part) {
+            return true;
+        }
     }
 
     // Object type comparisons
@@ -112,6 +240,14 @@ pub fn is_contained_by(
     // Callable/Closure comparisons
     if is_callable_type(input_type_part) || is_callable_type(container_type_part) {
         if is_callable_type(container_type_part) {
+            // A Closure object instance is callable.
+            if matches!(
+                input_type_part,
+                TAtomic::TNamedObject { name, .. } if *name == StrId::CLOSURE
+            ) {
+                return true;
+            }
+
             // Check if input can be callable
             if is_callable_type(input_type_part) {
                 return callable_type_comparator::is_contained_by(
@@ -151,12 +287,9 @@ pub fn is_contained_by(
             return true;
         }
 
-        // Generators and Traversables are iterable
+        // Only classes implementing Traversable (or descendants) are iterable.
         if let TAtomic::TNamedObject { name, .. } = input_type_part {
-            // Check if it implements Traversable/Iterator
-            if let Some(_class_info) = codebase.get_class(*name) {
-                // TODO: properly check if class implements Traversable/Iterator
-                // For now, accept any object as potentially iterable
+            if named_object_is_iterable(codebase, *name) {
                 return true;
             }
         }
@@ -190,7 +323,10 @@ pub fn is_contained_by(
     }
 
     // Enum comparisons
-    if let TAtomic::TEnum { name: container_name } = container_type_part {
+    if let TAtomic::TEnum {
+        name: container_name,
+    } = container_type_part
+    {
         if let TAtomic::TEnum { name: input_name } = input_type_part {
             return input_name == container_name;
         }
@@ -229,16 +365,71 @@ pub fn is_contained_by(
 
     // Class-string comparisons
     if let TAtomic::TClassString {
-        as_type: _container_as,
+        as_type: container_as,
     } = container_type_part
     {
+        match input_type_part {
+            TAtomic::TClassString { as_type: input_as } => {
+                if let Some(container_as) = container_as {
+                    if let Some(input_as) = input_as {
+                        return is_contained_by(
+                            codebase,
+                            input_as,
+                            container_as,
+                            atomic_comparison_result,
+                        );
+                    }
+
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+
+                return true;
+            }
+            TAtomic::TLiteralClassString { .. } => {
+                // Only unconstrained class-string can safely accept literal class-string here.
+                return container_as.is_none();
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+fn named_object_is_iterable(codebase: &CodebaseInfo, class_name: StrId) -> bool {
+    if matches!(
+        class_name,
+        StrId::TRAVERSABLE | StrId::ITERATOR | StrId::ITERATOR_AGGREGATE | StrId::GENERATOR
+    ) {
+        return true;
+    }
+
+    let mut to_visit = vec![class_name];
+    let mut visited = FxHashSet::default();
+
+    while let Some(current) = to_visit.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+
         if matches!(
-            input_type_part,
-            TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
+            current,
+            StrId::TRAVERSABLE | StrId::ITERATOR | StrId::ITERATOR_AGGREGATE | StrId::GENERATOR
         ) {
-            // TODO: Check as_type compatibility
             return true;
         }
+
+        let Some(class_info) = codebase.get_class(current) else {
+            continue;
+        };
+
+        if let Some(parent_class) = class_info.parent_class {
+            to_visit.push(parent_class);
+        }
+
+        to_visit.extend(class_info.interfaces.iter().copied());
+        to_visit.extend(class_info.all_parent_interfaces.iter().copied());
     }
 
     false
@@ -276,7 +467,10 @@ fn is_scalar_type(atomic: &TAtomic) -> bool {
 
 /// Check if a type is an object type.
 fn is_object_type(atomic: &TAtomic) -> bool {
-    matches!(atomic, TAtomic::TObject | TAtomic::TNamedObject { .. })
+    matches!(
+        atomic,
+        TAtomic::TObject | TAtomic::TNamedObject { .. } | TAtomic::TObjectIntersection { .. }
+    )
 }
 
 /// Check if a type is an array type.
@@ -296,12 +490,25 @@ fn is_callable_type(atomic: &TAtomic) -> bool {
     matches!(atomic, TAtomic::TCallable { .. } | TAtomic::TClosure { .. })
 }
 
+fn named_objects_might_overlap(codebase: &CodebaseInfo, left: StrId, right: StrId) -> bool {
+    if object_type_comparator::is_class_subtype_of(left, right, codebase)
+        || object_type_comparator::is_class_subtype_of(right, left, codebase)
+    {
+        return true;
+    }
+
+    let Some(left_info) = codebase.get_class(left) else {
+        return true;
+    };
+    let Some(right_info) = codebase.get_class(right) else {
+        return true;
+    };
+
+    left_info.kind == ClassLikeKind::Interface || right_info.kind == ClassLikeKind::Interface
+}
+
 /// Check if two atomic types can be identical (used for type assertions).
-pub fn can_be_identical(
-    codebase: &CodebaseInfo,
-    type1: &TAtomic,
-    type2: &TAtomic,
-) -> bool {
+pub fn can_be_identical(codebase: &CodebaseInfo, type1: &TAtomic, type2: &TAtomic) -> bool {
     // Same types can always be identical
     if type1 == type2 {
         return true;
@@ -314,6 +521,43 @@ pub fn can_be_identical(
         return true;
     }
 
+    if is_array_type(type1) && is_array_type(type2) {
+        return true;
+    }
+
+    if matches!(
+        type1,
+        TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
+    ) && matches!(
+        type2,
+        TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
+    ) {
+        return true;
+    }
+
+    if let (
+        TAtomic::TNamedObject {
+            name: left_name, ..
+        },
+        TAtomic::TNamedObject {
+            name: right_name, ..
+        },
+    ) = (type1, type2)
+        && named_objects_might_overlap(codebase, *left_name, *right_name)
+    {
+        return true;
+    }
+
+    // `===` requires the same runtime scalar kind. Assignment containment allows
+    // int->float widening, which is not valid for identity comparisons.
+    if let (Some(left_family), Some(right_family)) = (
+        strict_scalar_identity_family(type1),
+        strict_scalar_identity_family(type2),
+    ) && left_family != right_family
+    {
+        return false;
+    }
+
     // Check if either is contained by the other
     let mut result = TypeComparisonResult::new();
     if is_contained_by(codebase, type1, type2, &mut result) {
@@ -324,4 +568,35 @@ pub fn can_be_identical(
     }
 
     false
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StrictScalarIdentityFamily {
+    Int,
+    Float,
+    String,
+    Bool,
+}
+
+fn strict_scalar_identity_family(atomic: &TAtomic) -> Option<StrictScalarIdentityFamily> {
+    match atomic {
+        TAtomic::TInt
+        | TAtomic::TLiteralInt { .. }
+        | TAtomic::TPositiveInt
+        | TAtomic::TNegativeInt
+        | TAtomic::TIntRange { .. } => Some(StrictScalarIdentityFamily::Int),
+        TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => Some(StrictScalarIdentityFamily::Float),
+        TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse => Some(StrictScalarIdentityFamily::Bool),
+        TAtomic::TString
+        | TAtomic::TLiteralString { .. }
+        | TAtomic::TClassString { .. }
+        | TAtomic::TLiteralClassString { .. }
+        | TAtomic::TNumericString
+        | TAtomic::TNonEmptyNumericString
+        | TAtomic::TNonEmptyString
+        | TAtomic::TLowercaseString
+        | TAtomic::TNonEmptyLowercaseString
+        | TAtomic::TTruthyString => Some(StrictScalarIdentityFamily::String),
+        _ => None,
+    }
 }

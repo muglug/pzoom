@@ -1,6 +1,5 @@
 //! Expression-specific analyzers.
 
-pub mod array_access_analyzer;
 pub mod array_analyzer;
 pub mod assignment_analyzer;
 pub mod binop_analyzer;
@@ -9,12 +8,14 @@ pub mod variable_fetch_analyzer;
 
 // New analyzers migrated from Psalm/Hakana
 pub mod cast_analyzer;
+pub mod clone_analyzer;
 pub mod closure_analyzer;
 pub mod const_fetch_analyzer;
 pub mod echo_analyzer;
 pub mod exit_analyzer;
 pub mod include_analyzer;
 pub mod isset_analyzer;
+pub mod match_analyzer;
 pub mod ternary_analyzer;
 pub mod throw_analyzer;
 pub mod unop_analyzer;

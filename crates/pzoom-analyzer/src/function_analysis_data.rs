@@ -2,7 +2,7 @@
 //!
 //! Holds all accumulated data during analysis of a function body.
 
-use pzoom_code_info::{Issue, TUnion};
+use pzoom_code_info::{DataFlowGraph, Issue, TUnion, combine_union_types};
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
@@ -25,6 +25,10 @@ pub struct FunctionAnalysisData {
     /// Return types inferred from return statements.
     pub inferred_return_types: Vec<TUnion>,
 
+    /// Yield key/value types inferred from yield expressions.
+    /// Key is None for `yield $value` and Some for `yield $key => $value`.
+    pub inferred_yield_types: Vec<(Option<TUnion>, TUnion)>,
+
     /// Whether the function definitely returns on all paths.
     pub all_paths_return: bool,
 
@@ -41,11 +45,23 @@ pub struct FunctionAnalysisData {
     /// Assertions that hold when an expression is falsy.
     pub if_false_assertions: FxHashMap<Pos, FxHashMap<StrId, TUnion>>,
 
+    /// Function-body data-flow graph used for parent-node tracking.
+    pub data_flow_graph: DataFlowGraph,
+
     /// Variables that have been referenced (for unused variable detection).
     pub referenced_var_ids: FxHashMap<StrId, u32>,
 
     /// Variables that have been assigned (for definite assignment analysis).
     pub assigned_var_ids: FxHashMap<StrId, u32>,
+
+    /// Class-like names declared in the current file (for duplicate declaration checks).
+    pub declared_classlike_names: FxHashMap<StrId, u32>,
+
+    /// Observed argument types at named-function callsites, keyed by (function_id, param_index).
+    ///
+    /// This is used for flow-aware refinement when a function body is analyzed after
+    /// callsites in the same file.
+    pub function_argument_callsite_types: FxHashMap<(StrId, usize), TUnion>,
 
     /// Effects from one expression copied to another (for control flow).
     effects: FxHashMap<Pos, Vec<Pos>>,
@@ -100,6 +116,11 @@ impl FunctionAnalysisData {
         self.inferred_return_types.push(return_type);
     }
 
+    /// Add yield key/value types inferred from a yield expression.
+    pub fn add_yield_type(&mut self, key_type: Option<TUnion>, value_type: TUnion) {
+        self.inferred_yield_types.push((key_type, value_type));
+    }
+
     /// Set assertions for when an expression is truthy.
     pub fn set_if_true_assertions(&mut self, pos: Pos, assertions: FxHashMap<StrId, TUnion>) {
         self.if_true_assertions.insert(pos, assertions);
@@ -134,10 +155,7 @@ impl FunctionAnalysisData {
     ///
     /// This is used to propagate effects from sub-expressions to parent expressions.
     pub fn copy_effects(&mut self, from_pos: Pos, to_pos: Pos) {
-        self.effects
-            .entry(to_pos)
-            .or_default()
-            .push(from_pos);
+        self.effects.entry(to_pos).or_default().push(from_pos);
     }
 
     /// Combine effects from two positions into a target position.
@@ -154,14 +172,34 @@ impl FunctionAnalysisData {
             combined.extend(effects2.clone());
         }
 
-        self.effects
-            .entry(to_pos)
-            .or_default()
-            .extend(combined);
+        self.effects.entry(to_pos).or_default().extend(combined);
     }
 
     /// Get effects for a position.
     pub fn get_effects(&self, pos: Pos) -> Option<&Vec<Pos>> {
         self.effects.get(&pos)
+    }
+
+    pub fn record_function_argument_callsite_type(
+        &mut self,
+        function_id: StrId,
+        param_index: usize,
+        arg_type: TUnion,
+    ) {
+        let key = (function_id, param_index);
+        if let Some(existing) = self.function_argument_callsite_types.get_mut(&key) {
+            *existing = combine_union_types(existing, &arg_type, false);
+        } else {
+            self.function_argument_callsite_types.insert(key, arg_type);
+        }
+    }
+
+    pub fn get_function_argument_callsite_type(
+        &self,
+        function_id: StrId,
+        param_index: usize,
+    ) -> Option<&TUnion> {
+        self.function_argument_callsite_types
+            .get(&(function_id, param_index))
     }
 }

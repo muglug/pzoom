@@ -412,6 +412,10 @@ interface DateTimeInterface
 
     public function diff(DateTimeInterface $targetObject, bool $absolute = false): DateInterval;
 
+    public function add(DateInterval $interval): DateTimeInterface;
+
+    public function sub(DateInterval $interval): DateTimeInterface;
+
     public function __wakeup(): void;
 
     public function __serialize(): array;

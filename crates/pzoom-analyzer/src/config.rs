@@ -1,6 +1,6 @@
 //! Configuration for the analyzer.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Error level for analysis (Psalm-compatible).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -52,6 +52,9 @@ pub struct Config {
     /// Issue types to suppress.
     pub suppressed_issues: FxHashSet<String>,
 
+    /// Issue suppressions scoped to file/directory patterns from Psalm issueHandlers.
+    pub issue_handler_suppressions: FxHashMap<String, Vec<String>>,
+
     /// PHP version to target (e.g., "8.2").
     pub php_version: String,
 
@@ -90,17 +93,21 @@ pub struct Config {
 
     /// Whether to find unused Psalm suppress annotations.
     pub find_unused_suppress: bool,
+
+    /// Path to a Psalm-style error baseline XML file.
+    pub error_baseline: Option<String>,
+
+    /// Whether to report unused baseline entries.
+    pub find_unused_baseline_entry: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             project_dirs: vec![".".to_string()],
-            exclude_patterns: vec![
-                "vendor/**".to_string(),
-                "tests/**".to_string(),
-            ],
+            exclude_patterns: vec!["vendor/**".to_string(), "tests/**".to_string()],
             suppressed_issues: FxHashSet::default(),
+            issue_handler_suppressions: FxHashMap::default(),
             php_version: "8.2".to_string(),
             strict_types: false,
             taint_analysis: false,
@@ -114,6 +121,8 @@ impl Default for Config {
             stubs: Vec::new(),
             forbidden_functions: FxHashSet::default(),
             find_unused_suppress: false,
+            error_baseline: None,
+            find_unused_baseline_entry: false,
         }
     }
 }
@@ -133,4 +142,41 @@ impl Config {
     pub fn is_issue_suppressed(&self, issue_type: &str) -> bool {
         self.suppressed_issues.contains(issue_type)
     }
+
+    /// Check if an issue type should be suppressed for a specific display-relative file path.
+    pub fn is_issue_suppressed_for_path(&self, issue_type: &str, file_path: &str) -> bool {
+        if self.is_issue_suppressed(issue_type) {
+            return true;
+        }
+
+        let Some(patterns) = self.issue_handler_suppressions.get(issue_type) else {
+            return false;
+        };
+
+        let normalized_path = normalize_path(file_path);
+
+        patterns.iter().any(|pattern| {
+            if let Some(dir) = pattern.strip_suffix("/**") {
+                normalized_path == dir || normalized_path.starts_with(&format!("{}/", dir))
+            } else {
+                normalized_path == *pattern || normalized_path.ends_with(&format!("/{}", pattern))
+            }
+        })
+    }
+
+    pub fn add_issue_handler_suppression_pattern(&mut self, issue_type: &str, pattern: String) {
+        let normalized_pattern = normalize_path(&pattern);
+        self.issue_handler_suppressions
+            .entry(issue_type.to_string())
+            .or_default()
+            .push(normalized_pattern);
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    normalized
+        .strip_prefix("./")
+        .unwrap_or(&normalized)
+        .to_string()
 }

@@ -1,0 +1,28 @@
+<?php
+
+namespace ExtensionRequirements\Base {
+    class MyBaseClass {}
+}
+
+namespace ExtensionRequirements\Trait {
+    use ExtensionRequirements\Base\MyBaseClass as MyAliasedBaseClass;
+
+    /** @psalm-require-extends MyAliasedBaseClass */
+    trait ImposesExtensionRequirements {}
+}
+
+namespace ImplementationRequirements\Base {
+    interface A {}
+    interface B {}
+}
+
+namespace ImplementationRequirements\Trait {
+    use ImplementationRequirements\Base\A as MyAliasedInterfaceA;
+    use ImplementationRequirements\Base\B as MyAliasedInterfaceB;
+
+    /**
+     * @psalm-require-implements MyAliasedInterfaceA
+     * @psalm-require-implements MyAliasedInterfaceB
+     */
+    trait ImposesImplementationRequirements {}
+}

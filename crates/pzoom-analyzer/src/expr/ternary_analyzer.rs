@@ -8,14 +8,17 @@ use std::rc::Rc;
 
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::conditional::Conditional;
+use mago_syntax::ast::ast::construct::Construct;
 use rustc_hash::FxHashSet;
 
-use pzoom_code_info::algebra::{get_truths_from_formula, negate_formula, simplify_cnf, Clause};
-use pzoom_code_info::{combine_union_types, Assertion, TUnion};
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
+use pzoom_code_info::{Assertion, Issue, IssueKind, TUnion, combine_union_types};
 
 use crate::assertion_finder;
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expr::binop::coalesce_analyzer;
+use crate::expression_analyzer;
+use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::reconciler::{self, assertion_reconciler};
 use crate::scope::IfScope;
@@ -31,10 +34,35 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
+    if let Some(if_expr) = cond.then {
+        if let mago_syntax::ast::ast::expression::Expression::Construct(Construct::Isset(isset)) =
+            cond.condition.unparenthesized()
+        {
+            if isset.values.len() == 1 {
+                if let Some(isset_value) = isset.values.first() {
+                    let isset_key = expression_identifier::get_expression_var_key(isset_value);
+                    let if_key = expression_identifier::get_expression_var_key(if_expr);
+
+                    if isset_key.is_some() && if_key.is_some() && isset_key == if_key {
+                        coalesce_analyzer::analyze(
+                            analyzer,
+                            isset_value,
+                            cond.r#else,
+                            pos,
+                            analysis_data,
+                            context,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     let mut if_scope = IfScope::default();
 
     // Analyze the condition expression
-    let cond_pos = expr_analyzer::analyze(analyzer, cond.condition, analysis_data, context);
+    let cond_pos = expression_analyzer::analyze(analyzer, cond.condition, analysis_data, context);
 
     // Copy effects from condition to the ternary expression
     analysis_data.copy_effects(cond_pos, pos);
@@ -43,7 +71,15 @@ pub fn analyze(
     let stmt_cond_type = analysis_data.get_rc_expr_type(cond_pos).cloned();
 
     // Get type narrowing assertions from the condition
-    let assertion_result = assertion_finder::get_assertions(analyzer, cond.condition);
+    let assertion_result =
+        assertion_finder::get_assertions(analyzer, cond.condition, analysis_data);
+    emit_ternary_condition_paradox_if_needed(
+        analyzer,
+        cond.condition,
+        &context.clauses,
+        &assertion_result.if_true_clauses,
+        analysis_data,
+    );
 
     let cond_object_id = (
         cond.condition.start_offset() as u32,
@@ -68,20 +104,25 @@ pub fn analyze(
             .collect::<Vec<_>>(),
     );
 
+    let simplified_ternary_clauses = simplify_cnf(ternary_clauses.iter().collect());
+
     // Get reconcilable truths from the combined clauses
     let mut cond_referenced_var_ids = FxHashSet::default();
-    let (reconcilable_if_types, _active_if_types) = get_truths_from_formula(
-        ternary_clauses.iter().collect(),
+    let (mut reconcilable_if_types, _active_if_types) = get_truths_from_formula(
+        simplified_ternary_clauses.iter().collect(),
         Some(cond_object_id),
         &mut cond_referenced_var_ids,
     );
+    merge_direct_assertions_into_reconciled_types(
+        &mut reconcilable_if_types,
+        &assertion_result.if_true,
+    );
 
-    if_scope.reasonable_clauses = ternary_clauses.into_iter().map(Rc::new).collect();
+    if_scope.reasonable_clauses = simplified_ternary_clauses.into_iter().map(Rc::new).collect();
 
     // Negate the if clauses for the else branch
-    if_scope.negated_clauses = negate_formula(if_clauses).unwrap_or_else(|_| {
-        assertion_result.if_false_clauses.clone()
-    });
+    if_scope.negated_clauses =
+        negate_formula(if_clauses).unwrap_or_else(|_| assertion_result.if_false_clauses.clone());
 
     // Get negated types for the else branch
     let negated_clauses = simplify_cnf({
@@ -90,11 +131,12 @@ pub fn analyze(
         c
     });
 
-    let (new_negated_types, _) = get_truths_from_formula(
+    let (mut new_negated_types, _) = get_truths_from_formula(
         negated_clauses.iter().collect(),
         None,
         &mut FxHashSet::default(),
     );
+    merge_direct_assertions_into_reconciled_types(&mut new_negated_types, &assertion_result.if_false);
 
     if_scope.negated_types = new_negated_types;
 
@@ -116,6 +158,10 @@ pub fn analyze(
     // Create the else-branch context (post-if context with negated types)
     let mut else_context = context.child();
     else_context.inside_conditional = true;
+    let mut else_clauses: Vec<Clause> = else_context.clauses.iter().map(|c| (**c).clone()).collect();
+    else_clauses.extend(if_scope.negated_clauses.clone());
+    let simplified_else_clauses = simplify_cnf(else_clauses.iter().collect());
+    else_context.clauses = simplified_else_clauses.into_iter().map(Rc::new).collect();
 
     // Analyze the branches
     let mut lhs_type: Option<TUnion> = None;
@@ -124,7 +170,8 @@ pub fn analyze(
     // Check if there is an expression for the true case (full ternary vs elvis)
     if let Some(ref if_expr) = cond.then {
         // Full ternary: $a ? $b : $c
-        let if_branch_pos = expr_analyzer::analyze(analyzer, if_expr, analysis_data, &mut if_context);
+        let if_branch_pos =
+            expression_analyzer::analyze(analyzer, if_expr, analysis_data, &mut if_context);
 
         // Combine effects
         analysis_data.combine_effects(if_branch_pos, pos, pos);
@@ -173,7 +220,8 @@ pub fn analyze(
     }
 
     // Analyze the else branch
-    let else_pos = expr_analyzer::analyze(analyzer, cond.r#else, analysis_data, &mut else_context);
+    let else_pos =
+        expression_analyzer::analyze(analyzer, cond.r#else, analysis_data, &mut else_context);
 
     // Combine effects
     analysis_data.combine_effects(else_pos, pos, pos);
@@ -235,12 +283,10 @@ pub fn analyze(
     // Handle variables redefined only in the if branch
     for redef_var_id in &redef_var_ifs {
         if !redef_all.contains(redef_var_id) && context.locals.contains_key(redef_var_id) {
-            if let Some(else_type) = else_context.locals.get(redef_var_id) {
+            if let Some(if_type) = if_context.locals.get(redef_var_id) {
                 let parent_type = context.locals.get(redef_var_id).unwrap();
-                let combined = combine_union_types(parent_type, else_type, false);
+                let combined = combine_union_types(parent_type, if_type, false);
                 context.locals.insert(*redef_var_id, combined);
-            } else {
-                context.locals.remove(redef_var_id);
             }
         }
     }
@@ -293,6 +339,84 @@ pub fn analyze(
     analysis_data.set_expr_type(pos, result_type);
 }
 
+fn emit_ternary_condition_paradox_if_needed(
+    analyzer: &StatementsAnalyzer<'_>,
+    condition: &mago_syntax::ast::ast::expression::Expression<'_>,
+    entry_clauses: &[std::rc::Rc<Clause>],
+    true_formula: &[Clause],
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    if !formula_contradicts_entry_clauses(entry_clauses, true_formula) {
+        return;
+    }
+
+    let condition_pos = (
+        condition.start_offset() as u32,
+        condition.end_offset() as u32,
+    );
+    let (line, col) = analyzer.get_line_column(condition_pos.0);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::ParadoxicalCondition,
+        "Condition contradicts a previously-established condition".to_string(),
+        analyzer.file_path,
+        condition_pos.0,
+        condition_pos.1,
+        line,
+        col,
+    ));
+}
+
+fn formula_contradicts_entry_clauses(
+    entry_clauses: &[std::rc::Rc<Clause>],
+    formula: &[Clause],
+) -> bool {
+    if entry_clauses.is_empty() || formula.is_empty() {
+        return false;
+    }
+
+    let Ok(negated_formula) = negate_formula(formula.to_vec()) else {
+        return false;
+    };
+
+    for negated_clause in negated_formula {
+        if !negated_clause.reconcilable || negated_clause.wedge {
+            continue;
+        }
+
+        for entry_clause in entry_clauses {
+            if !entry_clause.reconcilable || entry_clause.wedge {
+                continue;
+            }
+
+            let mut negated_contains_entry = true;
+            for (key, entry_possibilities) in &entry_clause.possibilities {
+                let Some(negated_possibilities) = negated_clause.possibilities.get(key) else {
+                    negated_contains_entry = false;
+                    break;
+                };
+
+                if negated_possibilities != entry_possibilities {
+                    negated_contains_entry = false;
+                    break;
+                }
+
+                if entry_possibilities.values().any(|assertion| {
+                    matches!(assertion, Assertion::InArray(_) | Assertion::NotInArray(_))
+                }) {
+                    negated_contains_entry = false;
+                    break;
+                }
+            }
+
+            if negated_contains_entry {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Apply reconciled types to a context.
 fn apply_reconciled_types(
     analyzer: &StatementsAnalyzer<'_>,
@@ -300,25 +424,83 @@ fn apply_reconciled_types(
     context: &mut BlockContext,
     analysis_data: &mut FunctionAnalysisData,
 ) {
+    if reconciled_types.is_empty() {
+        return;
+    }
+
+    let mut flattened: BTreeMap<String, Vec<Assertion>> = BTreeMap::new();
     for (var_name, assertion_lists) in reconciled_types {
-        let var_id = analyzer.interner.intern(var_name);
+        let has_or_group = assertion_lists
+            .iter()
+            .any(|assertion_list| assertion_list.len() > 1);
 
-        // Get the current type for this variable
-        let existing_type = context
-            .locals
-            .get(&var_id)
-            .cloned()
-            .unwrap_or_else(TUnion::mixed);
+        if has_or_group {
+            let var_id = analyzer.interner.intern(var_name);
+            let mut current_type = context
+                .locals
+                .get(&var_id)
+                .cloned()
+                .unwrap_or_else(TUnion::mixed);
 
-        // Apply each assertion in sequence
-        let mut current_type = existing_type;
-        for assertion_list in assertion_lists {
-            for assertion in assertion_list {
-                current_type = reconciler::reconcile(assertion, &current_type, analyzer, analysis_data);
+            for assertion_list in assertion_lists {
+                let mut orred_outcome: Option<TUnion> = None;
+                for assertion in assertion_list {
+                    let narrowed = assertion_reconciler::reconcile(
+                        assertion,
+                        Some(&current_type),
+                        false,
+                        Some(var_name),
+                        analyzer,
+                        analysis_data,
+                        context.inside_loop,
+                        false,
+                    );
+
+                    orred_outcome = Some(match orred_outcome {
+                        Some(existing) => combine_union_types(&existing, &narrowed, false),
+                        None => narrowed,
+                    });
+                }
+
+                if let Some(outcome) = orred_outcome {
+                    current_type = outcome;
+                }
+            }
+
+            context.locals.insert(var_id, current_type);
+        } else {
+            let entry = flattened.entry(var_name.clone()).or_default();
+            for assertion_list in assertion_lists {
+                entry.extend(assertion_list.iter().cloned());
             }
         }
+    }
 
-        // Update the context with the narrowed type
-        context.locals.insert(var_id, current_type);
+    if !flattened.is_empty() {
+        let mut changed_var_ids = FxHashSet::default();
+        let inside_loop = context.inside_loop;
+        reconciler::reconcile_keyed_types(
+            &flattened,
+            context,
+            &mut changed_var_ids,
+            analyzer,
+            analysis_data,
+            inside_loop,
+            false,
+            false,
+            None,
+        );
+    }
+}
+
+fn merge_direct_assertions_into_reconciled_types(
+    reconciled_types: &mut BTreeMap<String, Vec<Vec<Assertion>>>,
+    direct_assertions: &BTreeMap<String, Vec<Assertion>>,
+) {
+    for (var_name, assertions) in direct_assertions {
+        let entry = reconciled_types.entry(var_name.clone()).or_default();
+        for assertion in assertions {
+            entry.push(vec![assertion.clone()]);
+        }
     }
 }

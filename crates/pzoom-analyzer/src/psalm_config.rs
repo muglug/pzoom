@@ -3,8 +3,8 @@
 //! This module parses Psalm's XML configuration format (psalm.xml) and converts
 //! it to pzoom's Config struct.
 
-use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use quick_xml::events::{BytesStart, Event};
 use rustc_hash::FxHashSet;
 use std::path::Path;
 
@@ -56,6 +56,7 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
     let mut ignore_files: Vec<String> = Vec::new();
     let mut stubs: Vec<String> = Vec::new();
     let mut forbidden_functions: FxHashSet<String> = FxHashSet::default();
+    let mut active_issue_handler_suppression: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf)? {
@@ -73,6 +74,11 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                 let path_strs: Vec<&str> = current_path.iter().map(|s| s.as_str()).collect();
                 match path_strs.as_slice() {
                     [.., "projectFiles", "directory"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.project_dirs.push(name);
+                        }
+                    }
+                    [.., "projectFiles", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             config.project_dirs.push(name);
                         }
@@ -95,6 +101,31 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             }
                         }
                     }
+                    [.., "issueHandlers", issue_name, "errorLevel"] => {
+                        let level = get_attribute(e, "type")?.or(get_attribute(e, "errorLevel")?);
+                        if level.as_deref() == Some("suppress") {
+                            active_issue_handler_suppression = Some(issue_name.to_string());
+                        } else {
+                            active_issue_handler_suppression = None;
+                        }
+                    }
+                    [.., "issueHandlers", issue_name, "errorLevel", "directory"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_handler_suppression_pattern(
+                                issue_name,
+                                format!("{}/**", name),
+                            );
+                        }
+                    }
+                    [.., "issueHandlers", issue_name, "errorLevel", "file"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_handler_suppression_pattern(issue_name, name);
+                        }
+                    }
                     [.., "stubs", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             stubs.push(name);
@@ -107,10 +138,19 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
 
                 // Handle self-closing tags
-                let full_path: Vec<&str> = current_path.iter().map(|s| s.as_str()).chain(std::iter::once(name.as_str())).collect();
+                let full_path: Vec<&str> = current_path
+                    .iter()
+                    .map(|s| s.as_str())
+                    .chain(std::iter::once(name.as_str()))
+                    .collect();
 
                 match full_path.as_slice() {
                     [.., "projectFiles", "directory"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.project_dirs.push(name);
+                        }
+                    }
+                    [.., "projectFiles", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             config.project_dirs.push(name);
                         }
@@ -132,6 +172,29 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             }
                         }
                     }
+                    [.., "issueHandlers", issue_name, "errorLevel"] => {
+                        let level = get_attribute(e, "type")?.or(get_attribute(e, "errorLevel")?);
+                        if level.as_deref() == Some("suppress") {
+                            config.suppressed_issues.insert(issue_name.to_string());
+                        }
+                    }
+                    [.., "issueHandlers", issue_name, "errorLevel", "directory"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_handler_suppression_pattern(
+                                issue_name,
+                                format!("{}/**", name),
+                            );
+                        }
+                    }
+                    [.., "issueHandlers", issue_name, "errorLevel", "file"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_handler_suppression_pattern(issue_name, name);
+                        }
+                    }
                     [.., "stubs", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             stubs.push(name);
@@ -145,7 +208,10 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                     _ => {}
                 }
             }
-            Event::End(_) => {
+            Event::End(ref e) => {
+                if e.name().as_ref() == b"errorLevel" {
+                    active_issue_handler_suppression = None;
+                }
                 current_path.pop();
             }
             Event::Eof => break,
@@ -203,6 +269,9 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             "findUnusedPsalmSuppress" => {
                 config.find_unused_suppress = value == "true";
             }
+            "findUnusedBaselineEntry" => {
+                config.find_unused_baseline_entry = value == "true";
+            }
             "runTaintAnalysis" => {
                 config.taint_analysis = value == "true";
             }
@@ -214,6 +283,9 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             }
             "cacheDirectory" => {
                 config.cache_dir = Some(value);
+            }
+            "errorBaseline" => {
+                config.error_baseline = Some(value);
             }
             "threads" => {
                 if let Ok(n) = value.parse::<usize>() {
@@ -242,8 +314,25 @@ fn get_attribute(e: &BytesStart<'_>, name: &str) -> Result<Option<String>, Psalm
 
 /// Load a Psalm config from a file path.
 pub fn load_psalm_config<P: AsRef<Path>>(path: P) -> Result<Config, PsalmConfigError> {
-    let content = std::fs::read_to_string(path)?;
-    parse_psalm_xml(&content)
+    let config_path = path.as_ref();
+    let content = std::fs::read_to_string(config_path)?;
+    let mut config = parse_psalm_xml(&content)?;
+
+    if let Some(error_baseline) = config.error_baseline.clone() {
+        let error_baseline_path = Path::new(&error_baseline);
+        if error_baseline_path.is_relative()
+            && let Some(config_dir) = config_path.parent()
+        {
+            config.error_baseline = Some(
+                config_dir
+                    .join(error_baseline_path)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+
+    Ok(config)
 }
 
 /// Try to find and load a Psalm config file in the given directory.
@@ -339,6 +428,8 @@ mod tests {
     useDocblockTypes="false"
     reportMixedIssues="false"
     findUnusedPsalmSuppress="true"
+    findUnusedBaselineEntry="true"
+    errorBaseline="psalm-baseline.xml"
 >
     <projectFiles>
         <directory name="src" />
@@ -351,6 +442,8 @@ mod tests {
         assert!(!config.use_docblock_types);
         assert!(!config.report_mixed_issues);
         assert!(config.find_unused_suppress);
+        assert!(config.find_unused_baseline_entry);
+        assert_eq!(config.error_baseline.as_deref(), Some("psalm-baseline.xml"));
     }
 
     #[test]
@@ -378,5 +471,64 @@ mod tests {
         assert!(config.forbidden_functions.contains("var_dump"));
         assert!(config.forbidden_functions.contains("print_r"));
         assert!(config.forbidden_functions.contains("dd"));
+    }
+
+    #[test]
+    fn test_parse_scoped_issue_handler_suppressions() {
+        let xml = r#"<?xml version="1.0"?>
+<psalm>
+    <projectFiles>
+        <directory name="src" />
+    </projectFiles>
+    <issueHandlers>
+        <InternalMethod>
+            <errorLevel type="suppress">
+                <directory name="tests" />
+                <file name="src/Foo.php" />
+            </errorLevel>
+        </InternalMethod>
+    </issueHandlers>
+</psalm>"#;
+
+        let config = parse_psalm_xml(xml).unwrap();
+
+        assert!(config.is_issue_suppressed_for_path("InternalMethod", "tests/A.php"));
+        assert!(config.is_issue_suppressed_for_path("InternalMethod", "src/Foo.php"));
+        assert!(!config.is_issue_suppressed_for_path("InternalMethod", "src/Bar.php"));
+    }
+
+    #[test]
+    fn test_load_psalm_config_resolves_relative_baseline_path() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "pzoom_psalm_config_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let config_path = temp_dir.join("psalm.xml");
+        std::fs::write(
+            &config_path,
+            r#"<?xml version="1.0"?>
+<psalm errorBaseline="psalm-baseline.xml">
+    <projectFiles>
+        <directory name="src" />
+    </projectFiles>
+</psalm>"#,
+        )
+        .unwrap();
+
+        let config = load_psalm_config(&config_path).unwrap();
+        let baseline = config.error_baseline.expect("baseline should be resolved");
+        assert_eq!(
+            std::path::Path::new(&baseline),
+            temp_dir.join("psalm-baseline.xml")
+        );
+
+        let _ = std::fs::remove_file(config_path);
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }

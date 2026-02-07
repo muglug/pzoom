@@ -19,6 +19,21 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// Main entry point for the population phase.
 /// Follows hakana's `populate_codebase` function.
 pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
+    // Rebuild case-insensitive classlike lookup used by type comparators.
+    codebase.classlike_name_lookup = codebase
+        .classlike_infos
+        .keys()
+        .map(|classlike_id| {
+            (
+                interner
+                    .lookup(*classlike_id)
+                    .trim_start_matches('\\')
+                    .to_ascii_lowercase(),
+                *classlike_id,
+            )
+        })
+        .collect();
+
     // First, reset population state for classlikes that need repopulation
     let classlike_names: Vec<_> = codebase
         .classlike_infos
@@ -53,6 +68,14 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
             }
         }
 
+        for prop_type in storage.pseudo_property_get_types.values_mut() {
+            populate_union_type(prop_type);
+        }
+
+        for prop_type in storage.pseudo_property_set_types.values_mut() {
+            populate_union_type(prop_type);
+        }
+
         // Populate constant types
         for (_, const_info) in storage.constants.iter_mut() {
             populate_union_type(&mut const_info.constant_type);
@@ -61,6 +84,18 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         // Populate template type bounds
         for template_type in storage.template_types.iter_mut() {
             populate_union_type(&mut template_type.as_type);
+        }
+
+        for param_types in storage.template_extended_offsets.values_mut() {
+            for param_type in param_types.iter_mut() {
+                populate_union_type(param_type);
+            }
+        }
+
+        for template_map in storage.template_extended_params.values_mut() {
+            for param_type in template_map.values_mut() {
+                populate_union_type(param_type);
+            }
         }
     }
 
@@ -73,8 +108,48 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
             if let Some(ref mut param_type) = param.param_type {
                 populate_union_type(param_type);
             }
+            if let Some(ref mut param_out_type) = param.param_out_type {
+                populate_union_type(param_out_type);
+            }
             if let Some(ref mut signature_type) = param.signature_type {
                 populate_union_type(signature_type);
+            }
+        }
+    }
+
+    // Populate pseudo method signatures
+    for (_, storage) in codebase.classlike_infos.iter_mut() {
+        for (_, method_info) in storage.pseudo_methods.iter_mut() {
+            if let Some(ref mut return_type) = method_info.return_type {
+                populate_union_type(return_type);
+            }
+            for param in method_info.params.iter_mut() {
+                if let Some(ref mut param_type) = param.param_type {
+                    populate_union_type(param_type);
+                }
+                if let Some(ref mut param_out_type) = param.param_out_type {
+                    populate_union_type(param_out_type);
+                }
+                if let Some(ref mut signature_type) = param.signature_type {
+                    populate_union_type(signature_type);
+                }
+            }
+        }
+
+        for (_, method_info) in storage.pseudo_static_methods.iter_mut() {
+            if let Some(ref mut return_type) = method_info.return_type {
+                populate_union_type(return_type);
+            }
+            for param in method_info.params.iter_mut() {
+                if let Some(ref mut param_type) = param.param_type {
+                    populate_union_type(param_type);
+                }
+                if let Some(ref mut param_out_type) = param.param_out_type {
+                    populate_union_type(param_out_type);
+                }
+                if let Some(ref mut signature_type) = param.signature_type {
+                    populate_union_type(signature_type);
+                }
             }
         }
     }
@@ -245,10 +320,16 @@ fn populate_data_from_trait(
         .invalid_dependencies
         .extend(trait_storage.invalid_dependencies.iter().copied());
 
+    extend_template_params(storage, trait_storage);
+
     // Inherit methods and properties
     let is_trait = storage.kind == ClassLikeKind::Trait;
     inherit_methods_from_parent(storage, trait_storage, is_trait);
     inherit_properties_from_parent(storage, trait_storage, true); // from_trait = true
+    inherit_pseudo_members_from_parent(storage, trait_storage);
+    inherit_mixin_metadata_from_parent(storage, trait_storage);
+
+    apply_trait_method_aliases(storage, trait_name);
 }
 
 /// Populate data from a parent class.
@@ -274,6 +355,8 @@ fn populate_data_from_parent_classlike(
     storage
         .all_parent_classes
         .extend(parent_storage.all_parent_classes.iter().copied());
+
+    extend_template_params(storage, parent_storage);
 
     // Inherit all parent interfaces
     storage
@@ -303,6 +386,8 @@ fn populate_data_from_parent_classlike(
     let is_trait = storage.kind == ClassLikeKind::Trait;
     inherit_methods_from_parent(storage, parent_storage, is_trait);
     inherit_properties_from_parent(storage, parent_storage, false); // from_trait = false
+    inherit_pseudo_members_from_parent(storage, parent_storage);
+    inherit_mixin_metadata_from_parent(storage, parent_storage);
 }
 
 /// Populate interface data from a parent interface.
@@ -328,6 +413,8 @@ fn populate_interface_data_from_parent_interface(
 
     // Inherit methods
     inherit_methods_from_parent(storage, parent_storage, false);
+    inherit_pseudo_members_from_parent(storage, parent_storage);
+    inherit_mixin_metadata_from_parent(storage, parent_storage);
 
     // Build all_parent_interfaces
     storage.all_parent_interfaces.push(*parent_iface_name);
@@ -360,6 +447,8 @@ fn populate_data_from_implemented_interface(
     // Inherit methods from the interface - this allows abstract classes to call
     // interface methods that will be implemented by concrete subclasses
     inherit_methods_from_parent(storage, iface_storage, false);
+    inherit_pseudo_members_from_parent(storage, iface_storage);
+    inherit_mixin_metadata_from_parent(storage, iface_storage);
 
     // Build all_parent_interfaces
     storage.all_parent_interfaces.push(*iface_name);
@@ -385,6 +474,119 @@ fn populate_interface_data_from_parent_or_implemented_interface(
     storage
         .invalid_dependencies
         .extend(interface_storage.invalid_dependencies.iter().copied());
+
+    extend_template_params(storage, interface_storage);
+}
+
+fn extend_template_params(storage: &mut ClassLikeInfo, parent_storage: &ClassLikeInfo) {
+    if !parent_storage.template_types.is_empty() {
+        storage
+            .template_extended_params
+            .entry(parent_storage.name)
+            .or_default();
+
+        if let Some(parent_offsets) = storage.template_extended_offsets.get(&parent_storage.name) {
+            for (i, extended_type) in parent_offsets.iter().enumerate() {
+                if let Some(parent_template) = parent_storage.template_types.get(i) {
+                    let mapped_name = parent_template.name;
+                    storage
+                        .template_extended_params
+                        .entry(parent_storage.name)
+                        .or_default()
+                        .insert(mapped_name, extended_type.clone());
+
+                    if !parent_template.as_type.is_mixed() {
+                        for atomic in &extended_type.types {
+                            if let TAtomic::TTemplateParam {
+                                name,
+                                defining_entity,
+                                ..
+                            } = atomic
+                            {
+                                if *defining_entity == storage.name {
+                                    if let Some(storage_template) = storage
+                                        .template_types
+                                        .iter_mut()
+                                        .find(|template_type| template_type.name == *name)
+                                    {
+                                        if storage_template.as_type.is_mixed() {
+                                            storage_template.as_type =
+                                                parent_template.as_type.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let existing = storage.template_extended_params.clone();
+            for (template_storage_class, type_map) in &parent_storage.template_extended_params {
+                for (template_name, type_) in type_map {
+                    storage
+                        .template_extended_params
+                        .entry(*template_storage_class)
+                        .or_default()
+                        .insert(*template_name, extend_type(type_, &existing));
+                }
+            }
+        } else {
+            for (key, value) in &parent_storage.template_extended_params {
+                storage
+                    .template_extended_params
+                    .entry(*key)
+                    .or_insert_with(|| value.clone());
+            }
+        }
+    } else {
+        for (key, value) in &parent_storage.template_extended_params {
+            storage
+                .template_extended_params
+                .entry(*key)
+                .or_insert_with(|| value.clone());
+        }
+    }
+}
+
+fn extend_type(
+    type_: &TUnion,
+    template_extended_params: &FxHashMap<StrId, FxHashMap<StrId, TUnion>>,
+) -> TUnion {
+    let mut changed = false;
+    let mut extended_types = Vec::with_capacity(type_.types.len());
+
+    for atomic_type in &type_.types {
+        if let TAtomic::TTemplateParam {
+            name,
+            defining_entity,
+            ..
+        } = atomic_type
+        {
+            if let Some(referenced_type) = template_extended_params
+                .get(defining_entity)
+                .and_then(|params| params.get(name))
+            {
+                changed = true;
+                extended_types.extend(referenced_type.types.clone());
+                continue;
+            }
+        }
+
+        extended_types.push(atomic_type.clone());
+    }
+
+    if !changed {
+        return type_.clone();
+    }
+
+    let mut extended = TUnion::from_types(extended_types);
+    extended.from_docblock = type_.from_docblock;
+    extended.is_resolved = type_.is_resolved;
+    extended.parent_nodes = type_.parent_nodes.clone();
+    extended.ignore_nullable_issues = type_.ignore_nullable_issues;
+    extended.ignore_falsable_issues = type_.ignore_falsable_issues;
+    extended
 }
 
 /// Inherit methods from a parent (class, interface, or trait).
@@ -402,8 +604,8 @@ fn inherit_methods_from_parent(
             continue;
         }
 
-        // For traits, methods appear in the using class
-        let appearing = if is_trait {
+        // Methods imported from traits appear in the consuming class/trait.
+        let appearing = if is_trait || parent_storage.kind == ClassLikeKind::Trait {
             classlike_name
         } else {
             *appearing_class
@@ -439,6 +641,112 @@ fn inherit_methods_from_parent(
     }
 }
 
+fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
+    for alias in storage.trait_method_aliases.clone() {
+        if alias
+            .trait_name
+            .is_some_and(|referenced_trait| referenced_trait != *trait_name)
+        {
+            continue;
+        }
+
+        let Some(source_method) = storage.methods.get(&alias.original_name).cloned() else {
+            continue;
+        };
+
+        // `use T { foo as public; }` mutates the original method visibility.
+        if alias.alias_name == alias.original_name {
+            if let Some(visibility) = alias.visibility
+                && let Some(existing_method) = storage.methods.get_mut(&alias.original_name)
+            {
+                existing_method.visibility = visibility;
+            }
+            continue;
+        }
+
+        if storage.methods.contains_key(&alias.alias_name) {
+            continue;
+        }
+
+        let mut aliased_method = source_method.clone();
+        aliased_method.name = alias.alias_name;
+
+        if let Some(visibility) = alias.visibility {
+            aliased_method.visibility = visibility;
+        }
+
+        storage.methods.insert(alias.alias_name, aliased_method);
+
+        if let Some(declaring_class) = storage
+            .declaring_method_ids
+            .get(&alias.original_name)
+            .copied()
+        {
+            storage
+                .declaring_method_ids
+                .insert(alias.alias_name, declaring_class);
+            storage
+                .inheritable_method_ids
+                .insert(alias.alias_name, declaring_class);
+        }
+
+        if let Some(appearing_class) = storage
+            .appearing_method_ids
+            .get(&alias.original_name)
+            .copied()
+        {
+            storage
+                .appearing_method_ids
+                .insert(alias.alias_name, appearing_class);
+        }
+    }
+}
+
+fn inherit_pseudo_members_from_parent(storage: &mut ClassLikeInfo, parent_storage: &ClassLikeInfo) {
+    for (method_name, method_info) in &parent_storage.pseudo_methods {
+        storage
+            .pseudo_methods
+            .entry(*method_name)
+            .or_insert_with(|| method_info.clone());
+    }
+
+    for (method_name, method_info) in &parent_storage.pseudo_static_methods {
+        storage
+            .pseudo_static_methods
+            .entry(*method_name)
+            .or_insert_with(|| method_info.clone());
+    }
+
+    for (prop_name, prop_type) in &parent_storage.pseudo_property_get_types {
+        storage
+            .pseudo_property_get_types
+            .entry(*prop_name)
+            .or_insert_with(|| prop_type.clone());
+    }
+
+    for (prop_name, prop_type) in &parent_storage.pseudo_property_set_types {
+        storage
+            .pseudo_property_set_types
+            .entry(*prop_name)
+            .or_insert_with(|| prop_type.clone());
+    }
+
+    if parent_storage.sealed_methods.is_some() {
+        storage.sealed_methods = parent_storage.sealed_methods;
+    }
+
+    if parent_storage.sealed_properties.is_some() {
+        storage.sealed_properties = parent_storage.sealed_properties;
+    }
+}
+
+fn inherit_mixin_metadata_from_parent(storage: &mut ClassLikeInfo, parent_storage: &ClassLikeInfo) {
+    if storage.named_mixins.is_empty() && !parent_storage.named_mixins.is_empty() {
+        storage.named_mixins = parent_storage.named_mixins.clone();
+        storage.mixin_declaring_class = parent_storage.mixin_declaring_class;
+    }
+}
+
 /// Inherit properties from a parent (class or trait).
 /// Follows hakana's `inherit_properties_from_parent`.
 fn inherit_properties_from_parent(
@@ -465,8 +773,8 @@ fn inherit_properties_from_parent(
             }
         }
 
-        // For traits, properties appear in the using class
-        let appearing = if is_trait {
+        // Properties imported from traits appear in the consuming class/trait.
+        let appearing = if is_trait || parent_is_trait {
             classlike_name
         } else {
             *appearing_class
@@ -537,8 +845,14 @@ pub fn populate_union_type(t_union: &mut TUnion) {
 /// Follows hakana's `populate_atomic_type`.
 pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
     match t_atomic {
-        TAtomic::TArray { key_type, value_type }
-        | TAtomic::TNonEmptyArray { key_type, value_type } => {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => {
             populate_union_type(key_type);
             populate_union_type(value_type);
         }
@@ -568,6 +882,11 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
                 }
             }
         }
+        TAtomic::TObjectIntersection { types } => {
+            for intersection_type in types.iter_mut() {
+                populate_atomic_type(intersection_type);
+            }
+        }
         TAtomic::TTemplateParam { as_type, .. } => {
             populate_union_type(as_type);
         }
@@ -577,6 +896,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         TAtomic::TClosure {
             params,
             return_type,
+            ..
         } => {
             if let Some(ps) = params {
                 for param in ps.iter_mut() {
@@ -590,6 +910,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         TAtomic::TCallable {
             params,
             return_type,
+            ..
         } => {
             if let Some(ps) = params {
                 for param in ps.iter_mut() {

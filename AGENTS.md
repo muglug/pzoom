@@ -1,6 +1,21 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This is the canonical agent instructions file for this repository.
+
+## Start Here
+
+1. Read this file first.
+2. Read `/Users/brownmatthew/git/pzoom/docs/CODEX_UPDATING_PZOOM.md` for the Psalm/Hakana parity workflow.
+3. Prefer local references over web lookups:
+   - `/Users/brownmatthew/git/psalm`
+   - `/Users/brownmatthew/git/hakana/hakana-core`
+
+## Fast Rules
+
+- Use `rg`/`rg --files` for search.
+- Keep behavior aligned with Psalm first, then Hakana where Psalm is unclear.
+- For expected test output changes, update `output.txt` only after confirming behavior parity.
+- Keep error file paths relative in emitted issues (not absolute).
 
 ## Build Commands
 
@@ -99,6 +114,25 @@ PHP built-in type stubs are in `stubs/`:
 
 The test runner and CLI automatically scan stubs before user files.
 
+## High-Risk Areas
+
+- Callable validation:
+  - `/Users/brownmatthew/git/pzoom/crates/pzoom-analyzer/src/expr/call/callable_validation.rs`
+- Type string formatting used in issues:
+  - `/Users/brownmatthew/git/pzoom/crates/pzoom-code-info/src/t_atomic.rs`
+  - `/Users/brownmatthew/git/pzoom/crates/pzoom-code-info/src/t_union.rs`
+- Unsupported expression handling:
+  - `/Users/brownmatthew/git/pzoom/crates/pzoom-analyzer/src/expr_analyzer.rs`
+- Interner/preloaded string constants:
+  - `/Users/brownmatthew/git/pzoom/crates/pzoom-str/build.rs`
+
+## Interner Rules
+
+- Prefer `StrId::*` constants over `interner.intern("literal")` when a stable preloaded string exists.
+- When adding strings to preload, check generated constant-name collisions in `format_identifier`.
+- Known collision: `"serialize"` and `"__serialize"`; keep `"__serialize"` mapped to `MAGIC_SERIALIZE`.
+
 ## External Dependencies
 
 The mago PHP parser is pulled as a git dependency from `github.com/carthage-software/mago`. Mago crates use the path pattern `mago_syntax::ast::ast::*` for AST types.
+

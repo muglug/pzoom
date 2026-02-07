@@ -6,7 +6,7 @@ use mago_syntax::ast::ast::expression::Expression;
 use pzoom_code_info::{TAtomic, TUnion};
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
@@ -21,22 +21,30 @@ pub fn analyze(
     context: &mut BlockContext,
 ) {
     // Analyze both operands
-    let left_pos = expr_analyzer::analyze(analyzer, left, analysis_data, context);
-    let right_pos = expr_analyzer::analyze(analyzer, right, analysis_data, context);
+    let left_pos = expression_analyzer::analyze(analyzer, left, analysis_data, context);
+    let right_pos = expression_analyzer::analyze(analyzer, right, analysis_data, context);
 
     let left_type = analysis_data.get_expr_type(left_pos);
     let right_type = analysis_data.get_expr_type(right_pos);
 
     let result_type = match operator {
-        BinaryOperator::Addition(_) => infer_addition_type(left_type.as_deref(), right_type.as_deref()),
-        BinaryOperator::Subtraction(_) => infer_arithmetic_type(left_type.as_deref(), right_type.as_deref()),
-        BinaryOperator::Multiplication(_) => infer_arithmetic_type(left_type.as_deref(), right_type.as_deref()),
+        BinaryOperator::Addition(_) => {
+            infer_addition_type(left_type.as_deref(), right_type.as_deref())
+        }
+        BinaryOperator::Subtraction(_) => {
+            infer_arithmetic_type(left_type.as_deref(), right_type.as_deref())
+        }
+        BinaryOperator::Multiplication(_) => {
+            infer_arithmetic_type(left_type.as_deref(), right_type.as_deref())
+        }
         BinaryOperator::Division(_) => {
             // Division can return int or float
             TUnion::from_types(vec![TAtomic::TInt, TAtomic::TFloat])
         }
         BinaryOperator::Modulo(_) => TUnion::int(),
-        BinaryOperator::Exponentiation(_) => infer_arithmetic_type(left_type.as_deref(), right_type.as_deref()),
+        BinaryOperator::Exponentiation(_) => {
+            infer_arithmetic_type(left_type.as_deref(), right_type.as_deref())
+        }
         _ => TUnion::new(TAtomic::TNumeric),
     };
 
@@ -47,10 +55,14 @@ pub fn analyze(
 fn infer_addition_type(left: Option<&TUnion>, right: Option<&TUnion>) -> TUnion {
     // Check if either operand is an array (array union)
     let left_is_array = left.map_or(false, |t| {
-        t.types.iter().any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
+        t.types
+            .iter()
+            .any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
     });
     let right_is_array = right.map_or(false, |t| {
-        t.types.iter().any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
+        t.types
+            .iter()
+            .any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
     });
 
     if left_is_array && right_is_array {
@@ -81,7 +93,7 @@ fn infer_arithmetic_type(left: Option<&TUnion>, right: Option<&TUnion>) -> TUnio
             if has_float(lt) || has_float(rt) {
                 TUnion::float()
             } else {
-                TUnion::int()
+                TUnion::int_from_calculation()
             }
         }
         _ => TUnion::new(TAtomic::TNumeric),

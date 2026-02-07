@@ -8,7 +8,7 @@ use mago_syntax::ast::ast::expression::Expression;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
@@ -66,7 +66,7 @@ fn analyze_path(
     is_require: bool,
 ) {
     // Analyze the path expression
-    let path_pos = expr_analyzer::analyze(analyzer, path, analysis_data, context);
+    let path_pos = expression_analyzer::analyze(analyzer, path, analysis_data, context);
 
     // Get the path type
     if let Some(path_type) = analysis_data.get_expr_type(path_pos) {

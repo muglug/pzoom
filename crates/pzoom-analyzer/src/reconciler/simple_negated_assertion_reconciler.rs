@@ -4,6 +4,7 @@
 //! This module provides the building blocks for more complex type subtractions.
 
 use pzoom_code_info::{Assertion, TAtomic, TUnion};
+use pzoom_str::StrId;
 
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::StatementsAnalyzer;
@@ -15,7 +16,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    _key: Option<&String>,
+    key: Option<&String>,
     _negated: bool,
     _analysis_data: &mut FunctionAnalysisData,
     _analyzer: &StatementsAnalyzer<'_>,
@@ -66,12 +67,33 @@ pub fn reconcile(
 
     match assertion {
         Assertion::Falsy => Some(reconcile_falsy(existing_var_type)),
-        Assertion::IsNotIsset => Some(reconcile_not_isset(existing_var_type)),
+        Assertion::IsNotIsset => Some(reconcile_not_isset(existing_var_type, key)),
         Assertion::EmptyCountable => Some(reconcile_empty_countable(existing_var_type)),
-        Assertion::DoesNotHaveArrayKey(key) => {
-            Some(reconcile_no_array_key(existing_var_type, key))
-        }
+        Assertion::DoesNotHaveArrayKey(key) => Some(reconcile_no_array_key(existing_var_type, key)),
         _ => None,
+    }
+}
+
+fn push_narrowed_template_type(
+    target: &mut Vec<TAtomic>,
+    template_atomic: &TAtomic,
+    narrowed_as_type: TUnion,
+) {
+    if narrowed_as_type.is_nothing() {
+        return;
+    }
+
+    match template_atomic {
+        TAtomic::TTemplateParam {
+            name,
+            defining_entity,
+            ..
+        } => target.push(TAtomic::TTemplateParam {
+            name: *name,
+            defining_entity: *defining_entity,
+            as_type: Box::new(narrowed_as_type),
+        }),
+        _ => target.push(template_atomic.clone()),
     }
 }
 
@@ -94,9 +116,7 @@ fn subtract_object(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_object(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -136,9 +156,7 @@ fn subtract_bool(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_bool(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -188,9 +206,7 @@ fn subtract_num(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_num(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -234,9 +250,7 @@ fn subtract_float(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_float(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -288,9 +302,7 @@ fn subtract_int(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_int(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -330,6 +342,14 @@ fn subtract_string(existing_var_type: &TUnion) -> TUnion {
             | TAtomic::TClassString { .. } => {
                 // Remove string types
             }
+            TAtomic::TCallable { .. } => {
+                // callable - string => array|object
+                acceptable_types.push(TAtomic::TArray {
+                    key_type: Box::new(TUnion::array_key()),
+                    value_type: Box::new(TUnion::mixed()),
+                });
+                acceptable_types.push(TAtomic::TObject);
+            }
             TAtomic::TScalar => {
                 // Narrow to non-string scalars
                 acceptable_types.push(TAtomic::TInt);
@@ -343,9 +363,7 @@ fn subtract_string(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_string(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -396,9 +414,7 @@ fn subtract_arraykey(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_arraykey(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -431,9 +447,7 @@ pub fn subtract_null(existing_var_type: &TUnion) -> TUnion {
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 let subtracted = subtract_null(as_type);
-                if !subtracted.is_nothing() {
-                    acceptable_types.push(atomic.clone());
-                }
+                push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
             }
             _ => {
                 acceptable_types.push(atomic.clone());
@@ -465,9 +479,7 @@ pub fn subtract_false(existing_var_type: &TUnion) -> TUnion {
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 let subtracted = subtract_false(as_type);
-                if !subtracted.is_nothing() {
-                    acceptable_types.push(atomic.clone());
-                }
+                push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
             }
             _ => {
                 acceptable_types.push(atomic.clone());
@@ -497,9 +509,7 @@ pub fn subtract_true(existing_var_type: &TUnion) -> TUnion {
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 let subtracted = subtract_true(as_type);
-                if !subtracted.is_nothing() {
-                    acceptable_types.push(atomic.clone());
-                }
+                push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
             }
             _ => {
                 acceptable_types.push(atomic.clone());
@@ -531,12 +541,25 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
             | TAtomic::TKeyedArray { .. } => {
                 // Remove array types
             }
+            TAtomic::TCallable { .. } => {
+                // callable - array => string|object
+                acceptable_types.push(TAtomic::TString);
+                acceptable_types.push(TAtomic::TObject);
+            }
+            TAtomic::TIterable {
+                key_type,
+                value_type,
+            } => {
+                // iterable is array|Traversable; removing array leaves Traversable
+                acceptable_types.push(TAtomic::TNamedObject {
+                    name: StrId::TRAVERSABLE,
+                    type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
+                });
+            }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_array(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -573,9 +596,7 @@ fn subtract_list(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_list(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -638,16 +659,35 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TNull);
                 acceptable_types.push(TAtomic::TFalse);
                 acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
+                acceptable_types.push(TAtomic::TLiteralFloat { value: 0.0 });
                 acceptable_types.push(TAtomic::TLiteralString {
                     value: String::new(),
+                });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: "0".to_string(),
                 });
             }
             TAtomic::TNonEmptyMixed => {
                 // Non-empty mixed but can still be falsy (0, "", false)
                 acceptable_types.push(TAtomic::TFalse);
                 acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
+                acceptable_types.push(TAtomic::TLiteralFloat { value: 0.0 });
                 acceptable_types.push(TAtomic::TLiteralString {
                     value: String::new(),
+                });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: "0".to_string(),
+                });
+            }
+            TAtomic::TScalar => {
+                acceptable_types.push(TAtomic::TFalse);
+                acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
+                acceptable_types.push(TAtomic::TLiteralFloat { value: 0.0 });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: String::new(),
+                });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: "0".to_string(),
                 });
             }
             TAtomic::TNull
@@ -665,9 +705,7 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = reconcile_falsy(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 }
             }
             _ => {
@@ -689,23 +727,16 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
 /// Reconciles a !isset assertion.
 ///
 /// Returns null type (the variable is not set).
-fn reconcile_not_isset(existing_var_type: &TUnion) -> TUnion {
-    // If the type already includes null, return just null
-    // Otherwise, the type would narrow to nothing
-    let has_null = existing_var_type
-        .types
-        .iter()
-        .any(|t| matches!(t, TAtomic::TNull));
-
-    if has_null || existing_var_type.is_nullable {
-        TUnion::new(TAtomic::TNull)
-    } else if existing_var_type.is_mixed() {
-        // Mixed can include null
-        TUnion::new(TAtomic::TNull)
-    } else {
-        // The variable wasn't set - this is an impossible type
-        TUnion::nothing()
+fn reconcile_not_isset(existing_var_type: &TUnion, key: Option<&String>) -> TUnion {
+    // For nested paths (`$a[0]`, `$obj->prop`), forcing the type to `null` bleeds
+    // nullability through branch merges and causes false positives after guarded writes.
+    // Keep the existing nested value type and model the unset state through clauses.
+    if key.is_some_and(|k| k.contains('[') || k.contains("->")) {
+        return existing_var_type.clone();
     }
+
+    // Plain variables use the historical null fallback for !isset checks.
+    TUnion::new(TAtomic::TNull)
 }
 
 /// Reconciles an empty countable assertion.
@@ -748,9 +779,7 @@ fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = reconcile_empty_countable(as_type);
-                    if !subtracted.is_nothing() {
-                        acceptable_types.push(atomic.clone());
-                    }
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
                 }
@@ -770,10 +799,7 @@ fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
 }
 
 /// Reconciles a DoesNotHaveArrayKey assertion.
-fn reconcile_no_array_key(
-    existing_var_type: &TUnion,
-    key: &pzoom_code_info::ArrayKey,
-) -> TUnion {
+fn reconcile_no_array_key(existing_var_type: &TUnion, key: &pzoom_code_info::ArrayKey) -> TUnion {
     let mut result_types = Vec::new();
 
     for atomic in &existing_var_type.types {
@@ -799,9 +825,7 @@ fn reconcile_no_array_key(
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 let subtracted = reconcile_no_array_key(as_type, key);
-                if !subtracted.is_nothing() {
-                    result_types.push(atomic.clone());
-                }
+                push_narrowed_template_type(&mut result_types, atomic, subtracted);
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
                 result_types.push(atomic.clone());

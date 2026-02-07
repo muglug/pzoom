@@ -16,6 +16,8 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Instant;
 use walkdir::WalkDir;
 
@@ -38,9 +40,14 @@ struct Cli {
     /// Reuse codebase between tests (faster, scans stubs only once)
     #[arg(long)]
     reuse_codebase: bool,
+
+    /// Number of worker threads (defaults to available CPUs)
+    #[arg(short = 'j', long)]
+    jobs: Option<usize>,
 }
 
 /// Holds pre-scanned stub data that can be reused across tests.
+#[derive(Clone)]
 struct BaseCodebase {
     codebase: CodebaseInfo,
     interner: Interner,
@@ -105,52 +112,140 @@ fn main() {
     let mut passed = 0;
     let mut failed = 0;
     let mut skipped = 0;
-    let mut failures: Vec<(String, String)> = Vec::new();
+    let mut failures: Vec<(usize, String, String)> = Vec::new();
 
     let start = Instant::now();
 
-    for test_folder in &test_folders {
+    let mut runnable_tests: Vec<(usize, String)> = Vec::new();
+    for (index, test_folder) in test_folders.iter().enumerate() {
         if test_folder.contains("skipped-") || test_folder.contains("SKIPPED-") {
             skipped += 1;
             print!("S");
             io::stdout().flush().unwrap();
-            continue;
-        }
-
-        let result = if let Some(ref base) = base_codebase {
-            run_test_with_base(test_folder, base, cli.update, cli.verbose)
         } else {
-            run_test(test_folder, &stubs_path, cli.update, cli.verbose)
-        };
-
-        match result {
-            TestResult::Pass => {
-                passed += 1;
-                print!(".");
-            }
-            TestResult::Fail(diff) => {
-                failed += 1;
-                print!("F");
-                failures.push((test_folder.clone(), diff));
-            }
-            TestResult::Updated => {
-                passed += 1;
-                print!("U");
-            }
-            TestResult::Skip => {
-                skipped += 1;
-                print!("S");
-            }
+            runnable_tests.push((index, test_folder.clone()));
         }
-        io::stdout().flush().unwrap();
+    }
+
+    let default_jobs = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let requested_jobs = cli.jobs.unwrap_or(default_jobs).max(1);
+    let worker_count = requested_jobs.max(1).min(runnable_tests.len().max(1));
+
+    if cli.verbose {
+        eprintln!(
+            "Running {} tests with {} worker(s)",
+            runnable_tests.len(),
+            worker_count
+        );
+    }
+
+    if worker_count == 1 {
+        for (index, test_folder) in &runnable_tests {
+            let result = if let Some(ref base) = base_codebase {
+                run_test_with_base(test_folder, base, cli.update, cli.verbose)
+            } else {
+                run_test(test_folder, &stubs_path, cli.update, cli.verbose)
+            };
+
+            match result {
+                TestResult::Pass => {
+                    passed += 1;
+                    print!(".");
+                }
+                TestResult::Fail(diff) => {
+                    failed += 1;
+                    print!("F");
+                    failures.push((*index, test_folder.clone(), diff));
+                }
+                TestResult::Updated => {
+                    passed += 1;
+                    print!("U");
+                }
+                TestResult::Skip => {
+                    skipped += 1;
+                    print!("S");
+                }
+            }
+            io::stdout().flush().unwrap();
+        }
+    } else {
+        let jobs = Arc::new(runnable_tests);
+        let next_job = Arc::new(AtomicUsize::new(0));
+        let (result_tx, result_rx) = mpsc::channel::<(usize, String, TestResult)>();
+        let mut handles = Vec::new();
+
+        for _ in 0..worker_count {
+            let jobs = Arc::clone(&jobs);
+            let next_job = Arc::clone(&next_job);
+            let result_tx = result_tx.clone();
+            let stubs_path = stubs_path.clone();
+            let base_codebase = base_codebase.clone();
+            let update = cli.update;
+            let verbose = cli.verbose;
+
+            handles.push(std::thread::spawn(move || {
+                loop {
+                    let job_index = next_job.fetch_add(1, Ordering::Relaxed);
+                    let Some((index, test_folder)) = jobs.get(job_index) else {
+                        break;
+                    };
+
+                    let result = if let Some(ref base) = base_codebase {
+                        run_test_with_base(test_folder, base, update, verbose)
+                    } else {
+                        run_test(test_folder, &stubs_path, update, verbose)
+                    };
+
+                    if result_tx
+                        .send((*index, test_folder.clone(), result))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
+        drop(result_tx);
+
+        let total = jobs.len();
+        for _ in 0..total {
+            let (index, test_folder, result) = result_rx.recv().unwrap();
+            match result {
+                TestResult::Pass => {
+                    passed += 1;
+                    print!(".");
+                }
+                TestResult::Fail(diff) => {
+                    failed += 1;
+                    print!("F");
+                    failures.push((index, test_folder, diff));
+                }
+                TestResult::Updated => {
+                    passed += 1;
+                    print!("U");
+                }
+                TestResult::Skip => {
+                    skipped += 1;
+                    print!("S");
+                }
+            }
+            io::stdout().flush().unwrap();
+        }
+
+        for handle in handles {
+            let _ = handle.join();
+        }
     }
 
     let elapsed = start.elapsed();
     println!("\n");
 
     if !failures.is_empty() {
+        failures.sort_by_key(|(index, _, _)| *index);
         println!("Failures:\n");
-        for (folder, diff) in &failures {
+        for (_, folder, diff) in &failures {
             println!("=== {} ===\n{}\n", folder, diff);
         }
     }
@@ -209,10 +304,18 @@ fn run_test_with_base(
     let file_id = pzoom_syntax::FileId::new(&input_path);
 
     let arena = bumpalo::Bump::new();
-    let (program, _parse_error) = pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
+    let (program, _parse_error) =
+        pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
 
-    let collector = pzoom_syntax::DeclarationCollector::new(&mut interner, file_path_id, &program.trivia);
-    let declarations = collector.collect(program);
+    let collector = pzoom_syntax::DeclarationCollector::new(
+        &mut interner,
+        file_path_id,
+        &input_contents,
+        &codebase.type_aliases,
+        &program.trivia,
+    );
+    let mut declarations = collector.collect(program);
+    let inline_annotations = std::mem::take(&mut declarations.inline_annotations);
 
     // Track what's defined in this file
     let mut file_classes = Vec::new();
@@ -234,6 +337,10 @@ fn run_test_with_base(
         codebase.constants.insert(constant.name, constant);
     }
 
+    for type_alias in declarations.type_aliases {
+        codebase.type_aliases.insert(type_alias.name, type_alias);
+    }
+
     // Record file info
     let file_info = pzoom_code_info::codebase_info::FileInfo {
         path: file_path_id,
@@ -242,6 +349,8 @@ fn run_test_with_base(
         constants: file_constants,
         content_hash: compute_hash(&input_contents),
         contents: input_contents,
+        is_stub: false,
+        inline_annotations,
     };
     codebase.files.insert(file_path_id, file_info);
 
@@ -314,7 +423,13 @@ fn run_analysis_and_compare(
     output_path: &str,
     update: bool,
 ) -> TestResult {
-    let config = Config::default();
+    let mut config = Config::default();
+    config
+        .forbidden_functions
+        .extend(["var_dump".to_string(), "shell_exec".to_string()]);
+    config
+        .suppressed_issues
+        .extend(load_test_suppressed_issues(input_path));
 
     // Populate
     {
@@ -329,6 +444,10 @@ fn run_analysis_and_compare(
     // Format output in Psalm style: IssueKind - file:line:column - message
     let mut output_lines: Vec<String> = Vec::new();
     for issue in &result.issues {
+        if config.is_issue_suppressed(&format!("{:?}", issue.kind)) {
+            continue;
+        }
+
         let file_path = interner.lookup(issue.file_path);
         // Only include issues from the test file, not stubs
         if file_path.contains(input_path) || file_path.ends_with("input.php") {
@@ -358,7 +477,9 @@ fn run_analysis_and_compare(
         true
     } else if !expected_output.contains('\n') && !expected_output.is_empty() {
         // Single-line expected output - check if any actual line contains it
-        output_lines.iter().any(|line| line.contains(&expected_output))
+        output_lines
+            .iter()
+            .any(|line| line.contains(&expected_output))
     } else {
         false
     };
@@ -382,6 +503,29 @@ fn run_analysis_and_compare(
     } else {
         TestResult::Fail(format_diff(&expected_output, &actual_output))
     }
+}
+
+fn load_test_suppressed_issues(input_path: &str) -> Vec<String> {
+    let Some(test_dir) = Path::new(input_path).parent() else {
+        return Vec::new();
+    };
+
+    let mut suppressed_issues = Vec::new();
+    suppressed_issues.extend(load_suppressed_issues_file(
+        &test_dir.join("error_levels.json"),
+    ));
+    suppressed_issues.extend(load_suppressed_issues_file(&test_dir.join("errors.json")));
+    suppressed_issues.sort();
+    suppressed_issues.dedup();
+    suppressed_issues
+}
+
+fn load_suppressed_issues_file(path: &Path) -> Vec<String> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+
+    serde_json::from_str::<Vec<String>>(&contents).unwrap_or_default()
 }
 
 fn compute_hash(contents: &str) -> String {

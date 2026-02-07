@@ -3,9 +3,10 @@
 use mago_syntax::ast::ast::echo::Echo;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
+use pzoom_str::StrId;
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
@@ -21,7 +22,7 @@ pub fn analyze(
 ) {
     // Analyze all values being echoed
     for value in echo.values.iter() {
-        let value_pos = expr_analyzer::analyze(analyzer, value, analysis_data, context);
+        let value_pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);
         let value_type = analysis_data.get_expr_type(value_pos);
 
         // Check that value is stringable
@@ -45,7 +46,7 @@ pub fn analyze_print(
     context: &mut BlockContext,
 ) {
     // Analyze the value being printed
-    let value_pos = expr_analyzer::analyze(analyzer, expr, analysis_data, context);
+    let value_pos = expression_analyzer::analyze(analyzer, expr, analysis_data, context);
     let value_type = analysis_data.get_expr_type(value_pos);
 
     // Check that value is stringable
@@ -61,7 +62,7 @@ pub fn analyze_print(
 }
 
 /// Check if a type can be converted to a string for output.
-fn check_stringable(
+pub(crate) fn check_stringable(
     analyzer: &StatementsAnalyzer<'_>,
     t: &TUnion,
     pos: Pos,
@@ -69,15 +70,12 @@ fn check_stringable(
     context_name: &str,
 ) {
     for atomic in &t.types {
-        if !is_stringable(atomic) {
-            let type_desc = atomic.get_id();
+        if !is_stringable(analyzer, atomic) {
+            let type_desc = atomic.get_id(Some(analyzer.interner));
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArgument,
-                format!(
-                    "{} cannot convert {} to string",
-                    context_name, type_desc
-                ),
+                format!("{} cannot convert {} to string", context_name, type_desc),
                 analyzer.file_path,
                 pos.0,
                 pos.1,
@@ -89,27 +87,44 @@ fn check_stringable(
 }
 
 /// Check if an atomic type can be implicitly converted to a string.
-fn is_stringable(atomic: &TAtomic) -> bool {
-    matches!(
-        atomic,
+fn is_stringable(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
+    match atomic {
         TAtomic::TString
-            | TAtomic::TLiteralString { .. }
-            | TAtomic::TLiteralClassString { .. }
-            | TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TFloat
-            | TAtomic::TLiteralFloat { .. }
-            | TAtomic::TBool
-            | TAtomic::TTrue
-            | TAtomic::TFalse
-            | TAtomic::TNull
-            | TAtomic::TMixed
-            | TAtomic::TNumeric
-            | TAtomic::TScalar
-            | TAtomic::TArrayKey
-            // Objects with __toString are handled by TNamedObject
-            // For now, allow all objects (we'd need codebase lookup to check __toString)
-            | TAtomic::TObject
-            | TAtomic::TNamedObject { .. }
-    )
+        | TAtomic::TLiteralString { .. }
+        | TAtomic::TNonEmptyString
+        | TAtomic::TTruthyString
+        | TAtomic::TLowercaseString
+        | TAtomic::TNonEmptyLowercaseString
+        | TAtomic::TNumericString
+        | TAtomic::TNonEmptyNumericString
+        | TAtomic::TClassString { .. }
+        | TAtomic::TLiteralClassString { .. }
+        | TAtomic::TInt
+        | TAtomic::TLiteralInt { .. }
+        | TAtomic::TPositiveInt
+        | TAtomic::TNegativeInt
+        | TAtomic::TIntRange { .. }
+        | TAtomic::TFloat
+        | TAtomic::TLiteralFloat { .. }
+        | TAtomic::TBool
+        | TAtomic::TTrue
+        | TAtomic::TFalse
+        | TAtomic::TNull
+        | TAtomic::TNothing
+        | TAtomic::TMixed
+        | TAtomic::TNonEmptyMixed
+        | TAtomic::TNumeric
+        | TAtomic::TScalar
+        | TAtomic::TArrayKey => true,
+        TAtomic::TNamedObject { name, .. } => analyzer
+            .codebase
+            .get_class(*name)
+            .is_some_and(|class_info| class_info.methods.contains_key(&StrId::TO_STRING)),
+        TAtomic::TTemplateParam { as_type, .. } => as_type
+            .types
+            .iter()
+            .all(|nested| is_stringable(analyzer, nested)),
+        TAtomic::TTemplateParamClass { as_type, .. } => is_stringable(analyzer, as_type),
+        _ => false,
+    }
 }

@@ -26,12 +26,20 @@ pub enum IssueKind {
     InvalidReturnStatement,
     InvalidPropertyAssignmentValue,
     InvalidArrayAccess,
+    InvalidFunctionCall,
     InvalidMethodCall,
     InvalidStaticMethodCall,
     InvalidPropertyFetch,
     InvalidStaticPropertyFetch,
+    InvalidClass,
+    InvalidParamDefault,
+    InvalidScope,
+    InvalidGlobal,
     InvalidCast,
     InvalidClone,
+    MixedClone,
+    InvalidCatch,
+    InvalidThrow,
 
     // Possibly invalid (nullable/optional concerns)
     PossiblyInvalidArgument,
@@ -39,40 +47,50 @@ pub enum IssueKind {
     PossiblyInvalidPropertyFetch,
     PossiblyInvalidArrayAccess,
     PossiblyInvalidArrayOffset,
+    PossiblyInvalidClone,
     PossiblyNullArgument,
     PossiblyNullReference,
+    PossiblyFalseReference,
     PossiblyNullPropertyFetch,
     PossiblyNullArrayAccess,
     PossiblyNullFunctionCall,
-    PossiblyUndefinedVariable,
     PossiblyUndefinedArrayOffset,
 
     // Array access issues
     NullArrayAccess,
     InvalidArrayOffset,
+    DuplicateArrayKey,
+    InvalidArrayAssignment,
 
     // Null/Void reference
     NullReference,
-    PossiblyUndefinedGlobalVariable,
 
     // Undefined entities
     UndefinedClass,
+    UndefinedAttributeClass,
+    UndefinedDocblockClass,
     UndefinedInterface,
     UndefinedTrait,
     UndefinedFunction,
     UndefinedMethod,
+    PossiblyUndefinedMethod,
+    UndefinedMagicMethod,
+    UndefinedInterfaceMethod,
     UndefinedProperty,
     UndefinedConstant,
     UndefinedVariable,
     UndefinedGlobalVariable,
     UndefinedThisPropertyFetch,
     UndefinedThisPropertyAssignment,
+    UndefinedMagicPropertyFetch,
+    UndefinedMagicPropertyAssignment,
 
     // Missing items
     MissingReturnType,
     MissingParamType,
     MissingPropertyType,
     MissingConstructor,
+    MissingDependency,
     MissingClosureReturnType,
     MissingClosureParamType,
 
@@ -92,26 +110,36 @@ pub enum IssueKind {
 
     // Redundant code
     RedundantCondition,
+    RedundantConditionGivenDocblockType,
+    ParadoxicalCondition,
+    UnevaluatedCode,
+    RedundantFunctionCall,
     RedundantCast,
+    RedundantPropertyInitializationCheck,
     RedundantPropertyInitialization,
 
     // Type system issues
     MixedAssignment,
     MixedArgument,
     MixedReturnStatement,
+    MixedReturnTypeCoercion,
     MixedPropertyFetch,
     MixedMethodCall,
     MixedArrayAccess,
     MixedArrayOffset,
     MixedArrayAssignment,
+    MixedStringOffsetAssignment,
 
     // Less specific types
     LessSpecificReturnType,
     MoreSpecificReturnType,
     LessSpecificImplementedReturnType,
+    ImplementedReturnTypeMismatch,
+    ImplementedParamTypeMismatch,
 
     // Docblock issues
     InvalidDocblock,
+    PossiblyInvalidDocblockTag,
     InvalidDocblockParamName,
     MismatchingDocblockParamType,
     MismatchingDocblockReturnType,
@@ -119,10 +147,14 @@ pub enum IssueKind {
     // Deprecated code
     DeprecatedClass,
     DeprecatedInterface,
+    DeprecatedTrait,
     DeprecatedMethod,
     DeprecatedProperty,
     DeprecatedFunction,
     DeprecatedConstant,
+
+    // Forbidden code
+    ForbiddenCode,
 
     // Internal code
     InternalClass,
@@ -144,6 +176,7 @@ pub enum IssueKind {
     TypeDoesNotContainType,
     TypeDoesNotContainNull,
     DocblockTypeContradiction,
+    RiskyTruthyFalsyComparison,
 
     // Loop issues
     LoopInvalidation,
@@ -161,9 +194,11 @@ pub enum IssueKind {
     // General
     ParseError,
     InternalError,
+    UnrecognizedExpression,
 
     // Argument coercion
     ArgumentTypeCoercion,
+    MixedArgumentTypeCoercion,
 
     // Named argument issues
     NamedArgumentNotAllowed,
@@ -175,54 +210,101 @@ pub enum IssueKind {
 
     // Invalid operand for operations
     InvalidOperand,
+    NullOperand,
+    FalseOperand,
+    PossiblyNullOperand,
+    PossiblyInvalidOperand,
     InvalidArrayOperand,
 
     // Class issues
     AbstractInstantiation,
+    InterfaceInstantiation,
     UnimplementedAbstractMethod,
     UnimplementedInterfaceMethod,
     DuplicateClass,
     DuplicateMethod,
     DuplicateFunction,
+    DuplicateParam,
+    MissingTemplateParam,
     CircularReference,
-    InvalidExtends,
+    InvalidExtendClass,
     InvalidImplements,
+    InvalidInterfaceImplementation,
+    InvalidAttribute,
+    InvalidTraversableImplementation,
+    InvalidEnumBackingType,
+    InvalidEnumCaseValue,
+    InvalidEnumMethod,
+    NoEnumProperties,
+    DuplicateEnumCase,
+    DuplicateEnumCaseValue,
+    UnhandledMatchCondition,
 
     // Method signature issues
     MethodSignatureMismatch,
+    TraitMethodSignatureMismatch,
+    MethodSignatureMustOmitReturnType,
     ParamNameMismatch,
     ConstructorSignatureMismatch,
+    OverriddenMethodAccess,
     MoreSpecificImplementedParamType,
     LessSpecificImplementedParamType,
 
     // Property issues
+    DuplicateProperty,
     PropertyNotSetInConstructor,
     UninitializedProperty,
     ReadonlyPropertyAssignment,
     InvalidPropertyAssignment,
     UndefinedPropertyAssignment,
     UndefinedPropertyFetch,
+    NoInterfaceProperties,
     NullPropertyAssignment,
     NullPropertyFetch,
     PossiblyNullPropertyAssignment,
     PossiblyInvalidPropertyAssignmentValue,
     PropertyTypeCoercion,
     MixedPropertyTypeCoercion,
+    OverriddenPropertyAccess,
+    NonInvariantPropertyType,
+    NonInvariantDocblockPropertyType,
 
     // Reserved word issues
     ReservedWord,
 
+    // Call style issues
+    DirectConstructorCall,
+    AbstractMethodCall,
+    ParentNotFound,
+
     // Pass by reference issues
     InvalidPassByReference,
+    ReferenceConstraintViolation,
+    ConflictingReferenceConstraint,
+    NonVariableReferenceReturn,
+    ReferenceReusedFromConfusingScope,
+    UnsupportedReferenceUsage,
 
     // Scalar type issues
     InvalidScalarArgument,
     InvalidStringClass,
+    InvalidStaticInvocation,
+    NonStaticSelfCall,
+    StringIncrement,
+    ImplicitToStringCast,
+    InvalidToString,
 
     // Control flow issues
     ContinueOutsideLoop,
     BreakOutsideLoop,
     NullArgument,
+    ImpureFunctionCall,
+    ImpureMethodCall,
+    ImpurePropertyAssignment,
+    MissingImmutableAnnotation,
+    MutableDependency,
+    IfThisIsMismatch,
+    Trace,
 
     // Argument count issues
     TooFewArguments,
@@ -266,21 +348,33 @@ impl Issue {
             | IssueKind::TaintedUnserialize => IssueSeverity::Error,
 
             IssueKind::UndefinedClass
+            | IssueKind::UndefinedAttributeClass
+            | IssueKind::UndefinedDocblockClass
             | IssueKind::UndefinedInterface
             | IssueKind::UndefinedTrait
             | IssueKind::UndefinedFunction
             | IssueKind::UndefinedMethod
+            | IssueKind::PossiblyUndefinedMethod
+            | IssueKind::UndefinedMagicMethod
+            | IssueKind::UndefinedInterfaceMethod
             | IssueKind::UndefinedProperty
+            | IssueKind::UndefinedMagicPropertyFetch
+            | IssueKind::UndefinedMagicPropertyAssignment
             | IssueKind::UndefinedConstant
-            | IssueKind::UndefinedVariable => IssueSeverity::Error,
+            | IssueKind::UndefinedVariable
+            | IssueKind::InvalidClass
+            | IssueKind::ForbiddenCode => IssueSeverity::Error,
 
             IssueKind::InvalidArgument
             | IssueKind::InvalidReturnType
             | IssueKind::InvalidReturnStatement
-            | IssueKind::InvalidPropertyAssignmentValue => IssueSeverity::Error,
+            | IssueKind::InvalidPropertyAssignmentValue
+            | IssueKind::InvalidScope
+            | IssueKind::InvalidGlobal => IssueSeverity::Error,
 
             IssueKind::DeprecatedClass
             | IssueKind::DeprecatedInterface
+            | IssueKind::DeprecatedTrait
             | IssueKind::DeprecatedMethod
             | IssueKind::DeprecatedProperty
             | IssueKind::DeprecatedFunction

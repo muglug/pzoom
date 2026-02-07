@@ -140,8 +140,39 @@ pub fn get_control_actions(
             }
 
             // Continue statement
-            Statement::Continue(_) => {
-                control_actions.insert(ControlAction::Continue);
+            Statement::Continue(continue_stmt) => {
+                // Get the continue depth (default 1)
+                let depth = continue_stmt
+                    .level
+                    .as_ref()
+                    .and_then(|level| {
+                        if let Expression::Literal(lit) = level {
+                            if let mago_syntax::ast::ast::literal::Literal::Integer(int_lit) = lit {
+                                int_lit.value.map(|v| v as usize)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(1);
+
+                if !break_context.is_empty() && break_context.len() >= depth {
+                    let target_idx = break_context.len() - depth;
+                    match break_context.get(target_idx) {
+                        // `continue` targeting a switch behaves as leaving switch
+                        Some(BreakContext::Switch) => {
+                            control_actions.insert(ControlAction::LeaveSwitch);
+                        }
+                        Some(BreakContext::Loop) | None => {
+                            control_actions.insert(ControlAction::Continue);
+                        }
+                    }
+                } else {
+                    control_actions.insert(ControlAction::Continue);
+                }
+
                 return control_actions;
             }
 
@@ -287,8 +318,12 @@ pub fn get_control_actions(
                 // Iterate cases in reverse order (like Psalm does)
                 for case in cases.iter().rev() {
                     let case_stmts = case.statements();
-                    let case_actions =
-                        get_control_actions(case_stmts, analysis_data, &switch_context, return_is_exit);
+                    let case_actions = get_control_actions(
+                        case_stmts,
+                        analysis_data,
+                        &switch_context,
+                        return_is_exit,
+                    );
 
                     // If case breaks/continues/leaves, skip further processing
                     if case_actions.contains(&ControlAction::LeaveSwitch)
@@ -308,7 +343,11 @@ pub fn get_control_actions(
                     }
 
                     if has_ended {
-                        all_case_actions.extend(case_actions.into_iter().filter(|a| *a != ControlAction::None));
+                        all_case_actions.extend(
+                            case_actions
+                                .into_iter()
+                                .filter(|a| *a != ControlAction::None),
+                        );
                     } else {
                         all_case_actions.extend(case_actions);
                     }
@@ -412,7 +451,11 @@ pub fn get_control_actions(
                     return control_actions;
                 }
 
-                control_actions.extend(block_actions.into_iter().filter(|a| *a != ControlAction::None));
+                control_actions.extend(
+                    block_actions
+                        .into_iter()
+                        .filter(|a| *a != ControlAction::None),
+                );
             }
 
             // These don't affect control flow

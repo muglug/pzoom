@@ -5,10 +5,10 @@ use mago_syntax::ast::ast::access::StaticPropertyAccess;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::class_like_info::Visibility;
-use pzoom_code_info::{Issue, IssueKind, TUnion};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
@@ -24,7 +24,7 @@ pub fn analyze(
     context: &mut BlockContext,
 ) {
     // Analyze the class expression to get the class name
-    let _class_pos = expr_analyzer::analyze(analyzer, access.class, analysis_data, context);
+    let _class_pos = expression_analyzer::analyze(analyzer, access.class, analysis_data, context);
 
     // Try to get the class name
     let class_name = get_class_name(analyzer, access.class, context);
@@ -36,7 +36,7 @@ pub fn analyze(
     };
 
     // Analyze the value expression
-    let value_pos = expr_analyzer::analyze(analyzer, value_expr, analysis_data, context);
+    let value_pos = expression_analyzer::analyze(analyzer, value_expr, analysis_data, context);
     let value_type = analysis_data
         .get_expr_type(value_pos)
         .map(|t| (*t).clone())
@@ -108,6 +108,19 @@ pub fn analyze(
                     ));
                 }
 
+                if prop_info.is_deprecated {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::DeprecatedProperty,
+                        format!("Property {}::${} is deprecated", class_name, prop_name_str),
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
+                }
+
                 // Verify type compatibility using proper type comparator
                 // Only check if property has a declared type
                 if let Some(prop_type) = prop_info.get_type() {
@@ -136,8 +149,8 @@ pub fn analyze(
                                         "Property {}::${} expects {}, parent type {} provided",
                                         class_name,
                                         prop_name_str,
-                                        prop_type.get_id(),
-                                        value_type.get_id()
+                                        prop_type.get_id(Some(analyzer.interner)),
+                                        value_type.get_id(Some(analyzer.interner))
                                     ),
                                     analyzer.file_path,
                                     pos.0,
@@ -152,8 +165,8 @@ pub fn analyze(
                                         "Property {}::${} expects {}, parent type {} provided",
                                         class_name,
                                         prop_name_str,
-                                        prop_type.get_id(),
-                                        value_type.get_id()
+                                        prop_type.get_id(Some(analyzer.interner)),
+                                        value_type.get_id(Some(analyzer.interner))
                                     ),
                                     analyzer.file_path,
                                     pos.0,
@@ -164,21 +177,19 @@ pub fn analyze(
                             }
                         } else {
                             // Check if there's a partial match (possibly invalid)
-                            let can_be_contained = union_type_comparator::can_be_contained_by(
-                                analyzer.codebase,
+                            if has_mixed_array_key_property_coercion(
+                                analyzer,
                                 &value_type,
                                 prop_type,
-                            );
-
-                            if can_be_contained {
+                            ) {
                                 analysis_data.add_issue(Issue::new(
-                                    IssueKind::PossiblyInvalidPropertyAssignmentValue,
+                                    IssueKind::MixedPropertyTypeCoercion,
                                     format!(
-                                        "Property {}::${} expects {}, possibly different type {} provided",
+                                        "Property {}::${} expects {}, parent type {} provided",
                                         class_name,
                                         prop_name_str,
-                                        prop_type.get_id(),
-                                        value_type.get_id()
+                                        prop_type.get_id(Some(analyzer.interner)),
+                                        value_type.get_id(Some(analyzer.interner))
                                     ),
                                     analyzer.file_path,
                                     pos.0,
@@ -187,21 +198,45 @@ pub fn analyze(
                                     col,
                                 ));
                             } else {
-                                analysis_data.add_issue(Issue::new(
-                                    IssueKind::InvalidPropertyAssignmentValue,
-                                    format!(
-                                        "Property {}::${} expects {}, got {}",
-                                        class_name,
-                                        prop_name_str,
-                                        prop_type.get_id(),
-                                        value_type.get_id()
-                                    ),
-                                    analyzer.file_path,
-                                    pos.0,
-                                    pos.1,
-                                    line,
-                                    col,
-                                ));
+                                let can_be_contained = union_type_comparator::can_be_contained_by(
+                                    analyzer.codebase,
+                                    &value_type,
+                                    prop_type,
+                                );
+
+                                if can_be_contained {
+                                    analysis_data.add_issue(Issue::new(
+                                        IssueKind::PossiblyInvalidPropertyAssignmentValue,
+                                        format!(
+                                            "Property {}::${} expects {}, possibly different type {} provided",
+                                            class_name,
+                                            prop_name_str,
+                                            prop_type.get_id(Some(analyzer.interner)),
+                                            value_type.get_id(Some(analyzer.interner))
+                                        ),
+                                        analyzer.file_path,
+                                        pos.0,
+                                        pos.1,
+                                        line,
+                                        col,
+                                    ));
+                                } else {
+                                    analysis_data.add_issue(Issue::new(
+                                        IssueKind::InvalidPropertyAssignmentValue,
+                                        format!(
+                                            "Property {}::${} expects {}, got {}",
+                                            class_name,
+                                            prop_name_str,
+                                            prop_type.get_id(Some(analyzer.interner)),
+                                            value_type.get_id(Some(analyzer.interner))
+                                        ),
+                                        analyzer.file_path,
+                                        pos.0,
+                                        pos.1,
+                                        line,
+                                        col,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -242,14 +277,24 @@ pub fn analyze(
 fn get_class_name(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
-    _context: &BlockContext,
+    context: &BlockContext,
 ) -> Option<String> {
+    let resolve_alias = |class_id| {
+        context
+            .class_aliases
+            .get(&class_id)
+            .copied()
+            .filter(|alias_target| analyzer.codebase.get_class(*alias_target).is_some())
+            .unwrap_or(class_id)
+    };
+
     match expr {
         // Handle special keywords: self, static, parent
         Expression::Self_(_) | Expression::Static(_) => {
             // Get the current class from the analyzer
             if let Some(declaring_class) = analyzer.get_declaring_class() {
-                return Some(analyzer.interner.lookup(declaring_class).to_string());
+                let class_id = resolve_alias(declaring_class);
+                return Some(analyzer.interner.lookup(class_id).to_string());
             }
             None
         }
@@ -258,7 +303,8 @@ fn get_class_name(
             if let Some(declaring_class) = analyzer.get_declaring_class() {
                 if let Some(class_info) = analyzer.codebase.get_class(declaring_class) {
                     if let Some(parent) = class_info.parent_class {
-                        return Some(analyzer.interner.lookup(parent).to_string());
+                        let class_id = resolve_alias(parent);
+                        return Some(analyzer.interner.lookup(class_id).to_string());
                     }
                 }
             }
@@ -266,10 +312,97 @@ fn get_class_name(
         }
         Expression::Identifier(id) => {
             let offset = id.span().start.offset;
-            analyzer.get_resolved_name(offset).map(|id| {
-                analyzer.interner.lookup(id).to_string()
-            })
+            let class_id = analyzer
+                .get_resolved_name(offset)
+                .unwrap_or_else(|| analyzer.interner.intern(id.value()));
+            let class_id = resolve_alias(class_id);
+            Some(analyzer.interner.lookup(class_id).to_string())
         }
         _ => None,
     }
+}
+
+fn has_mixed_array_key_property_coercion(
+    analyzer: &StatementsAnalyzer<'_>,
+    value_type: &TUnion,
+    property_type: &TUnion,
+) -> bool {
+    for value_atomic in &value_type.types {
+        let Some((value_key_type, value_value_type)) = get_array_key_value_union(value_atomic)
+        else {
+            continue;
+        };
+
+        if !is_broad_array_key_union(value_key_type) {
+            continue;
+        }
+
+        for property_atomic in &property_type.types {
+            let Some((property_key_type, property_value_type)) =
+                get_array_key_value_union(property_atomic)
+            else {
+                continue;
+            };
+
+            if property_key_type.is_mixed() {
+                continue;
+            }
+
+            let mut value_comparison = TypeComparisonResult::new();
+            if !union_type_comparator::is_contained_by(
+                analyzer.codebase,
+                value_value_type,
+                property_value_type,
+                false,
+                false,
+                &mut value_comparison,
+            ) {
+                continue;
+            }
+
+            let mut key_comparison = TypeComparisonResult::new();
+            if union_type_comparator::is_contained_by(
+                analyzer.codebase,
+                value_key_type,
+                property_key_type,
+                false,
+                false,
+                &mut key_comparison,
+            ) {
+                continue;
+            }
+
+            if union_type_comparator::can_be_contained_by(
+                analyzer.codebase,
+                property_key_type,
+                value_key_type,
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn get_array_key_value_union(atomic: &TAtomic) -> Option<(&TUnion, &TUnion)> {
+    match atomic {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => Some((key_type.as_ref(), value_type.as_ref())),
+        _ => None,
+    }
+}
+
+fn is_broad_array_key_union(key_type: &TUnion) -> bool {
+    key_type.is_mixed()
+        || key_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TArrayKey | TAtomic::TMixed))
 }

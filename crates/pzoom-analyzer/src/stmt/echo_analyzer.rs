@@ -3,7 +3,8 @@
 use mago_syntax::ast::ast::echo::Echo;
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expr::echo_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
 
@@ -16,10 +17,10 @@ pub fn analyze(
 ) -> Result<(), AnalysisError> {
     // Analyze each expression being echoed
     for value in &echo.values {
-        let _pos = expr_analyzer::analyze(analyzer, value, analysis_data, context);
-
-        // TODO: Check that the type can be converted to string
-        // (implements __toString or is scalar)
+        let pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);
+        if let Some(value_type) = analysis_data.get_expr_type(pos) {
+            echo_analyzer::check_stringable(analyzer, &value_type, pos, analysis_data, "echo");
+        }
     }
 
     Ok(())

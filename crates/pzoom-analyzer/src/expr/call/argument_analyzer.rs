@@ -5,7 +5,7 @@ use mago_syntax::ast::ast::argument::Argument;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
@@ -18,7 +18,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Pos {
-    let arg_pos = expr_analyzer::analyze(analyzer, argument.value(), analysis_data, context);
+    let arg_pos = expression_analyzer::analyze(analyzer, argument.value(), analysis_data, context);
 
     // Check if this is a named argument
     if let Argument::Named(named) = argument {
@@ -41,7 +41,7 @@ pub fn analyze(
                         | TAtomic::TKeyedArray { .. }
                         | TAtomic::TIterable { .. }
                         | TAtomic::TMixed
-                )
+                ) || is_traversable_object(analyzer, t)
             });
 
             if !is_iterable {
@@ -60,6 +60,34 @@ pub fn analyze(
     }
 
     arg_pos
+}
+
+fn is_traversable_object(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
+    let TAtomic::TNamedObject { name, .. } = atomic else {
+        return false;
+    };
+
+    if *name == pzoom_str::StrId::TRAVERSABLE
+        || *name == pzoom_str::StrId::ITERATOR
+        || *name == pzoom_str::StrId::ITERATOR_AGGREGATE
+        || *name == pzoom_str::StrId::GENERATOR
+    {
+        return true;
+    }
+
+    analyzer
+        .codebase
+        .get_class(*name)
+        .is_some_and(|class_info| {
+            class_info
+                .all_parent_interfaces
+                .iter()
+                .any(|interface| *interface == pzoom_str::StrId::TRAVERSABLE)
+                || class_info
+                    .interfaces
+                    .iter()
+                    .any(|interface| *interface == pzoom_str::StrId::TRAVERSABLE)
+        })
 }
 
 /// Verify that an argument type matches the expected parameter type.
@@ -88,7 +116,7 @@ pub fn verify_type(
                 "Argument {} of {} expects {}, mixed provided",
                 argument_offset + 1,
                 function_name,
-                param_type.get_id()
+                param_type.get_id(Some(analyzer.interner))
             ),
             analyzer.file_path,
             arg_pos.0,
@@ -119,8 +147,8 @@ pub fn verify_type(
                     "Argument {} of {} expects {}, parent type {} provided",
                     argument_offset + 1,
                     function_name,
-                    param_type.get_id(),
-                    arg_type.get_id()
+                    param_type.get_id(Some(analyzer.interner)),
+                    arg_type.get_id(Some(analyzer.interner))
                 ),
                 analyzer.file_path,
                 arg_pos.0,
@@ -130,11 +158,8 @@ pub fn verify_type(
             ));
         } else {
             // Check if any value could be valid (possibly invalid)
-            let can_be_contained = union_type_comparator::can_be_contained_by(
-                analyzer.codebase,
-                arg_type,
-                param_type,
-            );
+            let can_be_contained =
+                union_type_comparator::can_be_contained_by(analyzer.codebase, arg_type, param_type);
 
             if can_be_contained {
                 analysis_data.add_issue(Issue::new(
@@ -143,8 +168,8 @@ pub fn verify_type(
                         "Argument {} of {} expects {}, possibly different type {} provided",
                         argument_offset + 1,
                         function_name,
-                        param_type.get_id(),
-                        arg_type.get_id()
+                        param_type.get_id(Some(analyzer.interner)),
+                        arg_type.get_id(Some(analyzer.interner))
                     ),
                     analyzer.file_path,
                     arg_pos.0,
@@ -153,14 +178,19 @@ pub fn verify_type(
                     col,
                 ));
             } else {
+                let issue_kind = if is_scalar_union(arg_type) && is_scalar_union(param_type) {
+                    IssueKind::InvalidScalarArgument
+                } else {
+                    IssueKind::InvalidArgument
+                };
                 analysis_data.add_issue(Issue::new(
-                    IssueKind::InvalidArgument,
+                    issue_kind,
                     format!(
                         "Argument {} of {} expects {}, {} provided",
                         argument_offset + 1,
                         function_name,
-                        param_type.get_id(),
-                        arg_type.get_id()
+                        param_type.get_id(Some(analyzer.interner)),
+                        arg_type.get_id(Some(analyzer.interner))
                     ),
                     analyzer.file_path,
                     arg_pos.0,
@@ -171,4 +201,26 @@ pub fn verify_type(
             }
         }
     }
+}
+
+fn is_scalar_union(union: &TUnion) -> bool {
+    !union.types.is_empty() && union.types.iter().all(is_scalar_atomic)
+}
+
+fn is_scalar_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TScalar
+            | TAtomic::TBool
+            | TAtomic::TFalse
+            | TAtomic::TTrue
+            | TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TFloat
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TString
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TClassString { .. }
+            | TAtomic::TLiteralClassString { .. }
+    )
 }

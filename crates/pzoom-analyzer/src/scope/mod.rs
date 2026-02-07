@@ -15,5 +15,8 @@ pub fn var_has_root(var_name: &str, root: StrId, interner: &Interner) -> bool {
     let root_str = interner.lookup(root);
     var_name.starts_with(&*root_str)
         && (var_name.len() == root_str.len()
-            || var_name.chars().nth(root_str.len()).map_or(false, |c| c == '[' || c == '-'))
+            || var_name
+                .chars()
+                .nth(root_str.len())
+                .map_or(false, |c| c == '[' || c == '-'))
 }

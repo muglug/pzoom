@@ -5,18 +5,24 @@
 //! stored in a map keyed by the identifier's start offset.
 
 use mago_span::HasSpan;
+use mago_syntax::ast::Program;
+use mago_syntax::ast::Sequence;
+use mago_syntax::ast::ast::attribute::AttributeList;
+use mago_syntax::ast::ast::call::{Call, StaticMethodCall};
 use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
+use mago_syntax::ast::ast::class_like::property::Property;
 use mago_syntax::ast::ast::class_like::{Class, Enum, Interface, Trait};
+use mago_syntax::ast::ast::construct::Construct;
+use mago_syntax::ast::ast::control_flow::r#match::MatchArm;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::function_like::function::Function;
+use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter;
 use mago_syntax::ast::ast::identifier::Identifier;
 use mago_syntax::ast::ast::instantiation::Instantiation;
 use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
-use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems};
 use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::ast::call::{Call, StaticMethodCall};
 use mago_syntax::ast::ast::type_hint::Hint;
-use mago_syntax::ast::Program;
+use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems, UseType};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::FxHashMap;
 
@@ -29,6 +35,10 @@ pub struct NameContext {
     namespace: Option<String>,
     /// Class/type aliases: alias -> fully qualified name
     type_aliases: FxHashMap<String, String>,
+    /// Function aliases imported via `use function`.
+    function_aliases: FxHashMap<String, String>,
+    /// Constant aliases imported via `use const`.
+    constant_aliases: FxHashMap<String, String>,
 }
 
 impl NameContext {
@@ -36,6 +46,8 @@ impl NameContext {
         Self {
             namespace: None,
             type_aliases: FxHashMap::default(),
+            function_aliases: FxHashMap::default(),
+            constant_aliases: FxHashMap::default(),
         }
     }
 
@@ -44,17 +56,34 @@ impl NameContext {
         self.namespace = name.map(|n| n.to_string());
         // Reset aliases when entering a new namespace
         self.type_aliases.clear();
+        self.function_aliases.clear();
+        self.constant_aliases.clear();
     }
 
-    /// Add a use alias.
-    pub fn add_alias(&mut self, name: &str, alias: &str) {
+    /// Add a type/class alias imported via `use`.
+    pub fn add_type_alias(&mut self, name: &str, alias: &str) {
         // Strip leading backslash if present
         let name = name.strip_prefix('\\').unwrap_or(name);
-        self.type_aliases.insert(alias.to_string(), name.to_string());
+        self.type_aliases
+            .insert(alias.to_ascii_lowercase(), name.to_string());
     }
 
-    /// Resolve a name to its fully qualified form.
-    pub fn resolve_name(&self, name: &str, interner: &Interner) -> StrId {
+    /// Add a function alias imported via `use function`.
+    pub fn add_function_alias(&mut self, name: &str, alias: &str) {
+        let name = name.strip_prefix('\\').unwrap_or(name);
+        self.function_aliases
+            .insert(alias.to_ascii_lowercase(), name.to_string());
+    }
+
+    /// Add a constant alias imported via `use const`.
+    pub fn add_constant_alias(&mut self, name: &str, alias: &str) {
+        let name = name.strip_prefix('\\').unwrap_or(name);
+        self.constant_aliases
+            .insert(alias.to_string(), name.to_string());
+    }
+
+    /// Resolve a type/class name to its fully qualified form.
+    pub fn resolve_type_name(&self, name: &str, interner: &Interner) -> StrId {
         // Fully qualified names (starting with \) are already resolved
         if let Some(stripped) = name.strip_prefix('\\') {
             return interner.intern(stripped);
@@ -69,8 +98,9 @@ impl NameContext {
         // Check if first part is an alias
         let parts: Vec<&str> = name.split('\\').collect();
         let first_part = parts[0];
+        let first_part_lc = first_part.to_ascii_lowercase();
 
-        if let Some(resolved_alias) = self.type_aliases.get(first_part) {
+        if let Some(resolved_alias) = self.type_aliases.get(&first_part_lc) {
             if parts.len() > 1 {
                 // Qualified name with alias prefix: A\Foo -> resolved\Foo
                 let rest = parts[1..].join("\\");
@@ -82,6 +112,74 @@ impl NameContext {
         }
 
         // No alias found - prepend current namespace if any
+        match &self.namespace {
+            Some(ns) => interner.intern(&format!("{}\\{}", ns, name)),
+            None => interner.intern(name),
+        }
+    }
+
+    /// Resolve a function name to its fully qualified form.
+    pub fn resolve_function_name(&self, name: &str, interner: &Interner) -> StrId {
+        if let Some(stripped) = name.strip_prefix('\\') {
+            return interner.intern(stripped);
+        }
+
+        let parts: Vec<&str> = name.split('\\').collect();
+        let first_part = parts[0];
+        let first_part_lc = first_part.to_ascii_lowercase();
+
+        if let Some(resolved_alias) = self.function_aliases.get(&first_part_lc) {
+            if parts.len() > 1 {
+                let rest = parts[1..].join("\\");
+                return interner.intern(&format!("{}\\{}", resolved_alias, rest));
+            } else {
+                return interner.intern(resolved_alias);
+            }
+        }
+
+        if let Some(resolved_alias) = self.type_aliases.get(&first_part_lc) {
+            if parts.len() > 1 {
+                let rest = parts[1..].join("\\");
+                return interner.intern(&format!("{}\\{}", resolved_alias, rest));
+            } else {
+                return interner.intern(resolved_alias);
+            }
+        }
+
+        match &self.namespace {
+            Some(ns) => interner.intern(&format!("{}\\{}", ns, name)),
+            None => interner.intern(name),
+        }
+    }
+
+    /// Resolve a constant name to its fully qualified form.
+    pub fn resolve_constant_name(&self, name: &str, interner: &Interner) -> StrId {
+        if let Some(stripped) = name.strip_prefix('\\') {
+            return interner.intern(stripped);
+        }
+
+        let parts: Vec<&str> = name.split('\\').collect();
+        let first_part = parts[0];
+        let first_part_lc = first_part.to_ascii_lowercase();
+
+        if let Some(resolved_alias) = self.constant_aliases.get(first_part) {
+            if parts.len() > 1 {
+                let rest = parts[1..].join("\\");
+                return interner.intern(&format!("{}\\{}", resolved_alias, rest));
+            } else {
+                return interner.intern(resolved_alias);
+            }
+        }
+
+        if let Some(resolved_alias) = self.type_aliases.get(&first_part_lc) {
+            if parts.len() > 1 {
+                let rest = parts[1..].join("\\");
+                return interner.intern(&format!("{}\\{}", resolved_alias, rest));
+            } else {
+                return interner.intern(resolved_alias);
+            }
+        }
+
         match &self.namespace {
             Some(ns) => interner.intern(&format!("{}\\{}", ns, name)),
             None => interner.intern(name),
@@ -100,6 +198,13 @@ pub struct NameResolver<'a> {
     interner: &'a Interner,
     context: NameContext,
     resolved_names: ResolvedNames,
+}
+
+#[derive(Clone, Copy)]
+enum UseAliasKind {
+    Type,
+    Function,
+    Constant,
 }
 
 impl<'a> NameResolver<'a> {
@@ -265,55 +370,59 @@ impl<'a> NameResolver<'a> {
         match &use_stmt.items {
             UseItems::Sequence(seq) => {
                 for item in &seq.items {
-                    self.add_use_alias(item, None);
+                    self.add_use_alias(item, None, UseAliasKind::Type);
                 }
             }
             UseItems::TypedSequence(seq) => {
-                // For `use function` or `use const` - we only handle class aliases for now
-                if seq.r#type.is_function() || seq.r#type.is_const() {
-                    return;
-                }
+                let kind = use_type_to_alias_kind(&seq.r#type);
                 for item in &seq.items {
-                    self.add_use_alias(item, None);
+                    self.add_use_alias(item, None, kind);
                 }
             }
             UseItems::TypedList(list) => {
-                if list.r#type.is_function() || list.r#type.is_const() {
-                    return;
-                }
-                let prefix = list.namespace.value();
+                let kind = use_type_to_alias_kind(&list.r#type);
+                let prefix = normalize_use_name(list.namespace.value());
                 for item in &list.items {
-                    self.add_use_alias(item, Some(prefix));
+                    self.add_use_alias(item, Some(prefix.as_str()), kind);
                 }
             }
             UseItems::MixedList(list) => {
-                let prefix = list.namespace.value();
+                let prefix = normalize_use_name(list.namespace.value());
                 for maybe_typed in &list.items {
-                    if maybe_typed.r#type.as_ref().map_or(true, |t| !t.is_function() && !t.is_const()) {
-                        self.add_use_alias(&maybe_typed.item, Some(prefix));
-                    }
+                    let kind = maybe_typed
+                        .r#type
+                        .as_ref()
+                        .map(use_type_to_alias_kind)
+                        .unwrap_or(UseAliasKind::Type);
+                    self.add_use_alias(&maybe_typed.item, Some(prefix.as_str()), kind);
                 }
             }
         }
     }
 
-    fn add_use_alias(&mut self, item: &UseItem<'_>, prefix: Option<&str>) {
-        let name = item.name.value();
+    fn add_use_alias(&mut self, item: &UseItem<'_>, prefix: Option<&str>, kind: UseAliasKind) {
+        let name = normalize_use_name(item.name.value());
         let full_name = match prefix {
             Some(p) => format!("{}\\{}", p, name),
-            None => name.to_string(),
+            None => name.clone(),
         };
 
         // Alias is either explicit or the last part of the name
         let alias = match &item.alias {
             Some(alias) => alias.identifier.value.to_string(),
-            None => name.split('\\').last().unwrap_or(name).to_string(),
+            None => name.split('\\').last().unwrap_or(name.as_str()).to_string(),
         };
 
-        self.context.add_alias(&full_name, &alias);
+        match kind {
+            UseAliasKind::Type => self.context.add_type_alias(&full_name, &alias),
+            UseAliasKind::Function => self.context.add_function_alias(&full_name, &alias),
+            UseAliasKind::Constant => self.context.add_constant_alias(&full_name, &alias),
+        }
     }
 
     fn visit_class(&mut self, class: &Class<'_>) {
+        self.visit_attribute_lists(&class.attribute_lists);
+
         // Resolve extends
         if let Some(extends) = &class.extends {
             for parent in &extends.types {
@@ -333,6 +442,8 @@ impl<'a> NameResolver<'a> {
     }
 
     fn visit_interface(&mut self, iface: &Interface<'_>) {
+        self.visit_attribute_lists(&iface.attribute_lists);
+
         // Resolve extends
         if let Some(extends) = &iface.extends {
             for parent in &extends.types {
@@ -344,10 +455,13 @@ impl<'a> NameResolver<'a> {
     }
 
     fn visit_trait(&mut self, tr: &Trait<'_>) {
+        self.visit_attribute_lists(&tr.attribute_lists);
         self.visit_class_members(&tr.members);
     }
 
     fn visit_enum(&mut self, en: &Enum<'_>) {
+        self.visit_attribute_lists(&en.attribute_lists);
+
         if let Some(implements) = &en.implements {
             for iface in &implements.types {
                 self.resolve_identifier(iface);
@@ -356,17 +470,39 @@ impl<'a> NameResolver<'a> {
         self.visit_class_members(&en.members);
     }
 
-    fn visit_class_members(&mut self, members: &mago_syntax::ast::Sequence<'_, ClassLikeMember<'_>>) {
+    fn visit_class_members(
+        &mut self,
+        members: &mago_syntax::ast::Sequence<'_, ClassLikeMember<'_>>,
+    ) {
         use mago_syntax::ast::ast::class_like::method::MethodBody;
 
         for member in members {
             match member {
                 ClassLikeMember::Method(method) => {
+                    self.visit_attribute_lists(&method.attribute_lists);
+                    for param in method.parameter_list.parameters.iter() {
+                        self.visit_function_like_parameter(param);
+                    }
+
                     // Visit method body if concrete (not abstract)
                     if let MethodBody::Concrete(block) = &method.body {
                         for stmt in &block.statements {
                             self.visit_statement(stmt);
                         }
+                    }
+                }
+                ClassLikeMember::Property(property) => match property {
+                    Property::Plain(plain) => {
+                        self.visit_attribute_lists(&plain.attribute_lists);
+                    }
+                    Property::Hooked(hooked) => {
+                        self.visit_attribute_lists(&hooked.attribute_lists);
+                    }
+                },
+                ClassLikeMember::Constant(class_const) => {
+                    self.visit_attribute_lists(&class_const.attribute_lists);
+                    for item in &class_const.items {
+                        self.visit_expression(&item.value);
                     }
                 }
                 ClassLikeMember::TraitUse(trait_use) => {
@@ -380,8 +516,38 @@ impl<'a> NameResolver<'a> {
     }
 
     fn visit_function(&mut self, func: &Function<'_>) {
+        self.visit_attribute_lists(&func.attribute_lists);
+        for param in func.parameter_list.parameters.iter() {
+            self.visit_function_like_parameter(param);
+        }
+
         for stmt in &func.body.statements {
             self.visit_statement(stmt);
+        }
+    }
+
+    fn visit_function_like_parameter(&mut self, param: &FunctionLikeParameter<'_>) {
+        self.visit_attribute_lists(&param.attribute_lists);
+
+        if let Some(hint) = &param.hint {
+            self.visit_hint(hint);
+        }
+
+        if let Some(default_value) = &param.default_value {
+            self.visit_expression(&default_value.value);
+        }
+    }
+
+    fn visit_attribute_lists(&mut self, attribute_lists: &Sequence<'_, AttributeList<'_>>) {
+        for attribute_list in attribute_lists {
+            for attribute in &attribute_list.attributes {
+                self.resolve_identifier(&attribute.name);
+                if let Some(argument_list) = &attribute.argument_list {
+                    for arg in &argument_list.arguments {
+                        self.visit_expression(arg.value());
+                    }
+                }
+            }
         }
     }
 
@@ -389,6 +555,12 @@ impl<'a> NameResolver<'a> {
         use mago_syntax::ast::ast::access::Access;
 
         match expr {
+            Expression::Identifier(id) => {
+                self.resolve_identifier(id);
+            }
+            Expression::ConstantAccess(constant_access) => {
+                self.resolve_constant_identifier(&constant_access.name);
+            }
             Expression::Instantiation(inst) => {
                 self.visit_instantiation(inst);
             }
@@ -434,26 +606,24 @@ impl<'a> NameResolver<'a> {
                 self.visit_expression(access.array);
                 self.visit_expression(access.index);
             }
-            Expression::Access(access) => {
-                match access {
-                    Access::Property(prop) => {
-                        self.visit_expression(prop.object);
-                    }
-                    Access::NullSafeProperty(prop) => {
-                        self.visit_expression(prop.object);
-                    }
-                    Access::StaticProperty(prop) => {
-                        if let Expression::Identifier(id) = prop.class {
-                            self.resolve_identifier(id);
-                        }
-                    }
-                    Access::ClassConstant(cc) => {
-                        if let Expression::Identifier(id) = cc.class {
-                            self.resolve_identifier(id);
-                        }
+            Expression::Access(access) => match access {
+                Access::Property(prop) => {
+                    self.visit_expression(prop.object);
+                }
+                Access::NullSafeProperty(prop) => {
+                    self.visit_expression(prop.object);
+                }
+                Access::StaticProperty(prop) => {
+                    if let Expression::Identifier(id) = prop.class {
+                        self.resolve_identifier(id);
                     }
                 }
-            }
+                Access::ClassConstant(cc) => {
+                    if let Expression::Identifier(id) = cc.class {
+                        self.resolve_identifier(id);
+                    }
+                }
+            },
             Expression::Conditional(cond) => {
                 self.visit_expression(cond.condition);
                 if let Some(then_expr) = &cond.then {
@@ -471,7 +641,22 @@ impl<'a> NameResolver<'a> {
             }
             Expression::Match(match_expr) => {
                 self.visit_expression(match_expr.expression);
-                // Visit match arms - structure varies, just visit what we can
+                for arm in match_expr.arms.iter() {
+                    match arm {
+                        MatchArm::Expression(expression_arm) => {
+                            for condition in expression_arm.conditions.iter() {
+                                self.visit_expression(condition);
+                            }
+                            self.visit_expression(expression_arm.expression);
+                        }
+                        MatchArm::Default(default_arm) => {
+                            self.visit_expression(default_arm.expression);
+                        }
+                    }
+                }
+            }
+            Expression::Construct(construct) => {
+                self.visit_construct(construct);
             }
             Expression::Throw(throw) => {
                 self.visit_expression(throw.exception);
@@ -483,6 +668,51 @@ impl<'a> NameResolver<'a> {
                 // Yield structure varies - skip for now
             }
             _ => {}
+        }
+    }
+
+    fn visit_construct(&mut self, construct: &Construct<'_>) {
+        match construct {
+            Construct::Isset(isset) => {
+                for value in isset.values.iter() {
+                    self.visit_expression(value);
+                }
+            }
+            Construct::Empty(empty) => {
+                self.visit_expression(empty.value);
+            }
+            Construct::Eval(eval) => {
+                self.visit_expression(eval.value);
+            }
+            Construct::Include(include) => {
+                self.visit_expression(include.value);
+            }
+            Construct::IncludeOnce(include_once) => {
+                self.visit_expression(include_once.value);
+            }
+            Construct::Require(require) => {
+                self.visit_expression(require.value);
+            }
+            Construct::RequireOnce(require_once) => {
+                self.visit_expression(require_once.value);
+            }
+            Construct::Print(print_construct) => {
+                self.visit_expression(print_construct.value);
+            }
+            Construct::Exit(exit_construct) => {
+                if let Some(args) = &exit_construct.arguments {
+                    for arg in &args.arguments {
+                        self.visit_expression(arg.value());
+                    }
+                }
+            }
+            Construct::Die(die_construct) => {
+                if let Some(args) = &die_construct.arguments {
+                    for arg in &args.arguments {
+                        self.visit_expression(arg.value());
+                    }
+                }
+            }
         }
     }
 
@@ -503,7 +733,14 @@ impl<'a> NameResolver<'a> {
     fn visit_call(&mut self, call: &Call<'_>) {
         match call {
             Call::Function(func_call) => {
-                // Could resolve function name here if needed
+                match func_call.function.unparenthesized() {
+                    Expression::Identifier(id) => self.resolve_function_identifier(id),
+                    Expression::ConstantAccess(constant_access) => {
+                        self.resolve_constant_identifier(&constant_access.name);
+                    }
+                    other => self.visit_expression(other),
+                }
+
                 for arg in &func_call.argument_list.arguments {
                     self.visit_expression(arg.value());
                 }
@@ -541,9 +778,37 @@ impl<'a> NameResolver<'a> {
     fn resolve_identifier(&mut self, id: &Identifier<'_>) {
         let offset = id.span().start.offset;
         let name = id.value();
-        let resolved = self.context.resolve_name(name, self.interner);
+        let resolved = self.context.resolve_type_name(name, self.interner);
         self.resolved_names.insert(offset, resolved);
     }
+
+    fn resolve_function_identifier(&mut self, id: &Identifier<'_>) {
+        let offset = id.span().start.offset;
+        let name = id.value();
+        let resolved = self.context.resolve_function_name(name, self.interner);
+        self.resolved_names.insert(offset, resolved);
+    }
+
+    fn resolve_constant_identifier(&mut self, id: &Identifier<'_>) {
+        let offset = id.span().start.offset;
+        let name = id.value();
+        let resolved = self.context.resolve_constant_name(name, self.interner);
+        self.resolved_names.insert(offset, resolved);
+    }
+}
+
+fn use_type_to_alias_kind(use_type: &UseType<'_>) -> UseAliasKind {
+    if use_type.is_function() {
+        UseAliasKind::Function
+    } else if use_type.is_const() {
+        UseAliasKind::Constant
+    } else {
+        UseAliasKind::Type
+    }
+}
+
+fn normalize_use_name(name: &str) -> String {
+    name.strip_prefix('\\').unwrap_or(name).to_string()
 }
 
 /// Resolve all names in a program.

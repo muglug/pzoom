@@ -3,7 +3,7 @@
 use mago_syntax::ast::ast::statement::ExpressionStatement;
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
 
@@ -15,7 +15,15 @@ pub fn analyze(
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     // Analyze the expression - the result type is discarded
-    let _pos = expr_analyzer::analyze(analyzer, expr_stmt.expression, analysis_data, context);
+    let pos = expression_analyzer::analyze(analyzer, expr_stmt.expression, analysis_data, context);
+
+    // A statement-level expression of type `never` ends control flow.
+    if analysis_data
+        .get_expr_type(pos)
+        .is_some_and(|t| t.is_nothing())
+    {
+        context.has_returned = true;
+    }
 
     Ok(())
 }

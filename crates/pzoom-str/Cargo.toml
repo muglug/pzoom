@@ -4,6 +4,7 @@ description = "String interning for pzoom static analyzer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [dependencies]
 rustc-hash.workspace = true

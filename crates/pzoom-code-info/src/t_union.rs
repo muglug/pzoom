@@ -4,7 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::TAtomic;
+use crate::{TAtomic, data_flow::node::DataFlowNode};
+use pzoom_str::Interner;
 
 /// A union of atomic types.
 ///
@@ -17,6 +18,15 @@ pub struct TUnion {
 
     /// Whether this type came from a docblock (vs inferred or from signature).
     pub from_docblock: bool,
+
+    /// Whether this type originated from an arithmetic calculation where PHP may
+    /// promote integer results to float due to overflow semantics.
+    #[serde(default)]
+    pub from_calculation: bool,
+
+    /// Whether this union represents a keyed-array entry that may be undefined.
+    #[serde(default)]
+    pub possibly_undefined: bool,
 
     /// Whether this union can be null (optimization for quick null checks).
     pub is_nullable: bool,
@@ -35,13 +45,6 @@ pub struct TUnion {
     pub ignore_falsable_issues: bool,
 }
 
-/// A node in the data flow graph for taint analysis.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DataFlowNode {
-    pub id: String,
-    pub label: String,
-}
-
 impl TUnion {
     /// Create a new union from a single atomic type.
     pub fn new(atomic: TAtomic) -> Self {
@@ -50,6 +53,8 @@ impl TUnion {
         Self {
             types: vec![atomic],
             from_docblock: false,
+            from_calculation: false,
+            possibly_undefined: false,
             is_nullable,
             is_falsable,
             is_resolved: true,
@@ -66,6 +71,8 @@ impl TUnion {
         Self {
             types,
             from_docblock: false,
+            from_calculation: false,
+            possibly_undefined: false,
             is_nullable,
             is_falsable,
             is_resolved: true,
@@ -144,7 +151,12 @@ impl TUnion {
     /// Check if this union has any object types.
     pub fn has_object(&self) -> bool {
         self.types.iter().any(|t| {
-            matches!(t, TAtomic::TNamedObject { .. } | TAtomic::TObject)
+            matches!(
+                t,
+                TAtomic::TNamedObject { .. }
+                    | TAtomic::TObject
+                    | TAtomic::TObjectIntersection { .. }
+            )
         })
     }
 
@@ -203,6 +215,12 @@ impl TUnion {
         Self::new(TAtomic::TInt)
     }
 
+    pub fn int_from_calculation() -> Self {
+        let mut int_type = Self::int();
+        int_type.from_calculation = true;
+        int_type
+    }
+
     pub fn float() -> Self {
         Self::new(TAtomic::TFloat)
     }
@@ -235,16 +253,21 @@ impl TUnion {
         Self::new(TAtomic::TArrayKey)
     }
 
-    /// Returns a human-readable type identifier for this union.
-    pub fn get_id(&self) -> String {
+    /// Returns a human-readable type identifier, resolving class names through an
+    /// interner when available.
+    pub fn get_id(&self, interner: Option<&Interner>) -> String {
         if self.types.is_empty() {
             return "empty".to_string();
         }
-        self.types
-            .iter()
-            .map(|t| t.get_id())
-            .collect::<Vec<_>>()
-            .join("|")
+        let mut type_ids: Vec<String> = Vec::with_capacity(self.types.len());
+        for atomic in &self.types {
+            let atomic_id = atomic.get_id(interner);
+            if !type_ids.contains(&atomic_id) {
+                type_ids.push(atomic_id);
+            }
+        }
+
+        type_ids.join("|")
     }
 }
 

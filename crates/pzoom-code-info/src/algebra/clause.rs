@@ -239,12 +239,18 @@ impl Clause {
                         continue;
                     }
                     Assertion::IsType(value) | Assertion::IsEqual(value) => {
-                        clause_string_parts
-                            .push(format!("{} is {}", var_id_str, value.get_id()));
+                        clause_string_parts.push(format!(
+                            "{} is {}",
+                            var_id_str,
+                            value.get_id(None)
+                        ));
                     }
                     Assertion::IsNotType(value) | Assertion::IsNotEqual(value) => {
-                        clause_string_parts
-                            .push(format!("{} is not {}", var_id_str, value.get_id()));
+                        clause_string_parts.push(format!(
+                            "{} is not {}",
+                            var_id_str,
+                            value.get_id(None)
+                        ));
                     }
                     _ => {
                         clause_string_parts.push(value.to_string());

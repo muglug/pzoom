@@ -44,10 +44,12 @@ pub fn parse_type_string(type_str: &str, interner: &Interner) -> TUnion {
     if tokens.len() == 1 && !tokens[0].value.is_empty() {
         let token = &tokens[0];
         let fixed = type_tokenizer::fix_scalar_terms(&token.value);
-        return match atomic_from_string(&fixed, None, interner) {
+        let mut union = match atomic_from_string(&fixed, None, interner) {
             Some(atomic) => TUnion::new(atomic),
             None => TUnion::mixed(),
         };
+        union.from_docblock = !union.is_mixed();
+        return union;
     }
 
     // Build parse tree
@@ -58,10 +60,12 @@ pub fn parse_type_string(type_str: &str, interner: &Interner) -> TUnion {
     };
 
     // Convert parse tree to TUnion
-    match get_type_from_tree(&parse_tree, interner) {
+    let mut union = match get_type_from_tree(&parse_tree, interner) {
         TypeOrUnion::Union(u) => u,
         TypeOrUnion::Atomic(a) => TUnion::new(a),
-    }
+    };
+    union.from_docblock = !union.is_mixed();
+    union
 }
 
 /// Result of parsing - either an atomic or union type.
@@ -162,17 +166,21 @@ fn get_type_from_tree(tree: &ParseTree, interner: &Interner) -> TypeOrUnion {
 
         ParseTree::Callable(c) => {
             let (params, return_type) = parse_callable_children(&c.children, interner);
-            let is_closure = c.value.to_lowercase().contains("closure");
+            let lowered = c.value.to_lowercase();
+            let is_closure = lowered.contains("closure");
+            let is_pure = lowered.contains("pure-");
 
             if is_closure {
                 TypeOrUnion::Atomic(TAtomic::TClosure {
                     params: Some(params),
                     return_type,
+                    is_pure: Some(is_pure),
                 })
             } else {
                 TypeOrUnion::Atomic(TAtomic::TCallable {
                     params: Some(params),
                     return_type,
+                    is_pure: Some(is_pure),
                 })
             }
         }
@@ -187,16 +195,22 @@ fn get_type_from_tree(tree: &ParseTree, interner: &Interner) -> TypeOrUnion {
                 };
 
                 match callable_result {
-                    TypeOrUnion::Atomic(TAtomic::TCallable { params, .. }) => {
+                    TypeOrUnion::Atomic(TAtomic::TCallable {
+                        params, is_pure, ..
+                    }) => {
                         TypeOrUnion::Atomic(TAtomic::TCallable {
                             params,
                             return_type: Some(Box::new(return_type)),
+                            is_pure,
                         })
                     }
-                    TypeOrUnion::Atomic(TAtomic::TClosure { params, .. }) => {
+                    TypeOrUnion::Atomic(TAtomic::TClosure {
+                        params, is_pure, ..
+                    }) => {
                         TypeOrUnion::Atomic(TAtomic::TClosure {
                             params,
                             return_type: Some(Box::new(return_type)),
+                            is_pure,
                         })
                     }
                     other => other,
@@ -275,7 +289,7 @@ fn parse_keyed_array_children(
     for child in children {
         match child {
             ParseTree::KeyedArrayProperty(p) => {
-                let value_type = if let Some(c) = p.children.first() {
+                let mut value_type = if let Some(c) = p.children.first() {
                     match get_type_from_tree(c, interner) {
                         TypeOrUnion::Union(u) => u,
                         TypeOrUnion::Atomic(a) => TUnion::new(a),
@@ -294,13 +308,19 @@ fn parse_keyed_array_children(
                 } else {
                     is_list = false;
                     // Handle quoted keys
-                    let key = if (p.value.starts_with('\'') && p.value.ends_with('\''))
+                    let mut key = if (p.value.starts_with('\'') && p.value.ends_with('\''))
                         || (p.value.starts_with('"') && p.value.ends_with('"'))
                     {
                         p.value[1..p.value.len() - 1].to_string()
                     } else {
                         p.value.clone()
                     };
+
+                    if key.ends_with('?') {
+                        key.pop();
+                        value_type.possibly_undefined = true;
+                    }
+
                     properties.insert(ArrayKey::String(key), value_type);
                 }
             }
@@ -430,9 +450,9 @@ fn atomic_from_string(
                 });
             }
             // Other class constants - would need resolution
-            // For now, return as named object
+            // Keep the full `Class::CONST` token so wildcard expansion can resolve it later.
             return Some(TAtomic::TNamedObject {
-                name: interner.intern(parts[0]),
+                name: interner.intern(name),
                 type_params: None,
             });
         }
@@ -495,7 +515,9 @@ fn atomic_from_string(
         "lowercase-string" => TAtomic::TLowercaseString,
         "non-empty-lowercase-string" => TAtomic::TNonEmptyLowercaseString,
         "truthy-string" | "non-falsy-string" => TAtomic::TTruthyString,
-        "literal-string" | "non-empty-literal-string" => TAtomic::TString,
+        "literal-string" | "non-empty-literal-string" => TAtomic::TLiteralString {
+            value: pzoom_code_info::t_atomic::NON_SPECIFIC_LITERAL_STRING_VALUE.to_string(),
+        },
         "callable-string" => TAtomic::TString, // Simplified
 
         "class-string" => {
@@ -623,10 +645,20 @@ fn atomic_from_string(
         "callable" | "pure-callable" => TAtomic::TCallable {
             params: None,
             return_type: None,
+            is_pure: if lower == "pure-callable" {
+                Some(true)
+            } else {
+                None
+            },
         },
         "closure" | "\\closure" | "pure-closure" => TAtomic::TClosure {
             params: None,
             return_type: None,
+            is_pure: if lower == "pure-closure" {
+                Some(true)
+            } else {
+                None
+            },
         },
         "callable-object" | "stringable-object" => TAtomic::TObject,
 

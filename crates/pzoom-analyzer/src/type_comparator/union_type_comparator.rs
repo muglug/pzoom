@@ -44,6 +44,97 @@ pub fn is_contained_by(
 
     // Check each input atomic type
     for input_type_part in &input_type.types {
+        // Template bounds should be compared against the full container union.
+        // Comparing them atomically can produce false mismatches when the bound
+        // itself is a union (e.g. T as string|null).
+        if let TAtomic::TTemplateParam { as_type, .. } = input_type_part {
+            let mut template_comparison_result = TypeComparisonResult::new();
+            if is_contained_by(
+                codebase,
+                as_type,
+                container_type,
+                ignore_null,
+                ignore_false,
+                &mut template_comparison_result,
+            ) {
+                continue;
+            }
+
+            if template_comparison_result.type_coerced.unwrap_or(false) {
+                union_comparison_result.type_coerced = Some(true);
+            }
+            if template_comparison_result
+                .type_coerced_from_nested_mixed
+                .unwrap_or(false)
+            {
+                union_comparison_result.type_coerced_from_nested_mixed = Some(true);
+            }
+
+            return false;
+        }
+
+        if let TAtomic::TClassString {
+            as_type: Some(input_as_type),
+        } = input_type_part
+            && let TAtomic::TTemplateParam {
+                as_type: template_bound,
+                ..
+            } = input_as_type.as_ref()
+        {
+            let expanded_class_strings =
+                expand_class_string_union_from_template_bound(template_bound);
+            let mut template_comparison_result = TypeComparisonResult::new();
+            if is_contained_by(
+                codebase,
+                &expanded_class_strings,
+                container_type,
+                ignore_null,
+                ignore_false,
+                &mut template_comparison_result,
+            ) {
+                continue;
+            }
+
+            if template_comparison_result.type_coerced.unwrap_or(false) {
+                union_comparison_result.type_coerced = Some(true);
+            }
+            if template_comparison_result
+                .type_coerced_from_nested_mixed
+                .unwrap_or(false)
+            {
+                union_comparison_result.type_coerced_from_nested_mixed = Some(true);
+            }
+
+            return false;
+        }
+
+        if let TAtomic::TTemplateParamClass { as_type, .. } = input_type_part {
+            let class_string_bound = expand_template_param_class_union(as_type.as_ref());
+            let mut template_comparison_result = TypeComparisonResult::new();
+            if is_contained_by(
+                codebase,
+                &class_string_bound,
+                container_type,
+                ignore_null,
+                ignore_false,
+                &mut template_comparison_result,
+            ) {
+                continue;
+            }
+
+            if template_comparison_result.type_coerced.unwrap_or(false) {
+                union_comparison_result.type_coerced = Some(true);
+            }
+            if template_comparison_result
+                .type_coerced_from_nested_mixed
+                .unwrap_or(false)
+            {
+                union_comparison_result.type_coerced_from_nested_mixed = Some(true);
+            }
+
+            return false;
+        }
+
         // Skip null if requested
         if ignore_null && matches!(input_type_part, TAtomic::TNull) {
             continue;
@@ -150,6 +241,53 @@ pub fn is_contained_by(
     }
 
     true
+}
+
+fn expand_template_param_class_union(as_type: &TAtomic) -> TUnion {
+    if let TAtomic::TTemplateParam {
+        as_type: template_bound,
+        ..
+    } = as_type
+    {
+        let mut expanded = Vec::with_capacity(template_bound.types.len());
+        for bound_atomic in &template_bound.types {
+            let class_string_atomic = TAtomic::TClassString {
+                as_type: Some(Box::new(bound_atomic.clone())),
+            };
+
+            if !expanded.contains(&class_string_atomic) {
+                expanded.push(class_string_atomic);
+            }
+        }
+
+        if !expanded.is_empty() {
+            return TUnion::from_types(expanded);
+        }
+    }
+
+    TUnion::new(TAtomic::TClassString {
+        as_type: Some(Box::new(as_type.clone())),
+    })
+}
+
+fn expand_class_string_union_from_template_bound(template_bound: &TUnion) -> TUnion {
+    let mut expanded = Vec::with_capacity(template_bound.types.len());
+
+    for bound_atomic in &template_bound.types {
+        let class_string_atomic = TAtomic::TClassString {
+            as_type: Some(Box::new(bound_atomic.clone())),
+        };
+
+        if !expanded.contains(&class_string_atomic) {
+            expanded.push(class_string_atomic);
+        }
+    }
+
+    if expanded.is_empty() {
+        TUnion::new(TAtomic::TClassString { as_type: None })
+    } else {
+        TUnion::from_types(expanded)
+    }
 }
 
 /// Check if any value of input_type could be a valid value of container_type.

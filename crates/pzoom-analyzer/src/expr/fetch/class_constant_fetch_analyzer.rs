@@ -10,9 +10,11 @@ use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
-use crate::expr_analyzer;
+use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::type_comparator::object_type_comparator;
 
 /// Analyze a class constant access expression (Foo::BAR).
 pub fn analyze(
@@ -23,10 +25,45 @@ pub fn analyze(
     context: &mut BlockContext,
 ) {
     // Analyze the class expression
-    let _class_pos = expr_analyzer::analyze(analyzer, access.class, analysis_data, context);
+    let _class_pos = expression_analyzer::analyze(analyzer, access.class, analysis_data, context);
 
     // Try to get the resolved class ID
-    let class_id = get_resolved_class_id(analyzer, access.class);
+    let class_id = get_resolved_class_id(analyzer, access.class, context);
+
+    if class_id.is_none() {
+        match access.class.unparenthesized() {
+            Expression::Parent(_) => {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::ParentNotFound,
+                    "Cannot access parent as this class does not extend another",
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+                analysis_data.set_expr_type(pos, TUnion::mixed());
+                return;
+            }
+            Expression::Self_(_) | Expression::Static(_) => {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::NonStaticSelfCall,
+                    "Cannot use self/static in a non-class context",
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+                analysis_data.set_expr_type(pos, TUnion::mixed());
+                return;
+            }
+            _ => {}
+        }
+    }
+
     let classlike_name = class_id.map(|id| analyzer.interner.lookup(id));
 
     // Get the constant name
@@ -38,11 +75,63 @@ pub fn analyze(
     // Handle ::class pseudo-constant
     if let Some(const_name) = const_name {
         if const_name.eq_ignore_ascii_case("class") {
-            if let Some(class_name) = classlike_name {
-                // Return a literal class string
+            if matches!(access.class.unparenthesized(), Expression::Static(_)) {
                 analysis_data.set_expr_type(
                     pos,
-                    TUnion::new(TAtomic::TLiteralClassString { name: class_name.to_string() }),
+                    TUnion::new(TAtomic::TClassString {
+                        as_type: Some(Box::new(TAtomic::TNamedObject {
+                            name: StrId::STATIC,
+                            type_params: None,
+                        })),
+                    }),
+                );
+                return;
+            }
+
+            if let (Some(class_name), Some(class_id)) = (classlike_name.as_ref(), class_id) {
+                if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+
+                    if class_info.is_deprecated
+                        && analyzer
+                            .get_declaring_class()
+                            .is_none_or(|declaring_class| declaring_class != class_id)
+                    {
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::DeprecatedClass,
+                            format!("Class {} is deprecated", class_name),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
+
+                    if !can_access_internal(analyzer, &class_info.internal, Some(context)) {
+                        let scope_phrase =
+                            format_internal_scope_phrase(analyzer, &class_info.internal);
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::InternalClass,
+                            format!("{} is internal to {}", class_name, scope_phrase),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
+                }
+
+                // Return class-string constrained to the resolved class.
+                analysis_data.set_expr_type(
+                    pos,
+                    TUnion::new(TAtomic::TClassString {
+                        as_type: Some(Box::new(TAtomic::TNamedObject {
+                            name: class_id,
+                            type_params: None,
+                        })),
+                    }),
                 );
                 return;
             }
@@ -50,29 +139,91 @@ pub fn analyze(
     }
 
     // Try to look up class constant type
-    if let (Some(class_id), Some(class_name), Some(const_name)) = (class_id, classlike_name, const_name) {
+    if let (Some(class_id), Some(class_name), Some(const_name)) =
+        (class_id, classlike_name, const_name)
+    {
         let const_id = analyzer.interner.intern(const_name);
 
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
-            // Look for constant in class hierarchy (class, parents, interfaces)
-            if let Some(const_info) =
-                find_constant_in_hierarchy(analyzer, class_id, const_id)
+            let (line, col) = analyzer.get_line_column(pos.0);
+
+            if class_info.is_deprecated
+                && analyzer
+                    .get_declaring_class()
+                    .is_none_or(|declaring_class| declaring_class != class_id)
             {
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::DeprecatedClass,
+                    format!("Class {} is deprecated", class_name),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
+            if !can_access_internal(analyzer, &class_info.internal, Some(context)) {
+                let scope_phrase = format_internal_scope_phrase(analyzer, &class_info.internal);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::InternalClass,
+                    format!("{} is internal to {}", class_name, scope_phrase),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
+            // Look for constant in class hierarchy (class, parents, interfaces)
+            if let Some(const_info) = find_constant_in_hierarchy(analyzer, class_id, const_id) {
                 // Check visibility
                 if const_info.visibility == Visibility::Private {
-                    let (line, col) = analyzer.get_line_column(pos.0);
-                    analysis_data.add_issue(Issue::new(
-                        IssueKind::InaccessibleClassConstant,
-                        format!(
-                            "Cannot access private constant {}::{}",
-                            class_name, const_name
-                        ),
-                        analyzer.file_path,
-                        pos.0,
-                        pos.1,
-                        line,
-                        col,
-                    ));
+                    let is_same_class = analyzer
+                        .get_declaring_class()
+                        .is_some_and(|calling_class| calling_class == const_info.declaring_class);
+
+                    if !is_same_class {
+                        let (line, col) = analyzer.get_line_column(pos.0);
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::InaccessibleClassConstant,
+                            format!(
+                                "Cannot access private constant {}::{}",
+                                class_name, const_name
+                            ),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
+                } else if const_info.visibility == Visibility::Protected {
+                    let can_access = analyzer.get_declaring_class().is_some_and(|calling_class| {
+                        calling_class == const_info.declaring_class
+                            || object_type_comparator::is_class_subtype_of(
+                                calling_class,
+                                const_info.declaring_class,
+                                analyzer.codebase,
+                            )
+                    });
+
+                    if !can_access {
+                        let (line, col) = analyzer.get_line_column(pos.0);
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::InaccessibleClassConstant,
+                            format!(
+                                "Cannot access protected constant {}::{}",
+                                class_name, const_name
+                            ),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
                 }
 
                 // Check for deprecated constants
@@ -109,16 +260,20 @@ pub fn analyze(
             let _ = class_info;
         } else {
             // Class not found
-            let (line, col) = analyzer.get_line_column(pos.0);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::UndefinedClass,
-                format!("Class {} does not exist", class_name),
-                analyzer.file_path,
-                pos.0,
-                pos.1,
-                line,
-                col,
-            ));
+            if !is_class_guarded_by_exists(context, analyzer, class_id)
+                && !is_known_class_alias(context, analyzer, class_id)
+            {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UndefinedClass,
+                    format!("Class {} does not exist", class_name),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
         }
     }
 
@@ -127,14 +282,49 @@ pub fn analyze(
 }
 
 /// Get the resolved class ID from an expression using resolved_names.
-fn get_resolved_class_id(analyzer: &StatementsAnalyzer<'_>, expr: &Expression<'_>) -> Option<StrId> {
-    match expr {
+fn get_resolved_class_id(
+    analyzer: &StatementsAnalyzer<'_>,
+    expr: &Expression<'_>,
+    context: &BlockContext,
+) -> Option<StrId> {
+    let class_id = match expr {
         Expression::Identifier(id) => {
             let offset = id.span().start.offset;
-            analyzer.get_resolved_name(offset)
+            let mut resolved = analyzer
+                .get_resolved_name(offset)
+                .or_else(|| Some(analyzer.interner.intern(id.value())))?;
+
+            if analyzer.codebase.get_class(resolved).is_none()
+                && id.value().eq_ignore_ascii_case("Attribute")
+            {
+                resolved = analyzer.interner.intern("Attribute");
+            }
+
+            Some(resolved)
         }
+        Expression::Self_(_) | Expression::Static(_) => {
+            analyzer.get_declaring_class().or(context.self_class)
+        }
+        Expression::Parent(_) => analyzer
+            .get_declaring_class()
+            .or(context.self_class)
+            .and_then(|class_id| {
+                analyzer
+                    .codebase
+                    .get_class(class_id)
+                    .and_then(|class_info| class_info.parent_class)
+            }),
         _ => None,
-    }
+    }?;
+
+    Some(
+        context
+            .class_aliases
+            .get(&class_id)
+            .copied()
+            .filter(|alias_target| analyzer.codebase.get_class(*alias_target).is_some())
+            .unwrap_or(class_id),
+    )
 }
 
 /// Find a constant in a class's hierarchy (class, parent classes, interfaces).
@@ -165,4 +355,42 @@ fn find_constant_in_hierarchy<'a>(
     }
 
     None
+}
+
+fn is_class_guarded_by_exists(
+    context: &BlockContext,
+    analyzer: &StatementsAnalyzer<'_>,
+    class_id: StrId,
+) -> bool {
+    let class_name = analyzer.interner.lookup(class_id);
+    let key = format!(
+        "@class_exists({})",
+        class_name.trim_start_matches('\\').to_ascii_lowercase()
+    );
+    let key_id = analyzer.interner.intern(&key);
+
+    context
+        .locals
+        .get(&key_id)
+        .is_some_and(|guard_type| !guard_type.is_nothing() && !guard_type.is_always_falsy())
+}
+
+fn is_known_class_alias(
+    context: &BlockContext,
+    analyzer: &StatementsAnalyzer<'_>,
+    class_id: StrId,
+) -> bool {
+    let class_name = analyzer
+        .interner
+        .lookup(class_id)
+        .trim_start_matches('\\')
+        .to_ascii_lowercase();
+
+    context.class_aliases.keys().any(|alias_id| {
+        analyzer
+            .interner
+            .lookup(*alias_id)
+            .trim_start_matches('\\')
+            .eq_ignore_ascii_case(class_name.as_str())
+    })
 }

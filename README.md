@@ -2,7 +2,7 @@
 
 A fast PHP static analyzer written in Rust.
 
-[!NOTE]
+> [!NOTE]
 > This is not something I ever intend to support. Also, it is vibe-coded with no great care taken as to its overall quality. Caveat emptor.
 
 ## Overview

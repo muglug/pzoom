@@ -314,12 +314,12 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // Filter out issues from stubs, globally suppressed issues, and baseline-covered issues.
     let mut user_issues = Vec::new();
     for issue in &result.issues {
-        if stub_files.contains(&issue.file_path) {
+        if stub_files.contains(&issue.location.file_path) {
             continue;
         }
 
         let issue_name = format!("{:?}", issue.kind);
-        let file_path = interner.lookup(issue.file_path);
+        let file_path = interner.lookup(issue.location.file_path);
         let display_file_path = format_display_path(&file_path, &display_root);
 
         if config.is_issue_suppressed_for_path(&issue_name, &display_file_path) {
@@ -349,20 +349,20 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         // Sort issues alphabetically by file path, then by line, then by column
         let mut sorted_issues = user_issues;
         sorted_issues.sort_by(|a, b| {
-            let path_a = format_display_path(&interner.lookup(a.file_path), &display_root);
-            let path_b = format_display_path(&interner.lookup(b.file_path), &display_root);
+            let path_a = format_display_path(&interner.lookup(a.location.file_path), &display_root);
+            let path_b = format_display_path(&interner.lookup(b.location.file_path), &display_root);
             path_a
                 .cmp(&path_b)
-                .then_with(|| a.start_line.cmp(&b.start_line))
-                .then_with(|| a.start_column.cmp(&b.start_column))
+                .then_with(|| a.location.start_line.cmp(&b.location.start_line))
+                .then_with(|| a.location.start_column.cmp(&b.location.start_column))
         });
 
         for issue in sorted_issues {
             let display_path =
-                format_display_path(&interner.lookup(issue.file_path), &display_root);
+                format_display_path(&interner.lookup(issue.location.file_path), &display_root);
             println!(
                 "{:?} - {}:{}:{} - {}",
-                issue.kind, display_path, issue.start_line, issue.start_column, issue.message
+                issue.kind, display_path, issue.location.start_line, issue.location.start_column, issue.message
             );
         }
         ExitCode::FAILURE
@@ -399,15 +399,15 @@ fn extract_issue_selected_text(
 ) -> String {
     let file_contents = codebase
         .files
-        .get(&issue.file_path)
+        .get(&issue.location.file_path)
         .map(|file| file.contents.as_str());
 
     let Some(file_contents) = file_contents else {
         return String::new();
     };
 
-    let start = issue.start_offset as usize;
-    let end = issue.end_offset as usize;
+    let start = issue.location.start_offset as usize;
+    let end = issue.location.end_offset as usize;
 
     file_contents
         .get(start..end)

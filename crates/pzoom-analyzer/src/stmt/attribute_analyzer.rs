@@ -13,7 +13,7 @@ use pzoom_str::StrId;
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
-use crate::expr::call::callable_validation;
+use crate::expr::call::argument_analyzer;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
@@ -663,7 +663,7 @@ fn validate_attribute_constructor_call(
             continue;
         };
 
-        callable_validation::verify_argument_type(
+        argument_analyzer::verify_type(
             analyzer,
             arg,
             arg_pos,

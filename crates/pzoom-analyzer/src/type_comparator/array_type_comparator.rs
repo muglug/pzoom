@@ -149,9 +149,20 @@ pub fn is_contained_by(
                     atomic_comparison_result,
                 );
             }
-            TAtomic::TArray { .. } | TAtomic::TList { .. } => {
-                // Regular array/list could be empty
-                atomic_comparison_result.type_coerced = Some(true);
+            TAtomic::TArray {
+                value_type: input_value,
+                ..
+            }
+            | TAtomic::TList {
+                value_type: input_value,
+            } => {
+                // A definitely-empty array (`array<never, never>`, e.g. the `[]`
+                // literal) can never satisfy a non-empty constraint, so it is a hard
+                // mismatch rather than a coercion (Psalm yields InvalidArgument here).
+                // A general, possibly-empty array is a coercion (ArgumentTypeCoercion).
+                if !input_value.is_nothing() {
+                    atomic_comparison_result.type_coerced = Some(true);
+                }
                 return false;
             }
             TAtomic::TKeyedArray { properties, .. } => {
@@ -382,60 +393,40 @@ pub fn is_contained_by(
         }
     }
 
-    // Keyed array (shape) comparisons
-    if let TAtomic::TKeyedArray {
-        properties: container_props,
-        sealed: container_sealed,
-        ..
-    } = container_type_part
-    {
-        if let TAtomic::TKeyedArray {
-            properties: input_props,
-            ..
-        } = input_type_part
-        {
-            // Check that input has all required keys from container
-            for (key, container_value_type) in container_props {
-                if let Some(input_value_type) = input_props.get(key) {
-                    if input_value_type.possibly_undefined && !container_value_type.possibly_undefined
-                    {
-                        atomic_comparison_result.type_coerced = Some(true);
-                        return false;
-                    }
-
-                    let mut normalized_input_value = input_value_type.clone();
-                    normalized_input_value.possibly_undefined = false;
-                    let mut normalized_container_value = container_value_type.clone();
-                    normalized_container_value.possibly_undefined = false;
-
-                    if !union_type_comparator::is_contained_by(
-                        codebase,
-                        &normalized_input_value,
-                        &normalized_container_value,
-                        false,
-                        false,
-                        atomic_comparison_result,
-                    ) {
-                        return false;
-                    }
-                } else if !container_value_type.possibly_undefined {
-                    // Input is missing a required key
-                    return false;
-                }
-            }
-
-            // Psalm treats a shape with extra known fields as compatible with a
-            // shape requiring only a subset of those fields.
-            let _ = container_sealed;
-
-            return true;
+    // A generic array input against a keyed-array (shape) container. The
+    // keyed-array comparator below only handles shape-vs-shape; a generic array
+    // input has no declared per-key structure. An empty array (`array<never,
+    // never>`, the `[]` literal) satisfies a shape whose keys are *all* optional,
+    // because it simply omits every key. Matches Psalm, which contains
+    // `array<never, never>` in any all-optional shape (a required key fails).
+    if let TAtomic::TKeyedArray { properties, .. } = container_type_part {
+        let input_is_empty_array = matches!(
+            input_type_part,
+            TAtomic::TArray { value_type, .. } | TAtomic::TList { value_type }
+                if value_type.is_nothing()
+        );
+        if input_is_empty_array {
+            return properties
+                .values()
+                .all(|property_type| property_type.possibly_undefined);
         }
+    }
+
+    // Keyed array (shape) comparisons — delegated to the keyed-array comparator
+    // (mirrors Psalm's KeyedArrayComparator).
+    if let Some(result) = super::keyed_array_comparator::is_contained_by(
+        codebase,
+        input_type_part,
+        container_type_part,
+        atomic_comparison_result,
+    ) {
+        return result;
     }
 
     false
 }
 
-fn array_key_to_literal_union(key: &pzoom_code_info::t_atomic::ArrayKey) -> TUnion {
+pub(crate) fn array_key_to_literal_union(key: &pzoom_code_info::t_atomic::ArrayKey) -> TUnion {
     match key {
         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
             TUnion::new(TAtomic::TLiteralInt { value: *value })
@@ -493,8 +484,13 @@ fn compare_array_params(
     let normalized_input_key = normalize_array_key_union_for_comparison(input_key);
     let normalized_container_key = normalize_array_key_union_for_comparison(container_key);
 
-    // Check key compatibility
+    // Check key compatibility. A `mixed` input key satisfies an `array-key`
+    // (int&string) container key without further checking. Matches Psalm
+    // ArrayTypeComparator (the key param is array-key by construction).
     let key_ok = normalized_container_key.is_mixed()
+        || (normalized_input_key.is_mixed()
+            && normalized_container_key.has_int()
+            && normalized_container_key.has_string())
         || union_type_comparator::is_contained_by(
             codebase,
             &normalized_input_key,

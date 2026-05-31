@@ -20,6 +20,9 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
+    // Psalm: `echo` writes to output, so it is impure from a `@psalm-pure` context.
+    emit_impure_output(analyzer, pos, analysis_data, "echo");
+
     // Analyze all values being echoed
     for value in echo.values.iter() {
         let value_pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);
@@ -49,6 +52,9 @@ pub fn analyze_print(
     let value_pos = expression_analyzer::analyze(analyzer, expr, analysis_data, context);
     let value_type = analysis_data.get_expr_type(value_pos);
 
+    // Psalm: `print` writes to output, so it is impure from a `@psalm-pure` context.
+    emit_impure_output(analyzer, pos, analysis_data, "print");
+
     // Check that value is stringable
     if let Some(t) = value_type {
         check_stringable(analyzer, &t, value_pos, analysis_data, "print");
@@ -61,6 +67,30 @@ pub fn analyze_print(
     );
 }
 
+/// Emit `ImpureFunctionCall` when output (`echo`/`print`) occurs in a mutation-free
+/// context. Psalm gates this on `$context->mutation_free || $context->external_mutation_free`.
+pub(crate) fn emit_impure_output(
+    analyzer: &StatementsAnalyzer<'_>,
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+    construct: &str,
+) {
+    if !crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer) {
+        return;
+    }
+
+    let (line, col) = analyzer.get_line_column(pos.0);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::ImpureFunctionCall,
+        format!("Cannot call {} from a mutation-free context", construct),
+        analyzer.file_path,
+        pos.0,
+        pos.1,
+        line,
+        col,
+    ));
+}
+
 /// Check if a type can be converted to a string for output.
 pub(crate) fn check_stringable(
     analyzer: &StatementsAnalyzer<'_>,
@@ -69,21 +99,39 @@ pub(crate) fn check_stringable(
     analysis_data: &mut FunctionAnalysisData,
     context_name: &str,
 ) {
+    let mut saw_stringable = false;
+    let mut non_stringable: Option<String> = None;
     for atomic in &t.types {
-        if !is_stringable(analyzer, atomic) {
-            let type_desc = atomic.get_id(Some(analyzer.interner));
-            let (line, col) = analyzer.get_line_column(pos.0);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::InvalidArgument,
-                format!("{} cannot convert {} to string", context_name, type_desc),
-                analyzer.file_path,
-                pos.0,
-                pos.1,
-                line,
-                col,
-            ));
+        if is_stringable(analyzer, atomic) {
+            saw_stringable = true;
+        } else if non_stringable.is_none() {
+            non_stringable = Some(atomic.get_id(Some(analyzer.interner)));
         }
     }
+
+    let Some(type_desc) = non_stringable else {
+        return;
+    };
+
+    // When only some members of the union are non-stringable the conversion is
+    // merely possibly invalid (Psalm's PossiblyInvalidArgument); it is a hard
+    // InvalidArgument only when no member can be converted.
+    let issue_kind = if saw_stringable {
+        IssueKind::PossiblyInvalidArgument
+    } else {
+        IssueKind::InvalidArgument
+    };
+
+    let (line, col) = analyzer.get_line_column(pos.0);
+    analysis_data.add_issue(Issue::new(
+        issue_kind,
+        format!("{} cannot convert {} to string", context_name, type_desc),
+        analyzer.file_path,
+        pos.0,
+        pos.1,
+        line,
+        col,
+    ));
 }
 
 /// Check if an atomic type can be implicitly converted to a string.
@@ -101,8 +149,6 @@ fn is_stringable(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
         | TAtomic::TLiteralClassString { .. }
         | TAtomic::TInt
         | TAtomic::TLiteralInt { .. }
-        | TAtomic::TPositiveInt
-        | TAtomic::TNegativeInt
         | TAtomic::TIntRange { .. }
         | TAtomic::TFloat
         | TAtomic::TLiteralFloat { .. }

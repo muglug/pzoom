@@ -380,7 +380,7 @@ pub fn analyze(
         && !context.inside_isset
         && !context.inside_conditional
     {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::NullArrayAccess,
             "Cannot access array offset on null".to_string(),
             analyzer.file_path,
@@ -399,7 +399,7 @@ pub fn analyze(
         && !context.inside_isset
         && !context.inside_conditional
     {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyNullArrayAccess,
             "Cannot access array offset on possibly null value".to_string(),
             analyzer.file_path,
@@ -412,7 +412,7 @@ pub fn analyze(
 
     // Pure invalid access (non-array type)
     if has_invalid_access && !has_valid_access && !context.inside_isset {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::InvalidArrayAccess,
             format!("Cannot access array offset on {}", invalid_type_name),
             analyzer.file_path,
@@ -427,7 +427,7 @@ pub fn analyze(
 
     // Possibly invalid access (union with non-array type)
     if has_invalid_access && has_valid_access && !context.inside_isset {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyInvalidArrayAccess,
             format!(
                 "Cannot access array offset on value that may be {}",
@@ -442,7 +442,7 @@ pub fn analyze(
     }
 
     if has_mixed_access && !context.inside_isset && !context.inside_unset {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::MixedArrayAccess,
             "Cannot access array value on mixed type".to_string(),
             analyzer.file_path,
@@ -467,7 +467,7 @@ pub fn analyze(
             .map(|t| t.get_id(Some(analyzer.interner)))
             .unwrap_or_else(|| "array-key".to_string());
 
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::InvalidArrayOffset,
             format!("Invalid array offset type: {}", index_type_id),
             analyzer.file_path,
@@ -486,7 +486,7 @@ pub fn analyze(
         && !context.inside_unset
         && !context.inside_conditional
     {
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyUndefinedArrayOffset,
             "Possibly undefined array offset".to_string(),
             analyzer.file_path,
@@ -753,7 +753,7 @@ fn check_array_offset(
         {
             let span = access.array.span();
             let start_line = get_line_number(analyzer.source, span.start.offset);
-            analysis_data.issues.push(Issue::new(
+            analysis_data.add_issue(Issue::new(
                 IssueKind::MixedArrayAccess,
                 "Cannot access array value with unresolved key type".to_string(),
                 analyzer.file_path,
@@ -820,7 +820,7 @@ fn check_array_offset(
             if suppress_possible_issue {
                 return false;
             }
-            analysis_data.issues.push(Issue::new(
+            analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyInvalidArrayOffset,
                 format!(
                     "Array offset may be invalid type: {}",
@@ -837,7 +837,7 @@ fn check_array_offset(
             if suppress_possible_issue {
                 return false;
             }
-            analysis_data.issues.push(Issue::new(
+            analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArrayOffset,
                 format!(
                     "Invalid array offset type: {}",
@@ -917,7 +917,7 @@ fn check_array_offset(
             if suppress_possible_issue {
                 return false;
             }
-            analysis_data.issues.push(Issue::new(
+            analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyInvalidArrayOffset,
                 format!("Array offset may be invalid type: {}", invalid_offset_type),
                 analyzer.file_path,
@@ -931,7 +931,7 @@ fn check_array_offset(
             if suppress_possible_issue {
                 return false;
             }
-            analysis_data.issues.push(Issue::new(
+            analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArrayOffset,
                 format!("Invalid array offset type: {}", invalid_offset_type),
                 analyzer.file_path,
@@ -973,7 +973,7 @@ fn check_array_offset_against_expected_branches(
     }) {
         let span = access.array.span();
         let start_line = get_line_number(analyzer.source, span.start.offset);
-        analysis_data.issues.push(Issue::new(
+        analysis_data.add_issue(Issue::new(
             IssueKind::MixedArrayAccess,
             "Cannot access array value with unresolved key type".to_string(),
             analyzer.file_path,
@@ -1078,7 +1078,7 @@ fn check_array_offset_against_expected_branches(
         )
     };
 
-    analysis_data.issues.push(Issue::new(
+    analysis_data.add_issue(Issue::new(
         kind,
         message,
         analyzer.file_path,

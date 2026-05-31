@@ -11,7 +11,7 @@ use pzoom_syntax::resolve_hint;
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::control_analyzer::{self, ControlAction};
+use crate::stmt::scope_analyzer::{self, ControlAction};
 use crate::stmt_analyzer;
 use crate::type_comparator::object_type_comparator;
 
@@ -35,7 +35,7 @@ pub fn analyze(
 
     // Collect only branches that can continue after the try/catch.
     let mut continuing_branch_contexts = Vec::new();
-    let try_actions = control_analyzer::get_control_actions(
+    let try_actions = scope_analyzer::get_control_actions(
         try_stmt.block.statements.as_slice(),
         analysis_data,
         &[],
@@ -77,7 +77,7 @@ pub fn analyze(
             &mut catch_context,
         )?;
 
-        let catch_actions = control_analyzer::get_control_actions(
+        let catch_actions = scope_analyzer::get_control_actions(
             catch.block.statements.as_slice(),
             analysis_data,
             &[],
@@ -121,7 +121,7 @@ pub fn analyze(
         finally_has_returned = finally_context.has_returned;
 
         // Finally always executes, but only its non-exiting paths continue after this statement.
-        let finally_actions = control_analyzer::get_control_actions(
+        let finally_actions = scope_analyzer::get_control_actions(
             finally.block.statements.as_slice(),
             analysis_data,
             &[],
@@ -214,6 +214,13 @@ fn maybe_emit_invalid_catch_issue(
     }
 
     let span = hint.span();
+    if crate::issue_suppression::is_issue_suppressed_at(
+        analyzer,
+        span.start.offset,
+        "InvalidCatch",
+    ) {
+        return;
+    }
     let (line, col) = analyzer.get_line_column(span.start.offset);
     analysis_data.add_issue(pzoom_code_info::Issue::new(
         pzoom_code_info::IssueKind::InvalidCatch,
@@ -246,7 +253,7 @@ fn augment_catch_union_with_throwable(
                         TAtomic::TNamedObject {
                             name: StrId::THROWABLE,
                             type_params: None,
-                        },
+                        is_static: false, remapped_params: false },
                     ],
                 });
             }
@@ -258,7 +265,7 @@ fn augment_catch_union_with_throwable(
                     expanded.push(TAtomic::TNamedObject {
                         name: StrId::THROWABLE,
                         type_params: None,
-                    });
+                    is_static: false, remapped_params: false });
                 }
                 types.push(TAtomic::TObjectIntersection { types: expanded });
             }

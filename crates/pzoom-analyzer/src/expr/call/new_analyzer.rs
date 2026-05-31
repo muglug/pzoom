@@ -16,6 +16,7 @@ use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::template::TemplateMap;
 use crate::type_comparator::object_type_comparator;
 
 use super::{argument_analyzer, arguments_analyzer, callable_validation, function_call_analyzer};
@@ -234,6 +235,43 @@ pub fn analyze(
                     line,
                     col,
                 ));
+            }
+
+            // Impure-constructor purity check (Psalm `NewAnalyzer`): from a pure
+            // context, instantiating a class whose constructor may mutate
+            // external state is an `ImpureMethodCall`, unless we're inside a
+            // `throw`. Classes with no constructor — or an external-mutation-free
+            // constructor (immutable/EMF class, or one that only assigns simple
+            // values to its own properties) — are exempt.
+            if super::method_call_analyzer::is_mutation_free_context(analyzer)
+                && !context.inside_throw
+            {
+                let resolved_constructor = class_info
+                    .methods
+                    .get(&StrId::CONSTRUCT)
+                    .map(|ctor| (class_info, ctor.clone()))
+                    .or_else(|| {
+                        find_inherited_constructor(analyzer, class_info).map(|(decl_id, ctor)| {
+                            let decl_class =
+                                analyzer.codebase.get_class(decl_id).unwrap_or(class_info);
+                            (decl_class, ctor)
+                        })
+                    });
+
+                if let Some((ctor_class, ctor_info)) = resolved_constructor
+                    && !constructor_is_pure_compatible(class_info, ctor_class, &ctor_info)
+                {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::ImpureMethodCall,
+                        "Cannot call an impure constructor from a pure context",
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
+                }
             }
 
             if let Some(construct_info) = class_info.methods.get(&StrId::CONSTRUCT) {
@@ -475,8 +513,8 @@ pub fn analyze(
 
         let has_undefined_arg_issue = arg_positions.iter().any(|(start, end)| {
             analysis_data.issues.iter().any(|issue| {
-                issue.start_offset >= *start
-                    && issue.start_offset <= *end
+                issue.location.start_offset >= *start
+                    && issue.location.start_offset <= *end
                     && matches!(
                         issue.kind,
                         IssueKind::UndefinedVariable | IssueKind::UndefinedGlobalVariable
@@ -496,9 +534,21 @@ pub fn analyze(
         let result_class_id =
             get_instantiated_type_name_id(analyzer, instantiation.class, concrete_class_id);
 
+        // Mirror Psalm `NewAnalyzer`: instantiating a `class-string<T>` yields the
+        // constraint type `$lhs_type_part->as_type` verbatim, so the late-static flag
+        // (e.g. `class-string<static>` from `get_called_class()`) is carried through.
+        // `new static()` likewise produces the late-static-bound type. The concrete
+        // class stays in `name`; `is_static` marks it for re-resolution at each use site.
+        let constraint_is_static = class_string_constraint(class_expr_type.as_ref())
+            .is_some_and(|constraint| matches!(
+                constraint,
+                TAtomic::TNamedObject { is_static: true, .. }
+            ));
         let result_type = TUnion::new(TAtomic::TNamedObject {
             name: result_class_id,
             type_params: inferred_type_params,
+            is_static: is_static_class_reference || constraint_is_static,
+            remapped_params: false,
         });
         let result_type = add_instantiation_dataflow(
             analyzer,
@@ -509,14 +559,22 @@ pub fn analyze(
             pos,
             result_type,
         );
+        // Mirror Psalm `NewAnalyzer`: instantiating an externally-mutation-free
+        // class yields a reference-free value, so calling its (possibly
+        // -mutating) methods later is allowed from a pure context.
+        let result_is_reference_free = analyzer
+            .codebase
+            .get_class(result_class_id)
+            .is_some_and(|class_info| class_info.is_external_mutation_free);
+        let result_type = result_type.with_reference_free(result_is_reference_free);
         analysis_data.set_expr_type(pos, result_type);
         return;
     }
 
     let has_undefined_arg_issue = arg_positions.iter().any(|(start, end)| {
         analysis_data.issues.iter().any(|issue| {
-            issue.start_offset >= *start
-                && issue.start_offset <= *end
+            issue.location.start_offset >= *start
+                && issue.location.start_offset <= *end
                 && matches!(
                     issue.kind,
                     IssueKind::UndefinedVariable | IssueKind::UndefinedGlobalVariable
@@ -564,7 +622,7 @@ pub fn analyze(
             && union_has_unresolved_class_string_target(class_expr_type)
         {
             let already_emitted_mixed_method_call = analysis_data.issues.iter().any(|issue| {
-                issue.kind == IssueKind::MixedMethodCall && issue.start_offset == pos.0
+                issue.kind == IssueKind::MixedMethodCall && issue.location.start_offset == pos.0
             });
 
             if !already_emitted_mixed_method_call {
@@ -590,7 +648,7 @@ pub fn analyze(
         let already_emitted_undefined_class = analysis_data
             .issues
             .iter()
-            .any(|issue| issue.kind == IssueKind::UndefinedClass && issue.start_offset == pos.0);
+            .any(|issue| issue.kind == IssueKind::UndefinedClass && issue.location.start_offset == pos.0);
 
         if !already_emitted_undefined_class {
             let class_expr_id = class_expr_type
@@ -761,6 +819,19 @@ fn find_class_case_insensitive(
         })
 }
 
+/// The constraint atomic of a `class-string<T>` receiver — pzoom's analog of Psalm's
+/// `$lhs_type_part->as_type`. `new $x` on such a receiver instantiates this constraint,
+/// so its `is_static` flag (e.g. `class-string<static>` from `get_called_class()`)
+/// flows into the instantiated type.
+fn class_string_constraint(class_expr_type: Option<&TUnion>) -> Option<&TAtomic> {
+    match class_expr_type?.get_single()? {
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => Some(as_type.as_ref()),
+        _ => None,
+    }
+}
+
 fn infer_concrete_class_id_from_class_expr_type(
     analyzer: &StatementsAnalyzer<'_>,
     class_expr_type: Option<&TUnion>,
@@ -837,7 +908,7 @@ fn analyze_pending_closure_args_for_constructor(
 
     let args: Vec<_> = argument_list.arguments.iter().collect();
     let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend(function_call_analyzer::get_template_defaults(
+    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
         construct_info,
     ));
 
@@ -992,7 +1063,7 @@ fn verify_constructor_arguments(
     }
 
     let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend(function_call_analyzer::get_template_defaults(
+    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
         construct_info,
     ));
     let template_replacements = function_call_analyzer::infer_template_replacements_from_args(
@@ -1028,7 +1099,7 @@ fn verify_constructor_arguments(
             if let Some(arg_type) =
                 arguments_analyzer::get_argument_value_type(analysis_data, arg, arg_pos)
             {
-                callable_validation::verify_unpacked_argument(
+                argument_analyzer::verify_unpacked_argument(
                     analyzer,
                     arg_pos,
                     &arg_type,
@@ -1071,7 +1142,7 @@ fn verify_constructor_arguments(
             }
         }
 
-        callable_validation::verify_argument_type(
+        argument_analyzer::verify_type(
             analyzer,
             arg,
             arg_pos,
@@ -1110,135 +1181,112 @@ fn infer_constructor_template_params(
         return None;
     }
 
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
     let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
+
+    // Arg-inferred lower bounds only — Psalm's `$template_result->lower_bounds`.
+    // The extended-params mappings must NOT be folded in here: they contain
+    // identity entries (`[Ancestor][T] = T:Child`) that would satisfy the
+    // extends-chain walk below before a real inferred bound is found.
+    let mut lower_bounds = TemplateMap::new();
 
     if let (Some(argument_list), Some(construct_info)) = (
         instantiation.argument_list.as_ref(),
         class_info.methods.get(&StrId::CONSTRUCT),
     ) {
-        template_defaults.extend(function_call_analyzer::get_template_defaults(
+        template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
             construct_info,
         ));
         let args: Vec<_> = argument_list.arguments.iter().collect();
-        let arg_template_replacements =
-            function_call_analyzer::infer_template_replacements_from_args(
-                analyzer,
-                &args,
-                arg_positions,
-                &construct_info.params,
-                &template_defaults,
-                analysis_data,
-                context,
-            );
-        function_call_analyzer::overlay_template_replacements(
-            &mut template_replacements,
-            arg_template_replacements,
-        );
-
-        let inferred_class_template_replacements =
-            infer_class_template_replacements_from_constructor_templates(
-                class_info,
-                &template_replacements,
-            );
-        function_call_analyzer::overlay_template_replacements(
-            &mut template_replacements,
-            inferred_class_template_replacements,
+        lower_bounds = function_call_analyzer::infer_template_replacements_from_args(
+            analyzer,
+            &args,
+            arg_positions,
+            &construct_info.params,
+            &template_defaults,
+            analysis_data,
+            context,
         );
     }
 
+    // Resolve each of the class's own templates the way Psalm's `NewAnalyzer`
+    // does: an exact `[name][class]` bound wins; otherwise walk the extends
+    // chain (`getGenericParamForOffset`); otherwise fall back to the
+    // template's constraint.
     Some(
         class_info
             .template_types
             .iter()
             .map(|template_type| {
-                template_replacements
-                    .get(&template_type.name)
-                    .cloned()
-                    .unwrap_or_else(|| template_type.as_type.clone())
+                if let Some(bound) = lower_bounds.get_exact(template_type.name, class_info.name) {
+                    bound.clone()
+                } else if !class_info.template_extended_params.is_empty()
+                    && !lower_bounds.is_empty()
+                {
+                    get_generic_param_for_offset(
+                        class_info.name,
+                        template_type.name,
+                        &class_info.template_extended_params,
+                        &lower_bounds,
+                    )
+                } else {
+                    template_type.as_type.clone()
+                }
             })
             .collect(),
     )
 }
 
-pub(crate) fn infer_class_template_replacements_from_constructor_templates(
-    class_info: &pzoom_code_info::ClassLikeInfo,
-    template_replacements: &rustc_hash::FxHashMap<StrId, TUnion>,
-) -> rustc_hash::FxHashMap<StrId, TUnion> {
-    let class_template_names: rustc_hash::FxHashSet<StrId> = class_info
-        .template_types
-        .iter()
-        .map(|template_type| template_type.name)
-        .collect();
+/// Maps an inferred template bound onto a class's own template by walking the
+/// `@extends`/`@implements` chain — a faithful port of Psalm's
+/// `CallAnalyzer::getGenericParamForOffset`. When `(template_name,
+/// classlike_name)` has no direct bound, find the ancestor template that this
+/// class's template fills (`[$ancestor][$anc_template]` containing
+/// `TTemplateParam{template_name, classlike_name}`) and recurse; a broken
+/// chain maps the ancestor template to a non-template default, which stops the
+/// walk and yields `mixed`.
+pub(crate) fn get_generic_param_for_offset(
+    classlike_name: StrId,
+    template_name: StrId,
+    template_extended_params: &indexmap::IndexMap<StrId, indexmap::IndexMap<StrId, TUnion>>,
+    found_generic_params: &TemplateMap,
+) -> TUnion {
+    if let Some(found) = found_generic_params.get_exact(template_name, classlike_name) {
+        return found.clone();
+    }
 
-    let mut propagated_replacements = template_replacements.clone();
+    // Psalm returns on the first matching entry; it can afford to because its
+    // standin replacer has already mapped constructor bounds onto the static
+    // class (`getMappedGenericTypeParams`). pzoom's arg inference binds bounds
+    // at the declaring class only, so several entries can name this template
+    // (`[DirectParent][T2]` and `[GrandAncestor][T1]` both mapping to it) —
+    // try each and take the first that resolves to a real bound.
+    for (extended_class_name, type_map) in template_extended_params {
+        for (extended_template_name, extended_type) in type_map {
+            for extended_atomic_type in &extended_type.types {
+                if let TAtomic::TTemplateParam {
+                    name,
+                    defining_entity,
+                    ..
+                } = extended_atomic_type
+                    && *name == template_name
+                    && *defining_entity == classlike_name
+                {
+                    let candidate = get_generic_param_for_offset(
+                        *extended_class_name,
+                        *extended_template_name,
+                        template_extended_params,
+                        found_generic_params,
+                    );
 
-    loop {
-        let mut changed = false;
-
-        for template_map in class_info.template_extended_params.values() {
-            for (ancestor_template, mapped_type) in template_map {
-                let Some(ancestor_replacement) =
-                    propagated_replacements.get(ancestor_template).cloned()
-                else {
-                    continue;
-                };
-
-                for mapped_atomic in &mapped_type.types {
-                    let mapped_template = match mapped_atomic {
-                        TAtomic::TTemplateParam { name, .. } => Some(*name),
-                        TAtomic::TTemplateParamClass { name, .. } => Some(*name),
-                        _ => None,
-                    };
-
-                    let Some(mapped_template) = mapped_template else {
-                        continue;
-                    };
-
-                    let should_propagate = propagated_replacements
-                        .get(&mapped_template)
-                        .is_none_or(is_template_placeholder_union);
-
-                    if !should_propagate {
-                        continue;
-                    }
-
-                    if propagated_replacements
-                        .get(&mapped_template)
-                        .is_none_or(|existing| existing != &ancestor_replacement)
-                    {
-                        propagated_replacements
-                            .insert(mapped_template, ancestor_replacement.clone());
-                        changed = true;
+                    if !candidate.is_mixed() {
+                        return candidate;
                     }
                 }
             }
         }
-
-        if !changed {
-            break;
-        }
     }
 
-    let mut inferred_replacements = rustc_hash::FxHashMap::default();
-    for template_name in class_template_names {
-        if let Some(replacement) = propagated_replacements.get(&template_name) {
-            inferred_replacements.insert(template_name, replacement.clone());
-        }
-    }
-
-    inferred_replacements
-}
-
-fn is_template_placeholder_union(union: &TUnion) -> bool {
-    !union.types.is_empty()
-        && union.types.iter().all(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TTemplateParam { .. } | TAtomic::TTemplateParamClass { .. }
-            )
-        })
+    TUnion::mixed()
 }
 
 fn infer_dynamic_instantiation_type(
@@ -1322,8 +1370,8 @@ fn emit_unknown_class_constructor_arg_issues(
 
         let span = arg.span();
         analysis_data.issues.retain(|issue| {
-            !(issue.start_offset >= span.start.offset
-                && issue.start_offset <= span.end.offset
+            !(issue.location.start_offset >= span.start.offset
+                && issue.location.start_offset <= span.end.offset
                 && matches!(
                     issue.kind,
                     IssueKind::UndefinedVariable | IssueKind::UndefinedGlobalVariable
@@ -1374,6 +1422,24 @@ fn can_access_protected_member_visibility(
             caller_class,
             analyzer.codebase,
         )
+}
+
+/// Whether instantiating `instantiated_class` via `ctor_info` is safe from a
+/// pure context — i.e. the constructor won't mutate external state. Mirrors
+/// Psalm reading the constructor's `external_mutation_free` flag, plus the
+/// instantiated class being immutable / externally-mutation-free.
+fn constructor_is_pure_compatible(
+    instantiated_class: &pzoom_code_info::ClassLikeInfo,
+    ctor_class: &pzoom_code_info::ClassLikeInfo,
+    ctor_info: &pzoom_code_info::FunctionLikeInfo,
+) -> bool {
+    ctor_info.is_pure
+        || ctor_info.is_mutation_free
+        || ctor_info.is_external_mutation_free
+        || instantiated_class.is_immutable
+        || instantiated_class.is_external_mutation_free
+        || ctor_class.is_immutable
+        || ctor_class.is_external_mutation_free
 }
 
 fn find_inherited_constructor(
@@ -1437,13 +1503,37 @@ fn collect_instantiable_atomic(
             TAtomic::TNamedObject {
                 name: analyzer.interner.intern(name.trim_start_matches('\\')),
                 type_params: None,
+            is_static: false, remapped_params: false },
+        ),
+        // Instantiating a `class-string<T>` produces the template parameter `T`
+        // itself, not its `as` bound — Psalm keeps the link to the template so
+        // the caller's binding flows through (e.g. `@return T`).
+        TAtomic::TTemplateParamClass {
+            name,
+            defining_entity,
+            as_type,
+        } => push_unique_atomic(
+            inferred_types,
+            TAtomic::TTemplateParam {
+                name: *name,
+                defining_entity: *defining_entity,
+                as_type: Box::new(TUnion::new((**as_type).clone())),
             },
         ),
+        // A `class-string<T>` may also be modelled as a `TClassString` whose
+        // `as` target is the template parameter; instantiating it likewise
+        // yields the template.
         TAtomic::TClassString {
             as_type: Some(as_type),
-        }
-        | TAtomic::TTemplateParamClass { as_type, .. } => {
-            collect_instantiable_atomic(analyzer, as_type, inferred_types);
+        } => {
+            // `class-string<X>` instantiates to `X` directly. When `X` is a
+            // template parameter we must preserve it (recursing would collapse
+            // it to its bound and lose the caller's binding).
+            if matches!(as_type.as_ref(), TAtomic::TTemplateParam { .. }) {
+                push_unique_atomic(inferred_types, (**as_type).clone());
+            } else {
+                collect_instantiable_atomic(analyzer, as_type, inferred_types);
+            }
         }
         TAtomic::TTemplateParam { as_type, .. } => {
             for bound_atomic in &as_type.types {

@@ -115,6 +115,15 @@ pub fn reconcile(
             analyzer,
             *count,
         ),
+        Assertion::HasAtLeastCount(count) => reconcile_has_at_least_count(
+            assertion,
+            existing_var_type,
+            key,
+            negated,
+            analysis_data,
+            analyzer,
+            *count,
+        ),
         Assertion::InArray(array_type) => with_docblock_from(
             reconcile_in_array(existing_var_type, array_type),
             existing_var_type,
@@ -260,7 +269,20 @@ fn reconcile_truthy(
                 acceptable_types.push(TAtomic::TTrue);
             }
             TAtomic::TString => {
-                acceptable_types.push(TAtomic::TNonEmptyString);
+                // A truthy string excludes both "" and "0", i.e. truthy-string
+                // (Psalm's non-falsy-string), not merely non-empty-string.
+                did_remove_type = true;
+                acceptable_types.push(TAtomic::TTruthyString);
+            }
+            TAtomic::TNonEmptyString | TAtomic::TNumericString => {
+                // non-empty-string still admits "0" (falsy); narrow to truthy-string.
+                did_remove_type = true;
+                acceptable_types.push(TAtomic::TTruthyString);
+            }
+            TAtomic::TLowercaseString => {
+                // Removes "" (pzoom has no truthy-lowercase variant; "0" is kept).
+                did_remove_type = true;
+                acceptable_types.push(TAtomic::TNonEmptyLowercaseString);
             }
             TAtomic::TInt => {
                 // Keep int but note that 0 could be removed in strict mode
@@ -598,6 +620,112 @@ fn reconcile_exact_count(
     }
 
     let _ = (key, negated);
+    finalize_reconciliation(
+        acceptable_types,
+        did_remove_type,
+        existing_var_type,
+        assertion,
+        analysis_data,
+        analyzer,
+    )
+}
+
+/// Reconciles a `count($x) >= count` assertion (`HasAtLeastCount`).
+///
+/// Mirrors Psalm's `SimpleAssertionReconciler::reconcileNonEmptyCountable` when the
+/// assertion is a `HasAtLeastCount`: narrows arrays to be non-empty and removes
+/// sealed shapes that can never reach `count` elements (which the centralized
+/// redundant-issue path then reports as a contradiction).
+fn reconcile_has_at_least_count(
+    assertion: &Assertion,
+    existing_var_type: &TUnion,
+    key: Option<&String>,
+    negated: bool,
+    analysis_data: &mut FunctionAnalysisData,
+    analyzer: &StatementsAnalyzer<'_>,
+    count: usize,
+) -> TUnion {
+    let mut acceptable_types = Vec::new();
+    let mut did_remove_type = false;
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TKeyedArray { .. } => {
+                // Mirror Psalm's reconcileNonEmptyCountable: compare the bound against
+                // the shape's own getMinCount()/getMaxCount().
+                let prop_min_count = atomic.get_min_count().unwrap_or(0);
+                let prop_max_count = atomic.get_max_count();
+
+                if prop_max_count.is_some_and(|max_count| max_count < count) {
+                    // count($a) >= count is impossible for this sealed shape.
+                    did_remove_type = true;
+                } else if prop_min_count >= count {
+                    // Already guaranteed: redundant, keep the type unchanged.
+                    acceptable_types.push(atomic.clone());
+                } else {
+                    // Possible: keep the shape (conservatively unchanged).
+                    did_remove_type = true;
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            } => {
+                did_remove_type = true;
+                if !value_type.is_nothing() {
+                    acceptable_types.push(TAtomic::TNonEmptyArray {
+                        key_type: key_type.clone(),
+                        value_type: value_type.clone(),
+                    });
+                }
+            }
+            TAtomic::TList { value_type } => {
+                did_remove_type = true;
+                if !value_type.is_nothing() {
+                    acceptable_types.push(TAtomic::TNonEmptyList {
+                        value_type: value_type.clone(),
+                    });
+                }
+            }
+            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
+                acceptable_types.push(atomic.clone());
+            }
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
+                did_remove_type = true;
+                acceptable_types.push(TAtomic::TNonEmptyMixed);
+            }
+            TAtomic::TTemplateParam { as_type, .. } => {
+                did_remove_type = true;
+                if !as_type.is_mixed() {
+                    let narrowed = reconcile_has_at_least_count(
+                        assertion,
+                        as_type,
+                        None,
+                        false,
+                        analysis_data,
+                        analyzer,
+                        count,
+                    );
+                    push_narrowed_template_type(&mut acceptable_types, atomic, narrowed);
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            _ => {
+                did_remove_type = true;
+                acceptable_types.push(atomic.clone());
+            }
+        }
+    }
+
+    let _ = (key, negated);
+    // When nothing was narrowed the assertion is redundant; return the type
+    // verbatim (preserving data-flow nodes) so the centralized redundant-issue
+    // path detects the no-op via equality.
+    if !did_remove_type {
+        return existing_var_type.clone();
+    }
     finalize_reconciliation(
         acceptable_types,
         did_remove_type,
@@ -1066,21 +1194,43 @@ fn reconcile_array_access(
             TAtomic::TNamedObject {
                 name: analyzer.interner.intern("ArrayAccess"),
                 type_params: None,
-            },
+            is_static: false, remapped_params: false },
         ]);
         reconciled_type.from_docblock = existing_var_type.from_docblock;
         return reconciled_type;
     }
 
     let mut acceptable_types = Vec::new();
+    let mut narrowed_to_non_empty = false;
 
     for atomic in &existing_var_type.types {
         if can_be_array_accessed(atomic, allow_int_key) {
-            acceptable_types.push(atomic.clone());
+            // Array access (`$a[...]`) implies the array is non-empty, so narrow a
+            // generic array/list to its non-empty form. Matches Psalm.
+            match atomic {
+                TAtomic::TArray {
+                    key_type,
+                    value_type,
+                } => {
+                    acceptable_types.push(TAtomic::TNonEmptyArray {
+                        key_type: key_type.clone(),
+                        value_type: value_type.clone(),
+                    });
+                    narrowed_to_non_empty = true;
+                }
+                TAtomic::TList { value_type } => {
+                    acceptable_types.push(TAtomic::TNonEmptyList {
+                        value_type: value_type.clone(),
+                    });
+                    narrowed_to_non_empty = true;
+                }
+                _ => acceptable_types.push(atomic.clone()),
+            }
         }
     }
 
-    let did_remove_type = acceptable_types.len() != existing_var_type.types.len();
+    let did_remove_type =
+        narrowed_to_non_empty || acceptable_types.len() != existing_var_type.types.len();
 
     let _ = (key, negated);
     finalize_reconciliation(
@@ -1149,14 +1299,11 @@ fn types_might_match(a: &TAtomic, b: &TAtomic) -> bool {
     match (a, b) {
         (
             TAtomic::TInt,
-            TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt,
+            TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. },
         ) => true,
         (
             TAtomic::TLiteralInt { .. },
-            TAtomic::TInt | TAtomic::TPositiveInt | TAtomic::TNegativeInt,
+            TAtomic::TInt | TAtomic::TIntRange { .. },
         ) => true,
         (TAtomic::TLiteralInt { value: v1 }, TAtomic::TLiteralInt { value: v2 }) => v1 == v2,
 
@@ -1183,7 +1330,7 @@ fn is_more_specific(a: &TAtomic, b: &TAtomic) -> bool {
     match (a, b) {
         (
             TAtomic::TLiteralInt { .. },
-            TAtomic::TInt | TAtomic::TPositiveInt | TAtomic::TNegativeInt,
+            TAtomic::TInt | TAtomic::TIntRange { .. },
         ) => true,
         (TAtomic::TLiteralString { .. }, TAtomic::TString | TAtomic::TNonEmptyString) => true,
         (TAtomic::TTrue | TAtomic::TFalse, TAtomic::TBool) => true,

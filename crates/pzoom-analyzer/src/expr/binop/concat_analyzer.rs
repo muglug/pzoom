@@ -304,24 +304,11 @@ fn get_concat_atomic_info(
             numericish: true,
             non_negative_int: false,
         }),
-        TAtomic::TPositiveInt => Some(ConcatAtomicInfo {
+        TAtomic::TIntRange { min, max } => Some(ConcatAtomicInfo {
             lowercase: true,
             non_empty: true,
-            truthy: true,
-            numericish: true,
-            non_negative_int: true,
-        }),
-        TAtomic::TNegativeInt => Some(ConcatAtomicInfo {
-            lowercase: true,
-            non_empty: true,
-            truthy: true,
-            numericish: true,
-            non_negative_int: false,
-        }),
-        TAtomic::TIntRange { min, .. } => Some(ConcatAtomicInfo {
-            lowercase: true,
-            non_empty: true,
-            truthy: false,
+            // A range that excludes 0 (e.g. `positive-int`/`negative-int`) is truthy.
+            truthy: min.is_some_and(|v| v > 0) || max.is_some_and(|v| v < 0),
             numericish: true,
             non_negative_int: min.is_some_and(|v| v >= 0),
         }),
@@ -368,6 +355,18 @@ fn get_concat_atomic_info(
             non_negative_int: false,
         }),
         TAtomic::TTemplateParam { as_type, .. } => {
+            // A template parameter with a mixed bound concatenates like `mixed`
+            // (Psalm treats this as a mixed operand, not an InvalidOperand).
+            if as_type.is_mixed() {
+                return Some(ConcatAtomicInfo {
+                    lowercase: false,
+                    non_empty: false,
+                    truthy: false,
+                    numericish: false,
+                    non_negative_int: false,
+                });
+            }
+
             let nested_info = get_concat_union_info(analyzer, as_type);
             if !nested_info.all_castable {
                 return None;

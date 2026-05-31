@@ -7,12 +7,13 @@
 use pzoom_code_info::{FunctionLikeParameter, TAtomic, TUnion};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
+use crate::template::TemplateMap;
 
 /// Replaces remaining template atomics using inferred/default template maps.
 pub fn replace(
     union: &TUnion,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
 ) -> TUnion {
     if template_replacements.is_empty() && template_defaults.is_empty() {
         return union.clone();
@@ -28,8 +29,8 @@ pub fn replace(
 
 fn replace_union(
     union: &TUnion,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TUnion {
     let mut new_types = Vec::new();
@@ -43,6 +44,7 @@ fn replace_union(
             } => {
                 if let Some(template_type) = resolve_template_union(
                     *name,
+                    *defining_entity,
                     as_type,
                     template_replacements,
                     template_defaults,
@@ -74,6 +76,7 @@ fn replace_union(
             } => {
                 if let Some(class_template_type) = resolve_template_class_union(
                     *name,
+                    *defining_entity,
                     as_type,
                     template_replacements,
                     template_defaults,
@@ -96,6 +99,50 @@ fn replace_union(
                             )),
                         },
                     );
+                }
+            }
+            TAtomic::TTemplateKeyOf {
+                param_name,
+                defining_entity,
+                ..
+            }
+            | TAtomic::TTemplateValueOf {
+                param_name,
+                defining_entity,
+                ..
+            } => {
+                let is_key_of = matches!(atomic_type, TAtomic::TTemplateKeyOf { .. });
+                if let Some(resolved) = resolve_template_key_value_of(
+                    *param_name,
+                    *defining_entity,
+                    is_key_of,
+                    template_replacements,
+                    template_defaults,
+                    resolving_templates,
+                ) {
+                    for resolved_part in resolved.types {
+                        push_unique(&mut new_types, resolved_part);
+                    }
+                } else {
+                    push_unique(&mut new_types, atomic_type.clone());
+                }
+            }
+            TAtomic::TTemplatePropertiesOf {
+                param_name,
+                defining_entity,
+                visibility_filter,
+            } => {
+                if let Some(properties_of) = template_replacements
+                    .get(*param_name, *defining_entity)
+                    .and_then(single_named_object_name)
+                    .map(|classlike_name| TAtomic::TPropertiesOf {
+                        classlike_name,
+                        visibility_filter: *visibility_filter,
+                    })
+                {
+                    push_unique(&mut new_types, properties_of);
+                } else {
+                    push_unique(&mut new_types, atomic_type.clone());
                 }
             }
             _ => {
@@ -127,8 +174,8 @@ fn replace_union(
 
 fn replace_atomic(
     atomic: &TAtomic,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TAtomic {
     match atomic {
@@ -224,7 +271,12 @@ fn replace_atomic(
                 }),
             }
         }
-        TAtomic::TNamedObject { name, type_params } => TAtomic::TNamedObject {
+        TAtomic::TNamedObject {
+            name,
+            type_params,
+            is_static,
+            remapped_params,
+        } => TAtomic::TNamedObject {
             name: *name,
             type_params: type_params.as_ref().map(|type_params| {
                 type_params
@@ -239,6 +291,8 @@ fn replace_atomic(
                     })
                     .collect()
             }),
+            is_static: *is_static,
+            remapped_params: *remapped_params,
         },
         TAtomic::TObjectIntersection { types } => TAtomic::TObjectIntersection {
             types: types
@@ -351,6 +405,7 @@ fn replace_atomic(
         } => {
             if let Some(template_type) = resolve_template_union(
                 *name,
+                *defining_entity,
                 as_type,
                 template_replacements,
                 template_defaults,
@@ -377,6 +432,7 @@ fn replace_atomic(
         } => {
             if let Some(class_template_type) = resolve_template_class_union(
                 *name,
+                *defining_entity,
                 as_type,
                 template_replacements,
                 template_defaults,
@@ -400,16 +456,64 @@ fn replace_atomic(
     }
 }
 
+/// Resolve a deferred `key-of<T>` / `value-of<T>` from the inferred bound of `T`,
+/// producing the keys (resp. values) of that bound. Mirrors Psalm's
+/// `TemplateInferredTypeReplacer::replaceTemplateKeyOfValueOf`.
+fn resolve_template_key_value_of(
+    template_name: StrId,
+    defining_entity: StrId,
+    is_key_of: bool,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
+    resolving_templates: &mut FxHashSet<StrId>,
+) -> Option<TUnion> {
+    // Resolve only against a concrete inferred binding, never a declared bound, so the
+    // deferred `key-of<T>` survives body analysis (where only the bound is known).
+    let replacement = template_replacements.get(template_name, defining_entity)?;
+
+    if !resolving_templates.insert(template_name) {
+        return None;
+    }
+    let resolved = replace_union(
+        replacement,
+        template_replacements,
+        template_defaults,
+        resolving_templates,
+    );
+    resolving_templates.remove(&template_name);
+
+    Some(if is_key_of {
+        pzoom_code_info::ttype::get_key_of_union(&resolved)
+    } else {
+        pzoom_code_info::ttype::get_value_of_union(&resolved)
+    })
+}
+
 fn resolve_template_union(
     template_name: StrId,
+    defining_entity: StrId,
     as_type: &TUnion,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
     let replacement = template_replacements
-        .get(&template_name)
-        .or_else(|| template_defaults.get(&template_name))?;
+        .get(template_name, defining_entity)
+        .or_else(|| template_defaults.get(template_name, defining_entity))?;
+
+    // A self-referential replacement (`T -> T`) means the parameter is bound to
+    // itself — typically a `$this`/`self` method call inside the defining class,
+    // where the class templates stay abstract. Keep it as the template parameter
+    // rather than recursing (which would collapse it to its `as` bound).
+    if replacement.types.len() == 1
+        && let TAtomic::TTemplateParam {
+            name: replacement_name,
+            ..
+        } = &replacement.types[0]
+        && *replacement_name == template_name
+    {
+        return Some(replacement.clone());
+    }
 
     if !resolving_templates.insert(template_name) {
         return Some(as_type.clone());
@@ -433,14 +537,15 @@ fn resolve_template_union(
 
 fn resolve_template_class_union(
     template_name: StrId,
+    defining_entity: StrId,
     as_type: &TAtomic,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
+    template_replacements: &TemplateMap,
+    template_defaults: &TemplateMap,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
     let replacement = template_replacements
-        .get(&template_name)
-        .or_else(|| template_defaults.get(&template_name))?;
+        .get(template_name, defining_entity)
+        .or_else(|| template_defaults.get(template_name, defining_entity))?;
 
     if !resolving_templates.insert(template_name) {
         return Some(TUnion::new(TAtomic::TClassString {
@@ -498,6 +603,20 @@ fn to_class_string_atomic(atomic: &TAtomic) -> Option<TAtomic> {
 
 fn first_atomic_or_mixed(union: &TUnion) -> TAtomic {
     union.types.first().cloned().unwrap_or(TAtomic::TMixed)
+}
+
+fn single_named_object_name(union: &TUnion) -> Option<StrId> {
+    match union.get_single()? {
+        TAtomic::TNamedObject { name, .. } => Some(*name),
+        TAtomic::TObjectIntersection { types } => types.iter().find_map(|atomic| {
+            if let TAtomic::TNamedObject { name, .. } = atomic {
+                Some(*name)
+            } else {
+                None
+            }
+        }),
+        _ => None,
+    }
 }
 
 fn push_unique(target: &mut Vec<TAtomic>, atomic: TAtomic) {

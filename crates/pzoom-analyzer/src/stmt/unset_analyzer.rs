@@ -206,7 +206,6 @@ fn clear_array_path_types_for_base_var(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 

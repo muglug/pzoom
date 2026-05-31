@@ -27,6 +27,20 @@ pub fn analyze(
     let left_type = analysis_data.get_expr_type(left_pos);
     let right_type = analysis_data.get_expr_type(right_pos);
 
+    // Precise literal-folding / int-range propagation (Psalm ArithmeticOpAnalyzer)
+    // when both operands are single numeric atomics; array/other operands return
+    // None here and fall through to the generic inference below.
+    if let Some(op) = super::arithmetic_op_analyzer::arith_op(operator)
+        && let Some(precise) = super::arithmetic_op_analyzer::infer_precise_arithmetic_result(
+            op,
+            left_type.as_deref(),
+            right_type.as_deref(),
+        )
+    {
+        analysis_data.set_expr_type(pos, precise);
+        return;
+    }
+
     let result_type = match operator {
         BinaryOperator::Addition(_) => {
             infer_addition_type(left_type.as_deref(), right_type.as_deref())
@@ -37,10 +51,10 @@ pub fn analyze(
         BinaryOperator::Multiplication(_) => {
             infer_arithmetic_type(left_type.as_deref(), right_type.as_deref())
         }
-        BinaryOperator::Division(_) => {
-            // Division can return int or float
-            TUnion::from_types(vec![TAtomic::TInt, TAtomic::TFloat])
-        }
+        BinaryOperator::Division(_) => super::arithmetic_op_analyzer::infer_division_type(
+            left_type.as_deref(),
+            right_type.as_deref(),
+        ),
         BinaryOperator::Modulo(_) => TUnion::int(),
         BinaryOperator::Exponentiation(_) => {
             infer_arithmetic_type(left_type.as_deref(), right_type.as_deref())

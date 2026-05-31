@@ -11,7 +11,6 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::array::ArrayElement;
 use mago_syntax::ast::ast::assignment::{Assignment, AssignmentOperator};
-use mago_syntax::ast::ast::call::Call;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
@@ -27,7 +26,6 @@ use pzoom_str::StrId;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::assertion_finder;
 use crate::context::BlockContext;
 use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
 use crate::expr::assignment::{
@@ -358,6 +356,31 @@ fn analyze_assignment_lhs(
                 // Intern the variable name
                 let var_id = analyzer.interner.intern(var_name);
 
+                // Mirrors Psalm `AssignmentAnalyzer`: assigning to a by-reference variable
+                // mutates the caller's scope, so it is impure in a mutation-free context
+                // (Psalm gates on `$context->mutation_free` and detects the `by_ref` flag
+                // on the in-scope variable; pzoom approximates that via the by-ref params).
+                let assigns_by_ref = analyzer
+                    .function_info
+                    .is_some_and(|info| info.params.iter().any(|param| param.by_ref && param.name == var_id));
+                if assigns_by_ref
+                    && crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer)
+                {
+                    let (line, col) = analyzer.get_line_column(assignment_offset);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::ImpureByReferenceAssignment,
+                        format!(
+                            "Variable {} cannot be assigned to as it is passed by reference",
+                            var_name
+                        ),
+                        analyzer.file_path,
+                        assignment_offset,
+                        assignment_offset.saturating_add(1),
+                        line,
+                        col,
+                    ));
+                }
+
                 if var_id == StrId::THIS_VAR && context.get_var_type(StrId::THIS_VAR).is_none() {
                     if !issue_suppression::is_issue_suppressed_at(
                         analyzer,
@@ -437,14 +460,8 @@ fn analyze_assignment_lhs(
                 clear_dependent_property_types(analyzer, context, var_name);
                 clear_array_path_types_for_base_var(analyzer, context, var_name);
                 clear_dependent_array_access_types(analyzer, context, var_name);
-                clear_dependent_class_string_origins(context, var_id);
+                context.invalidate_dependent_types(var_id);
                 remove_var_clauses_from_context(context, var_name);
-
-                if let Some(source_var_id) = get_class_source_var_id(analyzer, rhs_expr) {
-                    context.class_string_origins.insert(var_id, source_var_id);
-                } else {
-                    context.class_string_origins.remove(&var_id);
-                }
             }
         }
         Expression::Access(access) => {
@@ -626,7 +643,6 @@ fn clear_dependent_property_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
@@ -653,7 +669,6 @@ fn clear_dependent_array_access_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
@@ -680,25 +695,6 @@ fn clear_array_path_types_for_base_var(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
-    }
-}
-
-fn clear_dependent_class_string_origins(context: &mut BlockContext, source_var_id: StrId) {
-    let dependent_keys: Vec<_> = context
-        .class_string_origins
-        .iter()
-        .filter_map(|(class_var_id, tracked_source_var_id)| {
-            if *tracked_source_var_id == source_var_id {
-                Some(*class_var_id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for class_var_id in dependent_keys {
-        context.class_string_origins.remove(&class_var_id);
     }
 }
 
@@ -948,16 +944,8 @@ fn analyze_reference_assignment(
         clear_dependent_property_types(analyzer, context, direct.name);
         clear_array_path_types_for_base_var(analyzer, context, direct.name);
         clear_dependent_array_access_types(analyzer, context, direct.name);
-        clear_dependent_class_string_origins(context, lhs_var_id);
+        context.invalidate_dependent_types(lhs_var_id);
         remove_var_clauses_from_context(context, direct.name);
-
-        if let Some(source_var_id) = get_class_source_var_id(analyzer, rhs_operand) {
-            context
-                .class_string_origins
-                .insert(lhs_var_id, source_var_id);
-        } else {
-            context.class_string_origins.remove(&lhs_var_id);
-        }
     }
 
     analysis_data.set_expr_type(pos, rhs_type);
@@ -1035,30 +1023,6 @@ fn get_inline_var_annotation_type(
     unnamed_match
 }
 
-fn get_class_source_var_id(
-    analyzer: &StatementsAnalyzer<'_>,
-    rhs_expr: &Expression<'_>,
-) -> Option<pzoom_str::StrId> {
-    let Expression::Call(Call::Function(function_call)) = rhs_expr.unparenthesized() else {
-        return None;
-    };
-
-    let Expression::Identifier(function_name) = function_call.function.unparenthesized() else {
-        return None;
-    };
-
-    if !function_name.value().eq_ignore_ascii_case("get_class") {
-        return None;
-    }
-
-    let first_arg = function_call.argument_list.arguments.first()?;
-    let Expression::Variable(Variable::Direct(direct)) = first_arg.value().unparenthesized() else {
-        return None;
-    };
-
-    Some(analyzer.interner.intern(direct.name))
-}
-
 fn handle_assignment_with_boolean_logic(
     analyzer: &StatementsAnalyzer<'_>,
     assigned_var_name: &str,
@@ -1079,8 +1043,15 @@ fn handle_assignment_with_boolean_logic(
     let var_object_id = (lhs_expr.start_offset() as u32, lhs_expr.end_offset() as u32);
     let cond_object_id = (rhs_expr.start_offset() as u32, rhs_expr.end_offset() as u32);
 
-    let right_clauses =
-        assertion_finder::get_assertions(analyzer, rhs_expr, analysis_data).if_true_clauses;
+    let right_clauses = crate::formula_generator::get_formula(
+        cond_object_id,
+        cond_object_id,
+        rhs_expr,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     if right_clauses.is_empty() {
         return;
     }

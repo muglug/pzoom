@@ -1,14 +1,10 @@
 //! Closure and arrow function analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::function_like::arrow_function::ArrowFunction;
 use mago_syntax::ast::ast::function_like::closure::Closure;
 use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter as MagoParameter;
-use mago_syntax::ast::ast::statement::Statement;
 
-use pzoom_code_info::algebra::ClauseKey;
 use pzoom_code_info::{
     FunctionLikeParameter, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
 };
@@ -19,6 +15,7 @@ use rustc_hash::FxHashSet;
 use crate::context::BlockContext;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::function_like_analyzer;
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::stmt_analyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
@@ -49,9 +46,9 @@ pub fn analyze(
     // Create a new scope for the closure body
     let mut closure_context = context.clone();
     if closure.r#static.is_some() {
-        strip_this_from_context(analyzer, &mut closure_context);
+        closure_context.strip_this_assumptions(analyzer.interner);
     }
-    strip_property_path_assumptions(analyzer, &mut closure_context);
+    closure_context.strip_property_path_assumptions(analyzer.interner);
 
     let param_ids: FxHashSet<StrId> = closure
         .parameter_list
@@ -172,26 +169,27 @@ pub fn analyze(
     closure_function_info.signature_return_type = closure_expected_return_type.clone();
     closure_function_info.returns_by_ref = closure.ampersand.is_some();
 
-    let closure_stmt_analyzer = StatementsAnalyzer {
-        codebase: analyzer.codebase,
-        interner: analyzer.interner,
-        function_info: Some(&closure_function_info),
-        file_path: analyzer.file_path,
-        source: analyzer.source,
-        resolved_names: analyzer.resolved_names,
-        config: analyzer.config,
-    };
+    let closure_stmt_analyzer = analyzer.for_nested_function(Some(&closure_function_info));
 
     let issue_count_before = analysis_data.issues.len();
+    let prev_is_generator = analysis_data.current_function_is_generator;
+    analysis_data.current_function_is_generator =
+        stmt_analyzer::body_contains_yield(closure.body.statements.as_slice());
     let _ = stmt_analyzer::analyze_stmts(
         &closure_stmt_analyzer,
         closure.body.statements.as_slice(),
         analysis_data,
         &mut closure_context,
     );
-    let saw_impure_issue =
-        strip_inferred_impure_issues(analysis_data, issue_count_before, !infer_purity);
-    let has_obvious_side_effect_stmt = closure_body_has_obvious_side_effect_statements(closure);
+    analysis_data.current_function_is_generator = prev_is_generator;
+    let saw_impure_issue = function_like_analyzer::strip_inferred_impure_issues(
+        analysis_data,
+        issue_count_before,
+        !infer_purity,
+    );
+    let has_obvious_side_effect_stmt = function_like_analyzer::body_has_obvious_side_effect_statements(
+        closure.body.statements.as_slice(),
+    );
     let closure_is_pure = !saw_impure_issue
         && !has_obvious_side_effect_stmt
         && (closure_function_info.is_pure || closure_function_info.is_mutation_free);
@@ -200,7 +198,7 @@ pub fn analyze(
     let inferred_return_type = if yielded_return_type.is_some() {
         yielded_return_type.clone()
     } else {
-        infer_inferred_return_type(analysis_data, return_types_start)
+        Some(analysis_data.combine_inferred_return_types(return_types_start))
     };
 
     let has_expected_callable_context = context
@@ -277,9 +275,9 @@ pub fn analyze_arrow_function(
     // Add parameters to context
     let mut arrow_context = context.clone();
     if arrow.r#static.is_some() {
-        strip_this_from_context(analyzer, &mut arrow_context);
+        arrow_context.strip_this_assumptions(analyzer.interner);
     }
-    strip_property_path_assumptions(analyzer, &mut arrow_context);
+    arrow_context.strip_property_path_assumptions(analyzer.interner);
 
     // Extract parameter types
     let mut params = extract_param_types(
@@ -320,15 +318,7 @@ pub fn analyze_arrow_function(
     arrow_function_info.is_pure = has_explicit_pure_annotation || infer_purity;
     arrow_function_info.is_mutation_free = false;
 
-    let arrow_expr_analyzer = StatementsAnalyzer {
-        codebase: analyzer.codebase,
-        interner: analyzer.interner,
-        function_info: Some(&arrow_function_info),
-        file_path: analyzer.file_path,
-        source: analyzer.source,
-        resolved_names: analyzer.resolved_names,
-        config: analyzer.config,
-    };
+    let arrow_expr_analyzer = analyzer.for_nested_function(Some(&arrow_function_info));
 
     // Analyze the body expression to infer return type
     let issue_count_before = analysis_data.issues.len();
@@ -338,8 +328,11 @@ pub fn analyze_arrow_function(
         analysis_data,
         &mut arrow_context,
     );
-    let saw_impure_issue =
-        strip_inferred_impure_issues(analysis_data, issue_count_before, !infer_purity);
+    let saw_impure_issue = function_like_analyzer::strip_inferred_impure_issues(
+        analysis_data,
+        issue_count_before,
+        !infer_purity,
+    );
     let arrow_is_pure =
         !saw_impure_issue && (arrow_function_info.is_pure || arrow_function_info.is_mutation_free);
     let inferred_return_type = analysis_data.get_expr_type(body_pos).map(|t| (*t).clone());
@@ -358,7 +351,9 @@ pub fn analyze_arrow_function(
     let inline_return_type =
         inline_callable_annotation.and_then(|annotation| annotation.return_type.clone());
 
-    if arrow.ampersand.is_some() && !is_reference_returnable_expression(arrow.expression) {
+    if arrow.ampersand.is_some()
+        && !crate::stmt::return_analyzer::is_reference_returnable_expression(arrow.expression)
+    {
         add_issue(
             analyzer,
             analysis_data,
@@ -394,73 +389,6 @@ pub fn analyze_arrow_function(
     });
 
     analysis_data.set_expr_type(pos, expr_type);
-}
-
-fn strip_inferred_impure_issues(
-    analysis_data: &mut FunctionAnalysisData,
-    issue_count_before: usize,
-    retain_impure_issues: bool,
-) -> bool {
-    if analysis_data.issues.len() == issue_count_before {
-        return false;
-    }
-
-    let new_issues = analysis_data.issues.split_off(issue_count_before);
-    let mut filtered = Vec::with_capacity(new_issues.len());
-    let mut saw_impure_issue = false;
-
-    for issue in new_issues {
-        if is_impure_issue_kind(issue.kind) {
-            saw_impure_issue = true;
-            if retain_impure_issues {
-                filtered.push(issue);
-            }
-        } else {
-            filtered.push(issue);
-        }
-    }
-
-    analysis_data.issues.extend(filtered);
-    saw_impure_issue
-}
-
-fn is_impure_issue_kind(kind: IssueKind) -> bool {
-    matches!(
-        kind,
-        IssueKind::ImpureFunctionCall
-            | IssueKind::ImpureMethodCall
-            | IssueKind::ImpurePropertyAssignment
-    )
-}
-
-fn closure_body_has_obvious_side_effect_statements(closure: &Closure<'_>) -> bool {
-    closure.body.statements.iter().any(|statement| {
-        matches!(
-            statement,
-            Statement::Echo(_)
-                | Statement::EchoTag(_)
-                | Statement::Unset(_)
-                | Statement::Global(_)
-                | Statement::Static(_)
-        )
-    })
-}
-
-fn infer_inferred_return_type(
-    analysis_data: &FunctionAnalysisData,
-    start_index: usize,
-) -> Option<TUnion> {
-    let new_return_types = &analysis_data.inferred_return_types[start_index..];
-    if new_return_types.is_empty() {
-        return Some(TUnion::void());
-    }
-
-    let mut combined = new_return_types[0].clone();
-    for return_type in &new_return_types[1..] {
-        combined = combine_union_types(&combined, return_type, false);
-    }
-
-    Some(combined)
 }
 
 fn infer_yielded_return_type(
@@ -655,50 +583,6 @@ fn add_issue(
     ));
 }
 
-fn strip_this_from_context(analyzer: &StatementsAnalyzer<'_>, context: &mut BlockContext) {
-    let this_related_vars: Vec<StrId> = context
-        .locals
-        .keys()
-        .copied()
-        .filter(|var_id| {
-            *var_id == StrId::THIS_VAR
-                || analyzer
-                    .interner
-                    .lookup(*var_id)
-                    .as_ref()
-                    .starts_with("$this->")
-        })
-        .collect();
-
-    for var_id in this_related_vars {
-        context.locals.remove(&var_id);
-        context.assigned_var_ids.remove(&var_id);
-        context.possibly_assigned_var_ids.remove(&var_id);
-    }
-}
-
-fn strip_property_path_assumptions(analyzer: &StatementsAnalyzer<'_>, context: &mut BlockContext) {
-    let property_path_vars: Vec<StrId> = context
-        .locals
-        .keys()
-        .copied()
-        .filter(|var_id| analyzer.interner.lookup(*var_id).as_ref().contains("->"))
-        .collect();
-
-    for var_id in property_path_vars {
-        context.locals.remove(&var_id);
-        context.assigned_var_ids.remove(&var_id);
-        context.possibly_assigned_var_ids.remove(&var_id);
-        context.class_string_origins.remove(&var_id);
-    }
-
-    context.clauses.retain(|clause| {
-        !clause.possibilities.keys().any(|key| {
-            matches!(key, ClauseKey::Name(name) if name.contains("->"))
-        })
-    });
-}
-
 fn emit_closure_return_issues(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
@@ -793,11 +677,3 @@ fn union_allows_implicit_yield_return(union: &TUnion) -> bool {
     })
 }
 
-fn is_reference_returnable_expression(expr: &Expression<'_>) -> bool {
-    matches!(
-        expr.unparenthesized(),
-        Expression::Variable(_)
-            | Expression::Access(Access::Property(_))
-            | Expression::Access(Access::StaticProperty(_))
-    )
-}

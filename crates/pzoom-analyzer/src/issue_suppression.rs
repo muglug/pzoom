@@ -19,7 +19,40 @@ pub(crate) fn is_issue_suppressed_at(
         .unwrap_or(0)
         .min(offset);
 
-    has_suppressing_docblock(&source[scope_start..offset], issue_name)
+    if has_suppressing_docblock(&source[scope_start..offset], issue_name) {
+        return true;
+    }
+
+    // Psalm merges suppressions from enclosing scopes (file -> class -> function).
+    // Check the docblock attached to the enclosing class declaration so a
+    // class-level `@psalm-suppress` covers all of its members.
+    if let Some(class_id) = analyzer
+        .function_info
+        .and_then(|function_info| function_info.declaring_class)
+    {
+        if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+            let class_start = (class_info.start_offset as usize).min(source.len());
+            if let Some(docblock) = preceding_docblock(&source[..class_start]) {
+                if docblock_suppresses_issue(docblock, issue_name) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Return the docblock (`/** ... */`) immediately preceding `prefix` (the source
+/// up to a declaration), if one is present with only whitespace in between.
+fn preceding_docblock(prefix: &str) -> Option<&str> {
+    let trimmed = prefix.trim_end();
+    if !trimmed.ends_with("*/") {
+        return None;
+    }
+    let end = trimmed.len();
+    let start = trimmed.rfind("/**")?;
+    Some(&trimmed[start..end])
 }
 
 fn has_suppressing_docblock(scope_source: &str, issue_name: &str) -> bool {

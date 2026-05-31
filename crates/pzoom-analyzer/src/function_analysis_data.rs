@@ -7,6 +7,8 @@ use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 use std::rc::Rc;
 
+use crate::scope::LoopScope;
+
 /// Position in source code (start_offset, end_offset).
 pub type Pos = (u32, u32);
 
@@ -28,6 +30,11 @@ pub struct FunctionAnalysisData {
     /// Yield key/value types inferred from yield expressions.
     /// Key is None for `yield $value` and Some for `yield $key => $value`.
     pub inferred_yield_types: Vec<(Option<TUnion>, TUnion)>,
+
+    /// Whether the function-like currently being analyzed is a generator (its body
+    /// contains a `yield`/`yield from`). Set before analyzing each function-like body
+    /// and restored afterwards for nested scopes.
+    pub current_function_is_generator: bool,
 
     /// Whether the function definitely returns on all paths.
     pub all_paths_return: bool,
@@ -65,6 +72,19 @@ pub struct FunctionAnalysisData {
 
     /// Effects from one expression copied to another (for control flow).
     effects: FxHashMap<Pos, Vec<Pos>>,
+
+    /// Active loop scopes, innermost last. Pushed by the loop analyzer before
+    /// analyzing a loop body and popped afterwards; `break`/`continue` update the
+    /// top of this stack. Mirrors Hakana's threaded `&mut Option<LoopScope>`.
+    pub loop_scopes: Vec<LoopScope>,
+
+    /// Number of nested issue-recording sessions currently active. When > 0, newly
+    /// added issues are buffered instead of emitted (used by the loop fixpoint so
+    /// only the final iteration's issues are reported). Mirrors Hakana.
+    recording_level: usize,
+
+    /// Stack of buffered issues, one buffer per active recording session.
+    recorded_issues: Vec<Vec<Issue>>,
 }
 
 impl FunctionAnalysisData {
@@ -91,14 +111,54 @@ impl FunctionAnalysisData {
     }
 
     /// Add an issue to be reported.
+    ///
+    /// While issue recording is active (inside the loop fixpoint), the issue is
+    /// buffered in the current recording session instead of being emitted.
     pub fn add_issue(&mut self, issue: Issue) {
+        if self.recording_level > 0 {
+            if let Some(buffer) = self.recorded_issues.last_mut() {
+                buffer.push(issue);
+            }
+            return;
+        }
         self.issues.push(issue);
     }
 
     /// Add an issue if it's not suppressed by configuration.
     pub fn maybe_add_issue(&mut self, issue: Issue, _suppressed: &[String]) {
         // TODO: Check against suppressed issue types
-        self.issues.push(issue);
+        self.add_issue(issue);
+    }
+
+    /// Begin a new issue-recording session. Issues added while recording is active
+    /// are buffered rather than emitted.
+    pub fn start_recording_issues(&mut self) {
+        self.recording_level += 1;
+        self.recorded_issues.push(Vec::new());
+    }
+
+    /// End the current issue-recording session.
+    pub fn stop_recording_issues(&mut self) {
+        if self.recording_level > 0 {
+            self.recording_level -= 1;
+        }
+    }
+
+    /// Take and clear the issues buffered in the current recording session.
+    pub fn clear_currently_recorded_issues(&mut self) -> Vec<Issue> {
+        self.recorded_issues.pop().unwrap_or_default()
+    }
+
+    /// Re-emit a previously recorded issue. If an outer recording session is still
+    /// active the issue is re-buffered there; otherwise it is emitted.
+    pub fn bubble_up_issue(&mut self, issue: Issue) {
+        if self.recording_level == 0 {
+            self.issues.push(issue);
+            return;
+        }
+        if let Some(buffer) = self.recorded_issues.last_mut() {
+            buffer.push(issue);
+        }
     }
 
     /// Record that a variable was referenced.
@@ -114,6 +174,22 @@ impl FunctionAnalysisData {
     /// Add a return type inferred from a return statement.
     pub fn add_return_type(&mut self, return_type: TUnion) {
         self.inferred_return_types.push(return_type);
+    }
+
+    /// Combine the inferred return types recorded since `start_index` into one
+    /// union, returning `void` when none were recorded. Shared by the function
+    /// and closure/arrow analyzers when materializing an inferred return type.
+    pub fn combine_inferred_return_types(&self, start_index: usize) -> TUnion {
+        let new_return_types = &self.inferred_return_types[start_index..];
+        if new_return_types.is_empty() {
+            return TUnion::void();
+        }
+
+        let mut combined = new_return_types[0].clone();
+        for return_type in &new_return_types[1..] {
+            combined = combine_union_types(&combined, return_type, false);
+        }
+        combined
     }
 
     /// Add yield key/value types inferred from a yield expression.

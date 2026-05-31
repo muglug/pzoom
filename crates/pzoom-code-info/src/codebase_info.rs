@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ClassLikeInfo, FunctionLikeInfo, TAtomic, TUnion,
+    class_type_alias::ClassTypeAlias,
     functionlike_info::{AssertionType, ConditionalReturnCondition},
 };
 
@@ -24,7 +25,7 @@ pub struct CodebaseInfo {
     pub constants: FxHashMap<StrId, ConstantInfo>,
 
     /// Type aliases.
-    pub type_aliases: FxHashMap<StrId, TypeAliasInfo>,
+    pub type_aliases: FxHashMap<StrId, ClassTypeAlias>,
 
     /// Files that have been scanned.
     pub files: FxHashMap<StrId, FileInfo>,
@@ -54,86 +55,13 @@ pub struct ConstantInfo {
     pub start_offset: u32,
 }
 
-/// Information about a type alias.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TypeAliasInfo {
-    pub name: StrId,
-    pub aliased_type: TUnion,
-    pub file_path: StrId,
-    pub start_offset: u32,
-}
-
-/// Information about a scanned file.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FileInfo {
-    pub path: StrId,
-    /// Classes defined in this file.
-    pub classes: Vec<StrId>,
-    /// Functions defined in this file.
-    pub functions: Vec<StrId>,
-    /// Constants defined in this file.
-    pub constants: Vec<StrId>,
-    /// Hash of file contents for cache invalidation.
-    pub content_hash: String,
-    /// The file contents (for re-parsing during analysis).
-    pub contents: String,
-    /// Whether this file is a stub file.
-    #[serde(default)]
-    pub is_stub: bool,
-    /// Preprocessed inline docblock annotations keyed by expression/statement offset.
-    #[serde(default)]
-    pub inline_annotations: InlineTypeAnnotations,
-}
-
-/// Scanner-preprocessed inline type annotations for a file.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct InlineTypeAnnotations {
-    /// Inline `@var` annotations keyed by the offset of the annotated expression.
-    #[serde(default)]
-    pub var_annotations: FxHashMap<u32, Vec<InlineVarTypeAnnotation>>,
-    /// Inline callable (`@param`/`@return`) annotations keyed by closure/arrow offset.
-    #[serde(default)]
-    pub callable_annotations: FxHashMap<u32, InlineCallableTypeAnnotation>,
-    /// Inline `@psalm-trace` annotations keyed by statement/expression offset.
-    #[serde(default)]
-    pub trace_annotations: FxHashMap<u32, Vec<InlineTraceAnnotation>>,
-}
-
-/// A single inline `@var` annotation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InlineVarTypeAnnotation {
-    /// Optional variable name this annotation targets (e.g. "$x").
-    pub var_name: Option<StrId>,
-    pub var_type: TUnion,
-    #[serde(default)]
-    pub is_invalid: bool,
-}
-
-/// Inline callable annotation data for anonymous functions.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct InlineCallableTypeAnnotation {
-    pub params: Vec<InlineCallableParamType>,
-    pub return_type: Option<TUnion>,
-    #[serde(default)]
-    pub has_template_annotation: bool,
-    #[serde(default)]
-    pub is_pure: bool,
-}
-
-/// Inline callable parameter annotation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InlineCallableParamType {
-    /// Optional parameter name (e.g. "$x").
-    pub param_name: Option<StrId>,
-    pub param_type: TUnion,
-}
-
-/// Inline trace annotation data.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InlineTraceAnnotation {
-    /// Variables to trace (e.g. "$x", "$y").
-    pub var_names: Vec<StrId>,
-}
+// `FileInfo` and the inline-annotation structs live in [`crate::file_info`]
+// (mirroring Hakana's `file_info.rs`). They are re-exported here so existing
+// `codebase_info::FileInfo` / `codebase_info::Inline*` paths keep resolving.
+pub use crate::file_info::{
+    FileInfo, InlineCallableParamType, InlineCallableTypeAnnotation, InlineCheckTypeAnnotation,
+    InlineTraceAnnotation, InlineTypeAnnotations, InlineVarTypeAnnotation,
+};
 
 impl CodebaseInfo {
     pub fn new() -> Self {
@@ -148,6 +76,27 @@ impl CodebaseInfo {
     /// Get mutable information about a class by name.
     pub fn get_class_mut(&mut self, name: StrId) -> Option<&mut ClassLikeInfo> {
         self.classlike_infos.get_mut(&name)
+    }
+
+    /// Returns the storage of the class-like that declares `method_name` as
+    /// seen from `fq_class_name` — Psalm's
+    /// `Methods::getClassLikeStorageForMethod`. For an inherited method this
+    /// is the ancestor that declares it; trait methods resolve to the using
+    /// class (matching `declaring_method_ids` semantics). Falls back to the
+    /// class's own storage when no declaring id is recorded.
+    pub fn get_classlike_storage_for_method(
+        &self,
+        fq_class_name: StrId,
+        method_name: StrId,
+    ) -> Option<&ClassLikeInfo> {
+        let class_info = self.get_class(fq_class_name)?;
+
+        match class_info.declaring_method_ids.get(&method_name) {
+            Some(declaring_class) if *declaring_class != fq_class_name => {
+                self.get_class(*declaring_class).or(Some(class_info))
+            }
+            _ => Some(class_info),
+        }
     }
 
     /// Get information about a function by name.
@@ -305,6 +254,7 @@ impl CodebaseInfo {
             existing.is_abstract |= info.is_abstract;
             existing.is_readonly |= info.is_readonly;
             existing.is_immutable |= info.is_immutable;
+            existing.is_external_mutation_free |= info.is_external_mutation_free;
             existing.is_deprecated |= info.is_deprecated;
             existing.is_internal |= info.is_internal;
             for internal_scope in info.internal {
@@ -347,21 +297,17 @@ impl CodebaseInfo {
     /// Register a function in the codebase.
     pub fn register_function(&mut self, info: FunctionLikeInfo) {
         if let Some(existing) = self.functionlike_infos.get_mut(&info.name) {
-            let existing_is_stub = self
-                .files
-                .get(&existing.file_path)
-                .is_some_and(|file_info| file_info.is_stub);
-            let incoming_is_stub = self
-                .files
-                .get(&info.file_path)
-                .is_some_and(|file_info| file_info.is_stub);
+            let existing_prec = file_precedence(&self.files, existing.file_path);
+            let incoming_prec = file_precedence(&self.files, info.file_path);
 
-            if existing_is_stub && !incoming_is_stub {
+            // A higher-precedence source (project code > curated stubs >
+            // phpstorm-derived `extensions/*` stubs) replaces a lower one outright;
+            // a lower-precedence source is ignored. Mirrors Psalm's stub precedence.
+            if incoming_prec > existing_prec {
                 *existing = info;
                 return;
             }
-
-            if !existing_is_stub && incoming_is_stub {
+            if incoming_prec < existing_prec {
                 return;
             }
 
@@ -374,6 +320,18 @@ impl CodebaseInfo {
         }
 
         self.functionlike_infos.insert(info.name, info);
+    }
+}
+
+/// Precedence tier of a declaration's source file (higher wins). Mirrors Psalm's
+/// stub precedence: project code > pzoom's curated stubs > phpstorm-derived
+/// (`stubs/extensions/*`) stubs.
+fn file_precedence(files: &FxHashMap<StrId, FileInfo>, file_path: StrId) -> u8 {
+    match files.get(&file_path) {
+        Some(f) if !f.is_stub => 3,
+        Some(f) if !f.is_low_precedence_stub => 2,
+        Some(_) => 1,
+        None => 2,
     }
 }
 
@@ -405,7 +363,13 @@ fn functionlike_info_quality(info: &FunctionLikeInfo) -> usize {
         }
     }
 
-    if info.conditional_return_type.is_some() {
+    if info
+        .return_type
+        .as_ref()
+        .is_some_and(|return_type| return_type.types.iter().any(|atomic| {
+            matches!(atomic, crate::TAtomic::TConditional(_))
+        }))
+    {
         score += 100;
     }
     if info.if_this_is_type.is_some() {
@@ -444,10 +408,6 @@ fn merge_functionlike_info(existing: &mut FunctionLikeInfo, incoming: FunctionLi
 
     if existing.return_type.is_none() && incoming.return_type.is_some() {
         existing.return_type = incoming.return_type;
-    }
-
-    if existing.conditional_return_type.is_none() && incoming.conditional_return_type.is_some() {
-        existing.conditional_return_type = incoming.conditional_return_type;
     }
 
     if existing.if_this_is_type.is_none() && incoming.if_this_is_type.is_some() {
@@ -696,22 +656,6 @@ fn remap_functionlike_info_template_names(
         remap_union_template_names(signature_return_type, remap);
     }
 
-    if let Some(conditional_return_type) = info.conditional_return_type.as_mut() {
-        if let ConditionalReturnCondition::TemplateIs {
-            template_name,
-            asserted_type,
-        } = &mut conditional_return_type.condition
-        {
-            if let Some(mapped_name) = remap.get(template_name) {
-                *template_name = *mapped_name;
-            }
-            remap_union_template_names(asserted_type, remap);
-        }
-
-        remap_union_template_names(&mut conditional_return_type.if_true_type, remap);
-        remap_union_template_names(&mut conditional_return_type.if_false_type, remap);
-    }
-
     if let Some(if_this_is_type) = info.if_this_is_type.as_mut() {
         remap_union_template_names(if_this_is_type, remap);
     }
@@ -770,6 +714,25 @@ fn remap_union_template_names(union: &mut TUnion, remap: &FxHashMap<StrId, StrId
 
 fn remap_atomic_template_names(atomic: &mut TAtomic, remap: &FxHashMap<StrId, StrId>) {
     match atomic {
+        TAtomic::TConditional(conditional) => {
+            match &mut conditional.condition {
+                ConditionalReturnCondition::TemplateIs {
+                    template_name,
+                    asserted_type,
+                } => {
+                    if let Some(mapped_name) = remap.get(template_name) {
+                        *template_name = *mapped_name;
+                    }
+                    remap_union_template_names(asserted_type, remap);
+                }
+                ConditionalReturnCondition::ParamIs { asserted_type, .. } => {
+                    remap_union_template_names(asserted_type, remap);
+                }
+                ConditionalReturnCondition::FuncNumArgsIs { .. } => {}
+            }
+            remap_union_template_names(&mut conditional.if_true_type, remap);
+            remap_union_template_names(&mut conditional.if_false_type, remap);
+        }
         TAtomic::TArray {
             key_type,
             value_type,

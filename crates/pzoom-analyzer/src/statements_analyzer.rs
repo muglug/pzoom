@@ -35,6 +35,11 @@ pub struct StatementsAnalyzer<'a> {
 
     /// Analyzer configuration.
     pub config: &'a Config,
+
+    /// The parse arena, when available. Used to synthesize AST nodes during analysis
+    /// (e.g. rewriting a statement-level `A && B` to `if (A) { B; }`, mirroring
+    /// Psalm's AndAnalyzer from_stmt path).
+    pub arena: Option<&'a bumpalo::Bump>,
 }
 
 impl<'a> StatementsAnalyzer<'a> {
@@ -54,6 +59,7 @@ impl<'a> StatementsAnalyzer<'a> {
             source,
             resolved_names,
             config,
+            arena: None,
         }
     }
 
@@ -62,9 +68,39 @@ impl<'a> StatementsAnalyzer<'a> {
         self
     }
 
+    /// Build a child analyzer that shares this analyzer's codebase/source/config
+    /// context but runs in the scope of a different function. The child borrows
+    /// `function_info` for its own (possibly shorter) lifetime `'b`, which is
+    /// needed when the function info is a locally-owned value (closures, arrow
+    /// functions, synthesized methods) rather than living for `'a`. A plain
+    /// `with_function` cannot express that shorter borrow.
+    pub fn for_nested_function<'b>(
+        &self,
+        function_info: Option<&'b FunctionLikeInfo>,
+    ) -> StatementsAnalyzer<'b>
+    where
+        'a: 'b,
+    {
+        StatementsAnalyzer {
+            codebase: self.codebase,
+            interner: self.interner,
+            function_info,
+            file_path: self.file_path,
+            source: self.source,
+            resolved_names: self.resolved_names,
+            config: self.config,
+            arena: self.arena,
+        }
+    }
+
+    pub fn with_arena(mut self, arena: &'a bumpalo::Bump) -> Self {
+        self.arena = Some(arena);
+        self
+    }
+
     /// Get the expected return type for the current function.
     pub fn get_expected_return_type(&self) -> Option<&pzoom_code_info::TUnion> {
-        self.function_info.and_then(|f| f.return_type.as_ref())
+        self.function_info.and_then(|f| f.get_return_type())
     }
 
     /// Check if we're analyzing a static method.

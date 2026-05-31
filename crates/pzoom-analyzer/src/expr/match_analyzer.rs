@@ -26,16 +26,87 @@ pub fn analyze(
     let mut matched_conditions = Vec::new();
     let mut has_default_arm = false;
 
+    // The finite set of literal/enum-case values the subject can take, if known.
+    // Empty means the subject isn't a known finite literal set (e.g. plain `int`).
+    let subject_values = subject_type
+        .as_ref()
+        .map(|subject_type| collect_match_subject_values(analyzer, subject_type))
+        .unwrap_or_default();
+    let subject_is_finite = !subject_values.is_empty();
+
+    // Track which subject values remain unmatched as we walk the arms in order.
+    let mut remaining_subject_values = subject_values.clone();
+    // Track literal conditions already seen, to detect duplicate (paradoxical) arms.
+    let mut seen_conditions: Vec<TAtomic> = Vec::new();
+
     for arm in match_expr.arms.iter() {
         if let MatchArm::Expression(expression_arm) = arm {
             for condition in expression_arm.conditions.iter() {
+                let condition_span = condition.span();
                 let condition_pos =
                     expression_analyzer::analyze(analyzer, condition, analysis_data, context);
                 if let Some(condition_type) = analysis_data.get_expr_type(condition_pos) {
-                    matched_conditions.extend(extract_matchable_literals(&condition_type));
+                    for literal in extract_matchable_literals(&condition_type) {
+                        let already_seen = seen_conditions
+                            .iter()
+                            .any(|seen| match_literals_equal(&literal, seen));
+
+                        if already_seen {
+                            // A duplicate condition value can never be reached: the
+                            // earlier identical arm already handles it.
+                            emit_match_arm_issue(
+                                analyzer,
+                                analysis_data,
+                                IssueKind::ParadoxicalCondition,
+                                format!(
+                                    "This match condition can never be matched, as {} is handled by an earlier arm",
+                                    literal.get_id(Some(analyzer.interner))
+                                ),
+                                condition_span.start.offset,
+                                condition_span.end.offset,
+                            );
+                        } else if subject_is_finite
+                            && !subject_values
+                                .iter()
+                                .any(|value| match_literals_equal(value, &literal))
+                        {
+                            // The subject can never equal this literal, so the arm
+                            // is impossible.
+                            emit_match_arm_issue(
+                                analyzer,
+                                analysis_data,
+                                IssueKind::TypeDoesNotContainType,
+                                format!(
+                                    "{} is not a possible value of the match subject",
+                                    literal.get_id(Some(analyzer.interner))
+                                ),
+                                condition_span.start.offset,
+                                condition_span.end.offset,
+                            );
+                        }
+
+                        remaining_subject_values
+                            .retain(|value| !match_literals_equal(value, &literal));
+                        seen_conditions.push(literal.clone());
+                        matched_conditions.push(literal);
+                    }
                 }
             }
         } else {
+            // A `default` arm is impossible when every possible subject value has
+            // already been handled by the preceding arms.
+            if subject_is_finite && remaining_subject_values.is_empty() {
+                let default_span = arm.span();
+                emit_match_arm_issue(
+                    analyzer,
+                    analysis_data,
+                    IssueKind::TypeDoesNotContainType,
+                    "All match conditions have already been met, so the default arm is impossible"
+                        .to_string(),
+                    default_span.start.offset,
+                    default_span.end.offset,
+                );
+            }
             has_default_arm = true;
         }
 
@@ -46,34 +117,22 @@ pub fn analyze(
         }
     }
 
-    if !has_default_arm && let Some(subject_type) = subject_type {
-        let mut remaining_subject_values = collect_match_subject_values(analyzer, &subject_type);
-
-        if !remaining_subject_values.is_empty() {
-            remaining_subject_values.retain(|subject_atomic| {
-                !matched_conditions
-                    .iter()
-                    .any(|condition_atomic| match_literals_equal(subject_atomic, condition_atomic))
-            });
-
-            if !remaining_subject_values.is_empty() {
-                let remaining_type = TUnion::from_types(remaining_subject_values);
-                let subject_span = match_expr.expression.span();
-                let (line, col) = analyzer.get_line_column(subject_span.start.offset);
-                analysis_data.add_issue(Issue::new(
-                    IssueKind::UnhandledMatchCondition,
-                    format!(
-                        "This match expression is not exhaustive - consider values {}",
-                        remaining_type.get_id(Some(analyzer.interner))
-                    ),
-                    analyzer.file_path,
-                    subject_span.start.offset,
-                    subject_span.end.offset,
-                    line,
-                    col,
-                ));
-            }
-        }
+    if !has_default_arm && subject_is_finite && !remaining_subject_values.is_empty() {
+        let remaining_type = TUnion::from_types(remaining_subject_values);
+        let subject_span = match_expr.expression.span();
+        let (line, col) = analyzer.get_line_column(subject_span.start.offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::UnhandledMatchCondition,
+            format!(
+                "This match expression is not exhaustive - consider values {}",
+                remaining_type.get_id(Some(analyzer.interner))
+            ),
+            analyzer.file_path,
+            subject_span.start.offset,
+            subject_span.end.offset,
+            line,
+            col,
+        ));
     }
 
     let result_type = if result_types.is_empty() {
@@ -87,6 +146,26 @@ pub fn analyze(
     };
 
     analysis_data.set_expr_type(pos, result_type);
+}
+
+fn emit_match_arm_issue(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    kind: IssueKind,
+    message: String,
+    start_offset: u32,
+    end_offset: u32,
+) {
+    let (line, col) = analyzer.get_line_column(start_offset);
+    analysis_data.add_issue(Issue::new(
+        kind,
+        message,
+        analyzer.file_path,
+        start_offset,
+        end_offset,
+        line,
+        col,
+    ));
 }
 
 fn extract_matchable_literals(t_union: &TUnion) -> Vec<TAtomic> {

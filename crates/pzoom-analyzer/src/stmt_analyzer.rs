@@ -3,18 +3,50 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
 use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::ast::node::{Node, NodeKind};
 use pzoom_code_info::{Issue, IssueKind, TUnion};
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
+use crate::type_comparator::type_comparison_result::TypeComparisonResult;
+use crate::type_comparator::union_type_comparator;
 
 // Import statement-specific analyzers
 use crate::stmt::{
-    class_analyzer, echo_analyzer, expression_stmt_analyzer, for_analyzer, foreach_analyzer,
-    function_analyzer, global_analyzer, if_else_analyzer, return_analyzer, static_analyzer,
-    switch_analyzer, try_analyzer, unset_analyzer, while_analyzer,
+    break_analyzer, class_analyzer, continue_analyzer, do_analyzer, echo_analyzer,
+    expression_stmt_analyzer, for_analyzer, foreach_analyzer, function_analyzer, global_analyzer,
+    if_else_analyzer, return_analyzer, static_analyzer, switch_analyzer, try_analyzer,
+    unset_analyzer, while_analyzer,
 };
+
+/// Returns true if any statement in `statements` contains a `yield`/`yield from`,
+/// without descending into nested function-like scopes (which have their own
+/// generator context). Used to determine whether the enclosing function is a
+/// generator.
+pub fn body_contains_yield(statements: &[Statement<'_>]) -> bool {
+    let mut stack: Vec<Node> = statements.iter().map(Node::Statement).collect();
+
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            NodeKind::Yield | NodeKind::YieldFrom | NodeKind::YieldValue | NodeKind::YieldPair => {
+                return true;
+            }
+            // Nested function-like scopes are generators in their own right.
+            NodeKind::Closure
+            | NodeKind::ArrowFunction
+            | NodeKind::AnonymousClass
+            | NodeKind::Function
+            | NodeKind::Class
+            | NodeKind::Interface
+            | NodeKind::Trait
+            | NodeKind::Enum => {}
+            _ => stack.extend(node.children()),
+        }
+    }
+
+    false
+}
 
 /// Analyze a sequence of statements.
 pub fn analyze_stmts(
@@ -73,7 +105,7 @@ pub fn analyze_stmt(
         analysis_data,
     );
 
-    match stmt {
+    let stmt_result = match stmt {
         // Control flow statements
         Statement::Return(ret) => return_analyzer::analyze(analyzer, ret, analysis_data, context),
 
@@ -139,7 +171,9 @@ pub fn analyze_stmt(
         Statement::For(for_stmt) => {
             for_analyzer::analyze(analyzer, for_stmt, analysis_data, context)
         }
-        Statement::DoWhile(_) => Ok(()),
+        Statement::DoWhile(do_while_stmt) => {
+            do_analyzer::analyze(analyzer, do_while_stmt, analysis_data, context)
+        }
         Statement::Switch(switch_stmt) => {
             switch_analyzer::analyze(analyzer, switch_stmt, analysis_data, context)
         }
@@ -149,8 +183,14 @@ pub fn analyze_stmt(
         Statement::Declare(_) => Ok(()),
         Statement::Goto(_) => Ok(()),
         Statement::Label(_) => Ok(()),
-        Statement::Continue(_) => Ok(()),
-        Statement::Break(_) => Ok(()),
+        Statement::Continue(_) => {
+            continue_analyzer::analyze(analyzer, analysis_data, context);
+            Ok(())
+        }
+        Statement::Break(_) => {
+            break_analyzer::analyze(analyzer, analysis_data, context);
+            Ok(())
+        }
         Statement::Global(global_stmt) => {
             global_analyzer::analyze(analyzer, global_stmt, analysis_data, context);
             Ok(())
@@ -167,7 +207,20 @@ pub fn analyze_stmt(
         Statement::Noop(_) => Ok(()),
         // Non-exhaustive enum - catch future variants
         _ => Ok(()),
-    }
+    };
+
+    // `@psalm-check-type` is evaluated against the variable state *after* the
+    // annotated statement (the assertion's docblock precedes the statement it
+    // describes), so this runs once the statement has updated the context.
+    emit_check_type_annotations(
+        analyzer,
+        span.start.offset,
+        span.end.offset,
+        analysis_data,
+        context,
+    );
+
+    stmt_result
 }
 
 fn emit_invalid_inline_var_annotation_issues(
@@ -237,6 +290,115 @@ fn emit_inline_trace_annotations(
                     col,
                 ));
             }
+        }
+    }
+}
+
+/// Evaluates `@psalm-check-type[-exact]` assertions whose target offset falls
+/// within the current statement, comparing the asserted type against the
+/// in-scope variable type. Mirrors Psalm's `StatementsAnalyzer` check-type
+/// handling. Malformed assertions (missing variable or type) are reported by a
+/// separate file-level sweep, so only well-formed assertions are handled here.
+fn emit_check_type_annotations(
+    analyzer: &StatementsAnalyzer<'_>,
+    start_offset: u32,
+    end_offset: u32,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    let Some(file_info) = analyzer.codebase.files.get(&analyzer.file_path) else {
+        return;
+    };
+
+    for (annotation_offset, annotations) in &file_info.inline_annotations.check_type_annotations {
+        // Fire exactly once, for the statement the assertion is directly attached
+        // to (its start offset equals the assertion's target). A range check would
+        // re-fire for every enclosing statement (function body, block, …) — often
+        // with a stale context that hasn't yet defined the variable.
+        let _ = end_offset;
+        if *annotation_offset != start_offset {
+            continue;
+        }
+
+        for annotation in annotations {
+            // Malformed assertions are handled by the file-level sweep.
+            let (Some(var_id), Some(check_type)) = (annotation.var_id, annotation.check_type.as_ref())
+            else {
+                continue;
+            };
+
+            let (line, col) = analyzer.get_line_column(*annotation_offset);
+            let var_name = analyzer.interner.lookup(var_id);
+
+            let Some(checked_type) = context.get_var_type(var_id) else {
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::InvalidDocblock,
+                    format!("Attempt to check undefined variable {var_name}"),
+                    analyzer.file_path,
+                    *annotation_offset,
+                    *annotation_offset,
+                    line,
+                    col,
+                ));
+                continue;
+            };
+
+            let mut check_type = check_type.clone();
+            check_type.possibly_undefined = annotation.annotation_possibly_undefined;
+
+            let mut forward = TypeComparisonResult::new();
+            let mut reverse = TypeComparisonResult::new();
+            let contained = union_type_comparator::is_contained_by(
+                analyzer.codebase,
+                checked_type,
+                &check_type,
+                false,
+                false,
+                &mut forward,
+            );
+            let exact_ok = !annotation.is_exact
+                || union_type_comparator::is_contained_by(
+                    analyzer.codebase,
+                    &check_type,
+                    checked_type,
+                    false,
+                    false,
+                    &mut reverse,
+                );
+
+            let mismatch = check_type.possibly_undefined != checked_type.possibly_undefined
+                || !contained
+                || !exact_ok;
+
+            if !mismatch {
+                continue;
+            }
+
+            let checked_var_raw = annotation
+                .checked_var_raw
+                .clone()
+                .unwrap_or_else(|| var_name.to_string());
+            let check_var = format!(
+                "{}{}",
+                var_name,
+                if checked_type.possibly_undefined { "?" } else { "" }
+            );
+
+            analysis_data.add_issue(Issue::new(
+                IssueKind::CheckType,
+                format!(
+                    "Checked variable {} = {} does not match {} = {}",
+                    checked_var_raw,
+                    check_type.get_id(Some(analyzer.interner)),
+                    check_var,
+                    checked_type.get_id(Some(analyzer.interner)),
+                ),
+                analyzer.file_path,
+                *annotation_offset,
+                *annotation_offset,
+                line,
+                col,
+            ));
         }
     }
 }

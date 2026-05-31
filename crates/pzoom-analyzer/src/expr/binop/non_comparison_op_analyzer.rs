@@ -95,6 +95,16 @@ pub fn analyze(
         concat_analyzer::emit_concat_operand_issue(analyzer, right_type, pos, analysis_data);
     }
 
+    // Precise literal-folding / int-range propagation (Psalm
+    // ArithmeticOpAnalyzer), falling back to the generic per-operator result.
+    if !addition_is_array_union
+        && let Some(op) = arithmetic_op_analyzer::arith_op(operator)
+        && let Some(precise) =
+            arithmetic_op_analyzer::infer_precise_arithmetic_result(op, left_type, right_type)
+    {
+        return precise;
+    }
+
     match operator {
         BinaryOperator::LowXor(_) => TUnion::bool(),
         BinaryOperator::Addition(_) => {
@@ -115,7 +125,9 @@ pub fn analyze(
         BinaryOperator::Subtraction(_) | BinaryOperator::Multiplication(_) => {
             arithmetic_op_analyzer::infer_arithmetic_type(left_type, right_type)
         }
-        BinaryOperator::Division(_) => TUnion::from_types(vec![TAtomic::TInt, TAtomic::TFloat]),
+        BinaryOperator::Division(_) => {
+            arithmetic_op_analyzer::infer_division_type(left_type, right_type)
+        }
         BinaryOperator::Modulo(_) => TUnion::int(),
         BinaryOperator::Exponentiation(_) => {
             arithmetic_op_analyzer::infer_arithmetic_type(left_type, right_type)

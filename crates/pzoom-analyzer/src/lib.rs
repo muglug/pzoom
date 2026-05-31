@@ -6,6 +6,7 @@
 //! - Expression analysis
 //! - Type inference and checking
 
+pub mod algebra_analyzer;
 pub mod assertion_finder;
 pub mod config;
 pub mod context;
@@ -13,17 +14,22 @@ pub(crate) mod data_flow;
 pub mod expr;
 pub mod expression_analyzer;
 pub mod expression_identifier;
+pub mod file_analyzer;
+pub mod formula_generator;
 pub mod function_analysis_data;
+pub mod function_like_analyzer;
 pub(crate) mod internal_access;
 pub(crate) mod issue_suppression;
 pub mod psalm_baseline;
 pub mod psalm_config;
 pub mod reconciler;
+pub mod return_type_provider;
 pub mod scope;
 pub mod statements_analyzer;
 pub mod stmt;
 pub mod stmt_analyzer;
 pub mod template;
+pub mod type_expander;
 pub mod type_comparator;
 
 pub use config::Config;

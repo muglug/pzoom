@@ -125,6 +125,8 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
                 new_types.push(TAtomic::TNamedObject {
                     name,
                     type_params: Some(generic_type_params),
+                    is_static: false,
+                    remapped_params: false,
                 });
             }
         }
@@ -135,6 +137,8 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
         new_types.push(TAtomic::TNamedObject {
             name,
             type_params: Some(type_params),
+            is_static: false,
+            remapped_params: false,
         });
     }
 
@@ -152,6 +156,8 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
                         as_type: Some(Box::new(TAtomic::TNamedObject {
                             name,
                             type_params: None,
+                            is_static: false,
+                            remapped_params: false,
                         })),
                     });
                 } else if matches!(atomic, TAtomic::TObject) {
@@ -399,7 +405,7 @@ fn scrape_type_properties(
         TAtomic::TNamedObject {
             ref name,
             ref type_params,
-        } => {
+        .. } => {
             // Track static qualifier
             if !combination.object_static.contains_key(name) {
                 combination.object_static.insert(*name, false);
@@ -586,16 +592,6 @@ fn scrape_type_properties(
 
         TAtomic::TLiteralInt { value } => {
             scrape_literal_int_properties(value, atomic, combination, literal_limit);
-            None
-        }
-
-        TAtomic::TPositiveInt => {
-            scrape_int_range_properties(Some(1), None, combination);
-            None
-        }
-
-        TAtomic::TNegativeInt => {
-            scrape_int_range_properties(None, Some(-1), combination);
             None
         }
 
@@ -868,7 +864,7 @@ fn scrape_string_properties(
                     // Check if any existing strings are non-numeric
                     let has_non_numeric = strings.values().any(|t| {
                         if let TAtomic::TLiteralString { value } = t {
-                            value.parse::<f64>().is_err()
+                            !php_is_numeric(value)
                         } else {
                             false
                         }
@@ -949,7 +945,7 @@ fn scrape_literal_string_properties(
                 return;
             }
             TAtomic::TNumericString => {
-                if value.parse::<f64>().is_ok() {
+                if php_is_numeric(value) {
                     return;
                 }
                 combination
@@ -1089,13 +1085,9 @@ fn scrape_int_range_properties(
         }
 
         combination.ints = None;
-        combination.value_types.insert(
-            "int".to_string(),
-            TAtomic::TIntRange {
-                min: new_min,
-                max: new_max,
-            },
-        );
+        combination
+            .value_types
+            .insert("int".to_string(), int_range_or_int(new_min, new_max));
         return;
     }
 
@@ -1114,20 +1106,29 @@ fn scrape_int_range_properties(
             (Some(a), Some(b)) => Some(a.max(b)),
             _ => None, // One is unbounded above
         };
-        combination.value_types.insert(
-            "int".to_string(),
-            TAtomic::TIntRange {
-                min: new_min,
-                max: new_max,
-            },
-        );
+        combination
+            .value_types
+            .insert("int".to_string(), int_range_or_int(new_min, new_max));
     } else if combination.value_types.contains_key("int") {
         // Already have TInt, which encompasses all ranges
     } else {
         combination.ints = None;
         combination
             .value_types
-            .insert("int".to_string(), TAtomic::TIntRange { min, max });
+            .insert("int".to_string(), int_range_or_int(min, max));
+    }
+}
+
+/// An int-range atomic, collapsing a fully-open range to plain `int`. A
+/// `TIntRange { min: None, max: None }` is degenerate: comparators treat it as a
+/// bounded range rather than `int` (e.g. `array-key` then appears unable to
+/// contain it), so unioning `positive-int|negative-int|...` would emit a
+/// spurious contradiction. Mirrors Psalm collapsing such a range back to `int`.
+fn int_range_or_int(min: Option<i64>, max: Option<i64>) -> TAtomic {
+    if min.is_none() && max.is_none() {
+        TAtomic::TInt
+    } else {
+        TAtomic::TIntRange { min, max }
     }
 }
 
@@ -1439,7 +1440,13 @@ mod tests {
 
     #[test]
     fn test_combine_positive_int_and_zero() {
-        let types = vec![TAtomic::TPositiveInt, TAtomic::TLiteralInt { value: 0 }];
+        let types = vec![
+            TAtomic::TIntRange {
+                min: Some(1),
+                max: None,
+            },
+            TAtomic::TLiteralInt { value: 0 },
+        ];
         let result = combine(types, false);
         assert_eq!(result.len(), 1);
         if let TAtomic::TIntRange { min, max } = &result[0] {
@@ -1464,4 +1471,27 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0], TAtomic::TBool));
     }
+}
+
+/// Mimics PHP's `is_numeric()` for a literal string value.
+///
+/// Unlike Rust's `f64::parse`, PHP's `is_numeric` rejects `inf`/`nan` and hex
+/// (`0x..`) forms while allowing surrounding whitespace. Using it keeps
+/// numeric-string combination decisions consistent with Psalm (which calls
+/// `is_numeric`).
+fn php_is_numeric(value: &str) -> bool {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let unsigned = trimmed.trim_start_matches(['+', '-']);
+    let lower = unsigned.to_ascii_lowercase();
+
+    // PHP rejects the non-decimal words Rust's float parser accepts, plus hex.
+    if lower.starts_with("inf") || lower.starts_with("nan") || lower.contains('x') {
+        return false;
+    }
+
+    trimmed.parse::<f64>().is_ok()
 }

@@ -107,8 +107,6 @@ fn infer_int_cast_type(inner_type: &TUnion) -> TUnion {
             TAtomic::TLiteralFloat { value } => casted.push(TAtomic::TLiteralInt {
                 value: *value as i64,
             }),
-            TAtomic::TPositiveInt => casted.push(TAtomic::TPositiveInt),
-            TAtomic::TNegativeInt => casted.push(TAtomic::TNegativeInt),
             TAtomic::TIntRange { min, max } => casted.push(TAtomic::TIntRange {
                 min: *min,
                 max: *max,
@@ -136,8 +134,6 @@ fn infer_string_cast_type(analyzer: &StatementsAnalyzer<'_>, inner_type: &TUnion
                 value: value.to_string(),
             }),
             TAtomic::TInt
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
             | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TNumeric => casted.push(TAtomic::TNumericString),

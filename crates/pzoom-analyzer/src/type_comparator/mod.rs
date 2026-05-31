@@ -16,6 +16,10 @@
 pub mod array_type_comparator;
 pub mod atomic_type_comparator;
 pub mod callable_type_comparator;
+pub mod class_like_string_comparator;
+pub mod generic_type_comparator;
+pub mod integer_range_comparator;
+pub mod keyed_array_comparator;
 pub mod object_type_comparator;
 pub mod scalar_type_comparator;
 pub mod type_comparison_result;

@@ -269,6 +269,16 @@ fn analyze_comparison_operation(
                     && (weak_equality_compares_object_to_non_object(left_union, right_union)
                         || (union_is_int_like(left_union) && union_is_int_like(right_union))));
 
+            // A weak `==` comparison between a Stringable object (one with a
+            // `__toString` method) and a string-like value is valid in PHP: the
+            // object is coerced to its string form. Psalm does not flag it.
+            let should_check = should_check
+                && !weak_equality_compares_stringable_to_string(
+                    analyzer,
+                    left_union,
+                    right_union,
+                );
+
             if !should_check {
                 // no-op
             } else {
@@ -536,16 +546,69 @@ fn weak_equality_compares_object_to_non_object(left_union: &TUnion, right_union:
     }
 }
 
+/// Returns true when one operand is a string-like value and the other is an
+/// object that has a `__toString` method (Stringable). Such a `==` comparison
+/// is legal in PHP because the object is implicitly cast to a string.
+fn weak_equality_compares_stringable_to_string(
+    analyzer: &StatementsAnalyzer<'_>,
+    left_union: &TUnion,
+    right_union: &TUnion,
+) -> bool {
+    let stringable_vs_string = |object_union: &TUnion, other_union: &TUnion| {
+        union_is_stringable_object(analyzer, object_union) && union_is_string_like(other_union)
+    };
+
+    stringable_vs_string(left_union, right_union) || stringable_vs_string(right_union, left_union)
+}
+
+fn union_is_stringable_object(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> bool {
+    !union.types.is_empty()
+        && union.types.iter().all(|atomic| atomic_is_stringable_object(analyzer, atomic))
+}
+
+fn atomic_is_stringable_object(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
+    match atomic {
+        TAtomic::TNamedObject { name, .. } => {
+            *name == pzoom_str::StrId::STRINGABLE
+                || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
+                    class_info.methods.contains_key(&pzoom_str::StrId::TO_STRING)
+                        || class_info
+                            .all_parent_interfaces
+                            .contains(&pzoom_str::StrId::STRINGABLE)
+                })
+        }
+        TAtomic::TObjectIntersection { types } => {
+            types.iter().any(|t| atomic_is_stringable_object(analyzer, t))
+        }
+        TAtomic::TTemplateParam { as_type, .. } => union_is_stringable_object(analyzer, as_type),
+        _ => false,
+    }
+}
+
+fn union_is_string_like(union: &TUnion) -> bool {
+    !union.types.is_empty()
+        && union.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TString
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TNonEmptyString
+                    | TAtomic::TTruthyString
+                    | TAtomic::TLowercaseString
+                    | TAtomic::TNonEmptyLowercaseString
+                    | TAtomic::TNumericString
+                    | TAtomic::TNonEmptyNumericString
+            )
+        })
+}
+
 fn union_is_int_like(union: &TUnion) -> bool {
     !union.types.is_empty()
         && union.types.iter().all(|atomic| {
             matches!(
                 atomic,
                 TAtomic::TInt
-                    | TAtomic::TLiteralInt { .. }
-                    | TAtomic::TPositiveInt
-                    | TAtomic::TNegativeInt
-                    | TAtomic::TIntRange { .. }
+                    | TAtomic::TLiteralInt { .. }                    | TAtomic::TIntRange { .. }
             )
         })
 }
@@ -668,10 +731,7 @@ fn is_valid_bitwise_atomic(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
         TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
-            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TString
@@ -708,10 +768,7 @@ pub(crate) fn union_is_numeric_like_for_bitwise(union: &TUnion) -> bool {
             matches!(
                 atomic,
                 TAtomic::TInt
-                    | TAtomic::TLiteralInt { .. }
-                    | TAtomic::TPositiveInt
-                    | TAtomic::TNegativeInt
-                    | TAtomic::TIntRange { .. }
+                    | TAtomic::TLiteralInt { .. }                    | TAtomic::TIntRange { .. }
                     | TAtomic::TFloat
                     | TAtomic::TLiteralFloat { .. }
             )

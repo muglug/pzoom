@@ -57,6 +57,7 @@ pub fn analyze(
             let iterator_pos =
                 expression_analyzer::analyze(analyzer, yield_from.iterator, analysis_data, context);
             if let Some(iterator_type) = analysis_data.get_expr_type(iterator_pos) {
+                let iterator_type = (*iterator_type).clone();
                 emit_yield_from_iterator_issue_if_needed(
                     analyzer,
                     &iterator_type,
@@ -70,7 +71,16 @@ pub fn analyze(
                 } else {
                     analysis_data.add_yield_type(None, TUnion::mixed());
                 }
+
+                // The type of the `yield from` expression itself is whatever
+                // the delegated generator returns (its 4th template param), or
+                // `null` for arrays — *not* the enclosing function's send type.
+                // Mirrors Psalm's YieldFromAnalyzer.
+                analysis_data.set_expr_type(pos, yield_from_expression_type(analyzer, &iterator_type));
+            } else {
+                analysis_data.set_expr_type(pos, TUnion::mixed());
             }
+            return;
         }
     }
 
@@ -80,7 +90,7 @@ pub fn analyze(
         && let Some(return_type) = function_info.get_return_type()
     {
         for atomic in &return_type.types {
-            if let TAtomic::TNamedObject { name, type_params } = atomic {
+            if let TAtomic::TNamedObject { name, type_params , .. } = atomic {
                 let class_name = analyzer.interner.lookup(*name);
                 if class_name.eq_ignore_ascii_case("Generator") {
                     let send_type = if let Some(type_params) = type_params {
@@ -104,6 +114,47 @@ pub fn analyze(
     }
 
     analysis_data.set_expr_type(pos, inferred_send_type.unwrap_or_else(TUnion::mixed));
+}
+
+/// Compute the type of a `yield from <iter>` expression, i.e. the value the
+/// delegated iterator returns. Mirrors Psalm's `YieldFromAnalyzer`: the first
+/// atomic resolves to the `Generator`'s 4th template param (its return type),
+/// or `null` for any array; once more than one atomic contributes the result
+/// degrades to `mixed`, and an unrecognised single atomic also falls back to
+/// `mixed`.
+fn yield_from_expression_type(analyzer: &StatementsAnalyzer<'_>, iter_type: &TUnion) -> TUnion {
+    let mut yield_from_type: Option<TUnion> = None;
+
+    for atomic in &iter_type.types {
+        if yield_from_type.is_none() {
+            match atomic {
+                TAtomic::TNamedObject {
+                    name,
+                    type_params: Some(type_params),
+                    ..
+                } if type_params.len() >= 4
+                    && analyzer
+                        .interner
+                        .lookup(*name)
+                        .eq_ignore_ascii_case("Generator") =>
+                {
+                    yield_from_type = Some(type_params[3].clone());
+                }
+                TAtomic::TArray { .. }
+                | TAtomic::TNonEmptyArray { .. }
+                | TAtomic::TKeyedArray { .. }
+                | TAtomic::TList { .. }
+                | TAtomic::TNonEmptyList { .. } => {
+                    yield_from_type = Some(TUnion::null());
+                }
+                _ => {}
+            }
+        } else {
+            yield_from_type = Some(TUnion::mixed());
+        }
+    }
+
+    yield_from_type.unwrap_or_else(TUnion::mixed)
 }
 
 fn emit_yield_from_iterator_issue_if_needed(

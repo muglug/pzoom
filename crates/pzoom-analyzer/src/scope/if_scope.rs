@@ -8,7 +8,7 @@ use pzoom_code_info::{Assertion, TUnion};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::stmt::control_analyzer::ControlAction;
+use crate::stmt::scope_analyzer::ControlAction;
 
 /// Scope tracking for if statement analysis.
 ///
@@ -45,6 +45,10 @@ pub struct IfScope {
 
     /// Variable IDs changed by the if condition.
     pub if_cond_changed_var_ids: FxHashSet<StrId>,
+
+    /// Variables the if condition narrowed that can be negated in the fallthrough
+    /// branches — the `vars_to_update` set passed to `BlockContext::update`.
+    pub negatable_if_types: FxHashSet<StrId>,
 
     /// Negated clauses (the if condition was false).
     pub negated_clauses: Vec<Clause>,

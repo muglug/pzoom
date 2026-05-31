@@ -268,7 +268,7 @@ fn update_var_type_for_increment(
 
         clear_dependent_property_types(analyzer, context, direct.name);
         clear_dependent_array_access_types(analyzer, context, direct.name);
-        clear_dependent_class_string_origins(context, var_id);
+        context.invalidate_dependent_types(var_id);
         remove_var_clauses_from_context(context, direct.name);
         return;
     }
@@ -287,7 +287,7 @@ fn update_var_type_for_increment(
         let inside_loop = context.inside_loop;
 
         reconciler::reconcile_keyed_types(
-            &assertions,
+            &reconciler::to_and_groups(&assertions),
             context,
             &mut changed_var_ids,
             analyzer,
@@ -324,7 +324,6 @@ fn clear_dependent_property_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
@@ -351,25 +350,6 @@ fn clear_dependent_array_access_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
-    }
-}
-
-fn clear_dependent_class_string_origins(context: &mut BlockContext, source_var_id: pzoom_str::StrId) {
-    let dependent_keys: Vec<_> = context
-        .class_string_origins
-        .iter()
-        .filter_map(|(class_var_id, tracked_source_var_id)| {
-            if *tracked_source_var_id == source_var_id {
-                Some(*class_var_id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for class_var_id in dependent_keys {
-        context.class_string_origins.remove(&class_var_id);
     }
 }
 
@@ -546,8 +526,6 @@ fn is_valid_bitwise_not_atomic(atomic: &TAtomic) -> bool {
         atomic,
         TAtomic::TInt
             | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
             | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }

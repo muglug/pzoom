@@ -4459,14 +4459,11 @@ function array_count_values(array $array): array
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @param array<array-key, mixed> $array
+ * @param array-key|null $column_key
+ * @param array-key|null $index_key
  *
- * @param array<array-key, array<K, V>|object>|list<array<K,V>|object> $array
- * @param K|null $column_key
- * @param K|null $index_key
- *
- * @return array<array-key, V>
+ * @return array<array-key, mixed>
  *
  * @no-named-arguments
  * @pure
@@ -4497,7 +4494,7 @@ function array_reverse(array $array, bool $preserve_keys = false): array
  * @template I
  *
  * @param array<K, V> $array
- * @param (callable(null|I, V): I) $callback
+ * @param callable $callback
  * @param null|I $initial
  *
  * @return I

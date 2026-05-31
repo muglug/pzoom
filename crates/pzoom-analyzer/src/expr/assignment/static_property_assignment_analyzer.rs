@@ -26,6 +26,14 @@ pub fn analyze(
     // Analyze the class expression to get the class name
     let _class_pos = expression_analyzer::analyze(analyzer, access.class, analysis_data, context);
 
+    // Psalm: writing a static property is global mutable state, so it is impure from a
+    // `@psalm-pure` context.
+    crate::expr::fetch::static_property_fetch_analyzer::emit_impure_static_property(
+        analyzer,
+        pos,
+        analysis_data,
+    );
+
     // Try to get the class name
     let class_name = get_class_name(analyzer, access.class, context);
 

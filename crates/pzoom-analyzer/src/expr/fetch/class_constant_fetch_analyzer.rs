@@ -82,7 +82,7 @@ pub fn analyze(
                         as_type: Some(Box::new(TAtomic::TNamedObject {
                             name: StrId::STATIC,
                             type_params: None,
-                        })),
+                        is_static: false, remapped_params: false })),
                     }),
                 );
                 return;
@@ -130,7 +130,7 @@ pub fn analyze(
                         as_type: Some(Box::new(TAtomic::TNamedObject {
                             name: class_id,
                             type_params: None,
-                        })),
+                        is_static: false, remapped_params: false })),
                     }),
                 );
                 return;

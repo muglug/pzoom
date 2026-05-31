@@ -56,31 +56,11 @@ pub fn analyze_with_namespace(
         check_undefined_docblock_types(analyzer, info, analysis_data);
         check_param_class_casing(analyzer, info, analysis_data);
         check_invalid_param_defaults(analyzer, info, &fqn, analysis_data);
+        check_template_param_bounds(analyzer, info, analysis_data);
     }
 
     // Create a new analyzer with the function context
-    let func_analyzer = if let Some(info) = function_info {
-        StatementsAnalyzer {
-            codebase: analyzer.codebase,
-            interner: analyzer.interner,
-            function_info: Some(info),
-            file_path: analyzer.file_path,
-            source: analyzer.source,
-            resolved_names: analyzer.resolved_names,
-            config: analyzer.config,
-        }
-    } else {
-        // Function not found in codebase - use analyzer without function context
-        StatementsAnalyzer {
-            codebase: analyzer.codebase,
-            interner: analyzer.interner,
-            function_info: None,
-            file_path: analyzer.file_path,
-            source: analyzer.source,
-            resolved_names: analyzer.resolved_names,
-            config: analyzer.config,
-        }
-    };
+    let func_analyzer = analyzer.for_nested_function(function_info);
 
     // Create a new context for the function body, preserving namespace
     let mut func_context = BlockContext::new();
@@ -126,8 +106,14 @@ pub fn analyze_with_namespace(
             TUnion::mixed()
         };
 
-        if let Some(callsite_type) =
-            analysis_data.get_function_argument_callsite_type(func_name_id, param_index)
+        // Call-site argument types are used to narrow a parameter's declared
+        // type inside the body, but a templated parameter (e.g. `Collection<T>`)
+        // must stay abstract: `T` is universally quantified over every caller, so
+        // narrowing it to a single observed call site would be unsound. Psalm
+        // analyses such bodies with the abstract template parameter.
+        if !crate::type_comparator::generic_type_comparator::union_has_template(&param_type)
+            && let Some(callsite_type) =
+                analysis_data.get_function_argument_callsite_type(func_name_id, param_index)
         {
             param_type =
                 assertion_reconciler::intersect_union_with_union(&param_type, callsite_type)
@@ -175,12 +161,16 @@ pub fn analyze_with_namespace(
     // Analyze the function body
     let yield_types_start = analysis_data.inferred_yield_types.len();
     let return_types_start = analysis_data.inferred_return_types.len();
+    let prev_is_generator = analysis_data.current_function_is_generator;
+    analysis_data.current_function_is_generator =
+        stmt_analyzer::body_contains_yield(func.body.statements.as_slice());
     stmt_analyzer::analyze_stmts(
         &func_analyzer,
         func.body.statements.as_slice(),
         analysis_data,
         &mut func_context,
     )?;
+    analysis_data.current_function_is_generator = prev_is_generator;
     let has_yield = analysis_data.inferred_yield_types.len() > yield_types_start;
 
     if let Some(info) = function_info {
@@ -242,16 +232,9 @@ fn maybe_emit_missing_return_type_issue(
         return;
     }
 
-    let new_return_types = &analysis_data.inferred_return_types[return_types_start..];
-    if new_return_types.is_empty() {
-        return;
-    }
-
-    let mut inferred_return_type = new_return_types[0].clone();
-    for return_type in &new_return_types[1..] {
-        inferred_return_type =
-            pzoom_code_info::combine_union_types(&inferred_return_type, return_type, false);
-    }
+    // Empty inferred set yields `void`, which the guard below treats as "no
+    // missing-return-type issue", matching the previous early return.
+    let inferred_return_type = analysis_data.combine_inferred_return_types(return_types_start);
 
     if inferred_return_type.is_void()
         || inferred_return_type.is_nothing()
@@ -298,6 +281,16 @@ fn maybe_emit_missing_return_issue(
     let Some(expected_return_type) = function_info.get_return_type() else {
         return;
     };
+    // Expand any conditional return type to the union of its branches before deciding
+    // whether a return value is required (a void branch makes it optional).
+    let mut expected_return_type = expected_return_type.clone();
+    crate::type_expander::expand_union(
+        analyzer.codebase,
+        analyzer.interner,
+        &mut expected_return_type,
+        &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+    );
+    let expected_return_type = &expected_return_type;
 
     if context.has_returned
         || has_yield
@@ -334,6 +327,117 @@ fn maybe_emit_missing_return_issue(
         line,
         col,
     ));
+}
+
+/// Validates that the type arguments of a generic type used in the signature
+/// satisfy their template parameters' bounds, including dependent bounds such as
+/// `@template B of AType<T>` where an earlier argument is substituted into the
+/// bound before comparison. Mirrors Psalm's `InvalidTemplateParam`.
+fn check_template_param_bounds(
+    analyzer: &StatementsAnalyzer<'_>,
+    function_info: &pzoom_code_info::FunctionLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for param in &function_info.params {
+        if let Some(param_type) = param.get_type() {
+            for atomic in &param_type.types {
+                check_atomic_template_bounds(analyzer, atomic, param.start_offset, analysis_data);
+            }
+        }
+    }
+
+    if let Some(return_type) = &function_info.return_type {
+        let offset = function_info.start_offset;
+        for atomic in &return_type.types {
+            check_atomic_template_bounds(analyzer, atomic, offset, analysis_data);
+        }
+    }
+}
+
+fn check_atomic_template_bounds(
+    analyzer: &StatementsAnalyzer<'_>,
+    atomic: &TAtomic,
+    offset: u32,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let TAtomic::TNamedObject {
+        name,
+        type_params: Some(type_params),
+        ..
+    } = atomic
+    else {
+        return;
+    };
+
+    if let Some(class_info) = analyzer.codebase.get_class(*name) {
+        // Map each template parameter name to the supplied argument so dependent
+        // bounds (`B of AType<T>`) can be resolved.
+        let mut substitutions = crate::template::TemplateMap::new();
+        for (index, template_type) in class_info.template_types.iter().enumerate() {
+            if let Some(type_param) = type_params.get(index) {
+                substitutions.insert(
+                    template_type.name,
+                    template_type.defining_entity,
+                    type_param.clone(),
+                );
+            }
+        }
+
+        let empty_defaults = crate::template::TemplateMap::new();
+        for (index, template_type) in class_info.template_types.iter().enumerate() {
+            let Some(type_param) = type_params.get(index) else {
+                continue;
+            };
+            if template_type.as_type.is_mixed() {
+                continue;
+            }
+
+            let effective_bound = crate::expr::call::function_call_analyzer::replace_templates_in_union(
+                &template_type.as_type,
+                &substitutions,
+                &empty_defaults,
+            );
+            if effective_bound.is_mixed() {
+                continue;
+            }
+
+            let mut comparison_result = TypeComparisonResult::new();
+            let is_contained = union_type_comparator::is_contained_by(
+                analyzer.codebase,
+                type_param,
+                &effective_bound,
+                false,
+                false,
+                &mut comparison_result,
+            );
+
+            if !is_contained && !comparison_result.type_coerced.unwrap_or(false) {
+                let (line, col) = analyzer.get_line_column(offset);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::InvalidTemplateParam,
+                    format!(
+                        "Type {} is not within the bound {} of template param {} of {}",
+                        type_param.get_id(Some(analyzer.interner)),
+                        effective_bound.get_id(Some(analyzer.interner)),
+                        analyzer.interner.lookup(template_type.name),
+                        analyzer.interner.lookup(*name),
+                    ),
+                    analyzer.file_path,
+                    offset,
+                    offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+
+    // Recurse into the type arguments, which may themselves be generic.
+    for type_param in type_params {
+        for inner in &type_param.types {
+            check_atomic_template_bounds(analyzer, inner, offset, analysis_data);
+        }
+    }
 }
 
 fn check_param_class_casing(
@@ -512,7 +616,7 @@ fn inspect_atomic_for_docblock_refs(
     analysis_data: &mut FunctionAnalysisData,
 ) {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             if *name == StrId::PZOOM_INDEXED_ACCESS {
                 if let Some(type_params) = type_params {
                     for type_param in type_params {

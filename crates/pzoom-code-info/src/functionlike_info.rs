@@ -37,6 +37,20 @@ pub struct FunctionLikeInfo {
     /// Whether this function is mutation-free (no state mutations).
     pub is_mutation_free: bool,
 
+    /// Whether this method may mutate `$this` but not external state
+    /// (`@psalm-external-mutation-free`, or inferred for getters / simple
+    /// property-assigning constructors). Mirrors Psalm's
+    /// `MethodStorage::$external_mutation_free`.
+    #[serde(default)]
+    pub is_external_mutation_free: bool,
+
+    /// Whether the mutation-free / external-mutation-free status was *inferred*
+    /// from the body rather than declared. Psalm tracks this
+    /// (`mutation_free_inferred`) to avoid trusting inference on non-final
+    /// methods that subclasses may override.
+    #[serde(default)]
+    pub mutation_free_inferred: bool,
+
     /// Whether this is a static method.
     pub is_static: bool,
 
@@ -51,10 +65,6 @@ pub struct FunctionLikeInfo {
 
     /// Template/generic type parameters.
     pub template_types: Vec<FunctionTemplateType>,
-
-    /// Conditional return type metadata from docblocks.
-    /// Used to evaluate Psalm-style conditional return branches at callsites.
-    pub conditional_return_type: Option<ConditionalReturnType>,
 
     /// Receiver-type constraint from `@psalm-if-this-is`.
     pub if_this_is_type: Option<TUnion>,
@@ -110,13 +120,26 @@ pub struct FunctionLikeInfo {
 
     /// If-false assertions (from @psalm-assert-if-false).
     pub if_false_assertions: Vec<Assertion>,
+
+    /// Whether the method carries the `#[\Override]` attribute.
+    #[serde(default)]
+    pub has_override_attribute: bool,
+
+    /// Names of `$this->X` properties assigned within this method's body.
+    /// Mirrors Psalm's `MethodStorage::$this_property_mutations`, collected
+    /// syntactically during scanning. Used to decide which property narrowings
+    /// to drop in a caller after a non-mutation-free method call.
+    #[serde(default)]
+    pub this_property_mutations: Vec<StrId>,
 }
 
 impl FunctionLikeInfo {
-    /// Get the effective return type for analysis.
-    /// Returns the return_type if set, otherwise None.
+    /// Get the effective return type for analysis: the docblock `return_type` if present,
+    /// otherwise the native `signature_return_type`. Mirrors Psalm using
+    /// `return_type ?: signature_return_type` at use sites while keeping the two stored
+    /// separately.
     pub fn get_return_type(&self) -> Option<&TUnion> {
-        self.return_type.as_ref()
+        self.return_type.as_ref().or(self.signature_return_type.as_ref())
     }
 
     /// Check if this function has an explicit return type (either signature or docblock).
@@ -169,10 +192,11 @@ impl Default for ParamInfo {
 }
 
 impl ParamInfo {
-    /// Get the effective type for analysis.
-    /// Returns the param_type if set, otherwise None.
+    /// Get the effective type for analysis: the docblock `param_type` if present,
+    /// otherwise the native `signature_type`. Mirrors Psalm's `param_type ?:
+    /// signature_type` while keeping the two stored separately.
     pub fn get_type(&self) -> Option<&TUnion> {
-        self.param_type.as_ref()
+        self.param_type.as_ref().or(self.signature_type.as_ref())
     }
 
     /// Check if this parameter has an explicit type (either signature or docblock).
@@ -185,28 +209,16 @@ impl ParamInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FunctionTemplateType {
     pub name: StrId,
+    /// The entity that defines this template: the function's name for plain
+    /// functions, `"Class::method"` for methods (Psalm's `$defining_class`,
+    /// which uses `fn-`-prefixed ids for function-likes).
+    pub defining_entity: StrId,
     pub as_type: TUnion,
 }
 
-/// Conditional return type information from a docblock return annotation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ConditionalReturnType {
-    pub condition: ConditionalReturnCondition,
-    pub if_true_type: TUnion,
-    pub if_false_type: TUnion,
-}
-
-/// Condition controlling a conditional return type branch.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum ConditionalReturnCondition {
-    /// Template condition, e.g. `TType is 'array'`.
-    TemplateIs {
-        template_name: StrId,
-        asserted_type: TUnion,
-    },
-    /// Argument-count condition, e.g. `func_num_args() is 1`.
-    FuncNumArgsIs { count: usize },
-}
+// Conditional return types are a type-level concern (Psalm's `Type\Atomic\TConditional`),
+// carried on the return TUnion as `TAtomic::TConditional`, not stored here.
+pub use crate::t_atomic::{ConditionalReturnCondition, ConditionalReturnType};
 
 /// An assertion about a parameter type.
 #[derive(Clone, Debug, Serialize, Deserialize)]

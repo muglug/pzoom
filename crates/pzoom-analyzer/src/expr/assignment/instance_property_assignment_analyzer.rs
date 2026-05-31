@@ -70,7 +70,16 @@ pub fn analyze_with_known_type(
         Expression::Variable(Variable::Direct(v)) if v.name == "$this"
     );
 
-    if explicit_mutation_free_context && is_this_assignment && !is_special_write_method(analyzer) {
+    // Psalm: mutating a property is impure from a mutation-free / pure context. For the
+    // receiver (`$this`) this is gated on not being a special write method (serialize
+    // hooks, etc.); assigning to any *other* object's property is always a mutation.
+    let emit_impure_assignment = if is_this_assignment {
+        explicit_mutation_free_context && !is_special_write_method(analyzer)
+    } else {
+        explicit_mutation_free_context
+    };
+
+    if emit_impure_assignment {
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::ImpurePropertyAssignment,
@@ -171,7 +180,7 @@ pub fn analyze_with_known_type(
 
             for atomic in &lookup_types {
                 match atomic {
-                    TAtomic::TNamedObject { name, type_params } => {
+                    TAtomic::TNamedObject { name, type_params , .. } => {
                         // Look up the class and property
                         if let Some(class_info) = analyzer.codebase.get_class(*name) {
                             if let Some(prop_info) = class_info.properties.get(&prop_id) {
@@ -693,7 +702,6 @@ fn clear_object_member_tracking(
         context.locals.remove(&var_id);
         context.assigned_var_ids.remove(&var_id);
         context.possibly_assigned_var_ids.remove(&var_id);
-        context.class_string_origins.remove(&var_id);
     }
 }
 

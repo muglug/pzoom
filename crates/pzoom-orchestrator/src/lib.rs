@@ -6,6 +6,8 @@
 //! 3. Analyzing - Type check and detect issues
 
 pub mod analyzer;
+pub mod ast_differ;
+pub mod cache;
 pub mod populator;
 pub mod scanner;
 

@@ -21,6 +21,22 @@ pub fn analyze(
 ) {
     let stmt_offset = static_stmt.span().start.offset;
 
+    // Mirrors Psalm `StaticAnalyzer`: a static variable is persistent state across calls,
+    // so declaring one in a mutation-free context (`$context->mutation_free`) is impure.
+    if crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer) {
+        let span = static_stmt.span();
+        let (line, col) = analyzer.get_line_column(span.start.offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::ImpureStaticVariable,
+            "Cannot use a static variable in a mutation-free context",
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            line,
+            col,
+        ));
+    }
+
     for item in static_stmt.items.iter() {
         let var_id = analyzer.interner.intern(item.variable().name);
         context.static_var_ids.insert(var_id);

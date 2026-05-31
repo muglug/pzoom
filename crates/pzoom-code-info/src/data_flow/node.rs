@@ -6,6 +6,8 @@ use std::{
 use pzoom_str::{Interner, StrId};
 use serde::{Deserialize, Serialize};
 
+use crate::method_identifier::MethodIdentifier;
+
 pub(crate) trait IntoStrId {
     fn into_str_id(self) -> StrId;
 }
@@ -28,19 +30,6 @@ pub(crate) fn lookup_id(interner: &Interner, id: impl IntoStrId) -> Arc<str> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 pub struct VarId(pub StrId);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
-pub struct MethodIdentifier(pub StrId, pub StrId);
-
-impl MethodIdentifier {
-    pub fn to_string(&self, interner: &Interner) -> String {
-        format!(
-            "{}::{}",
-            lookup_id(interner, self.0),
-            lookup_id(interner, self.1)
-        )
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum FunctionLikeIdentifier {

@@ -34,6 +34,11 @@ pub fn is_contained_by(
         return true;
     }
 
+    // Psalm seeds `scalar_type_match_found` to true and only clears it when a
+    // non-scalar mismatch is found, so a purely-scalar mismatch yields
+    // `InvalidScalarArgument` rather than `InvalidArgument`.
+    union_comparison_result.scalar_type_match_found = Some(true);
+
     // Track coercion state across all atomic comparisons
     let mut all_type_coerced: Option<bool> = None;
     let mut all_type_coerced_from_mixed: Option<bool> = None;
@@ -70,6 +75,7 @@ pub fn is_contained_by(
                 union_comparison_result.type_coerced_from_nested_mixed = Some(true);
             }
 
+            union_comparison_result.scalar_type_match_found = Some(false);
             return false;
         }
 
@@ -105,6 +111,7 @@ pub fn is_contained_by(
                 union_comparison_result.type_coerced_from_nested_mixed = Some(true);
             }
 
+            union_comparison_result.scalar_type_match_found = Some(false);
             return false;
         }
 
@@ -132,6 +139,7 @@ pub fn is_contained_by(
                 union_comparison_result.type_coerced_from_nested_mixed = Some(true);
             }
 
+            union_comparison_result.scalar_type_match_found = Some(false);
             return false;
         }
 
@@ -152,9 +160,24 @@ pub fn is_contained_by(
             }
         }
 
+        // `numeric` (int|float|numeric-string) is contained by a union that covers
+        // all three constituents, e.g. `int|string|float`. Matches Psalm
+        // UnionTypeComparator. No single atomic contains `numeric`, so this must be
+        // handled at the union level.
+        if matches!(input_type_part, TAtomic::TNumeric)
+            && container_type.has_int()
+            && container_type.has_string()
+            && container_type.has_float()
+        {
+            continue;
+        }
+
         let mut type_match_found = false;
         let mut atomic_type_coerced: Option<bool> = None;
         let mut atomic_type_coerced_from_mixed: Option<bool> = None;
+        // Tracks whether the failing comparisons for this input atomic were
+        // scalar-vs-scalar mismatches (Psalm's per-atomic `$scalar_type_match_found`).
+        let mut atomic_scalar_match = false;
 
         // Check against each container atomic type
         for container_type_part in &container_type.types {
@@ -183,6 +206,18 @@ pub fn is_contained_by(
                 &mut atomic_comparison_result,
             );
 
+            // Mirror Psalm: the last atomic comparison with a determined
+            // scalar_type_match_found wins for this input atomic.
+            if let Some(scalar_match) = atomic_comparison_result.scalar_type_match_found {
+                atomic_scalar_match = scalar_match;
+            }
+            if atomic_comparison_result
+                .type_coerced_from_scalar
+                .unwrap_or(false)
+            {
+                union_comparison_result.type_coerced_from_scalar = Some(true);
+            }
+
             if is_atomic_contained {
                 type_match_found = true;
                 // Clear coercion flags since we found a direct match
@@ -207,12 +242,33 @@ pub fn is_contained_by(
         }
 
         if !type_match_found {
+            // An integer range can be covered by the UNION of the container's
+            // int atomics even when no single atomic contains it
+            // (e.g. `int<0,max>` ⊆ `0|positive-int`). Psalm handles this at the
+            // union level via IntegerRangeComparator::isContainedByUnion.
+            if let Some((input_range_min, input_range_max)) =
+                input_int_range_bounds(input_type_part)
+                && super::integer_range_comparator::is_contained_by_union(
+                    input_range_min,
+                    input_range_max,
+                    container_type,
+                )
+            {
+                continue;
+            }
+
             // Update overall coercion tracking
             if atomic_type_coerced.unwrap_or(false) {
                 union_comparison_result.type_coerced = Some(true);
             }
             if atomic_type_coerced_from_mixed.unwrap_or(false) {
                 union_comparison_result.type_coerced_from_nested_mixed = Some(true);
+            }
+
+            // Psalm: clear the seeded scalar flag unless every failing container
+            // comparison for this input atomic was a scalar-vs-scalar mismatch.
+            if !atomic_scalar_match {
+                union_comparison_result.scalar_type_match_found = Some(false);
             }
 
             return false;
@@ -241,6 +297,17 @@ pub fn is_contained_by(
     }
 
     true
+}
+
+/// Bounds for an int-range-like input atomic, used to check coverage by a union
+/// of container int atomics. Only the *spanning* int types are considered here
+/// (`int<a,b>`, `positive-int`, `negative-int`); a plain `int` or literal is
+/// handled by the per-atomic comparison.
+fn input_int_range_bounds(atomic: &TAtomic) -> Option<(Option<i64>, Option<i64>)> {
+    match atomic {
+        TAtomic::TIntRange { min, max } => Some((*min, *max)),
+        _ => None,
+    }
 }
 
 fn expand_template_param_class_union(as_type: &TAtomic) -> TUnion {

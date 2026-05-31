@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+indexmap.workspace = true
 pzoom-str.workspace = true
 pzoom-syntax.workspace = true
 pzoom-code-info.workspace = true

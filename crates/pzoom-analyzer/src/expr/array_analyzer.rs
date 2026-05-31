@@ -466,7 +466,7 @@ fn extract_unpacked_iterable_params(
             fallback_key_type.as_deref(),
             fallback_value_type.as_deref(),
         )),
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             if !named_object_is_traversable(analyzer, *name) {
                 return None;
             }
@@ -767,8 +767,6 @@ fn normalize_array_creation_key_union(
             }
             TAtomic::TInt
             | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
             | TAtomic::TIntRange { .. }
             | TAtomic::TString
             | TAtomic::TNonEmptyString

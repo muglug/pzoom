@@ -5,16 +5,15 @@
 use pzoom_str::StrId;
 use serde::{Deserialize, Serialize};
 
+use crate::code_location::CodeLocation;
+
 /// An issue detected during analysis.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Issue {
     pub kind: IssueKind,
     pub message: String,
-    pub file_path: StrId,
-    pub start_offset: u32,
-    pub end_offset: u32,
-    pub start_line: u32,
-    pub start_column: u32,
+    /// Where in the source the issue points (file + byte/line/column span).
+    pub location: CodeLocation,
 }
 
 /// Categories of issues that can be detected.
@@ -22,6 +21,9 @@ pub struct Issue {
 pub enum IssueKind {
     // Type mismatches
     InvalidArgument,
+    /// An argument whose type is `never`/`nothing` — its possible types were all
+    /// invalidated, signalling dead/unreachable code. Mirrors Psalm/Hakana `NoValue`.
+    NoValue,
     InvalidReturnType,
     InvalidReturnStatement,
     InvalidPropertyAssignmentValue,
@@ -180,7 +182,11 @@ pub enum IssueKind {
 
     // Loop issues
     LoopInvalidation,
+    InvalidIterator,
     PossiblyInvalidIterator,
+    /// Iterating over a concrete object that does not implement `Traversable`
+    /// (PHP iterates its public properties). Mirrors Psalm's `RawObjectIteration`.
+    RawObjectIteration,
 
     // Return issues
     InvalidReturnNull,
@@ -241,6 +247,7 @@ pub enum IssueKind {
     UnhandledMatchCondition,
 
     // Method signature issues
+    InvalidOverride,
     MethodSignatureMismatch,
     TraitMethodSignatureMismatch,
     MethodSignatureMustOmitReturnType,
@@ -301,14 +308,46 @@ pub enum IssueKind {
     ImpureFunctionCall,
     ImpureMethodCall,
     ImpurePropertyAssignment,
+    ImpurePropertyFetch,
+    ImpureStaticProperty,
+    ImpureStaticVariable,
+    ImpureVariable,
+    ImpureByReferenceAssignment,
     MissingImmutableAnnotation,
     MutableDependency,
     IfThisIsMismatch,
     Trace,
+    CheckType,
 
     // Argument count issues
     TooFewArguments,
     TooManyArguments,
+
+    // Additional Psalm issue kinds (added for parity with Psalm's catalog).
+    /// A possibly-`false` value passed to a parameter that does not accept it.
+    PossiblyFalseArgument,
+    PossiblyFalseOperand,
+    PossiblyFalseIterator,
+    PossiblyFalsePropertyAssignmentValue,
+    /// A literal value passed where a non-literal is expected (`expect_variable`).
+    InvalidLiteralArgument,
+    /// A docblock template parameter that does not satisfy its constraint.
+    InvalidTemplateParam,
+    TooManyTemplateParams,
+    MixedOperand,
+    MixedFunctionCall,
+    MixedArrayTypeCoercion,
+    MixedPropertyAssignment,
+    NullIterator,
+    NullFunctionCall,
+    NullArrayOffset,
+    PossiblyNullIterator,
+    PossiblyNullArrayOffset,
+    PossiblyNullArrayAssignment,
+    PossiblyNullPropertyAssignmentValue,
+    PossiblyInvalidCast,
+    RiskyCast,
+    RedundantCastGivenDocblockType,
 }
 
 impl Issue {
@@ -324,11 +363,22 @@ impl Issue {
         Self {
             kind,
             message: message.into(),
-            file_path,
-            start_offset,
-            end_offset,
-            start_line,
-            start_column,
+            location: CodeLocation::new(
+                file_path,
+                start_offset,
+                end_offset,
+                start_line,
+                start_column,
+            ),
+        }
+    }
+
+    /// Construct an issue from a pre-built [`CodeLocation`].
+    pub fn at(kind: IssueKind, message: impl Into<String>, location: CodeLocation) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            location,
         }
     }
 

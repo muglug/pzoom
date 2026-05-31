@@ -64,6 +64,37 @@ pub fn is_contained_by(
         }
     }
 
+    // A bare `callable` is the wider supertype of a `Closure`: it cannot be guaranteed
+    // to be one (it could be a string/array callable), so it is never strictly
+    // contained, but when the signatures line up the value might be a Closure. Flag it
+    // as a coercion (Psalm's LessSpecific) rather than a flat mismatch.
+    if let TAtomic::TClosure {
+        params: container_params,
+        return_type: container_return,
+        is_pure: container_is_pure,
+    } = container_type_part
+        && let TAtomic::TCallable {
+            params: input_params,
+            return_type: input_return,
+            is_pure: input_is_pure,
+        } = input_type_part
+    {
+        let mut signature_result = TypeComparisonResult::new();
+        if compare_callable_signatures(
+            codebase,
+            input_params,
+            input_return,
+            *input_is_pure,
+            container_params,
+            container_return,
+            *container_is_pure,
+            &mut signature_result,
+        ) {
+            atomic_comparison_result.type_coerced = Some(true);
+        }
+        return false;
+    }
+
     // TCallable to TCallable comparison
     if let TAtomic::TCallable {
         params: container_params,
@@ -181,8 +212,9 @@ fn compare_callable_signatures(
                 return false;
             };
 
-            // Param types are contravariant: container param must be subtype of input param
-            if !input_param.param_type.is_mixed()
+            // Param types are contravariant: container param must be subtype of input param.
+            // A `mixed` container param is accepted by anything, so skip the check (matches Psalm).
+            if !container_param.param_type.is_mixed()
                 && !union_type_comparator::is_contained_by(
                     codebase,
                     &container_param.param_type,
@@ -195,7 +227,7 @@ fn compare_callable_signatures(
                 if is_scalar_union(&container_param.param_type)
                     && is_scalar_union(&input_param.param_type)
                 {
-                    atomic_comparison_result.scalar_type_match_found = true;
+                    atomic_comparison_result.scalar_type_match_found = Some(true);
                 }
                 return false;
             }
@@ -217,7 +249,7 @@ fn compare_callable_signatures(
                         if is_scalar_union(&container_param.param_type)
                             && is_scalar_union(&input_param.param_type)
                         {
-                            atomic_comparison_result.scalar_type_match_found = true;
+                            atomic_comparison_result.scalar_type_match_found = Some(true);
                         }
                         return false;
                     }
@@ -228,6 +260,12 @@ fn compare_callable_signatures(
 
     // Check return type (covariant)
     if let (Some(container_return), Some(input_return)) = (container_return, input_return) {
+        // A void-returning callable effectively yields null, so it satisfies a
+        // container that expects a nullable return. Matches Psalm.
+        if input_return.is_void() && container_return.is_nullable {
+            return true;
+        }
+
         if !container_return.is_void()
             && !container_return.is_mixed()
             && !union_type_comparator::is_contained_by(
@@ -240,7 +278,7 @@ fn compare_callable_signatures(
             )
         {
             if is_scalar_union(container_return) && is_scalar_union(input_return) {
-                atomic_comparison_result.scalar_type_match_found = true;
+                atomic_comparison_result.scalar_type_match_found = Some(true);
             }
             return false;
         }

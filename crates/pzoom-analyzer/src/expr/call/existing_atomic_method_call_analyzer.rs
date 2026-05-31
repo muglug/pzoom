@@ -5,15 +5,16 @@
 
 use mago_syntax::ast::ast::argument::Argument;
 
-use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
 use crate::expr::call::function_call_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
+use crate::template::TemplateMap;
 use crate::type_comparator::{
     atomic_type_comparator, object_type_comparator, union_type_comparator,
 };
@@ -23,8 +24,8 @@ pub(crate) fn maybe_emit_if_this_is_mismatch(
     method_info: &pzoom_code_info::FunctionLikeInfo,
     receiver_class_id: StrId,
     receiver_type_params: Option<&[TUnion]>,
-    template_defaults: &FxHashMap<StrId, TUnion>,
-    template_replacements: &FxHashMap<StrId, TUnion>,
+    template_defaults: &TemplateMap,
+    template_replacements: &TemplateMap,
     parent_class_id: Option<StrId>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
@@ -43,7 +44,7 @@ pub(crate) fn maybe_emit_if_this_is_mismatch(
         )
     };
 
-    let expected_receiver_type = super::method_call_analyzer::localize_special_class_type_union(
+    let expected_receiver_type = crate::type_expander::localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
         &resolved_if_this_is,
         receiver_class_id,
         receiver_class_id,
@@ -53,7 +54,7 @@ pub(crate) fn maybe_emit_if_this_is_mismatch(
     let actual_receiver_type = TUnion::new(TAtomic::TNamedObject {
         name: receiver_class_id,
         type_params: receiver_type_params.map(|params| params.to_vec()),
-    });
+    is_static: false, remapped_params: false });
 
     if receiver_type_satisfies_if_this_is(analyzer, &actual_receiver_type, &expected_receiver_type)
     {
@@ -131,11 +132,11 @@ fn named_object_with_type_params_matches(
         TAtomic::TNamedObject {
             name: actual_name,
             type_params: actual_params,
-        },
+        .. },
         TAtomic::TNamedObject {
             name: expected_name,
             type_params: expected_params,
-        },
+        .. },
     ) = (actual_atomic, expected_atomic)
     else {
         return false;
@@ -179,23 +180,45 @@ pub(crate) fn build_method_template_context(
     class_info: &pzoom_code_info::ClassLikeInfo,
     object_type_params: Option<&[TUnion]>,
     method_info: &pzoom_code_info::FunctionLikeInfo,
+    self_call: bool,
     args: &[&Argument<'_>],
     arg_positions: &[Pos],
     analysis_data: &FunctionAnalysisData,
     context: &BlockContext,
-) -> (FxHashMap<StrId, TUnion>, FxHashMap<StrId, TUnion>) {
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend(function_call_analyzer::get_template_defaults(method_info));
+) -> (TemplateMap, TemplateMap) {
+    // For an inherited method the templates in its signature belong to the
+    // class that declares it — Psalm's
+    // `$codebase->methods->getClassLikeStorageForMethod($method_id)`.
+    // `class_info` stays the static/receiver class (for mixins the mixin class
+    // itself, mirroring Psalm's rewritten `$lhs_type_part`).
+    let declaring_class_info = analyzer
+        .codebase
+        .get_classlike_storage_for_method(class_info.name, method_info.name)
+        .unwrap_or(class_info);
 
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
-    function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
-        function_call_analyzer::infer_class_template_replacements_from_type_params(
-            class_info,
-            object_type_params,
-        ),
-    );
+    let mut template_defaults =
+        function_call_analyzer::get_class_template_defaults(declaring_class_info);
+    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(method_info));
+
+    // Class-level template replacements (extended params + receiver type params),
+    // via the class template-param collector (Psalm/Hakana
+    // ClassTemplateParamCollector::collect). Like Psalm, the declaring class of
+    // the method and the receiver's class are passed separately so templates
+    // resolve through the receiver's `template_extended_params`.
+    let lhs_type_part = TAtomic::TNamedObject {
+        name: class_info.name,
+        type_params: object_type_params.map(|params| params.to_vec()),
+        is_static: false,
+        remapped_params: false,
+    };
+    let mut template_replacements = super::class_template_param_collector::collect(
+        analyzer.codebase,
+        declaring_class_info,
+        class_info,
+        Some(&lhs_type_part),
+        self_call,
+    )
+    .unwrap_or_default();
 
     if let Some(if_this_is_type) = &method_info.if_this_is_type {
         let method_template_names: FxHashSet<_> =
@@ -205,22 +228,10 @@ pub(crate) fn build_method_template_context(
             let class_template_names: FxHashSet<_> =
                 class_info.template_types.iter().map(|t| t.name).collect();
 
-            let class_template_defaults: FxHashMap<_, _> = template_defaults
-                .iter()
-                .filter_map(|(name, default)| {
-                    class_template_names
-                        .contains(name)
-                        .then_some((*name, default.clone()))
-                })
-                .collect();
-            let class_template_replacements: FxHashMap<_, _> = template_replacements
-                .iter()
-                .filter_map(|(name, replacement)| {
-                    class_template_names
-                        .contains(name)
-                        .then_some((*name, replacement.clone()))
-                })
-                .collect();
+            let class_template_defaults =
+                template_defaults.filter_names(|name| class_template_names.contains(&name));
+            let class_template_replacements =
+                template_replacements.filter_names(|name| class_template_names.contains(&name));
 
             let expected_receiver_type =
                 if class_template_defaults.is_empty() && class_template_replacements.is_empty() {
@@ -236,7 +247,7 @@ pub(crate) fn build_method_template_context(
             let actual_receiver_type = TUnion::new(TAtomic::TNamedObject {
                 name: class_info.name,
                 type_params: object_type_params.map(|params| params.to_vec()),
-            });
+            is_static: false, remapped_params: false });
 
             let inferred_if_this_is_replacements = infer_if_this_is_template_replacements(
                 analyzer,
@@ -261,10 +272,22 @@ pub(crate) fn build_method_template_context(
         analysis_data,
         context,
     );
-    function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
-        arg_template_replacements,
-    );
+    // A class template parameter used by a method is fixed by the receiver's type
+    // arguments (e.g. calling `create()` on `FileManager<ImageFile>` binds `T` to
+    // `ImageFile`); argument-based inference must not override such a binding, so
+    // it only fills templates the receiver left unbound. This matches Psalm, where
+    // an argument that contradicts the receiver's binding is an InvalidArgument
+    // rather than a re-inference of the template.
+    for (name, entity, replacement) in arg_template_replacements.iter() {
+        match template_replacements.get(name, entity) {
+            // A concrete receiver binding wins; a degenerate `never` binding
+            // (e.g. from an empty-array generic) is refined by the argument.
+            Some(existing) if !existing.is_nothing() => {}
+            _ => {
+                template_replacements.insert(name, entity, replacement.clone());
+            }
+        }
+    }
 
     (template_defaults, template_replacements)
 }
@@ -274,8 +297,8 @@ fn infer_if_this_is_template_replacements(
     expected_receiver_type: &TUnion,
     actual_receiver_type: &TUnion,
     method_template_names: &FxHashSet<StrId>,
-) -> FxHashMap<StrId, TUnion> {
-    let mut template_replacements = FxHashMap::default();
+) -> TemplateMap {
+    let mut template_replacements = TemplateMap::new();
     infer_if_this_is_union_replacements(
         analyzer,
         expected_receiver_type,
@@ -291,7 +314,7 @@ fn infer_if_this_is_union_replacements(
     expected_type: &TUnion,
     actual_type: &TUnion,
     method_template_names: &FxHashSet<StrId>,
-    template_replacements: &mut FxHashMap<StrId, TUnion>,
+    template_replacements: &mut TemplateMap,
 ) {
     for expected_atomic in &expected_type.types {
         for actual_atomic in &actual_type.types {
@@ -311,30 +334,29 @@ fn infer_if_this_is_atomic_replacements(
     expected_atomic: &TAtomic,
     actual_atomic: &TAtomic,
     method_template_names: &FxHashSet<StrId>,
-    template_replacements: &mut FxHashMap<StrId, TUnion>,
+    template_replacements: &mut TemplateMap,
 ) {
     match expected_atomic {
-        TAtomic::TTemplateParam { name, .. } => {
+        TAtomic::TTemplateParam {
+            name,
+            defining_entity,
+            ..
+        } => {
             if !method_template_names.contains(name) {
                 return;
             }
 
             let actual_union = TUnion::new(actual_atomic.clone());
-            if let Some(existing) = template_replacements.get(name) {
-                template_replacements
-                    .insert(*name, combine_union_types(existing, &actual_union, false));
-            } else {
-                template_replacements.insert(*name, actual_union);
-            }
+            template_replacements.insert_combined(*name, *defining_entity, actual_union);
         }
         TAtomic::TNamedObject {
             name: expected_name,
             type_params: Some(expected_type_params),
-        } => {
+        .. } => {
             let TAtomic::TNamedObject {
                 name: actual_name,
                 type_params: Some(actual_type_params),
-            } = actual_atomic
+            .. } = actual_atomic
             else {
                 return;
             };

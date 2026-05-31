@@ -43,6 +43,14 @@ pub struct TUnion {
     /// Whether this type should be ignored for type checking.
     pub ignore_nullable_issues: bool,
     pub ignore_falsable_issues: bool,
+
+    /// Whether this value holds no references to external mutable state — set on
+    /// the result of `new` for an externally-mutation-free class (Psalm's
+    /// `Union::$reference_free`). Used by purity checks: calling a possibly
+    /// -mutating method on a reference-free receiver is allowed from a pure
+    /// context because the mutation can't escape.
+    #[serde(default)]
+    pub reference_free: bool,
 }
 
 impl TUnion {
@@ -61,6 +69,7 @@ impl TUnion {
             parent_nodes: Vec::new(),
             ignore_nullable_issues: false,
             ignore_falsable_issues: false,
+            reference_free: false,
         }
     }
 
@@ -79,12 +88,28 @@ impl TUnion {
             parent_nodes: Vec::new(),
             ignore_nullable_issues: false,
             ignore_falsable_issues: false,
+            reference_free: false,
         }
     }
 
     /// Check if this union contains only a single atomic type.
     pub fn is_single(&self) -> bool {
         self.types.len() == 1
+    }
+
+    /// Whether this value is reference-free (holds no external mutable state).
+    /// Mirrors Psalm's `NodeDataProvider::isPureCompatible` type-side check.
+    pub fn is_reference_free(&self) -> bool {
+        self.reference_free
+    }
+
+    /// Mark this union as reference-free (or not) and return it, for fluent
+    /// construction. Kept as a helper so callers don't touch the field directly
+    /// and future `TUnion` shape changes stay localized.
+    #[must_use]
+    pub fn with_reference_free(mut self, reference_free: bool) -> Self {
+        self.reference_free = reference_free;
+        self
     }
 
     /// Get the single atomic type if this union contains exactly one.
@@ -105,9 +130,29 @@ impl TUnion {
         }
     }
 
-    /// Check if this union is the mixed type.
+    /// Whether this union contains a `mixed` atomic (Psalm's `Union::hasMixed`).
+    ///
+    /// NOTE: pzoom historically named this `is_mixed`, conflating Psalm's
+    /// `hasMixed` (any atomic is mixed) with `isMixed` (every atomic is mixed).
+    /// `is_mixed` retains the historical "any" semantics for its many callers;
+    /// use [`Self::is_only_mixed`] for Psalm's `isMixed`.
+    pub fn has_mixed(&self) -> bool {
+        self.types.iter().any(|t| matches!(t, TAtomic::TMixed))
+    }
+
+    /// Check if this union contains the mixed type (any atomic is mixed).
     pub fn is_mixed(&self) -> bool {
         self.types.iter().any(|t| matches!(t, TAtomic::TMixed))
+    }
+
+    /// Whether *every* atomic in this union is a mixed type (Psalm's
+    /// `Union::isMixed`). A `mixed|null`/`mixed|int` union is not "only mixed".
+    pub fn is_only_mixed(&self) -> bool {
+        !self.types.is_empty()
+            && self
+                .types
+                .iter()
+                .all(|t| matches!(t, TAtomic::TMixed | TAtomic::TNonEmptyMixed))
     }
 
     /// Check if this union is the nothing/never type.
@@ -167,8 +212,6 @@ impl TUnion {
                 t,
                 TAtomic::TInt
                     | TAtomic::TLiteralInt { .. }
-                    | TAtomic::TPositiveInt
-                    | TAtomic::TNegativeInt
                     | TAtomic::TIntRange { .. }
             )
         })
@@ -191,6 +234,13 @@ impl TUnion {
                     | TAtomic::TClassString { .. }
             )
         })
+    }
+
+    /// Check if this union contains any float types.
+    pub fn has_float(&self) -> bool {
+        self.types
+            .iter()
+            .any(|t| matches!(t, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
     }
 
     /// Add an atomic type to this union.

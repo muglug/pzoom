@@ -8,13 +8,16 @@ use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
 use pzoom_code_info::t_atomic::ArrayKey;
-use pzoom_code_info::{TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{CodebaseInfo, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
+use pzoom_str::StrId;
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
-use crate::function_analysis_data::FunctionAnalysisData;
+use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt_analyzer::analyze_stmts;
+use crate::stmt::scope_analyzer::BreakContext;
+use crate::stmt::loop_analyzer;
 
 /// Analyze a foreach statement.
 pub fn analyze(
@@ -26,16 +29,15 @@ pub fn analyze(
     // Analyze the iterable expression
     let iterable_pos =
         expression_analyzer::analyze(analyzer, foreach.expression, analysis_data, context);
+    // `get_expr_type` hands back an owned `Rc<TUnion>`, so this doesn't borrow
+    // `analysis_data` — we can still emit issues against it below.
     let iterable_type = analysis_data.get_expr_type(iterable_pos);
-    let pre_loop_assigned_var_ids = context.assigned_var_ids.clone();
-    let pre_loop_possibly_assigned_var_ids = context.possibly_assigned_var_ids.clone();
 
     // Create loop context
-    let mut loop_context = context.child();
-    loop_context.inside_loop = true;
-    loop_context.inside_foreach = true;
-    loop_context.assigned_var_ids = pre_loop_assigned_var_ids.clone();
-    loop_context.possibly_assigned_var_ids = pre_loop_possibly_assigned_var_ids;
+    let mut foreach_context = context.clone();
+    foreach_context.inside_loop = true;
+    foreach_context.inside_foreach = true;
+    foreach_context.break_types.push(BreakContext::Loop);
 
     // Determine the value type from the iterable
     let value_type = if let Some(ref iter_type) = iterable_type {
@@ -51,51 +53,55 @@ pub fn analyze(
         TUnion::array_key()
     };
 
+    // Validate that the expression is actually iterable, mirroring Psalm's
+    // `ForeachAnalyzer::checkIteratorType` (InvalidIterator, PossiblyNullIterator,
+    // RawObjectIteration, ...).
+    if let Some(ref iter_type) = iterable_type {
+        check_iterator_type(analyzer, analysis_data, iter_type, iterable_pos);
+    }
+
     // Set the iterator variable types in loop context
     match &foreach.target {
         ForeachTarget::Value(value_target) => {
-            mark_foreach_reference_target(value_target.value, analyzer, &mut loop_context);
-            set_expression_var_type(value_target.value, &value_type, analyzer, &mut loop_context);
+            mark_foreach_reference_target(value_target.value, analyzer, &mut foreach_context);
+            set_expression_var_type(value_target.value, &value_type, analyzer, &mut foreach_context);
         }
         ForeachTarget::KeyValue(kv_target) => {
-            set_expression_var_type(kv_target.key, &key_type, analyzer, &mut loop_context);
-            mark_foreach_reference_target(kv_target.value, analyzer, &mut loop_context);
-            set_expression_var_type(kv_target.value, &value_type, analyzer, &mut loop_context);
+            set_expression_var_type(kv_target.key, &key_type, analyzer, &mut foreach_context);
+            mark_foreach_reference_target(kv_target.value, analyzer, &mut foreach_context);
+            set_expression_var_type(kv_target.value, &value_type, analyzer, &mut foreach_context);
         }
     }
 
-    // Analyze the loop body using helper method
-    let body_stmts = foreach.body.statements();
-    analyze_stmts(analyzer, body_stmts, analysis_data, &mut loop_context)?;
+    // If the iterable is provably empty (its element type is `never`, e.g.
+    // `array_keys([])` is `list<never>`), the loop runs zero times and the body is
+    // unreachable, so it is not analyzed — matching Psalm/Hakana, which suppress
+    // diagnostics in the unreachable body.
+    let iterable_is_empty = iterable_type
+        .as_ref()
+        .is_some_and(|_| value_type.is_nothing());
 
-    // Variables assigned in the loop body are "possibly assigned" in the parent
-    // Also propagate their types back (variables modified in loop have their new types)
-    for (var_id, loop_assigned_count) in &loop_context.assigned_var_ids {
-        let pre_loop_count = pre_loop_assigned_var_ids.get(var_id).copied().unwrap_or(0);
-        if *loop_assigned_count <= pre_loop_count {
-            continue;
-        }
-
-        let parent_had_local = context.locals.contains_key(var_id);
-        if !parent_had_local {
-            context.possibly_assigned_var_ids.insert(*var_id);
-        }
-
-        // Propagate the modified type back to parent context
-        if let Some(loop_type) = loop_context.locals.get(var_id) {
-            if let Some(parent_type) = context.locals.get(var_id) {
-                // Combine the parent type with the loop-modified type
-                let combined = combine_union_types(parent_type, loop_type, false);
-                context.locals.insert(*var_id, combined);
-            } else {
-                // Variable was created in the loop
-                context.locals.insert(*var_id, loop_type.clone());
-            }
-        }
+    if !iterable_is_empty {
+        // Analyze the loop body to a fixed point. A foreach may iterate zero times, so
+        // `always_enters_loop` is false.
+        let loop_scope = LoopScope::new(context.locals.clone());
+        let body_stmts = foreach.body.statements();
+        let (_loop_scope, _inner) = loop_analyzer::analyze(
+            analyzer,
+            body_stmts,
+            vec![],
+            vec![],
+            loop_scope,
+            &mut foreach_context,
+            context,
+            analysis_data,
+            false,
+            false,
+        )?;
     }
 
-    // Iterator variables are now visible in the parent scope (PHP quirk)
-    // They have the loop's type after the loop finishes
+    // Iterator variables are now visible in the parent scope (PHP quirk).
+    // They have the loop's element type after the loop finishes.
     match &foreach.target {
         ForeachTarget::Value(value_target) => {
             set_expression_var_type(value_target.value, &value_type, analyzer, context);
@@ -106,9 +112,171 @@ pub fn analyze(
         }
     }
 
-    context.update_references_possibly_from_confusing_scope(&loop_context);
-
     Ok(())
+}
+
+/// Validate that `iter_type` can be iterated over, emitting the same family of
+/// issues Psalm's `ForeachAnalyzer::checkIteratorType` does.
+///
+/// Each atomic member is classified as a valid iterable (array/iterable/object
+/// implementing `Traversable`), `null`, a non-Traversable "raw" object (PHP
+/// iterates its public properties), or an outright invalid value (a scalar). The
+/// emitted issue then depends on whether the offending members are the whole
+/// type (`InvalidIterator`/`NullIterator`/`RawObjectIteration`) or only part of
+/// it (`PossiblyInvalidIterator`/`PossiblyNullIterator`).
+fn check_iterator_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    iter_type: &TUnion,
+    pos: Pos,
+) {
+    // `mixed` carries no information to check against.
+    if iter_type.is_mixed() {
+        return;
+    }
+
+    let interner = Some(analyzer.interner);
+    let mut has_valid_iterator = false;
+    let mut has_null = false;
+    let mut invalid_types: Vec<String> = Vec::new();
+    let mut raw_object_types: Vec<String> = Vec::new();
+
+    for atomic in &iter_type.types {
+        match atomic {
+            TAtomic::TNull => has_null = true,
+
+            // Arrays, `iterable`, and anything whose runtime value could be a
+            // Traversable (`object`, a template parameter, `mixed`) are accepted.
+            TAtomic::TArray { .. }
+            | TAtomic::TNonEmptyArray { .. }
+            | TAtomic::TList { .. }
+            | TAtomic::TNonEmptyList { .. }
+            | TAtomic::TKeyedArray { .. }
+            | TAtomic::TIterable { .. }
+            | TAtomic::TObject
+            | TAtomic::TTemplateParam { .. }
+            | TAtomic::TMixed
+            | TAtomic::TNonEmptyMixed => {
+                has_valid_iterator = true;
+            }
+
+            TAtomic::TNamedObject { name, .. } => {
+                if *name == StrId::STDCLASS
+                    || !analyzer.codebase.class_exists(*name)
+                    || class_is_traversable(analyzer.codebase, *name)
+                {
+                    // Implements Traversable, or an unknown class we can't
+                    // disprove — assume it is iterable.
+                    has_valid_iterator = true;
+                } else {
+                    // A concrete object that does not implement Traversable: PHP
+                    // iterates its public properties (Psalm: RawObjectIteration).
+                    raw_object_types.push(TUnion::new(atomic.clone()).get_id(interner));
+                }
+            }
+
+            // Scalars and other non-iterable values cannot be iterated at all.
+            TAtomic::TInt
+            | TAtomic::TFloat
+            | TAtomic::TString
+            | TAtomic::TBool
+            | TAtomic::TTrue
+            | TAtomic::TFalse
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TClassString { .. }
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TArrayKey
+            | TAtomic::TScalar
+            | TAtomic::TNumeric
+            | TAtomic::TVoid
+            | TAtomic::TResource
+            | TAtomic::TClosedResource
+            | TAtomic::TCallable { .. }
+            | TAtomic::TClosure { .. } => {
+                invalid_types.push(TUnion::new(atomic.clone()).get_id(interner));
+            }
+
+            // Anything else (enums, intersections, conditionals, …): be
+            // conservative and don't flag it, to avoid false positives.
+            _ => {}
+        }
+    }
+
+    let (start_offset, end_offset) = pos;
+    let (start_line, start_column) = analyzer.get_line_column(start_offset);
+    let mut emit = |kind: IssueKind, message: String| {
+        analysis_data.add_issue(Issue::new(
+            kind,
+            message,
+            analyzer.file_path,
+            start_offset,
+            end_offset,
+            start_line,
+            start_column,
+        ));
+    };
+
+    if !invalid_types.is_empty() {
+        // If only *some* of the union can't be iterated, it's a possible error.
+        let kind = if has_valid_iterator || has_null || !raw_object_types.is_empty() {
+            IssueKind::PossiblyInvalidIterator
+        } else {
+            IssueKind::InvalidIterator
+        };
+        emit(kind, format!("Cannot iterate over {}", invalid_types.join("|")));
+    }
+
+    if !raw_object_types.is_empty() {
+        emit(
+            IssueKind::RawObjectIteration,
+            format!(
+                "Trying to iterate over the non-Traversable object {}",
+                raw_object_types.join("|"),
+            ),
+        );
+    }
+
+    if iter_type.is_null() {
+        emit(
+            IssueKind::NullIterator,
+            "Cannot iterate over null".to_string(),
+        );
+    } else if has_null && (has_valid_iterator || !raw_object_types.is_empty()) {
+        emit(
+            IssueKind::PossiblyNullIterator,
+            "Cannot iterate over a nullable value".to_string(),
+        );
+    }
+}
+
+/// Whether a class (by interned name) is — or implements/extends — `Traversable`,
+/// and may therefore be used directly in `foreach`.
+fn class_is_traversable(codebase: &CodebaseInfo, name: StrId) -> bool {
+    if matches!(
+        name,
+        StrId::TRAVERSABLE | StrId::ITERATOR | StrId::ITERATOR_AGGREGATE | StrId::GENERATOR
+    ) {
+        return true;
+    }
+
+    let Some(class_info) = codebase.get_class(name) else {
+        return false;
+    };
+
+    class_info.interfaces.contains(&StrId::TRAVERSABLE)
+        || class_info
+            .all_parent_interfaces
+            .iter()
+            .any(|interface| *interface == StrId::TRAVERSABLE)
 }
 
 /// Extract the value type from an iterable type.

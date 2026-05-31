@@ -175,7 +175,7 @@ fn scrape_assertions(
             return scrape_assertions(analyzer, paren.expression, cond_id, analysis_data);
         }
         Expression::Construct(construct) => {
-            return scrape_construct_assertions(construct, cond_id);
+            return scrape_construct_assertions(construct, cond_id, analysis_data);
         }
         _ => {}
     }
@@ -210,7 +210,11 @@ fn add_nullsafe_object_assertions(
         .push(assertion);
 }
 
-fn scrape_construct_assertions(construct: &Construct<'_>, cond_id: (u32, u32)) -> AssertionResult {
+fn scrape_construct_assertions(
+    construct: &Construct<'_>,
+    cond_id: (u32, u32),
+    analysis_data: &FunctionAnalysisData,
+) -> AssertionResult {
     let mut result = AssertionResult::new();
 
     match construct {
@@ -221,7 +225,7 @@ fn scrape_construct_assertions(construct: &Construct<'_>, cond_id: (u32, u32)) -
 
             let mut combined_false_clauses: Option<Vec<Clause>> = None;
             for value in isset.values.iter() {
-                let expr_assertions = get_isset_assertions_for_expr(value, cond_id);
+                let expr_assertions = get_isset_assertions_for_expr(value, cond_id, analysis_data);
 
                 result
                     .if_true_clauses
@@ -308,7 +312,7 @@ fn scrape_function_call_assertions(
 
                 let mut combined_false_clauses: Option<Vec<Clause>> = None;
                 for arg in func_call.argument_list.arguments.iter() {
-                    let expr_assertions = get_isset_assertions_for_expr(arg.value(), cond_id);
+                    let expr_assertions = get_isset_assertions_for_expr(arg.value(), cond_id, analysis_data);
                     result
                         .if_true_clauses
                         .extend(expr_assertions.if_true_clauses);
@@ -496,11 +500,16 @@ fn scrape_function_call_assertions(
                     return;
                 };
                 if let Some(var_name) = get_argument_var_name(first_arg) {
-                    add_type_assertions(
+                    // Only narrow the positive branch to class-string. A failing
+                    // class_exists/interface_exists on a general string leaves it a
+                    // `string` (it may still name an interface or an as-yet-unloaded
+                    // class), so we must not assert `not class-string` in the false branch
+                    // - doing so makes a following interface_exists() look paradoxical.
+                    // Matches Psalm.
+                    add_positive_only_type_assertion(
                         result,
                         var_name,
                         TAtomic::TClassString { as_type: None },
-                        true,
                         cond_id,
                     );
                     return;
@@ -569,13 +578,13 @@ fn scrape_function_call_assertions(
                             as_type: Some(Box::new(TAtomic::TNamedObject {
                                 name: class_id,
                                 type_params: None,
-                            })),
+                            is_static: false, remapped_params: false })),
                         }
                     } else {
                         TAtomic::TNamedObject {
                             name: class_id,
                             type_params: None,
-                        }
+                        is_static: false, remapped_params: false }
                     };
 
                     add_type_assertions(result, var_name.clone(), asserted_type, true, cond_id);
@@ -612,7 +621,7 @@ fn scrape_function_call_assertions(
                                 TAtomic::TNamedObject {
                                     name: class_id,
                                     type_params: None,
-                                },
+                                is_static: false, remapped_params: false },
                                 true,
                                 cond_id,
                             );
@@ -652,13 +661,13 @@ fn scrape_function_call_assertions(
                             as_type: Some(Box::new(TAtomic::TNamedObject {
                                 name: class_id,
                                 type_params: None,
-                            })),
+                            is_static: false, remapped_params: false })),
                         }
                     } else {
                         TAtomic::TNamedObject {
                             name: class_id,
                             type_params: None,
-                        }
+                        is_static: false, remapped_params: false }
                     }
                 } else if let Some(class_string_union) =
                     analysis_data.get_expr_type(get_expr_id(class_arg.value()))
@@ -979,7 +988,7 @@ fn scrape_instanceof_assertions(
         TAtomic::TNamedObject {
             name: class_id,
             type_params: None,
-        }
+        is_static: false, remapped_params: false }
     } else if let Some(class_string_union) = analysis_data.get_expr_type(get_expr_id(binary.rhs)) {
         let Some(classlike_atomic) =
             extract_classlike_from_class_string_union(analyzer, &class_string_union)
@@ -1049,6 +1058,17 @@ fn scrape_equality_assertions(
         return;
     }
 
+    // `get_class($x) === <expr of type class-string<T>>` narrows `$x` to the
+    // template parameter `T`. Psalm's AssertionFinder produces an equality
+    // assertion (`IsIdentical`/`IsNotIdentical`) here, not an `is` assertion —
+    // equality assertions on templates never report redundancy.
+    if let Some((var_name, template_atomic)) =
+        get_get_class_template_comparison(analyzer, binary.lhs, binary.rhs, analysis_data)
+    {
+        add_equality_assertions(result, var_name, template_atomic, is_positive, cond_id);
+        return;
+    }
+
     if let Some((var_name, class_id)) = get_get_class_comparison(analyzer, binary.lhs, binary.rhs) {
         if class_id != StrId::EMPTY {
             let resolved_class_id = if class_id == StrId::STATIC || class_id == StrId::SELF {
@@ -1057,16 +1077,10 @@ fn scrape_equality_assertions(
                 class_id
             };
 
-            if let Some(class_info) = analyzer.codebase.get_class(resolved_class_id)
-                && !class_info.is_final
-            {
-                return;
-            }
-
             let assertion_type = TAtomic::TNamedObject {
                 name: resolved_class_id,
                 type_params: None,
-            };
+            is_static: false, remapped_params: false };
             let is_static_origin = var_name == "@static";
             let primary_var = if is_static_origin { "$this" } else { var_name.as_str() };
             let target_clauses = if is_positive {
@@ -1096,7 +1110,7 @@ fn scrape_equality_assertions(
                     Assertion::IsType(TAtomic::TNamedObject {
                         name: resolved_class_id,
                         type_params: None,
-                    }),
+                    is_static: false, remapped_params: false }),
                     cond_id,
                 );
             }
@@ -1566,31 +1580,45 @@ fn add_empty_string_assertions(
     };
     let non_empty_string = TAtomic::TNonEmptyString;
 
-    if is_positive {
-        add_type_assertions(result, var_name.to_string(), empty_string, true, cond_id);
-        result.if_false_clauses.push(create_single_var_clause(
-            var_name,
-            Assertion::IsType(non_empty_string.clone()),
-            cond_id,
-        ));
-        result
-            .if_false
-            .entry(var_name.to_string())
-            .or_default()
-            .push(Assertion::IsType(non_empty_string));
+    // For `$s === ""` the true branch is the empty literal and the false branch
+    // is `non-empty-string`; `$s !== ""` swaps them. Each branch carries exactly
+    // one positive type assertion — pairing `IsType(non-empty-string)` with a
+    // redundant `IsNotType("")` on the *same* branch (as add_type_assertions
+    // would) makes the second assertion reconcile against an already-narrowed
+    // type and spuriously fire RedundantCondition. Psalm narrows to
+    // non-empty-string without any redundant-condition issue.
+    let (true_assertion, false_assertion) = if is_positive {
+        (
+            Assertion::IsType(empty_string),
+            Assertion::IsType(non_empty_string),
+        )
     } else {
-        result.if_true_clauses.push(create_single_var_clause(
-            var_name,
-            Assertion::IsType(non_empty_string.clone()),
-            cond_id,
-        ));
-        result
-            .if_true
-            .entry(var_name.to_string())
-            .or_default()
-            .push(Assertion::IsType(non_empty_string));
-        add_type_assertions(result, var_name.to_string(), empty_string, false, cond_id);
-    }
+        (
+            Assertion::IsType(non_empty_string),
+            Assertion::IsType(empty_string),
+        )
+    };
+
+    result.if_true_clauses.push(create_single_var_clause(
+        var_name,
+        true_assertion.clone(),
+        cond_id,
+    ));
+    result
+        .if_true
+        .entry(var_name.to_string())
+        .or_default()
+        .push(true_assertion);
+    result.if_false_clauses.push(create_single_var_clause(
+        var_name,
+        false_assertion.clone(),
+        cond_id,
+    ));
+    result
+        .if_false
+        .entry(var_name.to_string())
+        .or_default()
+        .push(false_assertion);
 }
 
 fn add_empty_countable_assertions(
@@ -1699,22 +1727,51 @@ fn try_add_count_inequality_assertions(
         return false;
     };
 
+    // Mirror Psalm's AssertionFinder::getGreaterAssertions / getSmallerAssertions:
+    // `count($a) >= n` yields HasAtLeastCount(n) (NonEmptyCountable for the n==1
+    // boundary), and `count($a) < n` yields DoesNotHaveAtLeastCount(n) (EmptyCountable
+    // for the empty boundary). `operator`/`count` are normalized so count() is on the
+    // left, i.e. `count($a) <operator> count`.
     let (Some(true_assertion), Some(false_assertion)) = (match operator {
+        // count($a) > 0  -> non-empty
         CountCmpOp::Gt if count == 0 => (
             Some(Assertion::NonEmptyCountable(true)),
             Some(Assertion::EmptyCountable),
         ),
-        CountCmpOp::Ge if count > 0 => (
+        // count($a) > n (n >= 1)  -> at least n + 1
+        CountCmpOp::Gt => (
+            Some(Assertion::HasAtLeastCount(count + 1)),
+            Some(Assertion::DoesNotHaveAtLeastCount(count + 1)),
+        ),
+        // count($a) >= 1  -> non-empty
+        CountCmpOp::Ge if count == 1 => (
             Some(Assertion::NonEmptyCountable(true)),
             Some(Assertion::EmptyCountable),
         ),
-        CountCmpOp::Lt if count == 1 => (
+        // count($a) >= n (n >= 2)  -> at least n  (count($a) >= 0 is always true)
+        CountCmpOp::Ge if count >= 2 => (
+            Some(Assertion::HasAtLeastCount(count)),
+            Some(Assertion::DoesNotHaveAtLeastCount(count)),
+        ),
+        // count($a) < 1  (or the degenerate < 0)  -> empty
+        CountCmpOp::Lt if count <= 1 => (
             Some(Assertion::EmptyCountable),
             Some(Assertion::NonEmptyCountable(true)),
         ),
+        // count($a) < n (n >= 2)  -> fewer than n
+        CountCmpOp::Lt => (
+            Some(Assertion::DoesNotHaveAtLeastCount(count)),
+            Some(Assertion::HasAtLeastCount(count)),
+        ),
+        // count($a) <= 0  -> empty
         CountCmpOp::Le if count == 0 => (
             Some(Assertion::EmptyCountable),
             Some(Assertion::NonEmptyCountable(true)),
+        ),
+        // count($a) <= n (n >= 1)  -> fewer than n + 1
+        CountCmpOp::Le => (
+            Some(Assertion::DoesNotHaveAtLeastCount(count + 1)),
+            Some(Assertion::HasAtLeastCount(count + 1)),
         ),
         _ => (None, None),
     }) else {
@@ -1917,8 +1974,8 @@ fn apply_assertion_list(
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
     assertions: &[FunctionLikeAssertion],
     args: &[mago_syntax::ast::ast::argument::Argument<'_>],
-    template_defaults: &rustc_hash::FxHashMap<StrId, TUnion>,
-    template_replacements: &rustc_hash::FxHashMap<StrId, TUnion>,
+    template_defaults: &crate::template::TemplateMap,
+    template_replacements: &crate::template::TemplateMap,
     target_map: &mut BTreeMap<String, Vec<Assertion>>,
     target_clauses: &mut Vec<Clause>,
     cond_id: (u32, u32),
@@ -2053,8 +2110,8 @@ fn convert_functionlike_assertion_type(assertion_type: &AssertionType) -> Vec<As
 
 fn replace_assertion_templates(
     assertion_type: &AssertionType,
-    template_replacements: &rustc_hash::FxHashMap<StrId, TUnion>,
-    template_defaults: &rustc_hash::FxHashMap<StrId, TUnion>,
+    template_replacements: &crate::template::TemplateMap,
+    template_defaults: &crate::template::TemplateMap,
 ) -> AssertionType {
     match assertion_type {
         AssertionType::IsType(union) => {
@@ -2202,29 +2259,29 @@ fn push_assertion(
 fn get_isset_assertions_for_expr(
     expr: &Expression<'_>,
     cond_id: (u32, u32),
+    analysis_data: &FunctionAnalysisData,
 ) -> IssetExprAssertions {
     let mut result = IssetExprAssertions::new();
 
     if let Some(var_name) = expression_identifier::get_expression_var_key(expr) {
-        push_assertion(
-            &mut result.if_true_clauses,
-            &mut result.if_true,
-            &var_name,
-            Assertion::IsIsset,
-            cond_id,
-        );
-        push_assertion(
-            &mut result.if_false_clauses,
-            &mut result.if_false,
-            &var_name,
-            Assertion::IsNotIsset,
-            cond_id,
-        );
-
-        if matches!(
+        // Mirror Psalm's AssertionFinder: when the isset target is a plain variable
+        // whose type is already known, non-mixed and not possibly-undefined, `isset`
+        // is purely a null check (`!null`). Otherwise it is a definedness check
+        // (`isset`). Psalm emits exactly one of the two — never both — so a `?T`
+        // narrows to `T` without a spurious follow-up "never null" redundancy.
+        let is_direct_variable = matches!(
             expr.unparenthesized(),
             Expression::Variable(Variable::Direct(_))
-        ) {
+        );
+
+        let var_is_defined_non_null_checkable = is_direct_variable && {
+            let var_pos = (expr.start_offset() as u32, expr.end_offset() as u32);
+            analysis_data
+                .get_expr_type(var_pos)
+                .is_some_and(|var_type| !var_type.is_mixed() && !var_type.possibly_undefined)
+        };
+
+        if var_is_defined_non_null_checkable {
             push_assertion(
                 &mut result.if_true_clauses,
                 &mut result.if_true,
@@ -2237,6 +2294,21 @@ fn get_isset_assertions_for_expr(
                 &mut result.if_false,
                 &var_name,
                 Assertion::IsType(TAtomic::TNull),
+                cond_id,
+            );
+        } else {
+            push_assertion(
+                &mut result.if_true_clauses,
+                &mut result.if_true,
+                &var_name,
+                Assertion::IsIsset,
+                cond_id,
+            );
+            push_assertion(
+                &mut result.if_false_clauses,
+                &mut result.if_false,
+                &var_name,
+                Assertion::IsNotIsset,
                 cond_id,
             );
         }
@@ -2490,7 +2562,7 @@ fn extract_classlike_from_class_string_union(
                 return Some(TAtomic::TNamedObject {
                     name: analyzer.interner.intern(name),
                     type_params: None,
-                });
+                is_static: false, remapped_params: false });
             }
             _ => {}
         }
@@ -2788,6 +2860,28 @@ fn merge_assertion_maps(
     }
 }
 
+/// Add only the positive (if-true) type assertion, leaving the false branch unchanged.
+/// Used for existence checks (`class_exists` etc.) whose negation must not narrow the
+/// variable away from a general `string`.
+fn add_positive_only_type_assertion(
+    result: &mut AssertionResult,
+    var_name: String,
+    assertion_type: TAtomic,
+    cond_id: (u32, u32),
+) {
+    let is_type_clause = create_single_var_clause(
+        &var_name,
+        Assertion::IsType(assertion_type.clone()),
+        cond_id,
+    );
+    result.if_true_clauses.push(is_type_clause);
+    result
+        .if_true
+        .entry(var_name)
+        .or_default()
+        .push(Assertion::IsType(assertion_type));
+}
+
 fn add_type_assertions(
     result: &mut AssertionResult,
     var_name: String,
@@ -2846,6 +2940,105 @@ fn add_type_assertions(
             .or_default()
             .push(Assertion::IsType(assertion_type));
     }
+}
+
+/// Like [`add_type_assertions`] but with equality assertions
+/// (`IsEqual`/`IsNotEqual`), matching Psalm's `IsIdentical`/`IsNotIdentical`.
+fn add_equality_assertions(
+    result: &mut AssertionResult,
+    var_name: String,
+    assertion_type: TAtomic,
+    is_positive: bool,
+    cond_id: (u32, u32),
+) {
+    let (true_assertion, false_assertion) = if is_positive {
+        (
+            Assertion::IsEqual(assertion_type.clone()),
+            Assertion::IsNotEqual(assertion_type),
+        )
+    } else {
+        (
+            Assertion::IsNotEqual(assertion_type.clone()),
+            Assertion::IsEqual(assertion_type),
+        )
+    };
+
+    let true_clause = create_single_var_clause(&var_name, true_assertion.clone(), cond_id);
+    result.if_true_clauses.push(true_clause);
+
+    let false_clause = create_single_var_clause(&var_name, false_assertion.clone(), cond_id);
+    result.if_false_clauses.push(false_clause);
+
+    result
+        .if_true
+        .entry(var_name.clone())
+        .or_default()
+        .push(true_assertion);
+    result
+        .if_false
+        .entry(var_name)
+        .or_default()
+        .push(false_assertion);
+}
+
+/// Detects `get_class($x) === <expr typed class-string<T>>` and returns the
+/// origin variable of `$x` together with the template parameter `T` it should
+/// be narrowed to.
+fn get_get_class_template_comparison(
+    analyzer: &StatementsAnalyzer<'_>,
+    left_expr: &Expression<'_>,
+    right_expr: &Expression<'_>,
+    analysis_data: &FunctionAnalysisData,
+) -> Option<(String, TAtomic)> {
+    if let Some(var_name) = extract_get_class_origin_var_name(left_expr)
+        && let Some(template_atomic) =
+            class_string_template_atomic(analyzer, right_expr, analysis_data)
+    {
+        return Some((var_name, template_atomic));
+    }
+
+    if let Some(var_name) = extract_get_class_origin_var_name(right_expr)
+        && let Some(template_atomic) =
+            class_string_template_atomic(analyzer, left_expr, analysis_data)
+    {
+        return Some((var_name, template_atomic));
+    }
+
+    None
+}
+
+/// If `expr` has type `class-string<T>` for some template parameter `T`, returns
+/// that template parameter as an instance type (the `T` an instance would have).
+fn class_string_template_atomic(
+    _analyzer: &StatementsAnalyzer<'_>,
+    expr: &Expression<'_>,
+    analysis_data: &FunctionAnalysisData,
+) -> Option<TAtomic> {
+    let expr_type = analysis_data.get_expr_type(get_expr_id(expr))?;
+
+    for atomic in &expr_type.types {
+        match atomic {
+            TAtomic::TClassString {
+                as_type: Some(as_type),
+            } if matches!(as_type.as_ref(), TAtomic::TTemplateParam { .. }) => {
+                return Some((**as_type).clone());
+            }
+            TAtomic::TTemplateParamClass {
+                name,
+                defining_entity,
+                as_type,
+            } => {
+                return Some(TAtomic::TTemplateParam {
+                    name: *name,
+                    defining_entity: *defining_entity,
+                    as_type: Box::new(TUnion::new((**as_type).clone())),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
 
 fn get_get_class_comparison(
@@ -2966,7 +3159,7 @@ fn function_exists_assertion_key(function_name: &str) -> String {
     format!("@function_exists({})", function_name)
 }
 
-fn method_exists_assertion_key(class_name_or_var: &str, method_name: &str) -> String {
+pub(crate) fn method_exists_assertion_key(class_name_or_var: &str, method_name: &str) -> String {
     format!(
         "@method_exists({},{})",
         class_name_or_var

@@ -31,6 +31,7 @@ pub(super) fn handle(
         return handle_dependent_type_function(
             analyzer,
             function_name,
+            func_call,
             arg_positions,
             analysis_data,
             context,
@@ -80,9 +81,15 @@ pub(super) fn handle(
 }
 
 /// Mirrors Psalm's `NamedFunctionCallHandler::handleDependentTypeFunction`.
+///
+/// When the argument is a plain in-scope variable `$x` (and not a template),
+/// `get_class($x)`/`gettype($x)` return a *dependent* type that remembers `$x`,
+/// so a later `get_class($x) === Foo::class` / `switch (gettype($x))` can narrow
+/// `$x` (Psalm's `TDependentGetClass`/`TDependentGetType`).
 fn handle_dependent_type_function(
     analyzer: &StatementsAnalyzer<'_>,
     function_name: &str,
+    func_call: &FunctionCall<'_>,
     arg_positions: &[Pos],
     analysis_data: &FunctionAnalysisData,
     context: &BlockContext,
@@ -97,8 +104,34 @@ fn handle_dependent_type_function(
     if let Some(first_arg_pos) = arg_positions.first().copied()
         && let Some(first_arg_type) = analysis_data.get_expr_type(first_arg_pos)
     {
+        let first_arg_type = first_arg_type.as_ref().clone();
+
+        // Produce a dependent type when the argument is a simple variable that is
+        // in scope and not a template parameter. The dependent type remembers
+        // `$x` so a later `get_class($x) === Foo::class` / `gettype($x) ===
+        // "string"` (incl. via `switch`) narrows `$x`. Mirrors Psalm's
+        // `TDependentGetClass` / `TDependentGetType`.
+        if let Some(var_id) = dependent_arg_var_id(analyzer, func_call)
+            && context.locals.contains_key(&var_id)
+            && !first_arg_type.types.iter().any(is_template_atomic)
+        {
+            if function_name.eq_ignore_ascii_case("get_class") {
+                let as_type = if first_arg_type.is_mixed() {
+                    TUnion::new(TAtomic::TObject)
+                } else {
+                    first_arg_type.clone()
+                };
+                return Some(TUnion::new(TAtomic::TDependentGetClass {
+                    var_id,
+                    as_type: Box::new(as_type),
+                }));
+            }
+            // gettype($x) / get_debug_type($x)
+            return Some(TUnion::new(TAtomic::TDependentGetType { var_id }));
+        }
+
         if function_name.eq_ignore_ascii_case("get_class") {
-            return Some(infer_get_class_return_type(first_arg_type.as_ref()));
+            return Some(infer_get_class_return_type(&first_arg_type));
         }
 
         return None;
@@ -110,7 +143,7 @@ fn handle_dependent_type_function(
                 as_type: Some(Box::new(TAtomic::TNamedObject {
                     name: self_class_id,
                     type_params: None,
-                })),
+                is_static: false, remapped_params: false })),
             }));
         }
 
@@ -120,7 +153,7 @@ fn handle_dependent_type_function(
     None
 }
 
-pub(super) fn is_php_stream_literal_argument(
+pub(crate) fn is_php_stream_literal_argument(
     arg: &mago_syntax::ast::ast::argument::Argument<'_>,
 ) -> bool {
     let expr = arg.value().unparenthesized();
@@ -298,7 +331,7 @@ fn infer_get_class_return_type(arg_type: &TUnion) -> TUnion {
                 as_type: Some(Box::new(TAtomic::TNamedObject {
                     name: *name,
                     type_params: None,
-                })),
+                is_static: false, remapped_params: false })),
             }),
             Some(
                 template @ TAtomic::TTemplateParam { .. }
@@ -313,15 +346,45 @@ fn infer_get_class_return_type(arg_type: &TUnion) -> TUnion {
     TUnion::new(TAtomic::TClassString { as_type: None })
 }
 
+/// The interned id of the first argument when it is a plain `$var`, else `None`.
+fn dependent_arg_var_id(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_call: &FunctionCall<'_>,
+) -> Option<StrId> {
+    use mago_syntax::ast::ast::variable::Variable;
+    let first_arg = func_call.argument_list.arguments.first()?;
+    match first_arg.value().unparenthesized() {
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(analyzer.interner.intern(direct.name))
+        }
+        _ => None,
+    }
+}
+
+fn is_template_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TTemplateParam { .. }
+            | TAtomic::TTemplateParamClass { .. }
+            | TAtomic::TTemplateKeyOf { .. }
+            | TAtomic::TTemplateValueOf { .. }
+    )
+}
+
 fn infer_get_called_class_return_type(
     analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
 ) -> TUnion {
-    if analyzer.get_declaring_class().or(context.self_class).is_some() {
+    // Mirror Psalm's FunctionCallReturnTypeFetcher: `get_called_class()` is
+    // `class-string<$context->self>` where the constraint is the concrete enclosing
+    // class marked as the late-static-bound type (`new TNamedObject($self, true)`).
+    if let Some(self_class_id) = analyzer.get_declaring_class().or(context.self_class) {
         return TUnion::new(TAtomic::TClassString {
             as_type: Some(Box::new(TAtomic::TNamedObject {
-                name: StrId::STATIC,
+                name: self_class_id,
                 type_params: None,
+                is_static: true,
+                remapped_params: false,
             })),
         });
     }
@@ -346,7 +409,7 @@ fn infer_get_parent_class_return_type(
             as_type: Some(Box::new(TAtomic::TNamedObject {
                 name: parent_class_id,
                 type_params: None,
-            })),
+            is_static: false, remapped_params: false })),
         });
     }
 
@@ -422,6 +485,11 @@ fn atomic_method_exists_possibility(
         TAtomic::TNamedObject { name, .. } => {
             if class_or_ancestor_has_method(analyzer, *name, method_name) {
                 (true, false)
+            } else if class_could_have_undeclared_method(analyzer, *name) {
+                // A non-final class (or one with a magic `__call`) may have the method at
+                // runtime via a subclass or magic dispatch, so `method_exists` is not
+                // provably false - it is `bool`. Matches Psalm.
+                (true, true)
             } else {
                 (false, true)
             }
@@ -430,6 +498,8 @@ fn atomic_method_exists_possibility(
             let class_id = analyzer.interner.intern(name.trim_start_matches('\\'));
             if class_or_ancestor_has_method(analyzer, class_id, method_name) {
                 (true, false)
+            } else if class_could_have_undeclared_method(analyzer, class_id) {
+                (true, true)
             } else {
                 (false, true)
             }
@@ -441,6 +511,8 @@ fn atomic_method_exists_possibility(
             if let TAtomic::TNamedObject { name, .. } = &**as_type {
                 if class_or_ancestor_has_method(analyzer, *name, method_name) {
                     (true, false)
+                } else if class_could_have_undeclared_method(analyzer, *name) {
+                    (true, true)
                 } else {
                     (false, true)
                 }
@@ -466,6 +538,27 @@ fn atomic_method_exists_possibility(
         | TAtomic::TLiteralString { .. } => (true, true),
         _ => (false, true),
     }
+}
+
+/// Whether `class_id` could gain a method beyond those declared - i.e. it is not final
+/// (a subclass could declare it) or it defines a magic `__call`. Such classes make
+/// `method_exists` indeterminate rather than provably false.
+fn class_could_have_undeclared_method(analyzer: &StatementsAnalyzer<'_>, class_id: StrId) -> bool {
+    let mut current_class = Some(class_id);
+    let mut is_final = false;
+    while let Some(current_class_id) = current_class {
+        let Some(class_info) = analyzer.codebase.get_class(current_class_id) else {
+            return true;
+        };
+        if current_class_id == class_id {
+            is_final = class_info.is_final;
+        }
+        if class_info.methods.contains_key(&StrId::CALL) {
+            return true;
+        }
+        current_class = class_info.parent_class;
+    }
+    !is_final
 }
 
 fn class_or_ancestor_has_method(

@@ -15,6 +15,7 @@ use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility}
 use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
+use indexmap::IndexMap;
 
 /// Main entry point for the population phase.
 /// Follows hakana's `populate_codebase` function.
@@ -104,6 +105,9 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         if let Some(ref mut return_type) = func_info.return_type {
             populate_union_type(return_type);
         }
+        if let Some(ref mut signature_return_type) = func_info.signature_return_type {
+            populate_union_type(signature_return_type);
+        }
         for param in func_info.params.iter_mut() {
             if let Some(ref mut param_type) = param.param_type {
                 populate_union_type(param_type);
@@ -123,6 +127,9 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
             if let Some(ref mut return_type) = method_info.return_type {
                 populate_union_type(return_type);
             }
+            if let Some(ref mut signature_return_type) = method_info.signature_return_type {
+                populate_union_type(signature_return_type);
+            }
             for param in method_info.params.iter_mut() {
                 if let Some(ref mut param_type) = param.param_type {
                     populate_union_type(param_type);
@@ -139,6 +146,9 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         for (_, method_info) in storage.pseudo_static_methods.iter_mut() {
             if let Some(ref mut return_type) = method_info.return_type {
                 populate_union_type(return_type);
+            }
+            if let Some(ref mut signature_return_type) = method_info.signature_return_type {
+                populate_union_type(signature_return_type);
             }
             for param in method_info.params.iter_mut() {
                 if let Some(ref mut param_type) = param.param_type {
@@ -320,7 +330,7 @@ fn populate_data_from_trait(
         .invalid_dependencies
         .extend(trait_storage.invalid_dependencies.iter().copied());
 
-    extend_template_params(storage, trait_storage);
+    extend_template_params(storage, trait_storage, false);
 
     // Inherit methods and properties
     let is_trait = storage.kind == ClassLikeKind::Trait;
@@ -356,7 +366,7 @@ fn populate_data_from_parent_classlike(
         .all_parent_classes
         .extend(parent_storage.all_parent_classes.iter().copied());
 
-    extend_template_params(storage, parent_storage);
+    extend_template_params(storage, parent_storage, true);
 
     // Inherit all parent interfaces
     storage
@@ -380,6 +390,12 @@ fn populate_data_from_parent_classlike(
         {
             storage.constants.insert(*const_name, const_info.clone());
         }
+    }
+
+    // `#[AllowDynamicProperties]` / `@psalm-no-seal-properties` are inherited: a subclass
+    // of a class that permits dynamic properties permits them too.
+    if parent_storage.no_seal_properties {
+        storage.no_seal_properties = true;
     }
 
     // Inherit methods and properties
@@ -475,10 +491,14 @@ fn populate_interface_data_from_parent_or_implemented_interface(
         .invalid_dependencies
         .extend(interface_storage.invalid_dependencies.iter().copied());
 
-    extend_template_params(storage, interface_storage);
+    extend_template_params(storage, interface_storage, false);
 }
 
-fn extend_template_params(storage: &mut ClassLikeInfo, parent_storage: &ClassLikeInfo) {
+fn extend_template_params(
+    storage: &mut ClassLikeInfo,
+    parent_storage: &ClassLikeInfo,
+    from_direct_parent: bool,
+) {
     if !parent_storage.template_types.is_empty() {
         storage
             .template_extended_params
@@ -532,26 +552,44 @@ fn extend_template_params(storage: &mut ClassLikeInfo, parent_storage: &ClassLik
                 }
             }
         } else {
-            for (key, value) in &parent_storage.template_extended_params {
+            // No explicit `@template-extends`: each parent template defaults to
+            // its constraint (Psalm's `$default_param` with from_docblock
+            // cleared), breaking the template chain at this class.
+            for parent_template in &parent_storage.template_types {
+                let mut default_param = parent_template.as_type.clone();
+                default_param.from_docblock = false;
                 storage
                     .template_extended_params
-                    .entry(*key)
-                    .or_insert_with(|| value.clone());
+                    .entry(parent_storage.name)
+                    .or_default()
+                    .insert(parent_template.name, default_param);
+            }
+
+            // Psalm only merges the parent's own extended params when extending
+            // a direct parent class (`$from_direct_parent`), with the parent's
+            // entries winning per class-name key (array_merge semantics).
+            if from_direct_parent {
+                for (key, value) in &parent_storage.template_extended_params {
+                    storage
+                        .template_extended_params
+                        .insert(*key, value.clone());
+                }
             }
         }
     } else {
+        // Parent declares no templates: inherit its extended params wholesale,
+        // parent entries winning per class-name key (array_merge semantics).
         for (key, value) in &parent_storage.template_extended_params {
             storage
                 .template_extended_params
-                .entry(*key)
-                .or_insert_with(|| value.clone());
+                .insert(*key, value.clone());
         }
     }
 }
 
 fn extend_type(
     type_: &TUnion,
-    template_extended_params: &FxHashMap<StrId, FxHashMap<StrId, TUnion>>,
+    template_extended_params: &IndexMap<StrId, IndexMap<StrId, TUnion>>,
 ) -> TUnion {
     let mut changed = false;
     let mut extended_types = Vec::with_capacity(type_.types.len());
@@ -638,6 +676,67 @@ fn inherit_methods_from_parent(
             continue;
         }
         storage.methods.insert(*method_name, method_info.clone());
+    }
+
+    // Register which methods override an ancestor's method. This mirrors Psalm's
+    // `Populator::inheritMethodsFromParent`: every inheritable method of a parent
+    // class or interface is recorded as overridden, but a used trait only
+    // contributes a method when the trait declares it `abstract` (using a
+    // concrete trait method is inheritance, not an override). Unlike the
+    // declaring/inheritable loops above, this runs even for methods the child
+    // redeclares, so a concrete override of an abstract requirement is counted.
+    let parent_is_trait = parent_storage.kind == ClassLikeKind::Trait;
+    for (method_name, declaring_class) in &parent_storage.inheritable_method_ids {
+        // Psalm skips `__construct` here (unless preserve_constructor_signature);
+        // pzoom has no such flag, so an `#[Override]` on a constructor is invalid.
+        if *method_name == StrId::CONSTRUCT {
+            continue;
+        }
+
+        let recorded = if parent_is_trait {
+            let is_abstract = parent_storage
+                .methods
+                .get(method_name)
+                .is_some_and(|m| m.is_abstract);
+            if is_abstract {
+                storage
+                    .overridden_method_ids
+                    .entry(*method_name)
+                    .or_default()
+                    .insert(*declaring_class);
+            }
+            is_abstract
+        } else {
+            // Private methods are not inheritable/overridable. Psalm omits them
+            // from `inheritable_method_ids`; pzoom keeps them, so skip them here
+            // (a child redeclaring a private parent method is not an override).
+            let is_private = parent_storage
+                .methods
+                .get(method_name)
+                .is_some_and(|m| m.visibility == Visibility::Private);
+            if is_private {
+                continue;
+            }
+            storage
+                .overridden_method_ids
+                .entry(*method_name)
+                .or_default()
+                .insert(*declaring_class);
+            true
+        };
+
+        // Propagate the parent's own overridden set (transitive overrides),
+        // but only when this method was itself recorded as overridden.
+        if recorded
+            && let Some(parent_overrides) = parent_storage.overridden_method_ids.get(method_name)
+        {
+            let inherited: Vec<StrId> = parent_overrides.iter().copied().collect();
+            storage
+                .overridden_method_ids
+                .entry(*method_name)
+                .or_default()
+                .extend(inherited);
+        }
     }
 }
 
@@ -887,6 +986,11 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
                 populate_atomic_type(intersection_type);
             }
         }
+        TAtomic::TObjectWithProperties { properties } => {
+            for prop_type in properties.values_mut() {
+                populate_union_type(prop_type);
+            }
+        }
         TAtomic::TTemplateParam { as_type, .. } => {
             populate_union_type(as_type);
         }
@@ -926,6 +1030,9 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
                 populate_atomic_type(inner);
             }
         }
+        TAtomic::TDependentGetClass { as_type, .. } => {
+            populate_union_type(as_type);
+        }
         TAtomic::TIterable {
             key_type,
             value_type,
@@ -951,13 +1058,12 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         | TAtomic::TArrayKey
         | TAtomic::TScalar
         | TAtomic::TNumeric
-        | TAtomic::TPositiveInt
-        | TAtomic::TNegativeInt
         | TAtomic::TIntRange { .. }
         | TAtomic::TLiteralInt { .. }
         | TAtomic::TLiteralFloat { .. }
         | TAtomic::TLiteralString { .. }
         | TAtomic::TLiteralClassString { .. }
+        | TAtomic::TDependentGetType { .. }
         | TAtomic::TNonEmptyString
         | TAtomic::TNumericString
         | TAtomic::TNonEmptyNumericString
@@ -966,6 +1072,14 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         | TAtomic::TTruthyString
         | TAtomic::TEnum { .. }
         | TAtomic::TEnumCase { .. } => {}
+        TAtomic::TConditional(conditional) => {
+            populate_union_type(&mut conditional.if_true_type);
+            populate_union_type(&mut conditional.if_false_type);
+        }
+        TAtomic::TTemplateKeyOf { as_type, .. } | TAtomic::TTemplateValueOf { as_type, .. } => {
+            populate_union_type(as_type);
+        }
+        TAtomic::TPropertiesOf { .. } | TAtomic::TTemplatePropertiesOf { .. } => {}
     }
 }
 

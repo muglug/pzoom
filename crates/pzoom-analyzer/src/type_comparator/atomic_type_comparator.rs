@@ -23,6 +23,26 @@ pub fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
+    // The dependent `get_class()`/`gettype()` atomics are class-string/string
+    // subtypes; compare them as their plain supertype (Psalm models them via
+    // class inheritance, so they are transparently comparable as strings).
+    if let Some(input_equiv) = input_type_part.dependent_string_equivalent() {
+        return is_contained_by(
+            codebase,
+            &input_equiv,
+            container_type_part,
+            atomic_comparison_result,
+        );
+    }
+    if let Some(container_equiv) = container_type_part.dependent_string_equivalent() {
+        return is_contained_by(
+            codebase,
+            input_type_part,
+            &container_equiv,
+            atomic_comparison_result,
+        );
+    }
+
     if let TAtomic::TObjectIntersection { types } = container_type_part {
         for intersection_type in types {
             let mut intersection_result = TypeComparisonResult::new();
@@ -108,6 +128,68 @@ pub fn is_contained_by(
             &class_string_container,
             atomic_comparison_result,
         );
+    }
+
+    // `key-of<T>` / `value-of<T>` on an unresolved template. Two deferred types of the
+    // same template parameter are interchangeable; otherwise they compare via the keys
+    // (resp. values) of the template's bound. A concrete value is never contained by a
+    // deferred template key-of/value-of (the real keys/values depend on the eventual
+    // instantiation), mirroring Psalm's TTemplateKeyOf/TTemplateValueOf handling.
+    if let TAtomic::TTemplateKeyOf {
+        param_name: input_param,
+        as_type: input_as,
+        ..
+    } = input_type_part
+    {
+        if let TAtomic::TTemplateKeyOf {
+            param_name: container_param,
+            ..
+        } = container_type_part
+            && input_param == container_param
+        {
+            return true;
+        }
+        return union_type_comparator::is_contained_by(
+            codebase,
+            &pzoom_code_info::ttype::get_key_of_union(input_as),
+            &pzoom_code_info::TUnion::new(container_type_part.clone()),
+            false,
+            false,
+            atomic_comparison_result,
+        );
+    }
+
+    if let TAtomic::TTemplateValueOf {
+        param_name: input_param,
+        as_type: input_as,
+        ..
+    } = input_type_part
+    {
+        if let TAtomic::TTemplateValueOf {
+            param_name: container_param,
+            ..
+        } = container_type_part
+            && input_param == container_param
+        {
+            return true;
+        }
+        return union_type_comparator::is_contained_by(
+            codebase,
+            &pzoom_code_info::ttype::get_value_of_union(input_as),
+            &pzoom_code_info::TUnion::new(container_type_part.clone()),
+            false,
+            false,
+            atomic_comparison_result,
+        );
+    }
+
+    // A non-template input is not contained by a deferred template key-of/value-of:
+    // the actual keys/values are unknown until the template is bound.
+    if matches!(
+        container_type_part,
+        TAtomic::TTemplateKeyOf { .. } | TAtomic::TTemplateValueOf { .. }
+    ) {
+        return false;
     }
 
     // Identical types are always contained
@@ -228,12 +310,21 @@ pub fn is_contained_by(
     // Array type comparisons
     if is_array_type(input_type_part) || is_array_type(container_type_part) {
         if is_array_type(input_type_part) && is_array_type(container_type_part) {
-            return array_type_comparator::is_contained_by(
+            // Array element / shape value types are always declared in docblocks,
+            // and Psalm gates `scalar_type_match_found` on the container element's
+            // `from_docblock` flag — so a scalar mismatch inside an array never
+            // counts as a scalar match (it stays an `InvalidArgument`, not
+            // `InvalidScalarArgument`). pzoom has no per-atomic docblock flag, so we
+            // preserve the incoming value across the nested element comparisons.
+            let saved_scalar_match = atomic_comparison_result.scalar_type_match_found;
+            let result = array_type_comparator::is_contained_by(
                 codebase,
                 input_type_part,
                 container_type_part,
                 atomic_comparison_result,
             );
+            atomic_comparison_result.scalar_type_match_found = saved_scalar_match;
+            return result;
         }
     }
 
@@ -282,14 +373,76 @@ pub fn is_contained_by(
         value_type: container_value,
     } = container_type_part
     {
-        // Arrays are iterable
+        // Arrays are iterable; check that the element key/value types are compatible.
         if is_array_type(input_type_part) {
+            if container_key.is_mixed() && container_value.is_mixed() {
+                return true;
+            }
+
+            if let Some((input_key, input_value)) = array_atomic_key_value_types(input_type_part) {
+                let key_ok = container_key.is_mixed()
+                    || union_type_comparator::is_contained_by(
+                        codebase,
+                        &input_key,
+                        container_key,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    );
+                let value_ok = container_value.is_mixed()
+                    || union_type_comparator::is_contained_by(
+                        codebase,
+                        &input_value,
+                        container_value,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    );
+                return key_ok && value_ok;
+            }
+
             return true;
         }
 
         // Only classes implementing Traversable (or descendants) are iterable.
-        if let TAtomic::TNamedObject { name, .. } = input_type_part {
+        if let TAtomic::TNamedObject { name, type_params , .. } = input_type_part {
             if named_object_is_iterable(codebase, *name) {
+                if container_key.is_mixed() && container_value.is_mixed() {
+                    return true;
+                }
+
+                // The built-in iterables expose <TKey, TValue> as their first two
+                // type parameters, so their iteration types can be checked directly.
+                if matches!(
+                    *name,
+                    StrId::GENERATOR
+                        | StrId::TRAVERSABLE
+                        | StrId::ITERATOR
+                        | StrId::ITERATOR_AGGREGATE
+                ) && let Some(params) = type_params
+                    && params.len() >= 2
+                {
+                    let key_ok = container_key.is_mixed()
+                        || union_type_comparator::is_contained_by(
+                            codebase,
+                            &params[0],
+                            container_key,
+                            false,
+                            false,
+                            atomic_comparison_result,
+                        );
+                    let value_ok = container_value.is_mixed()
+                        || union_type_comparator::is_contained_by(
+                            codebase,
+                            &params[1],
+                            container_value,
+                            false,
+                            false,
+                            atomic_comparison_result,
+                        );
+                    return key_ok && value_ok;
+                }
+
                 return true;
             }
         }
@@ -456,8 +609,6 @@ fn is_scalar_type(atomic: &TAtomic) -> bool {
             | TAtomic::TNonEmptyNumericString
             | TAtomic::TNonEmptyLowercaseString
             | TAtomic::TClassString { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
             | TAtomic::TIntRange { .. }
             | TAtomic::TNumeric
             | TAtomic::TArrayKey
@@ -469,11 +620,69 @@ fn is_scalar_type(atomic: &TAtomic) -> bool {
 fn is_object_type(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
-        TAtomic::TObject | TAtomic::TNamedObject { .. } | TAtomic::TObjectIntersection { .. }
+        TAtomic::TObject
+            | TAtomic::TNamedObject { .. }
+            | TAtomic::TObjectIntersection { .. }
+            | TAtomic::TObjectWithProperties { .. }
     )
 }
 
 /// Check if a type is an array type.
+/// Extract the (key, value) element types of an array-like atomic, for comparing
+/// against an iterable's type parameters.
+fn array_atomic_key_value_types(
+    atomic: &TAtomic,
+) -> Option<(pzoom_code_info::TUnion, pzoom_code_info::TUnion)> {
+    use pzoom_code_info::{ArrayKey, TUnion, combine_union_types};
+
+    match atomic {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => Some(((**key_type).clone(), (**value_type).clone())),
+        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            Some((TUnion::int(), (**value_type).clone()))
+        }
+        TAtomic::TKeyedArray {
+            properties,
+            fallback_key_type,
+            fallback_value_type,
+            ..
+        } => {
+            let mut key_union: Option<TUnion> =
+                fallback_key_type.as_ref().map(|k| (**k).clone());
+            let mut value_union: Option<TUnion> =
+                fallback_value_type.as_ref().map(|v| (**v).clone());
+
+            for (key, value) in properties {
+                let key_atomic = match key {
+                    ArrayKey::Int(i) => TAtomic::TLiteralInt { value: *i },
+                    ArrayKey::String(s) => TAtomic::TLiteralString { value: s.clone() },
+                };
+                let key_t = TUnion::new(key_atomic);
+                key_union = Some(match key_union {
+                    Some(existing) => combine_union_types(&existing, &key_t, false),
+                    None => key_t,
+                });
+                value_union = Some(match value_union {
+                    Some(existing) => combine_union_types(&existing, value, false),
+                    None => value.clone(),
+                });
+            }
+
+            Some((
+                key_union.unwrap_or_else(TUnion::array_key),
+                value_union.unwrap_or_else(TUnion::mixed),
+            ))
+        }
+        _ => None,
+    }
+}
+
 fn is_array_type(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
@@ -512,6 +721,14 @@ pub fn can_be_identical(codebase: &CodebaseInfo, type1: &TAtomic, type2: &TAtomi
     // Same types can always be identical
     if type1 == type2 {
         return true;
+    }
+
+    // Compare the dependent get_class()/gettype() atomics as their string supertype.
+    if let Some(equiv) = type1.dependent_string_equivalent() {
+        return can_be_identical(codebase, &equiv, type2);
+    }
+    if let Some(equiv) = type2.dependent_string_equivalent() {
+        return can_be_identical(codebase, type1, &equiv);
     }
 
     // Mixed can be identical to anything
@@ -582,8 +799,6 @@ fn strict_scalar_identity_family(atomic: &TAtomic) -> Option<StrictScalarIdentit
     match atomic {
         TAtomic::TInt
         | TAtomic::TLiteralInt { .. }
-        | TAtomic::TPositiveInt
-        | TAtomic::TNegativeInt
         | TAtomic::TIntRange { .. } => Some(StrictScalarIdentityFamily::Int),
         TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => Some(StrictScalarIdentityFamily::Float),
         TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse => Some(StrictScalarIdentityFamily::Bool),

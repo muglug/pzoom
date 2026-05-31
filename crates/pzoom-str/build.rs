@@ -21,6 +21,7 @@ fn main() -> Result<()> {
         "stdClass",
         "Generator",
         "Countable",
+        "Stringable",
         "self",
         "static",
         "parent",
@@ -267,6 +268,13 @@ fn main() -> Result<()> {
         "version_compare",
         "vsprintf",
         "wordwrap",
+        "usort",
+        "uasort",
+        "uksort",
+        "array_map",
+        "array_filter",
+        "array_replace",
+        "class_alias",
     ];
 
     let mut seen = std::collections::HashSet::new();

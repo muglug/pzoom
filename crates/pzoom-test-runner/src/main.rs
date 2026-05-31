@@ -350,6 +350,7 @@ fn run_test_with_base(
         content_hash: compute_hash(&input_contents),
         contents: input_contents,
         is_stub: false,
+        is_low_precedence_stub: false,
         inline_annotations,
     };
     codebase.files.insert(file_path_id, file_info);
@@ -448,12 +449,12 @@ fn run_analysis_and_compare(
             continue;
         }
 
-        let file_path = interner.lookup(issue.file_path);
+        let file_path = interner.lookup(issue.location.file_path);
         // Only include issues from the test file, not stubs
         if file_path.contains(input_path) || file_path.ends_with("input.php") {
             output_lines.push(format!(
                 "{:?} - {}:{}:{} - {}",
-                issue.kind, "input.php", issue.start_line, issue.start_column, issue.message
+                issue.kind, "input.php", issue.location.start_line, issue.location.start_column, issue.message
             ));
         }
     }

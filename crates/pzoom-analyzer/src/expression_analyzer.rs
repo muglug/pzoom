@@ -535,7 +535,7 @@ fn infer_anonymous_class_object_type(
         object_parts.push(TAtomic::TNamedObject {
             name: parent_id,
             type_params: None,
-        });
+        is_static: false, remapped_params: false });
     }
 
     if let Some(implements) = &anonymous_class.implements {
@@ -547,7 +547,7 @@ fn infer_anonymous_class_object_type(
             let interface_atomic = TAtomic::TNamedObject {
                 name: interface_id,
                 type_params: None,
-            };
+            is_static: false, remapped_params: false };
             if !object_parts.contains(&interface_atomic) {
                 object_parts.push(interface_atomic);
             }
@@ -573,7 +573,7 @@ fn infer_anonymous_class_object_type(
     TUnion::new(TAtomic::TNamedObject {
         name: anon_class_id,
         type_params: None,
-    })
+    is_static: false, remapped_params: false })
 }
 
 fn analyze_anonymous_class_members(
@@ -607,15 +607,7 @@ fn analyze_anonymous_class_members(
             method_info.return_type = Some(return_type);
         }
 
-        let method_analyzer = StatementsAnalyzer {
-            codebase: analyzer.codebase,
-            interner: analyzer.interner,
-            function_info: Some(&method_info),
-            file_path: analyzer.file_path,
-            source: analyzer.source,
-            resolved_names: analyzer.resolved_names,
-            config: analyzer.config,
-        };
+        let method_analyzer = analyzer.for_nested_function(Some(&method_info));
 
         let mut method_context = BlockContext::new();
         method_context.namespace = context.namespace;
@@ -663,7 +655,8 @@ fn parse_type_hint_union_from_source(
         return None;
     }
 
-    let mut parsed = pzoom_syntax::docblock::parse_type_string(hint_text, analyzer.interner);
+    let mut parsed = pzoom_syntax::docblock::parse_type_string(hint_text, analyzer.interner)
+        .unwrap_or_else(|_| TUnion::mixed());
     parsed.from_docblock = false;
     Some(parsed)
 }

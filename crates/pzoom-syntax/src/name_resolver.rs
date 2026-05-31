@@ -7,11 +7,12 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::Program;
 use mago_syntax::ast::Sequence;
+use mago_syntax::ast::ast::array::ArrayElement;
 use mago_syntax::ast::ast::attribute::AttributeList;
 use mago_syntax::ast::ast::call::{Call, StaticMethodCall};
 use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
 use mago_syntax::ast::ast::class_like::property::Property;
-use mago_syntax::ast::ast::class_like::{Class, Enum, Interface, Trait};
+use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
 use mago_syntax::ast::ast::construct::Construct;
 use mago_syntax::ast::ast::control_flow::r#match::MatchArm;
 use mago_syntax::ast::ast::expression::Expression;
@@ -268,6 +269,10 @@ impl<'a> NameResolver<'a> {
                 for stmt in while_stmt.body.statements() {
                     self.visit_statement(stmt);
                 }
+            }
+            Statement::DoWhile(do_while) => {
+                self.visit_statement(do_while.statement);
+                self.visit_expression(do_while.condition);
             }
             Statement::For(for_stmt) => {
                 for init in &for_stmt.initializations {
@@ -585,22 +590,13 @@ impl<'a> NameResolver<'a> {
                 self.visit_expression(paren.expression);
             }
             Expression::Array(array) => {
-                use mago_syntax::ast::ast::array::ArrayElement;
-                for element in &array.elements {
-                    match element {
-                        ArrayElement::KeyValue(kv) => {
-                            self.visit_expression(kv.key);
-                            self.visit_expression(kv.value);
-                        }
-                        ArrayElement::Value(v) => {
-                            self.visit_expression(v.value);
-                        }
-                        ArrayElement::Variadic(v) => {
-                            self.visit_expression(v.value);
-                        }
-                        ArrayElement::Missing(_) => {}
-                    }
-                }
+                self.visit_array_elements(array.elements.iter());
+            }
+            Expression::LegacyArray(array) => {
+                self.visit_array_elements(array.elements.iter());
+            }
+            Expression::List(list) => {
+                self.visit_array_elements(list.elements.iter());
             }
             Expression::ArrayAccess(access) => {
                 self.visit_expression(access.array);
@@ -632,11 +628,25 @@ impl<'a> NameResolver<'a> {
                 self.visit_expression(cond.r#else);
             }
             Expression::Closure(closure) => {
+                self.visit_attribute_lists(&closure.attribute_lists);
+                for param in closure.parameter_list.parameters.iter() {
+                    self.visit_function_like_parameter(param);
+                }
+                if let Some(return_type_hint) = &closure.return_type_hint {
+                    self.visit_hint(&return_type_hint.hint);
+                }
                 for stmt in &closure.body.statements {
                     self.visit_statement(stmt);
                 }
             }
             Expression::ArrowFunction(arrow) => {
+                self.visit_attribute_lists(&arrow.attribute_lists);
+                for param in arrow.parameter_list.parameters.iter() {
+                    self.visit_function_like_parameter(param);
+                }
+                if let Some(return_type_hint) = &arrow.return_type_hint {
+                    self.visit_hint(&return_type_hint.hint);
+                }
                 self.visit_expression(arrow.expression);
             }
             Expression::Match(match_expr) => {
@@ -664,10 +674,62 @@ impl<'a> NameResolver<'a> {
             Expression::Clone(clone) => {
                 self.visit_expression(clone.object);
             }
+            Expression::AnonymousClass(anonymous_class) => {
+                self.visit_anonymous_class(anonymous_class);
+            }
             Expression::Yield(_) => {
                 // Yield structure varies - skip for now
             }
             _ => {}
+        }
+    }
+
+    /// Resolve names inside an anonymous class (`new class(...) extends X
+    /// implements Y { ... }`): its parents, interfaces, and member bodies.
+    fn visit_anonymous_class(&mut self, anonymous_class: &AnonymousClass<'_>) {
+        self.visit_attribute_lists(&anonymous_class.attribute_lists);
+
+        if let Some(argument_list) = &anonymous_class.argument_list {
+            for arg in &argument_list.arguments {
+                self.visit_expression(arg.value());
+            }
+        }
+
+        if let Some(extends) = &anonymous_class.extends {
+            for parent in &extends.types {
+                self.resolve_identifier(parent);
+            }
+        }
+
+        if let Some(implements) = &anonymous_class.implements {
+            for iface in &implements.types {
+                self.resolve_identifier(iface);
+            }
+        }
+
+        self.visit_class_members(&anonymous_class.members);
+    }
+
+    /// Visit the elements of an array/list literal (short `[]`, legacy
+    /// `array(...)`, or `list(...)`), resolving any identifiers inside.
+    fn visit_array_elements<'b>(
+        &mut self,
+        elements: impl Iterator<Item = &'b ArrayElement<'b>>,
+    ) {
+        for element in elements {
+            match element {
+                ArrayElement::KeyValue(kv) => {
+                    self.visit_expression(kv.key);
+                    self.visit_expression(kv.value);
+                }
+                ArrayElement::Value(v) => {
+                    self.visit_expression(v.value);
+                }
+                ArrayElement::Variadic(v) => {
+                    self.visit_expression(v.value);
+                }
+                ArrayElement::Missing(_) => {}
+            }
         }
     }
 

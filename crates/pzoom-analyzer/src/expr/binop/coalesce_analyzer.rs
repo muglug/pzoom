@@ -202,10 +202,13 @@ fn maybe_emit_undefined_root_variable_for_coalesce_left(
 
 fn extract_root_var_name_for_coalesce(expr: &Expression<'_>) -> Option<String> {
     let var_key = expression_identifier::get_expression_var_key(expr)?;
-    let split_at = var_key
-        .find('[')
-        .or_else(|| var_key.find("->"))
-        .or_else(|| var_key.find("::"));
+    // Split at the *earliest* access/offset delimiter so the root is the base
+    // variable (e.g. `$this->data[$x]` -> `$this`, not `$this->data`); a property
+    // or static access root is not an undefined-variable candidate.
+    let split_at = ["[", "->", "::"]
+        .iter()
+        .filter_map(|delim| var_key.find(delim))
+        .min();
 
     match split_at {
         Some(offset) if offset > 0 => Some(var_key[..offset].to_string()),
@@ -283,7 +286,7 @@ fn apply_left_null_assumption(
 
     let mut changed_var_ids = FxHashSet::default();
     reconciler::reconcile_keyed_types(
-        &flattened_assertions,
+        &reconciler::to_and_groups(&flattened_assertions),
         context,
         &mut changed_var_ids,
         analyzer,

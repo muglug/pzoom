@@ -9,7 +9,7 @@ use mago_syntax::ast::ast::variable::Variable;
 
 use pzoom_code_info::{DataFlowNode, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
 use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
@@ -18,6 +18,7 @@ use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
 use crate::type_comparator;
+use crate::template::TemplateMap;
 
 /// Analyze a return statement.
 pub fn analyze(
@@ -89,6 +90,20 @@ pub fn analyze(
 
     // Check against expected return type
     if let Some(expected_type) = analyzer.get_expected_return_type() {
+        // A conditional return type's branch is unknown inside the body, so the body
+        // may legitimately return either branch — compare against the union of both
+        // (Psalm expands TConditional when used as a concrete type).
+        let mut expanded_expected_type = expected_type.clone();
+        // NB: `self`/`static` are resolved later by the call analyzers
+        // (`localize_special_class_type_*`); resolving them here too would
+        // double-resolve (see tests/inference/Class/preventDoubleStaticResolution1).
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            &mut expanded_expected_type,
+            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        );
+        let expected_type = &expanded_expected_type;
         if let Some(return_expr) = ret.value.as_ref() {
             if let Some(special_type_name) =
                 infer_explicit_special_return_type_name(analyzer, return_expr)
@@ -140,17 +155,80 @@ pub fn analyze(
         }
         // Check type compatibility for non-void/never functions
         else if has_return_value && !expected_type.is_mixed() && !expected_type.is_void() {
+            // A function's own template parameters are abstract inside its body
+            // and are rigid: only a value derived from the same template parameter
+            // satisfies a `@return T`. Returning a concrete value (even one within
+            // the template's `as` bound) is an InvalidReturnStatement, matching
+            // Psalm's ReturnTypeAnalyzer.
+            if expected_is_rigid_template(analyzer, expected_type)
+                && return_violates_rigid_template(&return_type, expected_type)
+            {
+                if let Some(start) = analysis_data.current_stmt_start {
+                    let (line, col) = analyzer.get_line_column(start);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::InvalidReturnStatement,
+                        format!(
+                            "The type {} does not match the declared return type {}",
+                            return_type.get_id(Some(analyzer.interner)),
+                            expected_type.get_id(Some(analyzer.interner))
+                        ),
+                        analyzer.file_path,
+                        start,
+                        analysis_data.current_stmt_end.unwrap_or(start),
+                        line,
+                        col,
+                    ));
+                }
+            } else {
             let expected_type = resolve_expected_return_type_templates(analyzer, expected_type);
-            let comparison_expected_type = if return_expression_uses_yield {
+            // In a generator function, a `return X` provides the Generator's TReturn
+            // (its 4th type parameter), not the Generator type itself. For other
+            // generator-like declared types (Iterator/Traversable/iterable) the
+            // returned value is discarded, so any type is accepted.
+            let is_generator = analysis_data.current_function_is_generator
+                && expected_type_allows_generator_void_return(&expected_type, analyzer.interner);
+            let comparison_expected_type = if is_generator {
+                get_generator_return_type(&expected_type, analyzer.interner)
+                    .unwrap_or_else(TUnion::mixed)
+            } else if return_expression_uses_yield {
                 get_generator_return_type(&expected_type, analyzer.interner)
                     .unwrap_or_else(|| expected_type.clone())
             } else {
                 expected_type
             };
 
+            // An object with a `__toString` method returned where a string is
+            // expected is implicitly cast to string. Report ImplicitToStringCast
+            // (matching Psalm) and accept the return rather than flagging a mismatch.
+            if let Some(casted) = union_cast_stringable_to_string(analyzer, &return_type)
+                && is_contained_without_coercion(
+                    &casted,
+                    &comparison_expected_type,
+                    analyzer.codebase,
+                    casted.ignore_nullable_issues,
+                    casted.ignore_falsable_issues,
+                )
+            {
+                if let Some(start) = analysis_data.current_stmt_start {
+                    let (line, col) = analyzer.get_line_column(start);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::ImplicitToStringCast,
+                        format!(
+                            "Object with a __toString method is implicitly converted to \
+                             the declared return type {}",
+                            comparison_expected_type.get_id(Some(analyzer.interner))
+                        ),
+                        analyzer.file_path,
+                        start,
+                        analysis_data.current_stmt_end.unwrap_or(start),
+                        line,
+                        col,
+                    ));
+                }
+            }
             // Skip mixed return validation for now - without docblock parsing,
             // we get too many false positives from untyped parameters
-            if return_type.is_mixed()
+            else if return_type.is_mixed()
                 || return_type
                     .types
                     .iter()
@@ -177,26 +255,26 @@ pub fn analyze(
                             &comparison_expected_type,
                         ) {
                             IssueKind::FalsableReturnStatement
-                        } else if is_class_string_return_coercion(
-                            &concrete_return_type,
-                            &comparison_expected_type,
-                        ) {
-                            IssueKind::LessSpecificReturnStatement
-                        } else if is_less_specific_due_to_static_expected_return(
-                            analyzer,
-                            &concrete_return_type,
-                            &comparison_expected_type,
-                        ) {
-                            if has_same_array_like_shape(
+                        } else {
+                            // Mirror Psalm's ReturnAnalyzer: when the inferred type is not
+                            // contained but the comparison coerced (the inferred type is a
+                            // wider/less-specific version of the declared type) emit
+                            // LessSpecificReturnStatement, otherwise InvalidReturnStatement.
+                            let mut comparison_result =
+                                type_comparator::TypeComparisonResult::new();
+                            type_comparator::union_type_comparator::is_contained_by(
+                                analyzer.codebase,
                                 &concrete_return_type,
                                 &comparison_expected_type,
-                            ) {
-                                IssueKind::InvalidReturnStatement
-                            } else {
+                                concrete_return_type.ignore_nullable_issues,
+                                concrete_return_type.ignore_falsable_issues,
+                                &mut comparison_result,
+                            );
+                            if comparison_result.type_coerced.unwrap_or(false) {
                                 IssueKind::LessSpecificReturnStatement
+                            } else {
+                                IssueKind::InvalidReturnStatement
                             }
-                        } else {
-                            IssueKind::InvalidReturnStatement
                         };
 
                         let actual_type_id = concrete_return_type.get_id(Some(analyzer.interner));
@@ -266,22 +344,13 @@ pub fn analyze(
                         &comparison_expected_type,
                     ) {
                         IssueKind::FalsableReturnStatement
-                    } else if comparison_result.type_coerced.unwrap_or(false)
-                        && union_contains_mixed_deep(&return_type)
-                    {
-                        IssueKind::MixedReturnTypeCoercion
-                    } else if is_class_string_return_coercion(
-                        &return_type,
-                        &comparison_expected_type,
-                    ) {
-                        IssueKind::LessSpecificReturnStatement
-                    } else if is_less_specific_due_to_static_expected_return(
-                        analyzer,
-                        &return_type,
-                        &comparison_expected_type,
-                    ) {
-                        if has_same_array_like_shape(&return_type, &comparison_expected_type) {
-                            IssueKind::InvalidReturnStatement
+                    } else if comparison_result.type_coerced.unwrap_or(false) {
+                        // Mirror Psalm's ReturnAnalyzer: a coerced comparison means the
+                        // inferred type is a wider/less-specific version of the declared
+                        // type. Coercion from mixed is reported as MixedReturnTypeCoercion;
+                        // any other coercion is a LessSpecificReturnStatement.
+                        if union_contains_mixed_deep(&return_type) {
+                            IssueKind::MixedReturnTypeCoercion
                         } else {
                             IssueKind::LessSpecificReturnStatement
                         }
@@ -315,12 +384,13 @@ pub fn analyze(
                     ));
                 }
             }
+            }
         }
         // Check if we're not returning a value when one is expected
         else if !has_return_value
             && !expected_type.is_void()
             && !expected_type.is_mixed()
-            && !(!analysis_data.inferred_yield_types.is_empty()
+            && !(analysis_data.current_function_is_generator
                 && expected_type_allows_generator_void_return(expected_type, analyzer.interner))
         {
             if let Some(start) = analysis_data.current_stmt_start {
@@ -362,6 +432,99 @@ pub fn analyze(
     Ok(())
 }
 
+/// Returns true if the declared return type consists solely of template
+/// parameters defined by the current function or its declaring class. Such a
+/// type is "rigid": only a value of the same template parameter satisfies it.
+fn expected_is_rigid_template(analyzer: &StatementsAnalyzer<'_>, expected_type: &TUnion) -> bool {
+    if expected_type.types.is_empty() {
+        return false;
+    }
+
+    expected_type.types.iter().all(|atomic| {
+        if let TAtomic::TTemplateParam {
+            name,
+            defining_entity,
+            ..
+        } = atomic
+        {
+            template_is_defined_locally(analyzer, *name, *defining_entity)
+        } else {
+            false
+        }
+    })
+}
+
+fn template_is_defined_locally(
+    analyzer: &StatementsAnalyzer<'_>,
+    name: StrId,
+    defining_entity: StrId,
+) -> bool {
+    if let Some(function_info) = analyzer.function_info
+        && function_info.name == defining_entity
+        && function_info.template_types.iter().any(|t| t.name == name)
+    {
+        return true;
+    }
+
+    if let Some(declaring_class) = analyzer.get_declaring_class()
+        && declaring_class == defining_entity
+        && let Some(class_info) = analyzer.codebase.get_class(declaring_class)
+    {
+        return class_info.template_types.iter().any(|t| t.name == name);
+    }
+
+    false
+}
+
+/// Returns true if `return_type` does not satisfy a rigid template return type:
+/// it carries no matching template parameter and is a fully concrete, non-null
+/// type (so it is not the template value itself).
+fn return_violates_rigid_template(return_type: &TUnion, expected_type: &TUnion) -> bool {
+    if return_type.types.is_empty()
+        || return_type.is_mixed()
+        || return_type.is_nullable
+        || return_type.is_nothing()
+    {
+        return false;
+    }
+
+    let expected_names: Vec<StrId> = expected_type
+        .types
+        .iter()
+        .filter_map(|atomic| match atomic {
+            TAtomic::TTemplateParam { name, .. } => Some(*name),
+            _ => None,
+        })
+        .collect();
+
+    // If the returned type is derived from one of the expected template
+    // parameters (directly, or via an intersection such as `T&object` produced
+    // by `is_object()` narrowing), it is acceptable.
+    let carries_matching_template = return_type
+        .types
+        .iter()
+        .any(|atomic| atomic_carries_template(atomic, &expected_names));
+
+    !carries_matching_template
+}
+
+fn atomic_carries_template(atomic: &TAtomic, expected_names: &[StrId]) -> bool {
+    match atomic {
+        TAtomic::TTemplateParam { name, .. } => expected_names.contains(name),
+        TAtomic::TObjectIntersection { types } => types
+            .iter()
+            .any(|inner| atomic_carries_template(inner, expected_names)),
+        // A `static` (late-static-bound) return inside a `@return T` function can
+        // only originate from a template-typed receiver, so its runtime type is
+        // the template parameter itself — treat it as template-derived rather
+        // than a concrete mismatch.
+        TAtomic::TNamedObject {
+            name, is_static, ..
+        } => *name == StrId::STATIC || *is_static,
+        _ => false,
+    }
+}
+
 fn resolve_expected_return_type_templates(
     analyzer: &StatementsAnalyzer<'_>,
     expected_type: &TUnion,
@@ -370,13 +533,13 @@ fn resolve_expected_return_type_templates(
         return expected_type.clone();
     };
 
-    let mut template_defaults = FxHashMap::default();
-    template_defaults.extend(function_call_analyzer::get_template_defaults(function_info));
+    let mut template_defaults = TemplateMap::new();
+    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(function_info));
 
     if let Some(declaring_class) = function_info.declaring_class
         && let Some(class_info) = analyzer.codebase.get_class(declaring_class)
     {
-        template_defaults.extend(function_call_analyzer::get_class_template_defaults(
+        template_defaults.extend_overlay(function_call_analyzer::get_class_template_defaults(
             class_info,
         ));
     }
@@ -386,7 +549,7 @@ fn resolve_expected_return_type_templates(
     } else {
         function_call_analyzer::replace_templates_in_union(
             expected_type,
-            &FxHashMap::default(),
+            &TemplateMap::new(),
             &template_defaults,
         )
     }
@@ -394,24 +557,6 @@ fn resolve_expected_return_type_templates(
 
 fn unions_are_array_like(left: &TUnion, right: &TUnion) -> bool {
     is_array_like_union(left) && is_array_like_union(right)
-}
-
-fn has_same_array_like_shape(left: &TUnion, right: &TUnion) -> bool {
-    let (Some(left_atomic), Some(right_atomic)) = (left.get_single(), right.get_single()) else {
-        return false;
-    };
-
-    matches!(
-        (left_atomic, right_atomic),
-        (TAtomic::TArray { .. }, TAtomic::TArray { .. })
-            | (
-                TAtomic::TNonEmptyArray { .. },
-                TAtomic::TNonEmptyArray { .. }
-            )
-            | (TAtomic::TList { .. }, TAtomic::TList { .. })
-            | (TAtomic::TNonEmptyList { .. }, TAtomic::TNonEmptyList { .. })
-            | (TAtomic::TKeyedArray { .. }, TAtomic::TKeyedArray { .. })
-    )
 }
 
 fn strip_mixed_types(union: &TUnion) -> Option<TUnion> {
@@ -453,27 +598,6 @@ fn is_contained_without_coercion(
     is_contained && !comparison_result.type_coerced.unwrap_or(false)
 }
 
-fn is_class_string_return_coercion(return_type: &TUnion, expected_type: &TUnion) -> bool {
-    if union_contains_class_string_like(expected_type)
-        && union_contains_plain_string_like(return_type)
-        && return_type
-            .types
-            .iter()
-            .all(atomic_is_string_or_class_string_like)
-    {
-        return true;
-    }
-
-    if let (Some(return_value_type), Some(expected_value_type)) = (
-        union_array_like_value_type(return_type),
-        union_array_like_value_type(expected_type),
-    ) {
-        return is_class_string_return_coercion(&return_value_type, &expected_value_type);
-    }
-
-    false
-}
-
 fn union_contains_class_string_like(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_class_string_like)
 }
@@ -489,32 +613,6 @@ fn atomic_contains_class_string_like(atomic: &TAtomic) -> bool {
         }
         _ => false,
     }
-}
-
-fn union_contains_plain_string_like(union: &TUnion) -> bool {
-    union.types.iter().any(atomic_is_plain_string_like)
-}
-
-fn atomic_is_plain_string_like(atomic: &TAtomic) -> bool {
-    matches!(
-        atomic,
-        TAtomic::TString
-            | TAtomic::TLiteralString { .. }
-            | TAtomic::TNonEmptyString
-            | TAtomic::TTruthyString
-            | TAtomic::TLowercaseString
-            | TAtomic::TNonEmptyLowercaseString
-            | TAtomic::TNumericString
-            | TAtomic::TNonEmptyNumericString
-    )
-}
-
-fn atomic_is_string_or_class_string_like(atomic: &TAtomic) -> bool {
-    atomic_is_plain_string_like(atomic)
-        || matches!(
-            atomic,
-            TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
-        )
 }
 
 fn union_array_like_value_type(union: &TUnion) -> Option<TUnion> {
@@ -701,6 +799,143 @@ fn atomic_contains_mixed_deep(atomic: &TAtomic) -> bool {
     }
 }
 
+/// If the union contains any object with a `__toString` method (possibly nested in
+/// array value/key types), return a copy with those objects replaced by `string`.
+/// Returns None if no such object is present, so callers can tell whether an implicit
+/// to-string cast actually applies.
+fn union_cast_stringable_to_string(
+    analyzer: &StatementsAnalyzer<'_>,
+    union: &TUnion,
+) -> Option<TUnion> {
+    let mut changed = false;
+    let mut atomics = Vec::with_capacity(union.types.len());
+    for atomic in &union.types {
+        let (new_atomic, atomic_changed) = atomic_cast_stringable_to_string(analyzer, atomic);
+        changed |= atomic_changed;
+        atomics.push(new_atomic);
+    }
+
+    if !changed {
+        return None;
+    }
+
+    let mut result = union.clone();
+    result.types = atomics;
+    Some(result)
+}
+
+fn atomic_cast_stringable_to_string(
+    analyzer: &StatementsAnalyzer<'_>,
+    atomic: &TAtomic,
+) -> (TAtomic, bool) {
+    match atomic {
+        TAtomic::TNamedObject { name, .. }
+            if analyzer
+                .codebase
+                .get_class(*name)
+                .is_some_and(|class_info| class_info.methods.contains_key(&StrId::TO_STRING)) =>
+        {
+            (TAtomic::TString, true)
+        }
+        TAtomic::TList { value_type } => {
+            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
+                (
+                    TAtomic::TList {
+                        value_type: Box::new(new_value),
+                    },
+                    true,
+                )
+            } else {
+                (atomic.clone(), false)
+            }
+        }
+        TAtomic::TNonEmptyList { value_type } => {
+            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
+                (
+                    TAtomic::TNonEmptyList {
+                        value_type: Box::new(new_value),
+                    },
+                    true,
+                )
+            } else {
+                (atomic.clone(), false)
+            }
+        }
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        } => {
+            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
+                (
+                    TAtomic::TArray {
+                        key_type: key_type.clone(),
+                        value_type: Box::new(new_value),
+                    },
+                    true,
+                )
+            } else {
+                (atomic.clone(), false)
+            }
+        }
+        TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => {
+            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
+                (
+                    TAtomic::TNonEmptyArray {
+                        key_type: key_type.clone(),
+                        value_type: Box::new(new_value),
+                    },
+                    true,
+                )
+            } else {
+                (atomic.clone(), false)
+            }
+        }
+        TAtomic::TKeyedArray {
+            properties,
+            is_list,
+            sealed,
+            fallback_key_type,
+            fallback_value_type,
+        } => {
+            let mut changed = false;
+            let mut new_properties = properties.clone();
+            for value in new_properties.values_mut() {
+                if let Some(new_value) = union_cast_stringable_to_string(analyzer, value) {
+                    *value = new_value;
+                    changed = true;
+                }
+            }
+            let new_fallback_value = fallback_value_type.as_ref().map(|fv| {
+                match union_cast_stringable_to_string(analyzer, fv) {
+                    Some(new_value) => {
+                        changed = true;
+                        Box::new(new_value)
+                    }
+                    None => fv.clone(),
+                }
+            });
+            if changed {
+                (
+                    TAtomic::TKeyedArray {
+                        properties: new_properties,
+                        is_list: *is_list,
+                        sealed: *sealed,
+                        fallback_key_type: fallback_key_type.clone(),
+                        fallback_value_type: new_fallback_value,
+                    },
+                    true,
+                )
+            } else {
+                (atomic.clone(), false)
+            }
+        }
+        _ => (atomic.clone(), false),
+    }
+}
+
 fn should_emit_falsable_return_statement(return_type: &TUnion, expected_type: &TUnion) -> bool {
     if return_type.ignore_falsable_issues
         || unions_are_array_like(return_type, expected_type)
@@ -747,15 +982,17 @@ fn union_has_scalar(union: &TUnion) -> bool {
 
 fn atomic_contains_scalar(atomic: &TAtomic) -> bool {
     match atomic {
+        // Boolean types (`bool`/`true`/`false`) are intentionally excluded: Psalm's
+        // falsable-return guard uses `hasScalar()` (TScalar-family, not bool) and a
+        // separate `isTrue()` exception, so a `true`/`bool` expected return still
+        // reaches the boolish check below (which yields FalsableReturnStatement for
+        // an expected `true`).
         TAtomic::TScalar
         | TAtomic::TNumeric
         | TAtomic::TArrayKey
         | TAtomic::TInt
         | TAtomic::TFloat
         | TAtomic::TString
-        | TAtomic::TBool
-        | TAtomic::TTrue
-        | TAtomic::TFalse
         | TAtomic::TLiteralInt { .. }
         | TAtomic::TLiteralFloat { .. }
         | TAtomic::TLiteralString { .. }
@@ -767,8 +1004,6 @@ fn atomic_contains_scalar(atomic: &TAtomic) -> bool {
         | TAtomic::TNonEmptyLowercaseString
         | TAtomic::TTruthyString
         | TAtomic::TClassString { .. }
-        | TAtomic::TPositiveInt
-        | TAtomic::TNegativeInt
         | TAtomic::TIntRange { .. } => true,
         TAtomic::TTemplateParam { as_type, .. } => union_has_scalar(as_type),
         TAtomic::TTemplateParamClass { as_type, .. } => atomic_contains_scalar(as_type),
@@ -801,7 +1036,7 @@ fn is_array_like_union(union: &TUnion) -> bool {
         })
 }
 
-fn is_reference_returnable_expression(expr: &Expression<'_>) -> bool {
+pub(crate) fn is_reference_returnable_expression(expr: &Expression<'_>) -> bool {
     matches!(
         expr.unparenthesized(),
         Expression::Variable(_)
@@ -874,7 +1109,7 @@ fn get_generator_return_type(
         let TAtomic::TNamedObject {
             name,
             type_params: Some(type_params),
-        } = atomic
+        .. } = atomic
         else {
             continue;
         };
@@ -1009,7 +1244,7 @@ fn rewrite_declaring_class_atomic_to_special(
     special_name: StrId,
 ) -> TAtomic {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             let rewritten_name = if *name == declaring_class
                 || matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT)
             {
@@ -1032,7 +1267,7 @@ fn rewrite_declaring_class_atomic_to_special(
                         })
                         .collect()
                 }),
-            }
+            is_static: false, remapped_params: false }
         }
         TAtomic::TObjectIntersection { types } => {
             let mut rewritten = Vec::with_capacity(types.len());
@@ -1061,7 +1296,7 @@ fn union_contains_special_class_name(union: &TUnion, special_name: StrId) -> boo
 
 fn atomic_contains_named_class(atomic: &TAtomic, class_name: StrId) -> bool {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             if *name == class_name {
                 return true;
             }
@@ -1105,35 +1340,4 @@ fn should_emit_mixed_return_statement(
         .eq_ignore_ascii_case("array_pop")
 }
 
-fn is_less_specific_due_to_static_expected_return(
-    analyzer: &StatementsAnalyzer<'_>,
-    return_type: &TUnion,
-    expected_type: &TUnion,
-) -> bool {
-    if !union_contains_special_class_name(expected_type, StrId::STATIC) {
-        return false;
-    }
 
-    let Some(declaring_class) = analyzer.get_declaring_class() else {
-        return false;
-    };
-
-    if analyzer
-        .codebase
-        .get_class(declaring_class)
-        .is_some_and(|class_info| class_info.is_final)
-    {
-        return false;
-    }
-
-    let declaring_class_type = TUnion::new(TAtomic::TNamedObject {
-        name: declaring_class,
-        type_params: None,
-    });
-
-    type_comparator::is_contained_by_with_codebase(
-        &declaring_class_type,
-        return_type,
-        analyzer.codebase,
-    )
-}

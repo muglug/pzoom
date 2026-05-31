@@ -7,12 +7,12 @@
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind};
 use pzoom_code_info::{Assertion, CodebaseInfo, TAtomic, TUnion};
 use pzoom_str::StrId;
-use rustc_hash::FxHashMap;
 
 use super::{negated_assertion_reconciler, simple_assertion_reconciler};
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
+use crate::template::TemplateMap;
 
 /// Main entry point for assertion reconciliation.
 ///
@@ -225,16 +225,8 @@ fn intersect_atomic_with_atomic_inner(
         (TAtomic::TInt, TAtomic::TLiteralInt { value }) => {
             Some(TAtomic::TLiteralInt { value: *value })
         }
-        (TAtomic::TInt, TAtomic::TPositiveInt) => Some(TAtomic::TPositiveInt),
-        (TAtomic::TInt, TAtomic::TNegativeInt) => Some(TAtomic::TNegativeInt),
         (TAtomic::TInt, TAtomic::TIntRange { min, max }) => Some(int_bounds_to_atomic(*min, *max)),
         (TAtomic::TLiteralInt { value }, TAtomic::TInt) => {
-            Some(TAtomic::TLiteralInt { value: *value })
-        }
-        (TAtomic::TLiteralInt { value }, TAtomic::TPositiveInt) if *value > 0 => {
-            Some(TAtomic::TLiteralInt { value: *value })
-        }
-        (TAtomic::TLiteralInt { value }, TAtomic::TNegativeInt) if *value < 0 => {
             Some(TAtomic::TLiteralInt { value: *value })
         }
         (TAtomic::TLiteralInt { value }, TAtomic::TIntRange { min, max }) => {
@@ -244,22 +236,6 @@ fn intersect_atomic_with_atomic_inner(
                 None
             }
         }
-        (TAtomic::TPositiveInt, TAtomic::TInt) => Some(TAtomic::TPositiveInt),
-        (TAtomic::TPositiveInt, TAtomic::TLiteralInt { value }) if *value > 0 => {
-            Some(TAtomic::TLiteralInt { value: *value })
-        }
-        (TAtomic::TPositiveInt, TAtomic::TIntRange { min, max }) => {
-            intersect_int_bounds(Some(1), None, *min, *max)
-                .map(|(min, max)| int_bounds_to_atomic(min, max))
-        }
-        (TAtomic::TNegativeInt, TAtomic::TInt) => Some(TAtomic::TNegativeInt),
-        (TAtomic::TNegativeInt, TAtomic::TLiteralInt { value }) if *value < 0 => {
-            Some(TAtomic::TLiteralInt { value: *value })
-        }
-        (TAtomic::TNegativeInt, TAtomic::TIntRange { min, max }) => {
-            intersect_int_bounds(None, Some(-1), *min, *max)
-                .map(|(min, max)| int_bounds_to_atomic(min, max))
-        }
         (TAtomic::TIntRange { min, max }, TAtomic::TInt) => Some(int_bounds_to_atomic(*min, *max)),
         (TAtomic::TIntRange { min, max }, TAtomic::TLiteralInt { value }) => {
             if literal_in_bounds(*value, *min, *max) {
@@ -267,14 +243,6 @@ fn intersect_atomic_with_atomic_inner(
             } else {
                 None
             }
-        }
-        (TAtomic::TIntRange { min, max }, TAtomic::TPositiveInt) => {
-            intersect_int_bounds(*min, *max, Some(1), None)
-                .map(|(min, max)| int_bounds_to_atomic(min, max))
-        }
-        (TAtomic::TIntRange { min, max }, TAtomic::TNegativeInt) => {
-            intersect_int_bounds(*min, *max, None, Some(-1))
-                .map(|(min, max)| int_bounds_to_atomic(min, max))
         }
         (
             TAtomic::TIntRange {
@@ -340,6 +308,17 @@ fn intersect_atomic_with_atomic_inner(
         }
         (TAtomic::TArrayKey, TAtomic::TNumeric) => Some(TAtomic::TNumeric),
         (TAtomic::TScalar, TAtomic::TNumeric) => Some(TAtomic::TNumeric),
+        // numeric contains every int/float-valued atomic; intersecting keeps the
+        // more specific existing type (mirrors reconcileNumeric narrowing).
+        (TAtomic::TLiteralInt { value }, TAtomic::TNumeric) => {
+            Some(TAtomic::TLiteralInt { value: *value })
+        }
+        (TAtomic::TLiteralFloat { value }, TAtomic::TNumeric) => {
+            Some(TAtomic::TLiteralFloat { value: *value })
+        }
+        (TAtomic::TIntRange { min, max }, TAtomic::TNumeric) => {
+            Some(TAtomic::TIntRange { min: *min, max: *max })
+        }
 
         // string types
         (TAtomic::TString, TAtomic::TString) => Some(TAtomic::TString),
@@ -348,6 +327,30 @@ fn intersect_atomic_with_atomic_inner(
         }),
         (TAtomic::TString, TAtomic::TNonEmptyString) => Some(TAtomic::TNonEmptyString),
         (TAtomic::TString, TAtomic::TNumericString) => Some(TAtomic::TNumericString),
+        // A non-empty literal string (e.g. "0") is a member of non-empty-string, so
+        // `$s === "0"` on a non-empty-string keeps the literal rather than clearing.
+        (TAtomic::TNonEmptyString, TAtomic::TLiteralString { value })
+        | (TAtomic::TLiteralString { value }, TAtomic::TNonEmptyString)
+            if !value.is_empty() =>
+        {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
+        // A numeric-valued literal string is a member of (non-empty-)numeric-string,
+        // so `$s === "1"` after is_numeric($s) keeps the literal rather than clearing.
+        (
+            TAtomic::TNumericString | TAtomic::TNonEmptyNumericString,
+            TAtomic::TLiteralString { value },
+        ) if value.parse::<f64>().is_ok() => {
+            Some(TAtomic::TLiteralString { value: value.clone() })
+        }
+        (
+            TAtomic::TLiteralString { value },
+            TAtomic::TNumericString | TAtomic::TNonEmptyNumericString,
+        ) if value.parse::<f64>().is_ok() => {
+            Some(TAtomic::TLiteralString { value: value.clone() })
+        }
         (TAtomic::TString, TAtomic::TClassString { as_type }) => Some(TAtomic::TClassString {
             as_type: as_type.clone(),
         }),
@@ -400,12 +403,51 @@ fn intersect_atomic_with_atomic_inner(
         (TAtomic::TScalar, TAtomic::TBool) => Some(TAtomic::TBool),
         (TAtomic::TScalar, TAtomic::TTrue) => Some(TAtomic::TTrue),
         (TAtomic::TScalar, TAtomic::TFalse) => Some(TAtomic::TFalse),
+        // scalar contains every literal/refined scalar, so narrowing to one keeps it.
+        (TAtomic::TScalar, TAtomic::TLiteralInt { value }) => {
+            Some(TAtomic::TLiteralInt { value: *value })
+        }
+        (TAtomic::TScalar, TAtomic::TLiteralFloat { value }) => {
+            Some(TAtomic::TLiteralFloat { value: *value })
+        }
+        (TAtomic::TScalar, TAtomic::TLiteralString { value }) => Some(TAtomic::TLiteralString {
+            value: value.clone(),
+        }),
         (TAtomic::TInt, TAtomic::TScalar) => Some(TAtomic::TInt),
         (TAtomic::TFloat, TAtomic::TScalar) => Some(TAtomic::TFloat),
         (TAtomic::TString, TAtomic::TScalar) => Some(TAtomic::TString),
         (TAtomic::TBool, TAtomic::TScalar) => Some(TAtomic::TBool),
         (TAtomic::TTrue, TAtomic::TScalar) => Some(TAtomic::TTrue),
         (TAtomic::TFalse, TAtomic::TScalar) => Some(TAtomic::TFalse),
+        // scalar contains every literal/refined scalar; intersecting keeps the more
+        // specific existing type. These reverse-order pairs were missing, so e.g.
+        // is_scalar() on a literal-string|null wrongly reconciled to `never`.
+        (TAtomic::TLiteralInt { value }, TAtomic::TScalar) => {
+            Some(TAtomic::TLiteralInt { value: *value })
+        }
+        (TAtomic::TLiteralFloat { value }, TAtomic::TScalar) => {
+            Some(TAtomic::TLiteralFloat { value: *value })
+        }
+        (TAtomic::TLiteralString { value }, TAtomic::TScalar) => {
+            Some(TAtomic::TLiteralString { value: value.clone() })
+        }
+        (TAtomic::TIntRange { min, max }, TAtomic::TScalar) => {
+            Some(TAtomic::TIntRange { min: *min, max: *max })
+        }
+        (TAtomic::TNonEmptyString, TAtomic::TScalar) => Some(TAtomic::TNonEmptyString),
+        (TAtomic::TNumericString, TAtomic::TScalar) => Some(TAtomic::TNumericString),
+        (TAtomic::TNonEmptyNumericString, TAtomic::TScalar) => {
+            Some(TAtomic::TNonEmptyNumericString)
+        }
+        (TAtomic::TArrayKey, TAtomic::TScalar) => Some(TAtomic::TArrayKey),
+        (TAtomic::TClassString { as_type }, TAtomic::TScalar) => {
+            Some(TAtomic::TClassString {
+                as_type: as_type.clone(),
+            })
+        }
+        (TAtomic::TLiteralClassString { name }, TAtomic::TScalar) => {
+            Some(TAtomic::TLiteralClassString { name: name.clone() })
+        }
 
         // array-key types
         (TAtomic::TArrayKey, TAtomic::TInt) => Some(TAtomic::TInt),
@@ -438,31 +480,86 @@ fn intersect_atomic_with_atomic_inner(
             Some(TAtomic::TNonEmptyLowercaseString)
         }
 
-        // object types
-        (TAtomic::TObject, TAtomic::TNamedObject { name, type_params }) => {
-            Some(TAtomic::TNamedObject {
-                name: *name,
-                type_params: type_params.clone(),
-            })
+        // Cross-compatible string subtypes: neither contains the other, so their
+        // intersection is the combined narrower subtype (matches Psalm). Without
+        // these arms the pair would fall through to `None` (an incorrect `never`).
+        (TAtomic::TLowercaseString, TAtomic::TNonEmptyString)
+        | (TAtomic::TNonEmptyString, TAtomic::TLowercaseString)
+        | (TAtomic::TLowercaseString, TAtomic::TNonEmptyLowercaseString)
+        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TLowercaseString) => {
+            Some(TAtomic::TNonEmptyLowercaseString)
         }
-        (TAtomic::TNamedObject { name, type_params }, TAtomic::TObject) => {
+        (TAtomic::TNonEmptyString, TAtomic::TNumericString)
+        | (TAtomic::TNumericString, TAtomic::TNonEmptyString)
+        | (TAtomic::TTruthyString, TAtomic::TNumericString)
+        | (TAtomic::TNumericString, TAtomic::TTruthyString) => {
+            Some(TAtomic::TNonEmptyNumericString)
+        }
+        (TAtomic::TNonEmptyString, TAtomic::TTruthyString)
+        | (TAtomic::TTruthyString, TAtomic::TNonEmptyString) => Some(TAtomic::TTruthyString),
+
+        // enum types: same enum, or an enum case belonging to the enum, intersect to
+        // the more specific operand (matches Psalm/Hakana). Without these the pair
+        // falls through to `None` (an incorrect `never`).
+        (TAtomic::TEnum { name: a }, TAtomic::TEnum { name: b }) if a == b => {
+            Some(TAtomic::TEnum { name: *a })
+        }
+        (
+            TAtomic::TEnumCase {
+                enum_name,
+                case_name,
+            },
+            TAtomic::TEnum { name },
+        )
+        | (
+            TAtomic::TEnum { name },
+            TAtomic::TEnumCase {
+                enum_name,
+                case_name,
+            },
+        ) if enum_name == name => Some(TAtomic::TEnumCase {
+            enum_name: *enum_name,
+            case_name: *case_name,
+        }),
+        (
+            TAtomic::TEnumCase {
+                enum_name: a_enum,
+                case_name: a_case,
+            },
+            TAtomic::TEnumCase {
+                enum_name: b_enum,
+                case_name: b_case,
+            },
+        ) if a_enum == b_enum && a_case == b_case => Some(TAtomic::TEnumCase {
+            enum_name: *a_enum,
+            case_name: *a_case,
+        }),
+
+        // object types
+        (TAtomic::TObject, TAtomic::TNamedObject { name, type_params , .. }) => {
             Some(TAtomic::TNamedObject {
                 name: *name,
                 type_params: type_params.clone(),
-            })
+            is_static: false, remapped_params: false })
+        }
+        (TAtomic::TNamedObject { name, type_params , .. }, TAtomic::TObject) => {
+            Some(TAtomic::TNamedObject {
+                name: *name,
+                type_params: type_params.clone(),
+            is_static: false, remapped_params: false })
         }
         (
             TAtomic::TNamedObject { name: name1, .. },
             TAtomic::TNamedObject {
                 name: name2,
                 type_params,
-            },
+            .. },
         ) => {
             if name1 == name2 {
                 Some(TAtomic::TNamedObject {
                     name: *name2,
                     type_params: type_params.clone(),
-                })
+                is_static: false, remapped_params: false })
             } else if let Some(codebase) = codebase {
                 if object_type_comparator::is_class_subtype_of(*name1, *name2, codebase) {
                     Some(existing_atomic.clone())
@@ -666,7 +763,7 @@ fn intersect_atomic_with_atomic_inner(
         ) if *name == StrId::TRAVERSABLE => Some(TAtomic::TNamedObject {
             name: *name,
             type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
-        }),
+        is_static: false, remapped_params: false }),
         (named @ TAtomic::TNamedObject { name, .. }, TAtomic::TIterable { .. })
             if codebase.is_some_and(|cb| {
                 object_type_comparator::is_class_subtype_of(*name, StrId::TRAVERSABLE, cb)
@@ -694,10 +791,14 @@ fn intersect_atomic_with_atomic_inner(
             }
         }
         (other, TAtomic::TTemplateParam { as_type, .. }) => {
-            if as_type.is_mixed() {
-                Some(other.clone())
-            } else if is_objectish_atomic(other) {
+            // Asserting `is T` must narrow to the template parameter, keeping the
+            // binding. For an object-ish existing type, intersect (`object&T`) so
+            // both the known shape and the template are preserved; otherwise fall
+            // back to the template itself rather than the (wider) existing type.
+            if is_objectish_atomic(other) {
                 Some(make_intersection(other.clone(), assertion_atomic.clone()))
+            } else if as_type.is_mixed() {
+                Some(assertion_atomic.clone())
             } else {
                 for constraint_atomic in &as_type.types {
                     if let Some(result) =
@@ -739,7 +840,11 @@ fn intersect_atomic_with_atomic_inner(
         // null type
         (TAtomic::TNull, TAtomic::TNull) => Some(TAtomic::TNull),
 
-        // If we can't find a specific intersection, types are incompatible
+        // If we can't find a specific intersection, types are incompatible. (Like
+        // hakana-core's intersect_atomic_with_atomic, which enumerates the
+        // intersectable pairs and otherwise yields no intersection, rather than
+        // falling back to a lax containment check — pzoom treats int as contained by
+        // float for coercion, which must not count as a type intersection.)
         _ => None,
     }
 }
@@ -802,8 +907,6 @@ fn intersect_int_bounds(
 fn int_bounds_to_atomic(min: Option<i64>, max: Option<i64>) -> TAtomic {
     match (min, max) {
         (None, None) => TAtomic::TInt,
-        (Some(1), None) => TAtomic::TPositiveInt,
-        (None, Some(-1)) => TAtomic::TNegativeInt,
         (Some(min), Some(max)) if min == max => TAtomic::TLiteralInt { value: min },
         _ => TAtomic::TIntRange { min, max },
     }
@@ -818,11 +921,11 @@ fn specialize_assertion_named_object_from_existing(
         TAtomic::TNamedObject {
             name: existing_name,
             type_params: existing_type_params,
-        },
+        .. },
         TAtomic::TNamedObject {
             name: assertion_name,
             type_params: assertion_type_params,
-        },
+        .. },
     ) = (existing_atomic, assertion_atomic)
     else {
         return None;
@@ -842,10 +945,14 @@ fn specialize_assertion_named_object_from_existing(
         return Some(assertion_atomic.clone());
     };
 
-    let mut ancestor_template_replacements = FxHashMap::default();
+    let mut ancestor_template_replacements = TemplateMap::new();
     for (idx, template_type) in existing_class_info.template_types.iter().enumerate() {
         if let Some(type_param) = existing_type_params.get(idx) {
-            ancestor_template_replacements.insert(template_type.name, type_param.clone());
+            ancestor_template_replacements.insert(
+                template_type.name,
+                template_type.defining_entity,
+                type_param.clone(),
+            );
         }
     }
 
@@ -867,11 +974,11 @@ fn specialize_assertion_named_object_from_existing(
         .iter()
         .map(|template_type| {
             inferred_template_replacements
-                .get(&template_type.name)
+                .get(template_type.name, template_type.defining_entity)
                 .cloned()
                 .or_else(|| {
                     ancestor_template_replacements
-                        .get(&template_type.name)
+                        .get(template_type.name, template_type.defining_entity)
                         .cloned()
                 })
                 .unwrap_or_else(|| template_type.as_type.clone())
@@ -881,39 +988,48 @@ fn specialize_assertion_named_object_from_existing(
     Some(TAtomic::TNamedObject {
         name: *assertion_name,
         type_params: Some(inferred_type_params),
-    })
+    is_static: false, remapped_params: false })
 }
 
 fn infer_class_template_replacements_from_ancestors(
     class_info: &ClassLikeInfo,
-    template_replacements: &FxHashMap<StrId, TUnion>,
-) -> FxHashMap<StrId, TUnion> {
+    template_replacements: &TemplateMap,
+) -> TemplateMap {
     let mut propagated_replacements = template_replacements.clone();
 
     loop {
         let mut changed = false;
 
-        for template_map in class_info.template_extended_params.values() {
+        for (ancestor_class, template_map) in &class_info.template_extended_params {
             for (ancestor_template, mapped_type) in template_map {
-                let Some(ancestor_replacement) =
-                    propagated_replacements.get(ancestor_template).cloned()
+                let Some(ancestor_replacement) = propagated_replacements
+                    .get(*ancestor_template, *ancestor_class)
+                    .cloned()
                 else {
                     continue;
                 };
 
                 for mapped_atomic in &mapped_type.types {
                     let mapped_template = match mapped_atomic {
-                        TAtomic::TTemplateParam { name, .. } => Some(*name),
-                        TAtomic::TTemplateParamClass { name, .. } => Some(*name),
+                        TAtomic::TTemplateParam {
+                            name,
+                            defining_entity,
+                            ..
+                        } => Some((*name, *defining_entity)),
+                        TAtomic::TTemplateParamClass {
+                            name,
+                            defining_entity,
+                            ..
+                        } => Some((*name, *defining_entity)),
                         _ => None,
                     };
 
-                    let Some(mapped_template) = mapped_template else {
+                    let Some((mapped_template, mapped_entity)) = mapped_template else {
                         continue;
                     };
 
                     let should_propagate = propagated_replacements
-                        .get(&mapped_template)
+                        .get(mapped_template, mapped_entity)
                         .is_none_or(is_template_placeholder_union);
 
                     if !should_propagate {
@@ -921,11 +1037,14 @@ fn infer_class_template_replacements_from_ancestors(
                     }
 
                     if propagated_replacements
-                        .get(&mapped_template)
+                        .get(mapped_template, mapped_entity)
                         .is_none_or(|existing| existing != &ancestor_replacement)
                     {
-                        propagated_replacements
-                            .insert(mapped_template, ancestor_replacement.clone());
+                        propagated_replacements.insert(
+                            mapped_template,
+                            mapped_entity,
+                            ancestor_replacement.clone(),
+                        );
                         changed = true;
                     }
                 }
@@ -937,10 +1056,16 @@ fn infer_class_template_replacements_from_ancestors(
         }
     }
 
-    let mut inferred_replacements = FxHashMap::default();
+    let mut inferred_replacements = TemplateMap::new();
     for template_type in &class_info.template_types {
-        if let Some(replacement) = propagated_replacements.get(&template_type.name) {
-            inferred_replacements.insert(template_type.name, replacement.clone());
+        if let Some(replacement) =
+            propagated_replacements.get(template_type.name, template_type.defining_entity)
+        {
+            inferred_replacements.insert(
+                template_type.name,
+                template_type.defining_entity,
+                replacement.clone(),
+            );
         }
     }
 
@@ -1000,7 +1125,7 @@ fn class_string_atomic_to_bound(
             Some(Some(TAtomic::TNamedObject {
                 name: class_id,
                 type_params: None,
-            }))
+            is_static: false, remapped_params: false }))
         }
         _ => None,
     }

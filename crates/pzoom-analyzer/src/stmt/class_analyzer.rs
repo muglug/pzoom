@@ -4,8 +4,9 @@
 
 use bumpalo::Bump;
 use mago_span::HasSpan;
+use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::class_like::enum_case::EnumCaseItem;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
+use mago_syntax::ast::ast::class_like::member::{ClassLikeMember, ClassLikeMemberSelector};
 use mago_syntax::ast::ast::class_like::method::{Method, MethodBody};
 use mago_syntax::ast::ast::class_like::{Class, Enum, Interface, Trait};
 use mago_syntax::ast::ast::expression::Expression;
@@ -13,8 +14,10 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::namespace::NamespaceBody;
 use mago_syntax::ast::ast::statement::Statement;
 use mago_syntax::ast::ast::type_hint::Hint;
+use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::ast::node::{Node, NodeKind};
 
-use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
+use pzoom_code_info::class_like_info::{ClassLikeKind, TemplateVariance, Visibility};
 use pzoom_code_info::{DataFlowNode, Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind};
 use pzoom_str::StrId;
 use pzoom_syntax::{FileId, parse_file_content, resolve_names};
@@ -31,6 +34,8 @@ use crate::stmt::attribute_analyzer;
 use crate::stmt_analyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
+use crate::template::TemplateMap;
+use indexmap::IndexMap;
 
 /// Analyze a class declaration.
 pub fn analyze(
@@ -130,6 +135,8 @@ pub fn analyze_with_namespace(
         check_missing_dependencies(analyzer, info, context, analysis_data);
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
+        check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
+        check_template_variance(analyzer, info, analysis_data);
         check_reserved_class_constant_names(analyzer, info, analysis_data);
         check_docblock_issues(analyzer, info, analysis_data);
         check_undefined_docblock_mixins(analyzer, info, analysis_data);
@@ -138,10 +145,12 @@ pub fn analyze_with_namespace(
         check_deprecated_and_internal_relationships(analyzer, info, analysis_data);
         check_method_docblock_param_type_mismatches(analyzer, info, analysis_data);
         check_method_override_issues(analyzer, info, analysis_data);
+        check_invalid_override_attributes(analyzer, info, analysis_data);
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
         check_invalid_traversable_implementation(analyzer, info, analysis_data);
         check_missing_constructor_for_typed_properties(analyzer, info, analysis_data);
+        check_property_initialization(analyzer, class, info, analysis_data);
 
         if !info.is_abstract {
             check_unimplemented_abstract_methods(analyzer, class, info, analysis_data);
@@ -206,12 +215,58 @@ pub fn analyze_interface_with_namespace(
         check_deprecated_and_internal_relationships(analyzer, info, analysis_data);
         check_method_docblock_param_type_mismatches(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
+        check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
+        check_template_variance(analyzer, info, analysis_data);
         check_missing_interface_method_typehints(analyzer, info, analysis_data);
+        check_invalid_override_attributes(analyzer, info, analysis_data);
     }
 
     let _ = context;
 
     Ok(())
+}
+
+/// Emit InvalidOverride for any method carrying `#[\Override]` that does not actually
+/// override (or implement) an inherited method.
+fn check_invalid_override_attributes(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for (method_name, method_info) in &class_info.methods {
+        if !method_info.has_override_attribute
+            || method_info.declaring_class != Some(class_info.name)
+        {
+            continue;
+        }
+
+        // Mirrors Psalm: an `#[Override]` is valid iff the method overrides at
+        // least one ancestor method, as recorded in `overridden_method_ids`
+        // during population (parent classes, interfaces, and abstract trait
+        // requirements all count).
+        if class_info
+            .overridden_method_ids
+            .get(method_name)
+            .is_some_and(|ancestors| !ancestors.is_empty())
+        {
+            continue;
+        }
+
+        let (line, col) = analyzer.get_line_column(method_info.start_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::InvalidOverride,
+            format!(
+                "Method {}::{} does not match any inherited method, but has the Override attribute",
+                analyzer.interner.lookup(class_info.name),
+                analyzer.interner.lookup(*method_name),
+            ),
+            analyzer.file_path,
+            method_info.start_offset,
+            method_info.end_offset,
+            line,
+            col,
+        ));
+    }
 }
 
 /// Analyze an enum declaration with a namespace context.
@@ -251,6 +306,8 @@ pub fn analyze_enum_with_namespace(
         check_missing_dependencies(analyzer, info, context, analysis_data);
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
+        check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
+        check_template_variance(analyzer, info, analysis_data);
         check_reserved_class_constant_names(analyzer, info, analysis_data);
         check_docblock_issues(analyzer, info, analysis_data);
         check_undefined_docblock_mixins(analyzer, info, analysis_data);
@@ -1029,8 +1086,8 @@ fn check_method_docblock_param_type_mismatches(
         }
 
         let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-        template_defaults.extend(function_call_analyzer::get_template_defaults(method_info));
-        let template_replacements: FxHashMap<StrId, TUnion> = FxHashMap::default();
+        template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(method_info));
+        let template_replacements = TemplateMap::new();
 
         for param in &method_info.params {
             if !param.has_docblock_type {
@@ -1067,6 +1124,24 @@ fn check_method_docblock_param_type_mismatches(
                 class_info.name,
                 class_info.parent_class,
             );
+            // Resolve class-constant references/wildcards (`Foo::BAR_*`) now that
+            // the codebase is populated — the same analysis-time expansion Psalm
+            // performs via TypeExpander before comparing a docblock param type to
+            // the native signature (pzoom's call-site checker uses the same
+            // helper).
+            {
+                let callable_name = format!(
+                    "{}::{}",
+                    analyzer.interner.lookup(class_info.name),
+                    analyzer.interner.lookup(method_info.name),
+                );
+                localized_docblock_type =
+                    crate::expr::call::callable_validation::normalize_class_constant_param_type(
+                        analyzer,
+                        &localized_docblock_type,
+                        &callable_name,
+                    );
+            }
             localized_signature_type = localize_special_class_names_for_final_class(
                 &localized_signature_type,
                 class_info.name,
@@ -1089,6 +1164,18 @@ fn check_method_docblock_param_type_mismatches(
             // `key-of<...>` docblocks can be conservatively parsed as `array-key`
             // during scan-time; avoid false positives when the signature expects int.
             if docblock_is_array_key && signature_is_int_only {
+                continue;
+            }
+
+            // A deferred `key-of<T>` / `value-of<T>` is template-dependent; the native
+            // signature is a reasonable widening of it, so don't flag a mismatch (Psalm
+            // does not emit MismatchingDocblockParamType for these).
+            if localized_docblock_type.types.iter().any(|atomic| {
+                matches!(
+                    atomic,
+                    TAtomic::TTemplateKeyOf { .. } | TAtomic::TTemplateValueOf { .. }
+                )
+            }) {
                 continue;
             }
 
@@ -1162,18 +1249,56 @@ fn check_missing_template_params(
             ));
         };
 
+    let emit_too_many_template_params =
+        |analysis_data: &mut FunctionAnalysisData,
+         related_name: StrId,
+         class_info: &pzoom_code_info::ClassLikeInfo| {
+            let (line, col) = analyzer.get_line_column(class_info.start_offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::TooManyTemplateParams,
+                format!(
+                    "{} has too many template params when extending {}",
+                    analyzer.interner.lookup(class_info.name),
+                    analyzer.interner.lookup(related_name)
+                ),
+                analyzer.file_path,
+                class_info.start_offset,
+                class_info.end_offset,
+                line,
+                col,
+            ));
+        };
+
+    // The number of type arguments supplied via `@extends`/`@implements`/`@use`
+    // must match the parent's template parameter count: too few is a
+    // MissingTemplateParam, too many a TooManyTemplateParams (Psalm).
+    let provided_param_count = |class_info: &pzoom_code_info::ClassLikeInfo,
+                                resolved_id: StrId,
+                                raw_id: StrId| {
+        class_info
+            .template_extended_offsets
+            .get(&resolved_id)
+            .or_else(|| class_info.template_extended_offsets.get(&raw_id))
+            .map(|params| params.len())
+    };
+
     if let Some(parent_id) = class_info.parent_class {
         let resolved_parent_id = resolve_alias_in_context(parent_id, context);
         if let Some(parent_info) = analyzer.codebase.get_class(resolved_parent_id) {
-            if !parent_info.template_types.is_empty()
-                && !class_info
-                    .template_extended_offsets
-                    .contains_key(&resolved_parent_id)
-                && !class_info
-                    .template_extended_offsets
-                    .contains_key(&parent_id)
-            {
-                emit_missing_template_param(analysis_data, resolved_parent_id, class_info);
+            let expected = parent_info.template_types.len();
+            match provided_param_count(class_info, resolved_parent_id, parent_id) {
+                None => {
+                    if expected > 0 {
+                        emit_missing_template_param(analysis_data, resolved_parent_id, class_info);
+                    }
+                }
+                Some(provided) if provided < expected => {
+                    emit_missing_template_param(analysis_data, resolved_parent_id, class_info);
+                }
+                Some(provided) if provided > expected => {
+                    emit_too_many_template_params(analysis_data, resolved_parent_id, class_info);
+                }
+                _ => {}
             }
         }
     }
@@ -1181,16 +1306,31 @@ fn check_missing_template_params(
     for interface_id in &class_info.interfaces {
         let resolved_interface_id = resolve_alias_in_context(*interface_id, context);
         if let Some(interface_info) = analyzer.codebase.get_class(resolved_interface_id) {
-            if !interface_info.template_types.is_empty()
-                && !class_info
-                    .template_extended_offsets
-                    .contains_key(&resolved_interface_id)
-                && !class_info
-                    .template_extended_offsets
-                    .contains_key(interface_id)
-            {
-                emit_missing_template_param(analysis_data, resolved_interface_id, class_info);
-                break;
+            let expected = interface_info.template_types.len();
+            match provided_param_count(class_info, resolved_interface_id, *interface_id) {
+                None => {
+                    if expected > 0 {
+                        emit_missing_template_param(
+                            analysis_data,
+                            resolved_interface_id,
+                            class_info,
+                        );
+                        break;
+                    }
+                }
+                Some(provided) if provided < expected => {
+                    emit_missing_template_param(analysis_data, resolved_interface_id, class_info);
+                    break;
+                }
+                Some(provided) if provided > expected => {
+                    emit_too_many_template_params(
+                        analysis_data,
+                        resolved_interface_id,
+                        class_info,
+                    );
+                    break;
+                }
+                _ => {}
             }
         }
     }
@@ -1568,22 +1708,20 @@ fn compare_method_to_guide(
         );
     }
 
-    if implementer_method.is_static != guide_method.is_static {
+    // Psalm only reports a static-ness mismatch in one direction: when the guide
+    // (parent/interface) method is static and the implementer is non-static (see
+    // ClassAnalyzer's interface-method check, "should be static like ..."). It does
+    // NOT report overriding a non-static method with a static one. Mirror that
+    // direction here.
+    if guide_method.is_static && !implementer_method.is_static {
         emit_method_issue(
             analyzer,
             analysis_data,
             implementer_method,
             base_mismatch_kind,
             format!(
-                "Method {} is{} static while inherited method {} is{}",
-                implementer_method_id,
-                if implementer_method.is_static {
-                    ""
-                } else {
-                    " not"
-                },
-                guide_method_id,
-                if guide_method.is_static { "" } else { " not" }
+                "Method {} should be static like {}",
+                implementer_method_id, guide_method_id
             ),
         );
     }
@@ -1691,7 +1829,8 @@ fn compare_method_to_guide(
                 &mut comparison_result,
             ) {
                 let issue_kind = if method_name == StrId::CONSTRUCT
-                    && guide_class_info.kind == ClassLikeKind::Interface
+                    && (guide_class_info.kind == ClassLikeKind::Interface
+                        || guide_class_info.is_consistent_constructor)
                 {
                     IssueKind::ConstructorSignatureMismatch
                 } else {
@@ -1796,7 +1935,8 @@ fn compare_method_to_guide(
 
     if required_implementer_params > required_guide_params {
         let issue_kind = if method_name == StrId::CONSTRUCT
-            && guide_class_info.kind == ClassLikeKind::Interface
+            && (guide_class_info.kind == ClassLikeKind::Interface
+                || guide_class_info.is_consistent_constructor)
         {
             IssueKind::ConstructorSignatureMismatch
         } else {
@@ -1846,11 +1986,61 @@ fn compare_method_to_guide(
         base_mismatch_kind
     };
 
+    // When the implementer declares no docblock return type, it inherits the guide's
+    // docblock return type. If the guide's (more specific) type fits within the
+    // implementer's native return type, treat it as inherited and skip the mismatch
+    // rather than comparing the widened native type against the guide. Matches Psalm.
+    if implementer_method.return_type.is_none()
+        && inherited_return_fallback.is_none()
+        && let (Some(guide_return_type), Some(native_return_type)) = (
+            guide_return_type,
+            implementer_method.signature_return_type.as_ref(),
+        )
+    {
+        let mut guide_specialized = specialize_for_comparison(guide_return_type);
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            &mut guide_specialized,
+            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        );
+        let mut native_specialized = specialize_for_comparison(native_return_type);
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            &mut native_specialized,
+            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        );
+        let mut inherit_result = TypeComparisonResult::new();
+        if union_type_comparator::is_contained_by(
+            analyzer.codebase,
+            &guide_specialized,
+            &native_specialized,
+            false,
+            false,
+            &mut inherit_result,
+        ) {
+            return;
+        }
+    }
+
     if let (Some(guide_return_type), Some(implementer_return_type)) =
         (guide_return_type, implementer_return_type)
     {
-        let guide_return_type = specialize_for_comparison(guide_return_type);
-        let implementer_return_type = specialize_for_comparison(implementer_return_type);
+        let mut guide_return_type = specialize_for_comparison(guide_return_type);
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            &mut guide_return_type,
+            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        );
+        let mut implementer_return_type = specialize_for_comparison(implementer_return_type);
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            &mut implementer_return_type,
+            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        );
         let mut comparison_result = TypeComparisonResult::new();
         if !union_type_comparator::is_contained_by(
             analyzer.codebase,
@@ -2063,6 +2253,14 @@ fn check_property_type_invariance(
             .get_type()
             .cloned()
             .unwrap_or_else(TUnion::mixed);
+
+        // Detect whether the parent property type is fully driven by
+        // `@template-covariant` template parameters. If so, a covariant (narrower)
+        // child type is allowed (mirrors Psalm's ClassAnalyzer covariant-template
+        // upper-bound substitution).
+        let parent_type_allows_covariance =
+            union_template_params_all_covariant(analyzer, &parent_type);
+
         if let Some(parent_template_replacements) = class_info
             .template_extended_params
             .get(&parent_property.declaring_class)
@@ -2071,9 +2269,20 @@ fn check_property_type_invariance(
         {
             let parent_template_defaults =
                 function_call_analyzer::get_class_template_defaults(parent_declaring_info);
+            let parent_template_replacements: crate::template::TemplateMap =
+                parent_template_replacements
+                    .iter()
+                    .map(|(template_name, replacement)| {
+                        (
+                            *template_name,
+                            parent_property.declaring_class,
+                            replacement.clone(),
+                        )
+                    })
+                    .collect();
             parent_type = function_call_analyzer::replace_templates_in_union(
                 &parent_type,
-                parent_template_replacements,
+                &parent_template_replacements,
                 &parent_template_defaults,
             );
         }
@@ -2102,6 +2311,19 @@ fn check_property_type_invariance(
         );
 
         if child_contained_by_parent && parent_contained_by_child {
+            continue;
+        }
+
+        // Mirror Psalm's ClassAnalyzer: a `@readonly`/readonly parent property
+        // cannot be written, so a covariant (narrower) child type is allowed as
+        // long as the child type is contained by the parent type.
+        if parent_property.is_readonly && child_contained_by_parent {
+            continue;
+        }
+
+        // `@template-covariant` parent property: a covariant (narrower) child type
+        // is permitted, so only require the child type to be contained by the parent.
+        if parent_type_allows_covariance && child_contained_by_parent {
             continue;
         }
 
@@ -2229,6 +2451,415 @@ fn union_contains_class_string_like_type(union: &TUnion) -> bool {
             atomic,
             TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
         )
+    })
+}
+
+/// Determine whether a (parent) property type's variance is fully driven by
+/// `@template-covariant` template parameters. Returns true only when the type
+/// references at least one template parameter and every referenced template
+/// parameter is declared covariant in its defining class. Used to permit a
+/// covariant child property type when overriding a covariant-templated parent.
+fn union_template_params_all_covariant(
+    analyzer: &StatementsAnalyzer<'_>,
+    union: &TUnion,
+) -> bool {
+    let mut saw_template = false;
+    let mut all_covariant = true;
+
+    for atomic in &union.types {
+        collect_template_covariance(analyzer, atomic, &mut saw_template, &mut all_covariant);
+    }
+
+    saw_template && all_covariant
+}
+
+fn collect_template_covariance(
+    analyzer: &StatementsAnalyzer<'_>,
+    atomic: &TAtomic,
+    saw_template: &mut bool,
+    all_covariant: &mut bool,
+) {
+    match atomic {
+        TAtomic::TTemplateParam {
+            name,
+            defining_entity,
+            as_type,
+        } => {
+            *saw_template = true;
+            let is_covariant = analyzer
+                .codebase
+                .get_class(*defining_entity)
+                .and_then(|class_info| {
+                    class_info
+                        .template_types
+                        .iter()
+                        .find(|template| template.name == *name)
+                })
+                .map(|template| {
+                    matches!(
+                        template.variance,
+                        pzoom_code_info::class_like_info::TemplateVariance::Covariant
+                    )
+                })
+                .unwrap_or(false);
+            if !is_covariant {
+                *all_covariant = false;
+            }
+            for nested in &as_type.types {
+                collect_template_covariance(analyzer, nested, saw_template, all_covariant);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Report `PropertyNotSetInConstructor` for typed, non-nullable, default-less,
+/// non-promoted instance properties declared by this class that are never
+/// initialized in its constructor — or in any same-class method the constructor
+/// calls (Psalm's `CallAnalyzer::collectSpecialInformation`). Mirrors Psalm's
+/// `ClassAnalyzer::checkPropertyInitialization`.
+fn check_property_initialization(
+    analyzer: &StatementsAnalyzer<'_>,
+    class: &Class<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    // Only concrete classes have a fully-known initialization path. Abstract
+    // classes/traits/interfaces/enums are exempt (a subclass / using class may
+    // initialize, or there is no constructor flow).
+    if class_info.kind != ClassLikeKind::Class || class_info.is_abstract {
+        return;
+    }
+
+    // Without a constructor, MissingConstructor handles typed properties.
+    let Some(constructor) = find_class_method(class, "__construct") else {
+        return;
+    };
+    if !matches!(constructor.body, MethodBody::Concrete(_)) {
+        return;
+    }
+
+    // Collect everything the constructor (and the same-class methods it calls)
+    // assigns to `$this`. Psalm re-analyzes the constructor with full method
+    // resolution (following parent/trait/overridden methods via
+    // collectSpecialInformation). pzoom's static walk can only follow methods
+    // defined in this class's AST, so if the constructor's reachable call graph
+    // contains a call it can't resolve (parent/ancestor constructor, a trait or
+    // inherited method, a dynamic call) the set of initialized properties is
+    // unknown — bail rather than risk a false positive.
+    let mut initialized: FxHashSet<StrId> = FxHashSet::default();
+    let mut visited_methods: FxHashSet<StrId> = FxHashSet::default();
+    let mut has_opaque_initializer = false;
+    collect_constructor_initialized_props(
+        analyzer,
+        class,
+        constructor,
+        &mut initialized,
+        &mut visited_methods,
+        &mut has_opaque_initializer,
+    );
+
+    if has_opaque_initializer {
+        return;
+    }
+
+    // Class-level suppression covers every property.
+    if analyzer
+        .config
+        .is_issue_suppressed("PropertyNotSetInConstructor")
+        || docblock_before_offset_suppresses(
+            analyzer.source,
+            class.span().start.offset,
+            "PropertyNotSetInConstructor",
+        )
+    {
+        return;
+    }
+
+    // Psalm iterates the class's appearing_property_ids (own + inherited),
+    // fetching each property's storage from its declaring class. pzoom clones
+    // inherited property storage into `properties`, so it is looked up there.
+    let mut uninitialized: Vec<StrId> = Vec::new();
+    for property_name in class_info.appearing_property_ids.keys().copied() {
+        let Some(property) = class_info.properties.get(&property_name) else {
+            continue;
+        };
+
+        if property.is_static || property.is_promoted || property.has_default {
+            continue;
+        }
+
+        // Only typed properties are reported. Skip nullable and mixed types:
+        // a nullable property is allowed to be left uninitialized (Psalm treats
+        // it as implicitly null), and mixed carries no init obligation.
+        let Some(effective_type) = property.get_type() else {
+            continue;
+        };
+        if effective_type.is_nullable
+            || effective_type
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TNull | TAtomic::TMixed))
+        {
+            continue;
+        }
+
+        if initialized.contains(&property_name) {
+            continue;
+        }
+
+        uninitialized.push(property_name);
+    }
+
+    if uninitialized.is_empty() {
+        return;
+    }
+
+    // "private or final " when any uninitialized property is private (Psalm).
+    let any_private = uninitialized.iter().any(|name| {
+        class_info
+            .properties
+            .get(name)
+            .is_some_and(|property| matches!(property.visibility, Visibility::Private))
+    });
+    let visibility_phrase = if any_private { "private or final " } else { "" };
+    let class_name = analyzer.interner.lookup(class_info.name);
+
+    for property_name in uninitialized {
+        let Some(property) = class_info.properties.get(&property_name) else {
+            continue;
+        };
+
+        // Property-level suppression.
+        if docblock_before_offset_suppresses(
+            analyzer.source,
+            property.start_offset,
+            "PropertyNotSetInConstructor",
+        ) {
+            continue;
+        }
+
+        // Own property: point at the property. Inherited property: point at the
+        // class (Psalm uses the class location when declaring class differs).
+        let error_offset = if property.declaring_class == class_info.name {
+            property.start_offset
+        } else {
+            class.span().start.offset
+        };
+
+        let prop_name = analyzer.interner.lookup(property_name);
+        let (line, col) = analyzer.get_line_column(error_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PropertyNotSetInConstructor,
+            format!(
+                "Property {}::${} is not defined in constructor of {} or in any {}methods called in the constructor",
+                class_name, prop_name, class_name, visibility_phrase
+            ),
+            analyzer.file_path,
+            error_offset,
+            error_offset,
+            line,
+            col,
+        ));
+    }
+}
+
+/// Find a method AST on the class by (case-insensitive) name.
+fn find_class_method<'a, 'arena>(
+    class: &'a Class<'arena>,
+    name: &str,
+) -> Option<&'a Method<'arena>> {
+    class.members.iter().find_map(|member| match member {
+        ClassLikeMember::Method(method) if method.name.value.eq_ignore_ascii_case(name) => {
+            Some(method)
+        }
+        _ => None,
+    })
+}
+
+/// Walk a method body collecting the names of `$this` properties it assigns,
+/// recursing into same-class methods it calls (`$this->m()`, `self::m()`,
+/// `static::m()`) — pzoom's static analog of Psalm's collectSpecialInformation.
+///
+/// Sets `has_opaque_initializer` when it encounters a call whose body it cannot
+/// reach (a `parent::`/ancestor constructor or method, a trait/inherited
+/// `$this->m()` not defined in this class's AST, a dynamic call). Such a call
+/// may initialize arbitrary properties, so callers must not report anything.
+fn collect_constructor_initialized_props(
+    analyzer: &StatementsAnalyzer<'_>,
+    class: &Class<'_>,
+    method: &Method<'_>,
+    initialized: &mut FxHashSet<StrId>,
+    visited_methods: &mut FxHashSet<StrId>,
+    has_opaque_initializer: &mut bool,
+) {
+    let MethodBody::Concrete(block) = &method.body else {
+        return;
+    };
+
+    let mut stack: Vec<Node> = block.statements.iter().map(Node::Statement).collect();
+
+    while let Some(node) = stack.pop() {
+        // Don't descend into nested declarations that rebind `$this`.
+        if matches!(
+            node.kind(),
+            NodeKind::Class
+                | NodeKind::Interface
+                | NodeKind::Trait
+                | NodeKind::Enum
+                | NodeKind::Function
+                | NodeKind::AnonymousClass
+        ) {
+            continue;
+        }
+
+        match node {
+            Node::Assignment(assignment) => {
+                if let Some(name) = assigned_this_property_name(assignment.lhs) {
+                    initialized.insert(analyzer.interner.intern(name));
+                }
+            }
+            Node::MethodCall(call) => {
+                if is_this_expression(call.object) {
+                    if let ClassLikeMemberSelector::Identifier(id) = &call.method {
+                        recurse_into_called_method(
+                            analyzer,
+                            class,
+                            id.value,
+                            initialized,
+                            visited_methods,
+                            has_opaque_initializer,
+                        );
+                    } else {
+                        // Dynamic method name on $this — unknowable.
+                        *has_opaque_initializer = true;
+                    }
+                }
+            }
+            Node::NullSafeMethodCall(call) => {
+                if is_this_expression(call.object) {
+                    if let ClassLikeMemberSelector::Identifier(id) = &call.method {
+                        recurse_into_called_method(
+                            analyzer,
+                            class,
+                            id.value,
+                            initialized,
+                            visited_methods,
+                            has_opaque_initializer,
+                        );
+                    } else {
+                        *has_opaque_initializer = true;
+                    }
+                }
+            }
+            Node::StaticMethodCall(call) => {
+                if let ClassLikeMemberSelector::Identifier(id) = &call.method {
+                    match call.class.unparenthesized() {
+                        // self::m() / static::m() resolve within this class.
+                        Expression::Self_(_) | Expression::Static(_) => {
+                            recurse_into_called_method(
+                                analyzer,
+                                class,
+                                id.value,
+                                initialized,
+                                visited_methods,
+                                has_opaque_initializer,
+                            );
+                        }
+                        // parent::… and AncestorClass::… constructors/methods
+                        // live in another class's AST we cannot follow.
+                        _ => {
+                            *has_opaque_initializer = true;
+                        }
+                    }
+                } else {
+                    *has_opaque_initializer = true;
+                }
+            }
+            _ => {}
+        }
+
+        stack.extend(node.children());
+    }
+}
+
+fn recurse_into_called_method(
+    analyzer: &StatementsAnalyzer<'_>,
+    class: &Class<'_>,
+    method_name: &str,
+    initialized: &mut FxHashSet<StrId>,
+    visited_methods: &mut FxHashSet<StrId>,
+    has_opaque_initializer: &mut bool,
+) {
+    let method_id = analyzer.interner.intern(method_name);
+    if !visited_methods.insert(method_id) {
+        return;
+    }
+    match find_class_method(class, method_name) {
+        Some(method) => collect_constructor_initialized_props(
+            analyzer,
+            class,
+            method,
+            initialized,
+            visited_methods,
+            has_opaque_initializer,
+        ),
+        // Not defined in this class's AST (trait/inherited method): unknowable.
+        None => *has_opaque_initializer = true,
+    }
+}
+
+/// If `expr` is an assignment target on `$this` (`$this->x`, `$this->x[...]`),
+/// return the property name.
+fn assigned_this_property_name<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
+    let mut target = expr.unparenthesized();
+    while let Expression::ArrayAccess(array_access) = target {
+        target = array_access.array.unparenthesized();
+    }
+
+    if let Expression::Access(Access::Property(property_access)) = target
+        && is_this_expression(property_access.object)
+        && let ClassLikeMemberSelector::Identifier(id) = &property_access.property
+    {
+        return Some(id.value);
+    }
+
+    None
+}
+
+fn is_this_expression(expr: &Expression<'_>) -> bool {
+    matches!(
+        expr.unparenthesized(),
+        Expression::Variable(Variable::Direct(variable)) if variable.name == "$this"
+    )
+}
+
+/// Whether the `/** ... */` docblock immediately preceding `offset` carries a
+/// `@psalm-suppress <issue_name>` tag.
+fn docblock_before_offset_suppresses(source: &str, offset: u32, issue_name: &str) -> bool {
+    let offset = (offset as usize).min(source.len());
+    let head = &source[..offset];
+    let Some(end) = head.rfind("*/") else {
+        return false;
+    };
+    // The docblock must be adjacent (only whitespace between it and the target).
+    if head[end + 2..].chars().any(|c| !c.is_whitespace()) {
+        return false;
+    }
+    let Some(start) = head[..end].rfind("/**") else {
+        return false;
+    };
+    let docblock = &head[start..end + 2];
+
+    docblock.lines().any(|line| {
+        line.find("@psalm-suppress").is_some_and(|idx| {
+            line[idx + "@psalm-suppress".len()..]
+                .split(|c: char| c.is_whitespace() || c == ',')
+                .map(|token| {
+                    token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\')
+                })
+                .any(|token| token == issue_name)
+        })
     })
 }
 
@@ -2864,9 +3495,337 @@ fn check_undefined_docblock_property_types(
     }
 }
 
+/// Composes an outer variance position with an inner one, following the usual
+/// rule: an invariant position anywhere forces invariance, two equal variances
+/// compose to covariance, and opposing variances compose to contravariance.
+fn compose_variance(outer: TemplateVariance, inner: TemplateVariance) -> TemplateVariance {
+    use TemplateVariance::*;
+    match (outer, inner) {
+        (Invariant, _) | (_, Invariant) => Invariant,
+        (Covariant, Covariant) | (Contravariant, Contravariant) => Covariant,
+        _ => Contravariant,
+    }
+}
+
+/// Walk a type at a given variance position, recording any covariant template
+/// parameter (defined by `defining_entity`) that appears in a non-covariant
+/// position.
+fn collect_covariant_misuse(
+    codebase: &pzoom_code_info::CodebaseInfo,
+    atomic: &TAtomic,
+    position: TemplateVariance,
+    covariant_names: &[StrId],
+    defining_entity: StrId,
+    found: &mut FxHashSet<StrId>,
+) {
+    match atomic {
+        TAtomic::TTemplateParam {
+            name,
+            defining_entity: entity,
+            ..
+        } => {
+            if *entity == defining_entity
+                && covariant_names.contains(name)
+                && position != TemplateVariance::Covariant
+            {
+                found.insert(*name);
+            }
+        }
+        TAtomic::TNamedObject {
+            name,
+            type_params: Some(type_params),
+            ..
+        } => {
+            let target = codebase.get_class(*name);
+            for (index, type_param) in type_params.iter().enumerate() {
+                let inner_variance = target
+                    .and_then(|info| info.template_types.get(index))
+                    .map(|template| template.variance)
+                    .unwrap_or(TemplateVariance::Invariant);
+                let inner_position = compose_variance(position, inner_variance);
+                for inner in &type_param.types {
+                    collect_covariant_misuse(
+                        codebase,
+                        inner,
+                        inner_position,
+                        covariant_names,
+                        defining_entity,
+                        found,
+                    );
+                }
+            }
+        }
+        TAtomic::TObjectIntersection { types } => {
+            for inner in types {
+                collect_covariant_misuse(
+                    codebase,
+                    inner,
+                    position,
+                    covariant_names,
+                    defining_entity,
+                    found,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Reports `InvalidTemplateParam` when a `@template-covariant` parameter is used
+/// in a non-covariant position (a method parameter, or an extends/implements
+/// type argument whose parent slot is invariant or contravariant), mirroring
+/// Psalm's template variance validation.
+fn check_template_variance(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let covariant_names: Vec<StrId> = class_info
+        .template_types
+        .iter()
+        .filter(|template| template.variance == TemplateVariance::Covariant)
+        .map(|template| template.name)
+        .collect();
+
+    if covariant_names.is_empty() {
+        return;
+    }
+
+    let mut found = FxHashSet::default();
+
+    // In an immutable class covariance is always sound, so Psalm skips the
+    // contravariant-parameter check entirely.
+    let check_params = !class_info.is_immutable;
+
+    for method in class_info.methods.values() {
+        if method.declaring_class != Some(class_info.name) {
+            continue;
+        }
+
+        // Constructor parameters are how a covariant container is populated and
+        // are exempt from the contravariant-position check.
+        if check_params && method.name != StrId::CONSTRUCT {
+            for param in &method.params {
+                if let Some(param_type) = &param.param_type {
+                    for atomic in &param_type.types {
+                        collect_covariant_misuse(
+                            analyzer.codebase,
+                            atomic,
+                            TemplateVariance::Contravariant,
+                            &covariant_names,
+                            class_info.name,
+                            &mut found,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Return types are covariant (output) positions; a covariant template
+        // nested inside an invariant generic there is still a misuse.
+        if let Some(return_type) = &method.return_type {
+            for atomic in &return_type.types {
+                collect_covariant_misuse(
+                    analyzer.codebase,
+                    atomic,
+                    TemplateVariance::Covariant,
+                    &covariant_names,
+                    class_info.name,
+                    &mut found,
+                );
+            }
+        }
+    }
+
+    // Extends/implements type arguments take the variance of the parent's
+    // corresponding template slot.
+    for (parent_id, type_params) in &class_info.template_extended_offsets {
+        let parent_info = analyzer.codebase.get_class(*parent_id);
+        for (index, type_param) in type_params.iter().enumerate() {
+            let slot_variance = parent_info
+                .and_then(|info| info.template_types.get(index))
+                .map(|template| template.variance)
+                .unwrap_or(TemplateVariance::Invariant);
+            for atomic in &type_param.types {
+                collect_covariant_misuse(
+                    analyzer.codebase,
+                    atomic,
+                    slot_variance,
+                    &covariant_names,
+                    class_info.name,
+                    &mut found,
+                );
+            }
+        }
+    }
+
+    for template_name in found {
+        let (line, col) = analyzer.get_line_column(class_info.start_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::InvalidTemplateParam,
+            format!(
+                "Template param {} of {} is marked covariant but is used in an \
+                 invariant or contravariant position",
+                analyzer.interner.lookup(template_name),
+                analyzer.interner.lookup(class_info.name)
+            ),
+            analyzer.file_path,
+            class_info.start_offset,
+            class_info.start_offset.saturating_add(1),
+            line,
+            col,
+        ));
+    }
+}
+
+/// Validate that classes referenced in `@template-extends`/`@template-implements`/
+/// `@template-use` type parameters exist, mirroring Psalm's `UndefinedDocblockClass`
+/// reporting for e.g. `@template-extends A<Z>` where `Z` is undefined.
+fn check_undefined_docblock_template_extends_classes(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let mut emitted = FxHashSet::default();
+
+    for (parent_id, type_params) in &class_info.template_extended_offsets {
+        // Psalm only materializes an extends/implements/use type argument as a
+        // class reference when the corresponding template parameter is actually
+        // used by a member of the parent (e.g. `@var T` / `@param T`). When the
+        // parent never uses the template (an empty trait, say) an undefined
+        // argument like `bar` is harmless and is not reported.
+        let Some(parent_info) = analyzer.codebase.get_class(*parent_id) else {
+            continue;
+        };
+
+        for (index, type_param) in type_params.iter().enumerate() {
+            let Some(template) = parent_info.template_types.get(index) else {
+                continue;
+            };
+
+            if !template_is_used_in_members(parent_info, template.name, *parent_id) {
+                continue;
+            }
+
+            let mut referenced_classes = Vec::new();
+            for atomic in &type_param.types {
+                collect_named_docblock_classes(atomic, &mut referenced_classes);
+            }
+
+            for referenced_class in referenced_classes {
+                let normalized_class =
+                    normalize_docblock_class_reference(analyzer, referenced_class);
+
+                if matches!(
+                    normalized_class,
+                    StrId::SELF | StrId::STATIC | StrId::PARENT
+                ) {
+                    continue;
+                }
+
+                // Template parameters of the extending class are not classes.
+                if class_info
+                    .template_types
+                    .iter()
+                    .any(|template| template.name == normalized_class)
+                {
+                    continue;
+                }
+
+                if analyzer.codebase.get_class(normalized_class).is_some() {
+                    continue;
+                }
+
+                if !emitted.insert(normalized_class) {
+                    continue;
+                }
+
+                let (line, col) = analyzer.get_line_column(class_info.start_offset);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UndefinedDocblockClass,
+                    format!(
+                        "Docblock class {} does not exist",
+                        analyzer.interner.lookup(normalized_class)
+                    ),
+                    analyzer.file_path,
+                    class_info.start_offset,
+                    class_info.start_offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+}
+
+/// Returns true if the template parameter `template_name` (defined by
+/// `defining_entity`) is referenced by any property or method signature of the
+/// class, indicating that an extends/implements/use type argument bound to it
+/// will materialize as a real type.
+fn template_is_used_in_members(
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    template_name: StrId,
+    defining_entity: StrId,
+) -> bool {
+    for property in class_info.properties.values() {
+        if let Some(property_type) = property.get_type() {
+            if union_uses_template(property_type, template_name, defining_entity) {
+                return true;
+            }
+        }
+    }
+
+    for method in class_info.methods.values() {
+        if let Some(return_type) = &method.return_type {
+            if union_uses_template(return_type, template_name, defining_entity) {
+                return true;
+            }
+        }
+        for param in &method.params {
+            if let Some(param_type) = &param.param_type {
+                if union_uses_template(param_type, template_name, defining_entity) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn union_uses_template(union: &TUnion, template_name: StrId, defining_entity: StrId) -> bool {
+    union
+        .types
+        .iter()
+        .any(|atomic| atomic_uses_template(atomic, template_name, defining_entity))
+}
+
+fn atomic_uses_template(atomic: &TAtomic, template_name: StrId, defining_entity: StrId) -> bool {
+    match atomic {
+        TAtomic::TTemplateParam {
+            name,
+            defining_entity: entity,
+            as_type,
+        } => {
+            (*name == template_name && *entity == defining_entity)
+                || union_uses_template(as_type, template_name, defining_entity)
+        }
+        TAtomic::TNamedObject {
+            type_params: Some(type_params),
+            ..
+        } => type_params
+            .iter()
+            .any(|param| union_uses_template(param, template_name, defining_entity)),
+        TAtomic::TObjectIntersection { types } => types
+            .iter()
+            .any(|inner| atomic_uses_template(inner, template_name, defining_entity)),
+        _ => false,
+    }
+}
+
 fn collect_named_docblock_classes(atomic: &TAtomic, classes: &mut Vec<StrId>) {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             classes.push(*name);
 
             if let Some(type_params) = type_params {
@@ -3186,6 +4145,12 @@ fn check_unimplemented_abstract_methods(
 
         if let Some(iface_info) = analyzer.codebase.get_class(*iface_name) {
             for (method_name, _method_info) in &iface_info.methods {
+                // Psalm does not require an explicit `__construct` implementation for
+                // an interface that declares one; constructors are exempt from the
+                // unimplemented-interface-method check.
+                if *method_name == StrId::CONSTRUCT {
+                    continue;
+                }
                 if !implemented_methods.contains(method_name) {
                     let method_name_str = analyzer.interner.lookup(*method_name);
                     let iface_name_str = analyzer.interner.lookup(*iface_name);
@@ -3318,7 +4283,8 @@ fn analyze_methods_from_trait(
         &trait_file_info.contents,
         &resolved_names,
         analyzer.config,
-    );
+    )
+    .with_arena(&arena);
 
     for member in trait_stmt.members.iter() {
         let ClassLikeMember::Method(method) = member else {
@@ -3459,15 +4425,7 @@ fn analyze_method(
     });
 
     // Create a new analyzer with the method context
-    let method_analyzer = StatementsAnalyzer {
-        codebase: analyzer.codebase,
-        interner: analyzer.interner,
-        function_info: func_info.as_ref(),
-        file_path: analyzer.file_path,
-        source: analyzer.source,
-        resolved_names: analyzer.resolved_names,
-        config: analyzer.config,
-    };
+    let method_analyzer = analyzer.for_nested_function(func_info.as_ref());
 
     // Create a new context for the method body with namespace preserved
     let mut method_context = BlockContext::new();
@@ -3497,9 +4455,13 @@ fn analyze_method(
                 )
             });
 
+            // `$this` is the late-static-bound type: the concrete class in `name`
+            // with is_static set, so it re-resolves to the runtime class.
             TUnion::new(pzoom_code_info::TAtomic::TNamedObject {
                 name: class_name_id,
                 type_params: this_type_params,
+                is_static: true,
+                remapped_params: false,
             })
         };
 
@@ -3524,6 +4486,24 @@ fn analyze_method(
         // Get parameter type - for variadic params, wrap in array type
         let mut param_type = if let Some(info) = param_info {
             let mut base_type = info.get_type().cloned().unwrap_or_else(TUnion::mixed);
+            // Resolve class-constant references/wildcards (`Foo::BAR_*`) against the
+            // populated codebase before the type becomes the parameter variable's
+            // type — mirroring Psalm, which expands them via TypeExpander at
+            // function entry so the body (and anything the parameter is later
+            // passed to, or its by-ref constraint) sees the literal union.
+            {
+                let callable_name = format!(
+                    "{}::{}",
+                    analyzer.interner.lookup(class_name_id),
+                    analyzer.interner.lookup(method_name_id),
+                );
+                base_type =
+                    crate::expr::call::callable_validation::normalize_class_constant_param_type(
+                        analyzer,
+                        &base_type,
+                        &callable_name,
+                    );
+            }
             if let Some(signature_type) = &info.signature_type {
                 if !info.has_docblock_type {
                     base_type.from_docblock = false;
@@ -3541,7 +4521,13 @@ fn analyze_method(
                         method_name_id,
                         param_index,
                     ) {
-                        base_type = inherited_param_type;
+                        // Inherit the ancestor's type only when this override has no
+                        // native type of its own, or the inherited type is a docblock
+                        // refinement worth propagating. An explicit native param type
+                        // (e.g. a child widening `string` to `?string`) takes precedence.
+                        if info.signature_type.is_none() || inherited_param_type.from_docblock {
+                            base_type = inherited_param_type;
+                        }
                     }
                 }
             }
@@ -3613,12 +4599,16 @@ fn analyze_method(
     if let MethodBody::Concrete(block) = &method.body {
         let yield_types_start = analysis_data.inferred_yield_types.len();
         let return_types_start = analysis_data.inferred_return_types.len();
+        let prev_is_generator = analysis_data.current_function_is_generator;
+        analysis_data.current_function_is_generator =
+            stmt_analyzer::body_contains_yield(block.statements.as_slice());
         stmt_analyzer::analyze_stmts(
             &method_analyzer,
             block.statements.as_slice(),
             analysis_data,
             &mut method_context,
         )?;
+        analysis_data.current_function_is_generator = prev_is_generator;
         let has_yield = analysis_data.inferred_yield_types.len() > yield_types_start;
 
         if let Some(info) = method_info {
@@ -3747,11 +4737,31 @@ fn emit_invalid_by_ref_param_out_types_for_method(
             continue;
         }
 
+        // Resolve class-constant references/wildcards (`Foo::BAR_*`) in the by-ref
+        // constraint against the populated codebase, matching where Psalm's
+        // TypeExpander resolves them, so a `RECONCILIATION_*` out type accepts the
+        // concrete `0|1|2` values assigned in the body.
+        let callable_name = method_info
+            .declaring_class
+            .map(|class_id| {
+                format!(
+                    "{}::{}",
+                    analyzer.interner.lookup(class_id),
+                    analyzer.interner.lookup(method_info.name),
+                )
+            })
+            .unwrap_or_else(|| analyzer.interner.lookup(method_info.name).to_string());
+        let expected_type = crate::expr::call::callable_validation::normalize_class_constant_param_type(
+            analyzer,
+            expected_type,
+            &callable_name,
+        );
+
         let mut comparison = TypeComparisonResult::new();
         if union_type_comparator::is_contained_by(
             analyzer.codebase,
             actual_type,
-            expected_type,
+            &expected_type,
             false,
             false,
             &mut comparison,
@@ -3764,7 +4774,7 @@ fn emit_invalid_by_ref_param_out_types_for_method(
         let mut reverse_comparison = TypeComparisonResult::new();
         if union_type_comparator::is_contained_by(
             analyzer.codebase,
-            expected_type,
+            &expected_type,
             actual_type,
             false,
             false,
@@ -4117,7 +5127,7 @@ fn get_return_type_from_classlike(
 
 fn replace_extended_templates_in_union(
     union: &TUnion,
-    template_extended_params: &FxHashMap<StrId, FxHashMap<StrId, TUnion>>,
+    template_extended_params: &IndexMap<StrId, IndexMap<StrId, TUnion>>,
 ) -> TUnion {
     if template_extended_params.is_empty() {
         return union.clone();
@@ -4216,7 +5226,7 @@ fn replace_extended_templates_in_union(
 
 fn replace_extended_templates_in_atomic(
     atomic_type: &TAtomic,
-    template_extended_params: &FxHashMap<StrId, FxHashMap<StrId, TUnion>>,
+    template_extended_params: &IndexMap<StrId, IndexMap<StrId, TUnion>>,
 ) -> TAtomic {
     match atomic_type {
         TAtomic::TArray {
@@ -4290,7 +5300,7 @@ fn replace_extended_templates_in_atomic(
                 }),
             }
         }
-        TAtomic::TNamedObject { name, type_params } => TAtomic::TNamedObject {
+        TAtomic::TNamedObject { name, type_params , .. } => TAtomic::TNamedObject {
             name: *name,
             type_params: type_params.as_ref().map(|params| {
                 params
@@ -4300,7 +5310,7 @@ fn replace_extended_templates_in_atomic(
                     })
                     .collect()
             }),
-        },
+        is_static: false, remapped_params: false },
         TAtomic::TObjectIntersection { types } => TAtomic::TObjectIntersection {
             types: types
                 .iter()
@@ -4413,7 +5423,7 @@ fn replace_template_param_class_union(union: &TUnion) -> TUnion {
                         as_type: Some(Box::new(TAtomic::TNamedObject {
                             name: *name,
                             type_params: None,
-                        })),
+                        is_static: false, remapped_params: false })),
                     },
                 );
             }
@@ -4440,7 +5450,7 @@ fn push_unique_atomic(types: &mut Vec<TAtomic>, atomic: TAtomic) {
 fn union_is_class_constant_reference(union: &TUnion, analyzer: &StatementsAnalyzer<'_>) -> bool {
     !union.types.is_empty()
         && union.types.iter().all(|atomic| match atomic {
-            TAtomic::TNamedObject { name, type_params } => {
+            TAtomic::TNamedObject { name, type_params , .. } => {
                 type_params.is_none() && analyzer.interner.lookup(*name).contains("::")
             }
             _ => false,
@@ -4453,7 +5463,7 @@ fn union_contains_special_class_names(union: &TUnion) -> bool {
 
 fn atomic_contains_special_class_names(atomic: &TAtomic) -> bool {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             if matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT) {
                 return true;
             }
@@ -4497,7 +5507,7 @@ fn localize_special_class_names_in_atomic(
     parent_class_id: Option<StrId>,
 ) -> TAtomic {
     match atomic {
-        TAtomic::TNamedObject { name, type_params } => {
+        TAtomic::TNamedObject { name, type_params , .. } => {
             let localized_name = if matches!(*name, StrId::SELF | StrId::STATIC) {
                 self_class_id
             } else if *name == StrId::PARENT {
@@ -4520,7 +5530,7 @@ fn localize_special_class_names_in_atomic(
                         })
                         .collect()
                 }),
-            }
+            is_static: false, remapped_params: false }
         }
         TAtomic::TObjectIntersection { types } => TAtomic::TObjectIntersection {
             types: types

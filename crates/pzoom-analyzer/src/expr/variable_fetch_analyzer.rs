@@ -42,6 +42,23 @@ pub fn analyze(
                 return;
             }
 
+            // Psalm: referencing `$this` from a `@psalm-pure` context is impure, since a
+            // pure function may not depend on instance state.
+            if var_id == StrId::THIS_VAR
+                && analyzer.function_info.is_some_and(|info| info.is_pure)
+            {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::ImpureVariable,
+                    "Cannot reference $this in a pure context",
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
             // Inline @var docblocks are keyed by the following statement's start offset.
             // Check both the exact variable offset and current statement start.
             let inline_annotation_type = get_inline_var_annotation_type(analyzer, pos.0, var_id)

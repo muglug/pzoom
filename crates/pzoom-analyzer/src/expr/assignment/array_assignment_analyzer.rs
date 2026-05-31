@@ -248,9 +248,16 @@ fn analyze_assignment_chain<'a>(
         clear_dependent_property_types(analyzer, context, direct.name);
         clear_array_path_types_for_base_var(analyzer, context, direct.name);
         clear_dependent_array_access_types(analyzer, context, direct.name);
-        clear_dependent_class_string_origins(context, var_id);
+        context.invalidate_dependent_types(var_id);
         remove_var_clauses_from_context(context, direct.name);
         context.set_var_type(var_id, stored_type);
+        // Assigning to an offset modifies the base variable, so mark it possibly
+        // assigned (mirroring Psalm marking the root var in
+        // `possibly_assigned_var_ids`). Without this, a base that was also narrowed
+        // by the enclosing condition (e.g. `if (isset($p[$i])) { $p[$i] = ...; }`)
+        // is treated as merely narrowed and dropped from the branch-merge's
+        // possibly-redefined set, losing the assignment's widening.
+        context.possibly_assigned_var_ids.insert(var_id);
 
         let stores_array_path_types =
             union_has_array_like(&root_type) || union_has_array_like(&updated_child_type);
@@ -402,7 +409,6 @@ fn clear_dependent_property_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
@@ -429,7 +435,6 @@ fn clear_dependent_array_access_types(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
@@ -456,30 +461,9 @@ fn clear_array_path_types_for_base_var(
         context.locals.remove(&key);
         context.assigned_var_ids.remove(&key);
         context.possibly_assigned_var_ids.remove(&key);
-        context.class_string_origins.remove(&key);
     }
 }
 
-fn clear_dependent_class_string_origins(
-    context: &mut BlockContext,
-    source_var_id: pzoom_str::StrId,
-) {
-    let dependent_keys: Vec<_> = context
-        .class_string_origins
-        .iter()
-        .filter_map(|(class_var_id, tracked_source_var_id)| {
-            if *tracked_source_var_id == source_var_id {
-                Some(*class_var_id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    for class_var_id in dependent_keys {
-        context.class_string_origins.remove(&class_var_id);
-    }
-}
 
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
     context.clauses.retain(|clause| {
@@ -670,6 +654,36 @@ fn apply_assignment_to_container(
                 has_writable = true;
                 if emit_mixed_issues && assigned_type.is_mixed() {
                     emit_mixed_string_offset_assignment_issue(analyzer, analysis_data, issue_pos);
+                }
+                updated.push(atomic.clone());
+            }
+            // A template parameter is offset-assignable when its `as` bound is
+            // (e.g. `@template T as array` permits `$t[$k] = ...`). Defer to the
+            // bound rather than rejecting the abstract template outright.
+            TAtomic::TTemplateParam { as_type, .. } => {
+                let bound_writable = as_type.types.iter().any(|bound| {
+                    matches!(
+                        bound,
+                        TAtomic::TArray { .. }
+                            | TAtomic::TNonEmptyArray { .. }
+                            | TAtomic::TList { .. }
+                            | TAtomic::TNonEmptyList { .. }
+                            | TAtomic::TKeyedArray { .. }
+                            | TAtomic::TString
+                            | TAtomic::TNonEmptyString
+                            | TAtomic::TLiteralString { .. }
+                            | TAtomic::TNumericString
+                            | TAtomic::TNonEmptyNumericString
+                            | TAtomic::TLowercaseString
+                            | TAtomic::TNonEmptyLowercaseString
+                            | TAtomic::TTruthyString
+                    )
+                }) || union_supports_offset_set(analyzer, as_type);
+
+                if bound_writable {
+                    has_writable = true;
+                } else if invalid_atomic_name.is_none() {
+                    invalid_atomic_name = Some(atomic.get_id(Some(analyzer.interner)));
                 }
                 updated.push(atomic.clone());
             }
@@ -1064,6 +1078,21 @@ fn update_keyed_array_atomic(
                     fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
                     fallback_value_type: fallback_value_type.map(|t| Box::new(t.clone())),
                 }
+            } else if is_list && key_union_is_int_only(key_type) {
+                // Non-literal int offset into a list: broaden every element with the
+                // new value, keeping the list (Psalm widens the element type rather
+                // than collapsing a list to a generic `array<int, …>`).
+                let mut value_union = assigned_type.clone();
+                for value in properties.values() {
+                    value_union = combine_union_types(&value_union, value, false);
+                }
+                if let Some(fallback_value_type) = fallback_value_type {
+                    value_union = combine_union_types(&value_union, fallback_value_type, false);
+                }
+                value_union.possibly_undefined = false;
+                TAtomic::TNonEmptyList {
+                    value_type: Box::new(value_union),
+                }
             } else {
                 keyed_array_to_non_empty_array(
                     properties,
@@ -1291,8 +1320,6 @@ fn is_int_like_atomic(atomic: &TAtomic) -> bool {
         atomic,
         TAtomic::TInt
             | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
             | TAtomic::TIntRange { .. }
     )
 }

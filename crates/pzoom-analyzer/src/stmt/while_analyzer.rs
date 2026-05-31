@@ -1,16 +1,19 @@
 //! While statement analyzer.
+//!
+//! Delegates to the shared [`loop_analyzer`] fixpoint, mirroring Hakana's
+//! `while_analyzer`.
 
+use mago_span::HasSpan;
+use mago_syntax::ast::ast::binary::BinaryOperator;
+use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::r#loop::r#while::While;
-use pzoom_code_info::combine_union_types;
-use rustc_hash::FxHashSet;
 
-use crate::assertion_finder;
 use crate::context::BlockContext;
-use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
-use crate::reconciler;
+use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt_analyzer::analyze_stmts;
+use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
+use crate::stmt::loop_analyzer;
 
 /// Analyze a while statement.
 pub fn analyze(
@@ -19,84 +22,70 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    // Analyze the condition
-    let was_inside_loop = context.inside_loop;
-    context.inside_loop = true;
-    let _cond_pos =
-        expression_analyzer::analyze(analyzer, while_stmt.condition, analysis_data, context);
-    context.inside_loop = was_inside_loop;
-    let assertion_result =
-        assertion_finder::get_assertions(analyzer, while_stmt.condition, analysis_data);
-    let pre_loop_assigned_var_ids = context.assigned_var_ids.clone();
-    let pre_loop_possibly_assigned_var_ids = context.possibly_assigned_var_ids.clone();
+    let condition = while_stmt.condition;
+    let while_true = matches!(
+        condition.unparenthesized(),
+        Expression::Literal(mago_syntax::ast::ast::literal::Literal::True(_))
+    );
 
-    // Create a child context for the loop body
-    let mut loop_context = context.child();
-    loop_context.inside_loop = true;
-    loop_context.inside_foreach = false;
-    loop_context.assigned_var_ids = pre_loop_assigned_var_ids.clone();
-    loop_context.possibly_assigned_var_ids = pre_loop_possibly_assigned_var_ids;
-    if !assertion_result.if_true.is_empty() {
-        let mut changed_var_ids = FxHashSet::default();
-        reconciler::reconcile_keyed_types(
-            &assertion_result.if_true,
-            &mut loop_context,
-            &mut changed_var_ids,
-            analyzer,
-            analysis_data,
-            true,
-            false,
-            false,
-            None,
-        );
-    }
+    let mut while_context = context.clone();
+    while_context.inside_loop = true;
+    while_context.inside_foreach = false;
+    while_context.break_types.push(BreakContext::Loop);
 
-    // Analyze the loop body using helper method
+    let loop_scope = LoopScope::new(context.locals.clone());
+
+    let cond_pos = (
+        condition.start_offset() as u32,
+        condition.end_offset() as u32,
+    );
+    let always_enters_loop = while_true
+        || analysis_data
+            .get_expr_type(cond_pos)
+            .is_some_and(|t| t.is_always_truthy());
+
     let body_stmts = while_stmt.body.statements();
-    analyze_stmts(analyzer, body_stmts, analysis_data, &mut loop_context)?;
+    let pre_conditions = get_and_expressions(condition);
 
-    // Variables assigned in the loop body are "possibly assigned" in the parent
-    for (var_id, loop_assigned_count) in &loop_context.assigned_var_ids {
-        let pre_loop_count = pre_loop_assigned_var_ids.get(var_id).copied().unwrap_or(0);
-        if *loop_assigned_count <= pre_loop_count {
-            continue;
-        }
+    let (loop_scope, _inner_loop_context) = loop_analyzer::analyze(
+        analyzer,
+        body_stmts,
+        pre_conditions,
+        vec![],
+        loop_scope,
+        &mut while_context,
+        context,
+        analysis_data,
+        false,
+        always_enters_loop,
+    )?;
 
-        let parent_had_local = context.locals.contains_key(var_id);
-        if !parent_had_local {
-            context.possibly_assigned_var_ids.insert(*var_id);
-        }
+    let can_leave_loop = !while_true || loop_scope.final_actions.contains(&ControlAction::Break);
 
-        if let Some(loop_type) = loop_context.locals.get(var_id) {
-            if let Some(parent_type) = context.locals.get(var_id) {
-                let combined = combine_union_types(parent_type, loop_type, false);
-                context.locals.insert(*var_id, combined);
-            } else {
-                context.locals.insert(*var_id, loop_type.clone());
-            }
-        }
+    if always_enters_loop && !can_leave_loop {
+        // `while (true)` with no reachable break never exits normally.
+        context.control_actions.insert(ControlAction::End);
+        context.has_returned = true;
     }
 
-    let reassigned_var_ids: FxHashSet<_> = loop_context
-        .assigned_var_ids
-        .iter()
-        .filter_map(|(var_id, loop_assigned_count)| {
-            let pre_loop_count = pre_loop_assigned_var_ids.get(var_id).copied().unwrap_or(0);
-            (loop_assigned_count > &pre_loop_count).then_some(*var_id)
-        })
-        .collect();
-
-    if !reassigned_var_ids.is_empty() {
-        context.clauses = BlockContext::remove_reconciled_clause_refs(
-            &context.clauses,
-            &reassigned_var_ids,
-            analyzer.interner,
-        )
-        .0;
-    }
-
-    context.update_references_possibly_from_confusing_scope(&loop_context);
-
-    // The loop doesn't guarantee all paths exit (condition might be false initially)
     Ok(())
+}
+
+/// Split a condition `a && b && c` into its conjuncts `[a, b, c]`, mirroring
+/// Hakana's `get_and_expressions`.
+pub fn get_and_expressions<'a, 'arena>(
+    condition: &'a Expression<'arena>,
+) -> Vec<&'a Expression<'arena>> {
+    if let Expression::Binary(binary) = condition.unparenthesized() {
+        if matches!(
+            binary.operator,
+            BinaryOperator::And(_) | BinaryOperator::LowAnd(_)
+        ) {
+            let mut anded = get_and_expressions(binary.lhs);
+            anded.extend(get_and_expressions(binary.rhs));
+            return anded;
+        }
+    }
+
+    vec![condition]
 }

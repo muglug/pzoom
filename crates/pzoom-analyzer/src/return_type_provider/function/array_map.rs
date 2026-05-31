@@ -1,0 +1,147 @@
+//! `"array_map"` return-type provider.
+
+use pzoom_code_info::{TAtomic, TUnion};
+use rustc_hash::FxHashMap;
+
+use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
+use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::context::BlockContext;
+use crate::statements_analyzer::StatementsAnalyzer;
+use crate::expr::call::function_call_analyzer as fca;
+pub(super) struct ArrayMapReturnTypeProvider;
+
+impl FunctionReturnTypeProvider for ArrayMapReturnTypeProvider {
+    fn function_ids(&self) -> &'static [&'static str] {
+        &["array_map"]
+    }
+
+    fn get_function_return_type(
+        &self,
+        event: &FunctionReturnTypeProviderEvent<'_, '_>,
+        analysis_data: &mut FunctionAnalysisData,
+    ) -> Option<TUnion> {
+        infer_array_map_return_type(event.analyzer, event.args, event.arg_positions, analysis_data, event.context)
+    }
+}
+
+fn infer_array_map_return_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    arg_positions: &[Pos],
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) -> Option<TUnion> {
+    if args.len() < 2 || arg_positions.len() < 2 {
+        return None;
+    }
+
+    let callback_type = analysis_data.get_expr_type(arg_positions[0])?;
+
+    let mut input_array_infos = Vec::new();
+    let mut callback_input_types = Vec::new();
+    let mut first_array_type = None;
+    for arg_pos in arg_positions.iter().skip(1) {
+        let array_type = analysis_data.get_expr_type(*arg_pos)?;
+        if first_array_type.is_none() {
+            first_array_type = Some(array_type.clone());
+        }
+        let info = fca::extract_array_like_info_from_union(&array_type)?;
+        callback_input_types.push(info.value_type.clone());
+        input_array_infos.push(info);
+    }
+
+    let callback_return_type = fca::infer_array_map_callable_return_type(
+        analyzer,
+        &callback_type,
+        &callback_input_types,
+        context,
+    )
+    .unwrap_or_else(TUnion::mixed);
+
+    let first_info = input_array_infos.first()?;
+
+    // Mirror Psalm's ArrayMapReturnTypeProvider: with a single array argument
+    // that is a known keyed-array shape, preserve the shape and map each
+    // property's type through the callback return type.
+    if args.len() == 2 {
+        if let Some(first_array_type) = &first_array_type {
+            if let Some(TAtomic::TKeyedArray {
+                properties,
+                is_list,
+                sealed,
+                fallback_key_type,
+                fallback_value_type,
+            }) = first_array_type.get_single()
+            {
+                let mut new_properties: FxHashMap<_, TUnion> = FxHashMap::default();
+                for (key, prop) in properties {
+                    let mut mapped = callback_return_type.clone();
+                    mapped.possibly_undefined = prop.possibly_undefined;
+                    new_properties.insert(key.clone(), mapped);
+                }
+
+                let (new_fallback_key, new_fallback_value) =
+                    match (fallback_key_type, fallback_value_type) {
+                        (Some(fk), Some(_)) => {
+                            (Some(fk.clone()), Some(Box::new(callback_return_type.clone())))
+                        }
+                        _ => (None, None),
+                    };
+
+                return Some(TUnion::new(TAtomic::TKeyedArray {
+                    properties: new_properties,
+                    is_list: *is_list,
+                    sealed: *sealed,
+                    fallback_key_type: new_fallback_key,
+                    fallback_value_type: new_fallback_value,
+                }));
+            }
+        }
+    }
+
+    if args.len() == 2 {
+        if first_info.is_list {
+            let atomic = if first_info.is_non_empty {
+                TAtomic::TNonEmptyList {
+                    value_type: Box::new(callback_return_type),
+                }
+            } else {
+                TAtomic::TList {
+                    value_type: Box::new(callback_return_type),
+                }
+            };
+            return Some(TUnion::new(atomic));
+        }
+
+        let key_type = if first_info.key_type.is_nothing() {
+            TUnion::array_key()
+        } else {
+            first_info.key_type.clone()
+        };
+        let atomic = if first_info.is_non_empty {
+            TAtomic::TNonEmptyArray {
+                key_type: Box::new(key_type),
+                value_type: Box::new(callback_return_type),
+            }
+        } else {
+            TAtomic::TArray {
+                key_type: Box::new(key_type),
+                value_type: Box::new(callback_return_type),
+            }
+        };
+        return Some(TUnion::new(atomic));
+    }
+
+    let all_non_empty = input_array_infos.iter().all(|info| info.is_non_empty);
+    let atomic = if all_non_empty {
+        TAtomic::TNonEmptyList {
+            value_type: Box::new(callback_return_type),
+        }
+    } else {
+        TAtomic::TList {
+            value_type: Box::new(callback_return_type),
+        }
+    };
+
+    Some(TUnion::new(atomic))
+}

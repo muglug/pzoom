@@ -1,16 +1,19 @@
 //! For loop statement analyzer.
+//!
+//! Delegates to the shared [`loop_analyzer`] fixpoint, mirroring Hakana's
+//! `for_analyzer`.
 
-use mago_syntax::ast::ast::r#loop::r#for::{For, ForBody};
-use pzoom_code_info::combine_union_types;
-use rustc_hash::FxHashSet;
+use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::ast::ast::literal::Literal;
+use mago_syntax::ast::ast::r#loop::r#for::For;
 
-use crate::assertion_finder;
 use crate::context::BlockContext;
 use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
-use crate::reconciler;
+use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt_analyzer;
+use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
+use crate::stmt::loop_analyzer;
 
 /// Analyze a for loop statement.
 pub fn analyze(
@@ -19,125 +22,66 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    // Analyze initialization expressions
+    // Initialization expressions run once, in the parent context.
     for init_expr in for_stmt.initializations.iter() {
         let _ = expression_analyzer::analyze(analyzer, init_expr, analysis_data, context);
     }
 
-    let pre_loop_assigned_var_ids = context.assigned_var_ids.clone();
-    let pre_loop_possibly_assigned_var_ids = context.possibly_assigned_var_ids.clone();
-
-    // Analyze the loop body
-    let mut loop_context = context.child();
-    loop_context.inside_loop = true;
-    loop_context.inside_foreach = false;
-    loop_context.assigned_var_ids = pre_loop_assigned_var_ids.clone();
-    loop_context.possibly_assigned_var_ids = pre_loop_possibly_assigned_var_ids;
-
-    broaden_loop_context_with_increment_effects(analyzer, for_stmt, &mut loop_context);
-
-    for cond_expr in for_stmt.conditions.iter() {
-        let _ = expression_analyzer::analyze(analyzer, cond_expr, analysis_data, &mut loop_context);
-        let assertion_result = assertion_finder::get_assertions(analyzer, cond_expr, analysis_data);
-        if !assertion_result.if_true.is_empty() {
-            let mut changed_var_ids = FxHashSet::default();
-            reconciler::reconcile_keyed_types(
-                &assertion_result.if_true,
-                &mut loop_context,
-                &mut changed_var_ids,
-                analyzer,
-                analysis_data,
-                true,
-                false,
-                false,
-                None,
-            );
-        }
-    }
-
-    match &for_stmt.body {
-        ForBody::Statement(stmt) => {
-            stmt_analyzer::analyze_stmt(analyzer, stmt, analysis_data, &mut loop_context)?;
-        }
-        ForBody::ColonDelimited(block) => {
-            stmt_analyzer::analyze_stmts(
-                analyzer,
-                block.statements.as_slice(),
-                analysis_data,
-                &mut loop_context,
-            )?;
-        }
+    // Only the last condition acts as the loop guard in PHP; the earlier ones
+    // are evaluated for their side effects but do not gate the loop.
+    let pre_conditions: Vec<&Expression<'_>> = match for_stmt.conditions.iter().last() {
+        Some(condition) => vec![condition],
+        None => vec![],
     };
+    let post_expressions: Vec<&Expression<'_>> = for_stmt.increments.iter().collect();
 
-    // Analyze increment expressions
-    for inc_expr in for_stmt.increments.iter() {
-        let _ = expression_analyzer::analyze(analyzer, inc_expr, analysis_data, &mut loop_context);
+    // A `for` loop is infinite when it has no guard or its guard is always true
+    // (`for (;;)`, `for (; true;)`, `for ($i = 0;; $i++)`). In that case the body
+    // is guaranteed to run at least once and the loop only exits via `break` —
+    // matching how Psalm derives `always_enters_loop`.
+    let always_enters_loop = pre_conditions
+        .last()
+        .map_or(true, |condition| is_always_true(condition));
+    let while_true = always_enters_loop;
+
+    let mut for_context = context.clone();
+    for_context.inside_loop = true;
+    for_context.inside_foreach = false;
+    for_context.break_types.push(BreakContext::Loop);
+
+    let loop_scope = LoopScope::new(context.locals.clone());
+
+    let body_stmts = for_stmt.body.statements();
+
+    let (loop_scope, _inner) = loop_analyzer::analyze(
+        analyzer,
+        body_stmts,
+        pre_conditions,
+        post_expressions,
+        loop_scope,
+        &mut for_context,
+        context,
+        analysis_data,
+        always_enters_loop,
+        while_true,
+    )?;
+
+    // An infinite loop with no reachable `break` never exits normally, so any
+    // code after it is unreachable.
+    let exits_via_break = loop_scope.final_actions.contains(&ControlAction::Break);
+    if while_true && !exits_via_break {
+        context.control_actions.insert(ControlAction::End);
+        context.has_returned = true;
     }
-
-    for (var_id, loop_assigned_count) in &loop_context.assigned_var_ids {
-        let pre_loop_count = pre_loop_assigned_var_ids.get(var_id).copied().unwrap_or(0);
-        if *loop_assigned_count <= pre_loop_count {
-            continue;
-        }
-
-        let parent_had_local = context.locals.contains_key(var_id);
-        if !parent_had_local {
-            context.possibly_assigned_var_ids.insert(*var_id);
-        }
-
-        if let Some(loop_type) = loop_context.locals.get(var_id) {
-            if let Some(parent_type) = context.locals.get(var_id) {
-                let combined = combine_union_types(parent_type, loop_type, false);
-                context.locals.insert(*var_id, combined);
-            } else {
-                context.locals.insert(*var_id, loop_type.clone());
-            }
-        }
-    }
-
-    context.update_references_possibly_from_confusing_scope(&loop_context);
 
     Ok(())
 }
 
-fn broaden_loop_context_with_increment_effects(
-    analyzer: &StatementsAnalyzer<'_>,
-    for_stmt: &For<'_>,
-    loop_context: &mut BlockContext,
-) {
-    if for_stmt.increments.is_empty() {
-        return;
-    }
-
-    let mut speculative_context = loop_context.clone();
-    let baseline_assigned = speculative_context.assigned_var_ids.clone();
-    let mut speculative_analysis_data = FunctionAnalysisData::new();
-
-    for inc_expr in for_stmt.increments.iter() {
-        let _ = expression_analyzer::analyze(
-            analyzer,
-            inc_expr,
-            &mut speculative_analysis_data,
-            &mut speculative_context,
-        );
-    }
-
-    for (var_id, speculative_type) in &speculative_context.locals {
-        let baseline_count = baseline_assigned.get(var_id).copied().unwrap_or(0);
-        let speculative_count = speculative_context
-            .assigned_var_ids
-            .get(var_id)
-            .copied()
-            .unwrap_or(0);
-        if speculative_count <= baseline_count {
-            continue;
-        }
-
-        if let Some(current_type) = loop_context.locals.get(var_id) {
-            let combined = combine_union_types(current_type, speculative_type, false);
-            loop_context.locals.insert(*var_id, combined);
-        } else {
-            loop_context.locals.insert(*var_id, speculative_type.clone());
-        }
-    }
+/// Returns true if the guard expression is a literal `true`, making the loop
+/// body always execute (matching Psalm's always-enters detection).
+fn is_always_true(condition: &Expression<'_>) -> bool {
+    matches!(
+        condition.unparenthesized(),
+        Expression::Literal(Literal::True(_))
+    )
 }

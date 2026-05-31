@@ -86,6 +86,12 @@ pub enum Assertion {
 
     /// Variable does not have an exact count (count($x) !== n).
     DoesNotHaveExactCount(usize),
+
+    /// Variable has at least `n` elements (count($x) >= n).
+    HasAtLeastCount(usize),
+
+    /// Variable does not have at least `n` elements (count($x) < n).
+    DoesNotHaveAtLeastCount(usize),
 }
 
 impl Assertion {
@@ -126,6 +132,8 @@ impl Assertion {
             Assertion::EmptyCountable => "empty-countable".to_string(),
             Assertion::HasExactCount(n) => format!("has-exactly-{}", n),
             Assertion::DoesNotHaveExactCount(n) => format!("!has-exactly-{}", n),
+            Assertion::HasAtLeastCount(n) => format!("has-at-least-{}", n),
+            Assertion::DoesNotHaveAtLeastCount(n) => format!("!has-at-least-{}", n),
         }
     }
 
@@ -148,6 +156,7 @@ impl Assertion {
                 | Assertion::ArrayKeyDoesNotExist
                 | Assertion::DoesNotHaveArrayKey(_)
                 | Assertion::DoesNotHaveExactCount(_)
+                | Assertion::DoesNotHaveAtLeastCount(_)
                 | Assertion::DoesNotHaveNonnullEntryForKey(_)
                 | Assertion::EmptyCountable
         )
@@ -284,6 +293,14 @@ impl Assertion {
                 Assertion::HasExactCount(other_n) => other_n == n,
                 _ => false,
             },
+            Assertion::HasAtLeastCount(n) => match other {
+                Assertion::DoesNotHaveAtLeastCount(other_n) => other_n == n,
+                _ => false,
+            },
+            Assertion::DoesNotHaveAtLeastCount(n) => match other {
+                Assertion::HasAtLeastCount(other_n) => other_n == n,
+                _ => false,
+            },
         }
     }
 
@@ -313,6 +330,8 @@ impl Assertion {
             Assertion::NotInArray(union) => Assertion::InArray(union.clone()),
             Assertion::HasExactCount(size) => Assertion::DoesNotHaveExactCount(*size),
             Assertion::DoesNotHaveExactCount(size) => Assertion::HasExactCount(*size),
+            Assertion::HasAtLeastCount(size) => Assertion::DoesNotHaveAtLeastCount(*size),
+            Assertion::DoesNotHaveAtLeastCount(size) => Assertion::HasAtLeastCount(*size),
             Assertion::HasArrayKey(key) => Assertion::DoesNotHaveArrayKey(key.clone()),
             Assertion::DoesNotHaveArrayKey(key) => Assertion::HasArrayKey(key.clone()),
             Assertion::HasNonnullEntryForKey(key) => {

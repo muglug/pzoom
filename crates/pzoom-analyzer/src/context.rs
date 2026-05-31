@@ -5,10 +5,122 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use pzoom_code_info::algebra::Clause;
-use pzoom_code_info::{TUnion, combine_union_types};
-use pzoom_str::StrId;
+use pzoom_code_info::algebra::{Clause, ClauseKey};
+use pzoom_code_info::{TAtomic, TUnion, combine_union_types};
+
+/// Expand any `bool` atomic into the pair `true`, `false` for set arithmetic.
+fn expand_bool_atomics(atomics: &[TAtomic]) -> Vec<TAtomic> {
+    let mut expanded = Vec::with_capacity(atomics.len());
+    for atomic in atomics {
+        if matches!(atomic, TAtomic::TBool) {
+            expanded.push(TAtomic::TTrue);
+            expanded.push(TAtomic::TFalse);
+        } else {
+            expanded.push(atomic.clone());
+        }
+    }
+    expanded
+}
+
+/// Re-collapse a `true` + `false` pair back into `bool`.
+fn collapse_bool_atomics(atomics: &mut Vec<TAtomic>) {
+    let has_true = atomics.iter().any(|a| matches!(a, TAtomic::TTrue));
+    let has_false = atomics.iter().any(|a| matches!(a, TAtomic::TFalse));
+    if has_true && has_false {
+        atomics.retain(|a| !matches!(a, TAtomic::TTrue | TAtomic::TFalse));
+        atomics.push(TAtomic::TBool);
+    }
+}
+
+/// Whether two unions describe the same set of atomic types, ignoring ordering
+/// and data-flow noise. A lightweight stand-in for Psalm's `Union::equals`, used
+/// by the if/else merge to decide whether a variable was genuinely redefined
+/// (rather than merely re-emitted with different data-flow nodes by the `||`/`&&`
+/// analyzers).
+pub(crate) fn unions_structurally_equal(left: &TUnion, right: &TUnion) -> bool {
+    if left.types.len() != right.types.len() {
+        return false;
+    }
+    // Semantically-meaningful provenance flags still count (e.g. `from_calculation`
+    // marks an int that may have overflowed to float, which a later `is_float`
+    // check depends on); only data-flow node noise is ignored.
+    if left.from_calculation != right.from_calculation
+        || left.from_docblock != right.from_docblock
+        || left.possibly_undefined != right.possibly_undefined
+    {
+        return false;
+    }
+    // Order-insensitive multiset comparison using TAtomic's exact equality, so
+    // genuinely different types (e.g. distinct int literals/ranges) still count as
+    // a redefinition while pure ordering/flag noise does not.
+    let mut matched = vec![false; right.types.len()];
+    for left_atomic in &left.types {
+        let mut found = false;
+        for (index, right_atomic) in right.types.iter().enumerate() {
+            if !matched[index] && left_atomic == right_atomic {
+                matched[index] = true;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+/// Replace `old_type`'s atomics with `new_type`'s within `existing`, mirroring
+/// Psalm's `Union::substitute` as used by `Context::update`. With `new_type` as
+/// `None` the old possibility is simply removed; the result never becomes empty.
+fn substitute_union(existing: &TUnion, old_type: &TUnion, new_type: Option<&TUnion>) -> TUnion {
+    // Expand `bool` to `true | false` so set subtraction works (pzoom stores `bool`
+    // as a single atomic, whereas the substitution is in terms of `true`/`false`).
+    let old_expanded = expand_bool_atomics(&old_type.types);
+    let mut atomics: Vec<TAtomic> = expand_bool_atomics(&existing.types)
+        .into_iter()
+        .filter(|atomic| !old_expanded.iter().any(|old| old == atomic))
+        .collect();
+
+    if let Some(new_type) = new_type {
+        for atomic in expand_bool_atomics(&new_type.types) {
+            if !atomics.iter().any(|existing_atomic| *existing_atomic == atomic) {
+                atomics.push(atomic);
+            }
+        }
+    }
+
+    collapse_bool_atomics(&mut atomics);
+
+    if atomics.is_empty() {
+        return existing.clone();
+    }
+
+    let mut result = TUnion::from_types(atomics);
+    result.from_docblock = existing.from_docblock;
+    result.ignore_nullable_issues = existing.ignore_nullable_issues;
+    result.ignore_falsable_issues = existing.ignore_falsable_issues;
+    if let Some(new_type) = new_type {
+        if new_type.from_docblock {
+            result.from_docblock = true;
+        }
+    }
+    result
+}
+
+/// The variable a dependent `get_class`/`gettype` atomic depends on, if any.
+fn dependent_type_var(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
+    match atomic {
+        TAtomic::TDependentGetClass { var_id, .. } | TAtomic::TDependentGetType { var_id } => {
+            Some(*var_id)
+        }
+        _ => None,
+    }
+}
+use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 
 /// Context for analyzing a block of code.
 ///
@@ -23,6 +135,13 @@ pub struct BlockContext {
 
     /// Variables that may have been assigned (e.g., in one branch of an if).
     pub possibly_assigned_var_ids: FxHashSet<StrId>,
+
+    /// Variables that might be in scope at this point — a superset of `locals`
+    /// that also retains variables possibly defined on some incoming path.
+    /// Mirrors Psalm's `Context::$vars_possibly_in_scope`; consulted when merging
+    /// branch/loop scopes to decide which variables become "possibly defined"
+    /// afterwards.
+    pub vars_possibly_in_scope: FxHashSet<StrId>,
 
     /// Variables referenced in conditional contexts.
     pub cond_referenced_var_ids: FxHashSet<StrId>,
@@ -64,6 +183,17 @@ pub struct BlockContext {
     /// Whether we're inside a loop.
     pub inside_loop: bool,
 
+    /// Whether we're analyzing a loop's pre-conditions or post-expressions
+    /// (the header of a `for`/`while`), as opposed to its body.
+    pub inside_loop_exprs: bool,
+
+    /// Stack of enclosing break targets (loop vs switch), innermost last. Used by
+    /// `break`/`continue` to decide whether they leave a switch or a loop.
+    pub break_types: Vec<BreakContext>,
+
+    /// Control-flow actions performed directly in this context (break/continue/…).
+    pub control_actions: FxHashSet<ControlAction>,
+
     /// Whether the current loop scope is a foreach body.
     pub inside_foreach: bool,
 
@@ -81,9 +211,6 @@ pub struct BlockContext {
 
     /// The current namespace (if any).
     pub namespace: Option<StrId>,
-
-    /// Tracks `$class = get_class($obj)` style relationships for class-string narrowing.
-    pub class_string_origins: FxHashMap<StrId, StrId>,
 
     /// Maps in-scope references to the variable they reference (`$b => $a` for `$b = &$a`).
     pub references_in_scope: FxHashMap<StrId, StrId>,
@@ -140,12 +267,59 @@ impl BlockContext {
         }
     }
 
+    /// Remove `$this` and any `$this->...`-derived locals/assignment tracking.
+    /// Used when entering a `static` closure/arrow scope, where `$this` is not
+    /// available.
+    pub fn strip_this_assumptions(&mut self, interner: &Interner) {
+        let this_related_vars: Vec<StrId> = self
+            .locals
+            .keys()
+            .copied()
+            .filter(|var_id| {
+                *var_id == StrId::THIS_VAR
+                    || interner.lookup(*var_id).as_ref().starts_with("$this->")
+            })
+            .collect();
+
+        for var_id in this_related_vars {
+            self.locals.remove(&var_id);
+            self.assigned_var_ids.remove(&var_id);
+            self.possibly_assigned_var_ids.remove(&var_id);
+        }
+    }
+
+    /// Remove property-path locals (`$x->y`) plus their assignment tracking,
+    /// class-string origins and any clauses keyed on a property path. Closures
+    /// don't inherit the outer scope's property-narrowing assumptions.
+    pub fn strip_property_path_assumptions(&mut self, interner: &Interner) {
+        let property_path_vars: Vec<StrId> = self
+            .locals
+            .keys()
+            .copied()
+            .filter(|var_id| interner.lookup(*var_id).as_ref().contains("->"))
+            .collect();
+
+        for var_id in property_path_vars {
+            self.locals.remove(&var_id);
+            self.assigned_var_ids.remove(&var_id);
+            self.possibly_assigned_var_ids.remove(&var_id);
+        }
+
+        self.clauses.retain(|clause| {
+            !clause
+                .possibilities
+                .keys()
+                .any(|key| matches!(key, ClauseKey::Name(name) if name.contains("->")))
+        });
+    }
+
     /// Create a child context for a nested scope.
     pub fn child(&self) -> Self {
         Self {
             locals: self.locals.clone(),
             assigned_var_ids: FxHashMap::default(),
             possibly_assigned_var_ids: FxHashSet::default(),
+            vars_possibly_in_scope: self.vars_possibly_in_scope.clone(),
             cond_referenced_var_ids: FxHashSet::default(),
             clauses: self.clauses.clone(),
             reconciled_expression_clauses: Vec::new(),
@@ -157,13 +331,15 @@ impl BlockContext {
             inside_general_use: self.inside_general_use,
             check_variables: self.check_variables,
             inside_loop: self.inside_loop,
+            inside_loop_exprs: self.inside_loop_exprs,
+            break_types: self.break_types.clone(),
+            control_actions: FxHashSet::default(),
             inside_foreach: self.inside_foreach,
             inside_try: self.inside_try,
             self_class: self.self_class,
             parent_class: self.parent_class,
             has_this: self.has_this,
             namespace: self.namespace,
-            class_string_origins: self.class_string_origins.clone(),
             references_in_scope: self.references_in_scope.clone(),
             references_to_external_scope: self.references_to_external_scope.clone(),
             references_possibly_from_confusing_scope: self
@@ -200,6 +376,7 @@ impl BlockContext {
     pub fn set_var_type_direct(&mut self, var_id: StrId, var_type: TUnion) {
         self.locals.insert(var_id, var_type);
         *self.assigned_var_ids.entry(var_id).or_insert(0) += 1;
+        self.vars_possibly_in_scope.insert(var_id);
     }
 
     /// Check if a variable has been definitely assigned.
@@ -253,6 +430,127 @@ impl BlockContext {
         redefined
     }
 
+    /// Whether a variable is currently in scope.
+    pub fn has_variable(&self, var_id: StrId) -> bool {
+        self.locals.contains_key(&var_id)
+    }
+
+    /// Propagate the changes a block made to a set of variables back into this
+    /// (parent) context. Mirrors Psalm's `Context::update`: for each variable in
+    /// `vars_to_update`, the type the block narrowed it to (`end_context`, unless
+    /// the block leaves) replaces the pre-block type (`start_context`) within this
+    /// context's union — so a negated narrowing performed inside an `if`/`elseif`
+    /// branch is reflected afterwards. `updated_vars` records which variables
+    /// actually changed.
+    pub fn update(
+        &mut self,
+        start_context: &BlockContext,
+        end_context: &BlockContext,
+        has_leaving_statements: bool,
+        vars_to_update: &FxHashSet<StrId>,
+        updated_vars: &mut FxHashSet<StrId>,
+    ) {
+        for (var_id, old_type) in &start_context.locals {
+            // Only variables that underwent some negation are eligible.
+            if !vars_to_update.contains(var_id) {
+                continue;
+            }
+
+            // If we're leaving, the block's possibility is effectively deleted.
+            let new_type = if !has_leaving_statements && end_context.has_variable(*var_id) {
+                end_context.locals.get(var_id)
+            } else {
+                None
+            };
+
+            let Some(existing_type) = self.locals.get(var_id).cloned() else {
+                if let Some(new_type) = new_type {
+                    self.locals.insert(*var_id, new_type.clone());
+                    updated_vars.insert(*var_id);
+                }
+                continue;
+            };
+
+            // If the type changed within the block, substitute it in — but never
+            // allow ourselves to remove every atomic from a union.
+            let type_changed = match new_type {
+                Some(new_type) => old_type != new_type,
+                None => true,
+            };
+            let can_substitute = new_type.is_some() || existing_type.types.len() > 1;
+
+            if type_changed && can_substitute {
+                let substituted = substitute_union(&existing_type, old_type, new_type);
+                self.locals.insert(*var_id, substituted);
+                updated_vars.insert(*var_id);
+            }
+        }
+    }
+
+    /// Variables that are new or whose type/assignment-count changed between two
+    /// contexts. Mirrors Hakana's `BlockContext::get_new_or_updated_locals`.
+    pub fn get_new_or_updated_locals(original: &Self, new: &Self) -> FxHashSet<StrId> {
+        let mut redefined_var_ids = FxHashSet::default();
+
+        for (var_id, new_type) in &new.locals {
+            if let Some(original_type) = original.locals.get(var_id) {
+                if original.assigned_var_ids.get(var_id).copied().unwrap_or(0)
+                    != new.assigned_var_ids.get(var_id).copied().unwrap_or(0)
+                    || original_type != new_type
+                {
+                    redefined_var_ids.insert(*var_id);
+                }
+            } else {
+                redefined_var_ids.insert(*var_id);
+            }
+        }
+
+        redefined_var_ids
+    }
+
+    /// Invalidate any local whose type is a *dependent* `get_class($var_id)` /
+    /// `gettype($var_id)` result, because `$var_id`'s value has just changed.
+    /// Mirrors Psalm's `DependentType::getReplacement()`: the remembered
+    /// dependency no longer holds, so the type collapses to its plain equivalent
+    /// (`class-string` / `string`). Without this, `$t = get_class($a); $a = new
+    /// B(); switch ($t)` would wrongly narrow the *new* `$a`.
+    pub fn invalidate_dependent_types(&mut self, var_id: StrId) {
+        for local_type in self.locals.values_mut() {
+            if !local_type
+                .types
+                .iter()
+                .any(|atomic| dependent_type_var(atomic) == Some(var_id))
+            {
+                continue;
+            }
+            let replaced: Vec<TAtomic> = local_type
+                .types
+                .iter()
+                .map(|atomic| match atomic {
+                    TAtomic::TDependentGetClass { var_id: v, .. } if *v == var_id => {
+                        TAtomic::TClassString { as_type: None }
+                    }
+                    TAtomic::TDependentGetType { var_id: v } if *v == var_id => TAtomic::TString,
+                    other => other.clone(),
+                })
+                .collect();
+            *local_type = TUnion::from_types(replaced);
+        }
+    }
+
+    /// Drop any clauses that mention `var_id`, because its type has changed.
+    /// Mirrors Hakana's `remove_var_from_conflicting_clauses` (simplified: pzoom
+    /// always discards conflicting clauses rather than reconciling them).
+    pub fn remove_var_from_conflicting_clauses(
+        &mut self,
+        var_id: StrId,
+        interner: &pzoom_str::Interner,
+    ) {
+        let mut changed = FxHashSet::default();
+        changed.insert(var_id);
+        self.clauses = BlockContext::remove_reconciled_clause_refs(&self.clauses, &changed, interner).0;
+    }
+
     /// Remove reconciled clause refs from a set of clauses.
     ///
     /// Returns the filtered clauses and a set of changed variable IDs.
@@ -297,6 +595,54 @@ impl BlockContext {
         (result, affected_var_ids)
     }
 
+    /// Partition clauses by a set of changed variables, mirroring Hakana's
+    /// `BlockContext::remove_reconciled_clause_refs` which returns `(kept, removed)`.
+    ///
+    /// A clause is *removed* (reconciled) when any of its possibilities references a
+    /// changed variable (or an array offset rooted at one). The removed clauses are
+    /// what an `&&`/`||`/ternary records into `reconciled_expression_clauses` so the
+    /// enclosing if/ternary body reconcile does not re-report them.
+    pub fn partition_reconciled_clause_refs(
+        clauses: &[Rc<Clause>],
+        changed_var_ids: &FxHashSet<StrId>,
+        interner: &pzoom_str::Interner,
+    ) -> (Vec<Rc<Clause>>, Vec<Rc<Clause>>) {
+        use pzoom_code_info::algebra::ClauseKey;
+
+        let mut kept = Vec::new();
+        let mut removed = Vec::new();
+
+        for clause in clauses {
+            let mut dominated = false;
+
+            for (key, _) in &clause.possibilities {
+                if let ClauseKey::Name(name) = key {
+                    for changed_var_id in changed_var_ids {
+                        let changed_name = interner.lookup(*changed_var_id);
+                        if name == &*changed_name
+                            || name.starts_with(&format!("{}[", changed_name))
+                            || name.contains(&format!("[{}]", changed_name))
+                        {
+                            dominated = true;
+                            break;
+                        }
+                    }
+                }
+                if dominated {
+                    break;
+                }
+            }
+
+            if dominated {
+                removed.push(clause.clone());
+            } else {
+                kept.push(clause.clone());
+            }
+        }
+
+        (kept, removed)
+    }
+
     /// Merge another context into this one (for branch merging).
     pub fn merge(&mut self, other: &BlockContext) {
         // Variables assigned in both branches are definitely assigned
@@ -317,6 +663,10 @@ impl BlockContext {
             self.possibly_assigned_var_ids.insert(*var_id);
         }
 
+        // Anything possibly in scope in either branch is possibly in scope after.
+        self.vars_possibly_in_scope
+            .extend(other.vars_possibly_in_scope.iter().copied());
+
         // Merge variable types (union of types from both branches)
         for (var_id, other_type) in &other.locals {
             if let Some(self_type) = self.locals.get(var_id) {
@@ -329,18 +679,6 @@ impl BlockContext {
                 self.possibly_assigned_var_ids.insert(*var_id);
             }
         }
-
-        let mut merged_class_string_origins = FxHashMap::default();
-        for (class_var, source_var) in &self.class_string_origins {
-            if other
-                .class_string_origins
-                .get(class_var)
-                .is_some_and(|other_source| other_source == source_var)
-            {
-                merged_class_string_origins.insert(*class_var, *source_var);
-            }
-        }
-        self.class_string_origins = merged_class_string_origins;
 
         let mut merged_aliases = FxHashMap::default();
         for (alias, target) in &self.class_aliases {
@@ -487,7 +825,6 @@ impl BlockContext {
         self.assigned_var_ids.remove(&var_id);
         self.possibly_assigned_var_ids.remove(&var_id);
         self.cond_referenced_var_ids.remove(&var_id);
-        self.class_string_origins.remove(&var_id);
         self.references_to_external_scope.remove(&var_id);
         self.references_possibly_from_confusing_scope
             .remove(&var_id);
@@ -562,6 +899,7 @@ impl BlockContext {
     fn propagate_reference_cluster_type(&mut self, root_var_id: StrId, var_type: TUnion) {
         self.locals.insert(root_var_id, var_type.clone());
         *self.assigned_var_ids.entry(root_var_id).or_insert(0) += 1;
+        self.vars_possibly_in_scope.insert(root_var_id);
 
         let aliases: Vec<StrId> = self
             .references_in_scope
@@ -574,6 +912,7 @@ impl BlockContext {
         for alias in aliases {
             self.locals.insert(alias, var_type.clone());
             *self.assigned_var_ids.entry(alias).or_insert(0) += 1;
+            self.vars_possibly_in_scope.insert(alias);
         }
     }
 

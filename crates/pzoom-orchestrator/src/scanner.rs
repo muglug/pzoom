@@ -310,6 +310,9 @@ impl Scanner {
                 content_hash: compute_hash(contents),
                 contents: contents.to_string(),
                 is_stub,
+                // The phpstorm-derived `stubs/extensions/*` stubs are lower precedence
+                // than pzoom's own curated stubs (mirrors Psalm).
+                is_low_precedence_stub: is_stub && path.contains("extensions/"),
                 inline_annotations,
             },
         );

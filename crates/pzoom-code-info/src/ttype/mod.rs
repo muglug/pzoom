@@ -1,10 +1,12 @@
 //! Type operations module - combining, comparing, and manipulating types.
 
+pub mod key_value_of;
 mod type_combination;
 pub mod type_combiner;
 
 use crate::data_flow::node::DataFlowNode;
 
+pub use key_value_of::{get_key_of_union, get_value_of_union};
 pub use type_combiner::{add_union_type, combine, combine_union_types};
 
 pub fn extend_dataflow_uniquely(

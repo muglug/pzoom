@@ -1,5 +1,6 @@
 //! Echo statement analyzer.
 
+use mago_span::HasSpan;
 use mago_syntax::ast::ast::echo::Echo;
 
 use crate::context::BlockContext;
@@ -15,6 +16,16 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
+    // Mirrors Psalm `EchoAnalyzer`: echo writes to output and is impure in a
+    // mutation-free context.
+    let span = echo.span();
+    echo_analyzer::emit_impure_output(
+        analyzer,
+        (span.start.offset, span.end.offset),
+        analysis_data,
+        "echo",
+    );
+
     // Analyze each expression being echoed
     for value in &echo.values {
         let pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);

@@ -40,6 +40,23 @@ pub enum TAtomic {
         name: String,
     },
 
+    /// The result type of `get_class($x)` where `$x` is a variable: a
+    /// class-string that *depends on* `$x`. Mirrors Psalm's
+    /// `Type\Atomic\TDependentGetClass` (whose field is `$typeof`; `typeof` is a
+    /// reserved word in Rust, so the variable id is `var_id` here). `as_type` is
+    /// `$x`'s type at the call (`object` when mixed). Lets a later
+    /// `get_class($x) === Foo::class` / `switch (get_class($x))` narrow `$x`.
+    TDependentGetClass {
+        var_id: StrId,
+        as_type: Box<TUnion>,
+    },
+    /// The result type of `gettype($x)` where `$x` is a variable. Mirrors Psalm's
+    /// `Type\Atomic\TDependentGetType`. `var_id` is the interned id of `$x`; a
+    /// later `gettype($x) === "string"` / `switch (gettype($x))` narrows `$x`.
+    TDependentGetType {
+        var_id: StrId,
+    },
+
     // String subtypes
     TNonEmptyString,
     TNumericString,
@@ -52,8 +69,14 @@ pub enum TAtomic {
     },
 
     // Int subtypes
-    TPositiveInt,
-    TNegativeInt,
+    //
+    // `positive-int`, `negative-int`, `non-negative-int` and `non-positive-int`
+    // are all represented as `TIntRange` (mirroring Psalm, which lowers every
+    // bounded int keyword to a single `TIntRange` atomic):
+    //   positive-int     => TIntRange { min: Some(1),  max: None }
+    //   negative-int     => TIntRange { min: None,     max: Some(-1) }
+    //   non-negative-int => TIntRange { min: Some(0),  max: None }
+    //   non-positive-int => TIntRange { min: None,     max: Some(0) }
     TIntRange {
         min: Option<i64>,
         max: Option<i64>,
@@ -91,9 +114,25 @@ pub enum TAtomic {
         name: StrId,
         /// Generic type parameters
         type_params: Option<Vec<TUnion>>,
+        /// True when this represents the late-static-bound type (`static`/`$this`).
+        /// `name` holds the concrete class; `is_static` marks that it should be
+        /// re-resolved to the runtime class at each use site. Mirrors Hakana's
+        /// `TNamedObject::is_this`.
+        is_static: bool,
+        /// True when `type_params` were remapped through an `@extends`/`@implements`
+        /// clause and should not be re-inferred. Mirrors Hakana's
+        /// `TNamedObject::remapped_params`.
+        remapped_params: bool,
     },
     TObjectIntersection {
         types: Vec<TAtomic>,
+    },
+    /// `object{foo: int, bar?: string}` — an object with a known set of
+    /// properties (Psalm's `Type\Atomic\TObjectWithProperties`). Unlike a keyed
+    /// array these are object instances, so they are assignable to `object` and
+    /// only coercible from a bare `object`.
+    TObjectWithProperties {
+        properties: FxHashMap<ArrayKey, TUnion>,
     },
     TObject,
     TClosedResource,
@@ -150,6 +189,89 @@ pub enum TAtomic {
 
     // Numeric type (int|float)
     TNumeric,
+
+    /// A conditional type `(<cond> ? if : else)` (Psalm's `Type\Atomic\TConditional`).
+    /// Carried on a function's return type rather than in storage; evaluated at the
+    /// call site against the argument/template the condition tests.
+    TConditional(Box<ConditionalReturnType>),
+
+    /// `key-of<T>` where `T` is an unresolved template parameter (Psalm's
+    /// `Type\Atomic\TTemplateKeyOf`). Kept deferred so a concrete key cannot satisfy
+    /// it; resolved to the keys of the bound replacement during template substitution.
+    TTemplateKeyOf {
+        param_name: StrId,
+        defining_entity: StrId,
+        as_type: Box<TUnion>,
+    },
+    /// `value-of<T>` where `T` is an unresolved template parameter (Psalm's
+    /// `Type\Atomic\TTemplateValueOf`).
+    TTemplateValueOf {
+        param_name: StrId,
+        defining_entity: StrId,
+        as_type: Box<TUnion>,
+    },
+
+    /// `properties-of<C>` for a concrete class `C` (Psalm's `Type\Atomic\TPropertiesOf`).
+    /// Expanded to a keyed array of the class's properties (filtered by visibility) by
+    /// the type expander.
+    TPropertiesOf {
+        classlike_name: StrId,
+        visibility_filter: PropertiesOfVisibility,
+    },
+    /// `properties-of<T>` where `T` is an unresolved template parameter (Psalm's
+    /// `Type\Atomic\TTemplatePropertiesOf`).
+    TTemplatePropertiesOf {
+        param_name: StrId,
+        defining_entity: StrId,
+        visibility_filter: PropertiesOfVisibility,
+    },
+}
+
+/// Visibility filter for `properties-of<T>` and its public/protected/private variants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PropertiesOfVisibility {
+    All,
+    Public,
+    Protected,
+    Private,
+}
+
+impl PropertiesOfVisibility {
+    /// The docblock utility-type name this filter corresponds to.
+    pub fn utility_name(self) -> &'static str {
+        match self {
+            PropertiesOfVisibility::All => "properties-of",
+            PropertiesOfVisibility::Public => "public-properties-of",
+            PropertiesOfVisibility::Protected => "protected-properties-of",
+            PropertiesOfVisibility::Private => "private-properties-of",
+        }
+    }
+}
+
+/// A conditional return type `(<condition> ? if_true : if_false)`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ConditionalReturnType {
+    pub condition: ConditionalReturnCondition,
+    pub if_true_type: TUnion,
+    pub if_false_type: TUnion,
+}
+
+/// The condition controlling a conditional return type branch.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ConditionalReturnCondition {
+    /// Template condition, e.g. `TType is 'array'`.
+    TemplateIs {
+        template_name: StrId,
+        asserted_type: TUnion,
+    },
+    /// Parameter condition, e.g. `$name is class-string`, evaluated against the
+    /// argument's type at the call site.
+    ParamIs {
+        param_id: StrId,
+        asserted_type: TUnion,
+    },
+    /// Argument-count condition, e.g. `func_num_args() is 1`.
+    FuncNumArgsIs { count: usize },
 }
 
 /// Key type for keyed arrays (shapes).
@@ -170,9 +292,114 @@ pub struct FunctionLikeParameter {
 }
 
 impl TAtomic {
+    /// The guaranteed minimum number of entries for a keyed array, mirroring
+    /// Psalm's `TKeyedArray::getMinCount()`. Returns `None` for atomics that are
+    /// not keyed arrays.
+    ///
+    /// For a list this is the length of the leading run of always-defined entries;
+    /// for a shape it is the count of properties that are neither possibly-undefined
+    /// nor `never`.
+    pub fn get_min_count(&self) -> Option<usize> {
+        let TAtomic::TKeyedArray {
+            properties,
+            is_list,
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        if *is_list {
+            let mut min_count = 0usize;
+            while let Some(property) = properties.get(&ArrayKey::Int(min_count as i64)) {
+                if property.possibly_undefined || property.is_nothing() {
+                    break;
+                }
+                min_count += 1;
+            }
+            return Some(min_count);
+        }
+
+        Some(
+            properties
+                .values()
+                .filter(|property| !property.possibly_undefined && !property.is_nothing())
+                .count(),
+        )
+    }
+
+    /// The maximum number of entries for a keyed array, mirroring Psalm's
+    /// `TKeyedArray::getMaxCount()`. Returns `None` when the shape is unsealed (can
+    /// hold extra keys) or when the atomic is not a keyed array.
+    pub fn get_max_count(&self) -> Option<usize> {
+        let TAtomic::TKeyedArray {
+            properties,
+            sealed,
+            fallback_key_type,
+            fallback_value_type,
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        if !*sealed || fallback_key_type.is_some() || fallback_value_type.is_some() {
+            return None;
+        }
+
+        Some(
+            properties
+                .values()
+                .filter(|property| !property.is_nothing())
+                .count(),
+        )
+    }
+
+    /// Construct a plain named object (no type parameters, not late-static-bound).
+    #[inline]
+    pub fn named_object(name: StrId) -> Self {
+        TAtomic::TNamedObject {
+            name,
+            type_params: None,
+            is_static: false,
+            remapped_params: false,
+        }
+    }
+
+    /// Construct a generic named object with the given type parameters.
+    #[inline]
+    pub fn named_object_with_params(name: StrId, type_params: Option<Vec<TUnion>>) -> Self {
+        TAtomic::TNamedObject {
+            name,
+            type_params,
+            is_static: false,
+            remapped_params: false,
+        }
+    }
+
     /// Returns true if this type is nullable (can be null).
     pub fn is_nullable(&self) -> bool {
         matches!(self, TAtomic::TNull)
+    }
+
+    /// For the dependent `get_class`/`gettype` atomics (Psalm's `TDependentGetClass`
+    /// / `TDependentGetType`, both `TString` subtypes), the plain string-ish type
+    /// they stand in for. Lets type operations that have not been taught about the
+    /// dependent variants fall back to the supertype, mirroring Psalm's class
+    /// inheritance. Returns `None` for every other atomic.
+    pub fn dependent_string_equivalent(&self) -> Option<TAtomic> {
+        match self {
+            TAtomic::TDependentGetClass { as_type, .. } => {
+                let inner = as_type
+                    .get_single()
+                    .filter(|a| matches!(a, TAtomic::TNamedObject { .. }))
+                    .cloned()
+                    .map(Box::new);
+                Some(TAtomic::TClassString { as_type: inner })
+            }
+            TAtomic::TDependentGetType { .. } => Some(TAtomic::TString),
+            _ => None,
+        }
     }
 
     /// Returns true if this is a literal type.
@@ -189,29 +416,14 @@ impl TAtomic {
     }
 
     /// Returns true if this type can be falsy.
+    /// Whether this atomic *is* (or can be) the boolean `false`, mirroring Psalm's
+    /// `Union::isFalsable` (`isset($types['false'])` plus falsable template bounds).
+    ///
+    /// This is deliberately **not** "could hold a falsy value" — `0`, `""`, `[]`, etc.
+    /// are falsy but not falsable. Use [`Self::is_falsy`] for the falsy notion.
     pub fn is_falsable(&self) -> bool {
         match self {
-            TAtomic::TMixed
-            | TAtomic::TBool
-            | TAtomic::TFalse
-            | TAtomic::TNull
-            | TAtomic::TInt
-            | TAtomic::TFloat
-            | TAtomic::TString
-            | TAtomic::TNonEmptyString
-            | TAtomic::TNonEmptyNumericString
-            | TAtomic::TNonEmptyLowercaseString
-            | TAtomic::TScalar
-            | TAtomic::TNumeric
-            | TAtomic::TArrayKey
-            | TAtomic::TLiteralInt { value: 0 }
-            | TAtomic::TArray { .. }
-            | TAtomic::TList { .. } => true,
-            TAtomic::TLiteralFloat { value } => *value == 0.0,
-            TAtomic::TLiteralString { value } => value.is_empty() || value == "0",
-            TAtomic::TKeyedArray { properties, .. } => properties
-                .values()
-                .all(|value_type| value_type.possibly_undefined),
+            TAtomic::TFalse => true,
             TAtomic::TTemplateParam { as_type, .. } => as_type.is_falsable,
             TAtomic::TTemplateParamClass { as_type, .. } => as_type.is_falsable(),
             _ => false,
@@ -236,6 +448,7 @@ impl TAtomic {
             TAtomic::TTruthyString
             | TAtomic::TClassString { .. }
             | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TDependentGetClass { .. }
             | TAtomic::TTemplateParamClass { .. } => true,
             TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => true,
             TAtomic::TNonEmptyMixed => true,
@@ -244,7 +457,11 @@ impl TAtomic {
             TAtomic::TLiteralString { value } => {
                 value != NON_SPECIFIC_LITERAL_STRING_VALUE && !value.is_empty() && value != "0"
             }
-            TAtomic::TPositiveInt | TAtomic::TNegativeInt => true,
+            // An int range that cannot include 0 (wholly positive or wholly
+            // negative) is always truthy. Covers `positive-int`/`negative-int`.
+            TAtomic::TIntRange { min, max } => {
+                min.is_some_and(|m| m > 0) || max.is_some_and(|m| m < 0)
+            }
             TAtomic::TNamedObject { name, .. } => {
                 *name != StrId::SIMPLE_XML_ELEMENT && *name != StrId::SIMPLE_XMLITERATOR
             }
@@ -301,11 +518,103 @@ impl TAtomic {
                 key_type.get_id(interner),
                 value_type.get_id(interner)
             ),
-            TAtomic::TKeyedArray { is_list: true, .. } => "list".to_string(),
-            TAtomic::TKeyedArray { .. } => "array".to_string(),
+            TAtomic::TKeyedArray {
+                properties,
+                is_list,
+                sealed,
+                fallback_key_type,
+                fallback_value_type,
+            } => {
+                // Render the shape like Psalm's `TKeyedArray::getId`:
+                // `array{foo: int, bar?: string}` / `list{int, string}`, with an
+                // unsealed fallback as `, ...<K, V>` (`, ...<V>` for lists) inside
+                // the braces.
+                let has_fallback = !*sealed && fallback_value_type.is_some();
+
+                let mut int_entries: Vec<(i64, &TUnion)> = Vec::new();
+                let mut string_entries: Vec<(&str, &TUnion)> = Vec::new();
+                for (key, value) in properties {
+                    match key {
+                        ArrayKey::Int(i) => int_entries.push((*i, value)),
+                        ArrayKey::String(s) => string_entries.push((s.as_str(), value)),
+                    }
+                }
+                int_entries.sort_by_key(|(i, _)| *i);
+
+                if properties.is_empty() {
+                    // No known items: a generic list/array, or the empty array.
+                    if let Some(fallback_value) = fallback_value_type.as_ref().filter(|_| has_fallback)
+                    {
+                        return if *is_list {
+                            format!("list<{}>", fallback_value.get_id(interner))
+                        } else {
+                            let fallback_key = fallback_key_type
+                                .as_ref()
+                                .map(|k| k.get_id(interner))
+                                .unwrap_or_else(|| "array-key".to_string());
+                            format!("array<{}, {}>", fallback_key, fallback_value.get_id(interner))
+                        };
+                    }
+                    return "array<never, never>".to_string();
+                }
+
+                // Psalm uses positional list syntax (`list{int, string}`) only when
+                // every element is required; an optional element forces explicit keys.
+                let all_required = properties.values().all(|value| !value.possibly_undefined);
+                let use_list_syntax = *is_list && all_required;
+
+                let mut entries: Vec<String> = Vec::new();
+                if use_list_syntax {
+                    for (_, value) in &int_entries {
+                        entries.push(value.get_id(interner));
+                    }
+                } else {
+                    for (key, value) in &int_entries {
+                        let optional = if value.possibly_undefined { "?" } else { "" };
+                        entries.push(format!("{}{}: {}", key, optional, value.get_id(interner)));
+                    }
+                    for (key, value) in &string_entries {
+                        let optional = if value.possibly_undefined { "?" } else { "" };
+                        entries.push(format!("{}{}: {}", key, optional, value.get_id(interner)));
+                    }
+                    // Psalm sorts non-list property strings for a stable id.
+                    if !*is_list {
+                        entries.sort();
+                    }
+                }
+
+                let params_part = if has_fallback {
+                    let fallback_value = fallback_value_type.as_ref().unwrap().get_id(interner);
+                    if *is_list {
+                        format!(", ...<{}>", fallback_value)
+                    } else {
+                        let fallback_key = fallback_key_type
+                            .as_ref()
+                            .map(|k| k.get_id(interner))
+                            .unwrap_or_else(|| "array-key".to_string());
+                        format!(", ...<{}, {}>", fallback_key, fallback_value)
+                    }
+                } else {
+                    String::new()
+                };
+
+                let prefix = if *is_list { "list" } else { "array" };
+                format!("{}{{{}{}}}", prefix, entries.join(", "), params_part)
+            }
             TAtomic::TObject => "object".to_string(),
-            TAtomic::TNamedObject { name, type_params } => {
-                let mut id = strid_to_string(*name, interner);
+            TAtomic::TNamedObject {
+                name,
+                type_params,
+                is_static,
+                ..
+            } => {
+                // The late-static-bound type displays as `static` (the concrete class
+                // in `name` is only the resolution target), matching Psalm.
+                let mut id = if *is_static {
+                    "static".to_string()
+                } else {
+                    strid_to_string(*name, interner)
+                };
                 if let Some(type_params) = type_params {
                     let params = type_params
                         .iter()
@@ -327,6 +636,21 @@ impl TAtomic {
                 type_ids.dedup();
                 type_ids.join("&")
             }
+            TAtomic::TObjectWithProperties { properties } => {
+                let mut entries = properties
+                    .iter()
+                    .map(|(key, value_type)| {
+                        let key_str = match key {
+                            ArrayKey::Int(i) => i.to_string(),
+                            ArrayKey::String(s) => s.clone(),
+                        };
+                        let optional = if value_type.possibly_undefined { "?" } else { "" };
+                        format!("{}{}: {}", key_str, optional, value_type.get_id(interner))
+                    })
+                    .collect::<Vec<_>>();
+                entries.sort();
+                format!("object{{{}}}", entries.join(", "))
+            }
             TAtomic::TEnum { name } => strid_to_string(*name, interner),
             TAtomic::TEnumCase {
                 enum_name,
@@ -341,10 +665,10 @@ impl TAtomic {
                 return_type,
                 is_pure,
             } => {
-                let callable_prefix = if matches!(is_pure, Some(true)) {
-                    "pure-callable"
-                } else {
-                    "callable"
+                let callable_prefix = match is_pure {
+                    Some(true) => "pure-callable",
+                    Some(false) => "impure-callable",
+                    None => "callable",
                 };
                 if params.is_none() && return_type.is_none() {
                     callable_prefix.to_string()
@@ -368,9 +692,18 @@ impl TAtomic {
                                 .join(", ")
                         })
                         .unwrap_or_default();
+                    // Psalm wraps a multi-atomic return type in parentheses,
+                    // e.g. `callable():(A|B)`.
                     let return_str = return_type
                         .as_ref()
-                        .map(|t| t.get_id(interner))
+                        .map(|t| {
+                            let id = t.get_id(interner);
+                            if t.types.len() > 1 {
+                                format!("({})", id)
+                            } else {
+                                id
+                            }
+                        })
                         .unwrap_or_else(|| "mixed".to_string());
                     format!("{}({}):{}", callable_prefix, params_str, return_str)
                 }
@@ -380,10 +713,10 @@ impl TAtomic {
                 return_type,
                 is_pure,
             } => {
-                let closure_prefix = if matches!(is_pure, Some(true)) {
-                    "pure-function"
-                } else {
-                    "function"
+                let closure_prefix = match is_pure {
+                    Some(true) => "pure-Closure",
+                    Some(false) => "impure-Closure",
+                    None => "Closure",
                 };
                 if params.is_none() && return_type.is_none() {
                     "Closure".to_string()
@@ -407,11 +740,20 @@ impl TAtomic {
                                 .join(", ")
                         })
                         .unwrap_or_default();
+                    // Psalm wraps a multi-atomic return type in parentheses,
+                    // e.g. `callable():(A|B)`.
                     let return_str = return_type
                         .as_ref()
-                        .map(|t| t.get_id(interner))
+                        .map(|t| {
+                            let id = t.get_id(interner);
+                            if t.types.len() > 1 {
+                                format!("({})", id)
+                            } else {
+                                id
+                            }
+                        })
                         .unwrap_or_else(|| "mixed".to_string());
-                    format!("({}({}):{})", closure_prefix, params_str, return_str)
+                    format!("{}({}):{}", closure_prefix, params_str, return_str)
                 }
             }
             TAtomic::TIterable {
@@ -441,12 +783,14 @@ impl TAtomic {
             TAtomic::TTemplateParam {
                 name,
                 defining_entity,
-                ..
+                as_type,
             } => {
+                // Psalm's exact getId: `Name:DefiningClass as <constraint>`.
                 format!(
-                    "{}:{}",
+                    "{}:{} as {}",
                     strid_to_string(*name, interner),
-                    strid_to_string(*defining_entity, interner)
+                    strid_to_string(*defining_entity, interner),
+                    as_type.get_id(interner)
                 )
             }
             TAtomic::TTemplateParamClass {
@@ -463,6 +807,62 @@ impl TAtomic {
             TAtomic::TArrayKey => "array-key".to_string(),
             TAtomic::TScalar => "scalar".to_string(),
             TAtomic::TNumeric => "numeric".to_string(),
+            TAtomic::TConditional(conditional) => {
+                // Psalm: `(subject is conditional_type ? if_true : if_false)`.
+                let (subject, asserted) = match &conditional.condition {
+                    ConditionalReturnCondition::TemplateIs {
+                        template_name,
+                        asserted_type,
+                    } => (
+                        strid_to_string(*template_name, interner),
+                        asserted_type.get_id(interner),
+                    ),
+                    ConditionalReturnCondition::ParamIs {
+                        param_id,
+                        asserted_type,
+                    } => (
+                        strid_to_string(*param_id, interner),
+                        asserted_type.get_id(interner),
+                    ),
+                    ConditionalReturnCondition::FuncNumArgsIs { count } => {
+                        ("func_num_args()".to_string(), count.to_string())
+                    }
+                };
+                format!(
+                    "({} is {} ? {} : {})",
+                    subject,
+                    asserted,
+                    conditional.if_true_type.get_id(interner),
+                    conditional.if_false_type.get_id(interner)
+                )
+            }
+            TAtomic::TTemplateKeyOf { param_name, .. } => {
+                format!("key-of<{}>", strid_to_string(*param_name, interner))
+            }
+            TAtomic::TTemplateValueOf { param_name, .. } => {
+                format!("value-of<{}>", strid_to_string(*param_name, interner))
+            }
+            TAtomic::TPropertiesOf {
+                classlike_name,
+                visibility_filter,
+            } => {
+                format!(
+                    "{}<{}>",
+                    visibility_filter.utility_name(),
+                    strid_to_string(*classlike_name, interner)
+                )
+            }
+            TAtomic::TTemplatePropertiesOf {
+                param_name,
+                visibility_filter,
+                ..
+            } => {
+                format!(
+                    "{}<{}>",
+                    visibility_filter.utility_name(),
+                    strid_to_string(*param_name, interner)
+                )
+            }
             TAtomic::TNonEmptyString => "non-empty-string".to_string(),
             TAtomic::TNumericString => "numeric-string".to_string(),
             TAtomic::TNonEmptyNumericString => "non-empty-numeric-string".to_string(),
@@ -477,8 +877,12 @@ impl TAtomic {
                 }
             }
             TAtomic::TLiteralClassString { name } => format!("{}::class", name),
-            TAtomic::TPositiveInt => "positive-int".to_string(),
-            TAtomic::TNegativeInt => "negative-int".to_string(),
+            // Dependent types are string-valued; they display as their underlying
+            // string-ish type (the dependency on the variable is internal state).
+            TAtomic::TDependentGetClass { as_type, .. } => {
+                format!("class-string<{}>", as_type.get_id(interner))
+            }
+            TAtomic::TDependentGetType { .. } => "string".to_string(),
             TAtomic::TIntRange { min, max } => {
                 let min = min.map_or_else(|| "min".to_string(), |v| v.to_string());
                 let max = max.map_or_else(|| "max".to_string(), |v| v.to_string());

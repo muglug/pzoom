@@ -43,8 +43,26 @@ pub fn reconcile(
 /// Reconciles keyed types based on a map of assertions.
 ///
 /// This processes assertions for multiple variables and updates the context accordingly.
-pub fn reconcile_keyed_types(
+/// Convert a flat `var -> [Assertion]` map (a conjunction of assertions per
+/// variable) into the AND-of-OR-groups shape consumed by [`reconcile_keyed_types`].
+/// Each assertion becomes its own singleton (one-element) clause.
+pub fn to_and_groups(
     assertions: &BTreeMap<String, Vec<Assertion>>,
+) -> BTreeMap<String, Vec<Vec<Assertion>>> {
+    assertions
+        .iter()
+        .map(|(key, list)| (key.clone(), list.iter().map(|a| vec![a.clone()]).collect()))
+        .collect()
+}
+
+/// Reconcile a map of per-variable assertions against the context, narrowing each
+/// variable's type. Mirrors Psalm's `Reconciler::reconcileKeyedTypes` /
+/// Hakana's `reconcile_keyed_types`: the value for each variable is a list of
+/// AND-ed clauses, and each clause is itself a list of OR-ed assertions (a
+/// disjunction is reconciled per-alternative and unioned).
+#[allow(clippy::too_many_arguments)]
+pub fn reconcile_keyed_types(
+    assertions: &BTreeMap<String, Vec<Vec<Assertion>>>,
     context: &mut BlockContext,
     changed_var_ids: &mut FxHashSet<StrId>,
     analyzer: &StatementsAnalyzer<'_>,
@@ -58,9 +76,26 @@ pub fn reconcile_keyed_types(
         return;
     }
 
-    // Process nested isset assertions
-    let mut new_assertions = assertions.clone();
-    add_nested_assertions(&mut new_assertions, context, analyzer);
+    // Flatten groups for nested-isset augmentation and flag detection.
+    let mut flat: BTreeMap<String, Vec<Assertion>> = assertions
+        .iter()
+        .map(|(key, groups)| (key.clone(), groups.iter().flatten().cloned().collect()))
+        .collect();
+    add_nested_assertions(&mut flat, context, analyzer);
+
+    // Rebuild the nested working set, appending any assertions that
+    // add_nested_assertions introduced as singleton (AND) groups.
+    let mut new_assertions: BTreeMap<String, Vec<Vec<Assertion>>> = assertions.clone();
+    for (key, flat_assertions) in &flat {
+        let original_flat_len = assertions
+            .get(key)
+            .map(|groups| groups.iter().map(|g| g.len()).sum::<usize>())
+            .unwrap_or(0);
+        let groups = new_assertions.entry(key.clone()).or_default();
+        for assertion in flat_assertions.iter().skip(original_flat_len) {
+            groups.push(vec![assertion.clone()]);
+        }
+    }
 
     for (var_name, var_assertions) in &new_assertions {
         // Skip class constant assertions for now
@@ -69,14 +104,16 @@ pub fn reconcile_keyed_types(
         }
 
         // Determine assertion characteristics
-        let has_isset = var_assertions.iter().any(|a| a.has_isset());
+        let has_isset = var_assertions.iter().flatten().any(|a| a.has_isset());
         let has_inverted_isset = var_assertions
             .iter()
+            .flatten()
             .any(|a| matches!(a, Assertion::IsNotIsset));
         let has_falsyish = var_assertions
             .iter()
+            .flatten()
             .any(|a| matches!(a, Assertion::Falsy));
-        let has_positive_non_isset_assertion = var_assertions.iter().any(|assertion| {
+        let has_positive_non_isset_assertion = var_assertions.iter().flatten().any(|assertion| {
             matches!(
                 assertion,
                 Assertion::IsType(_)
@@ -130,53 +167,92 @@ pub fn reconcile_keyed_types(
         let type_before = current_type.clone();
         let mut had_active_assertion = false;
 
-        // Apply each assertion in sequence
-        for (assertion_offset, assertion) in var_assertions.iter().enumerate() {
-            let type_before_assertion = current_type.clone();
-            current_type = assertion_reconciler::reconcile(
-                assertion,
-                Some(&current_type),
-                possibly_undefined,
-                Some(var_name),
-                analyzer,
-                analysis_data,
-                inside_loop,
-                negated,
-            );
-
+        // Apply each assertion clause in sequence (conjunction). A clause with one
+        // assertion is a plain narrowing; a clause with several is a disjunction,
+        // reconciled per-alternative against the pre-clause type and unioned. The
+        // clause index is the unit used for active-assertion offsets (matching
+        // get_truths_from_formula and the singleton-group flat wrapper).
+        for (clause_index, assertion_group) in var_assertions.iter().enumerate() {
             let is_active_assertion = active_assertion_offsets
                 .and_then(|offsets_by_var| offsets_by_var.get(var_name))
-                .is_some_and(|offsets| offsets.contains(&assertion_offset));
-            had_active_assertion |=
-                is_active_assertion && !assertion.has_isset() && current_type != type_before_assertion;
+                .is_some_and(|offsets| offsets.contains(&clause_index));
 
-            if emit_redundant_issues && is_active_assertion && !type_before_assertion.is_mixed() {
-                if current_type.is_nothing() {
-                    trigger_issue_for_impossible(
-                        analysis_data,
-                        analyzer,
-                        &type_before_assertion,
-                        var_name,
+            if assertion_group.len() == 1 {
+                let assertion = &assertion_group[0];
+                let type_before_assertion = current_type.clone();
+                current_type = assertion_reconciler::reconcile(
+                    assertion,
+                    Some(&current_type),
+                    possibly_undefined,
+                    Some(var_name),
+                    analyzer,
+                    analysis_data,
+                    inside_loop,
+                    negated,
+                );
+
+                // Psalm clears from_docblock only inside specific reconciles (plain
+                // TString/TInt/TBool), never for a truthy/falsy narrowing — so e.g.
+                // `if ($a && $a instanceof A)` on a `?static` docblock keeps the
+                // docblock flag and reports RedundantConditionGivenDocblockType.
+                had_active_assertion |= is_active_assertion
+                    && !assertion.has_isset()
+                    && !matches!(assertion, Assertion::Truthy | Assertion::Falsy)
+                    && current_type != type_before_assertion;
+
+                if emit_redundant_issues && is_active_assertion && !type_before_assertion.is_mixed() {
+                    if current_type.is_nothing() {
+                        trigger_issue_for_impossible(
+                            analysis_data,
+                            analyzer,
+                            &type_before_assertion,
+                            var_name,
+                            assertion,
+                            false,
+                            negated,
+                        );
+                    } else if current_type == type_before_assertion
+                        && should_emit_redundant_issue_for_unchanged_assertion(
+                            assertion,
+                            &type_before_assertion,
+                            analyzer,
+                        )
+                    {
+                        trigger_issue_for_impossible(
+                            analysis_data,
+                            analyzer,
+                            &type_before_assertion,
+                            var_name,
+                            assertion,
+                            true,
+                            negated,
+                        );
+                    }
+                }
+            } else {
+                // Disjunction: union of reconciling each alternative against the
+                // type as it was before this clause.
+                let base_type = current_type.clone();
+                let mut result: Option<TUnion> = None;
+                for assertion in assertion_group {
+                    let narrowed = assertion_reconciler::reconcile(
                         assertion,
-                        false,
+                        Some(&base_type),
+                        possibly_undefined,
+                        Some(var_name),
+                        analyzer,
+                        analysis_data,
+                        inside_loop,
                         negated,
                     );
-                } else if current_type == type_before_assertion
-                    && should_emit_redundant_issue_for_unchanged_assertion(
-                        assertion,
-                        &type_before_assertion,
-                        analyzer,
-                    )
-                {
-                    trigger_issue_for_impossible(
-                        analysis_data,
-                        analyzer,
-                        &type_before_assertion,
-                        var_name,
-                        assertion,
-                        true,
-                        negated,
-                    );
+                    result = Some(match result {
+                        None => narrowed,
+                        Some(existing) => combine_union_types(&existing, &narrowed, false),
+                    });
+                }
+                if let Some(result) = result {
+                    had_active_assertion |= is_active_assertion && result != current_type;
+                    current_type = result;
                 }
             }
         }
@@ -201,14 +277,14 @@ pub fn reconcile_keyed_types(
         // Check if type changed
         let type_changed = current_type != type_before;
 
-        // Handle nested array types
-        if var_name.ends_with(']')
-            && (type_changed || has_isset)
-            && !has_inverted_isset
-            && !has_falsyish
-        {
+        // Propagate a reconciled nested key back into its base array. Psalm's
+        // `reconcileKeyedTypes` does this for any `…]` key that isn't an
+        // inverted-isset / empty / equality assertion — notably *without* gating on
+        // whether the path-local changed, so a base array stays in sync even when
+        // the leaf type-local was already narrowed (e.g. `is_int($arr['foo'])`).
+        if var_name.ends_with(']') && !has_inverted_isset && !has_falsyish {
             let key_parts = break_up_path_into_parts(var_name);
-            adjust_array_type(key_parts, context, changed_var_ids, &current_type, analyzer);
+            adjust_tkeyed_array_type(key_parts, context, changed_var_ids, &current_type, analyzer);
         }
 
         if type_changed {
@@ -257,6 +333,24 @@ fn should_emit_redundant_issue_for_unchanged_assertion(
         {
             false
         }
+        // Mirror Psalm's `SimpleAssertionReconciler::reconcileNumeric`: a numeric
+        // check is only redundant when every member is already a pure int/float
+        // value type. Any string component (including a literal numeric string such
+        // as `"5"`), `numeric-string`, `numeric`, `scalar`, or `array-key` keeps the
+        // check non-redundant, because the runtime check still discriminates.
+        Assertion::IsType(TAtomic::TNumeric) => {
+            !existing_var_type.types.is_empty()
+                && existing_var_type.types.iter().all(|atomic| {
+                    matches!(
+                        atomic,
+                        TAtomic::TInt
+                            | TAtomic::TFloat
+                            | TAtomic::TLiteralInt { .. }
+                            | TAtomic::TLiteralFloat { .. }
+                            | TAtomic::TIntRange { .. }
+                    )
+                })
+        }
         Assertion::IsType(asserted_atomic) => assertion_reconciler::intersect_union_with_atomic(
             existing_var_type,
             asserted_atomic,
@@ -282,12 +376,63 @@ fn should_emit_redundant_issue_for_unchanged_assertion(
             analyzer,
         )
         .is_none(),
-        Assertion::ArrayKeyExists => !existing_var_type.possibly_undefined,
+        // Psalm's reconcileArrayKeyExists only does setPossiblyUndefined(false) and
+        // never calls triggerIssueForImpossible, so array_key_exists() is never
+        // reported as redundant/impossible.
+        Assertion::ArrayKeyExists => false,
+        // `count($x) >= n` is redundant when the value is provably already at least
+        // that long (Psalm's reconcileNonEmptyCountable `$prop_min_count >= $count`).
+        Assertion::HasAtLeastCount(count) => get_union_count_bounds(existing_var_type)
+            .is_some_and(|(min_count, _)| min_count >= *count),
+        // `count($x) < n` is redundant when the value is provably always shorter
+        // (Psalm's reconcileNotNonEmptyCountable `$prop_max_count < $count`).
+        Assertion::DoesNotHaveAtLeastCount(count) => get_union_count_bounds(existing_var_type)
+            .is_some_and(|(_, max_count)| max_count.is_some_and(|max| max < *count)),
         Assertion::InArray(_) => false,
         Assertion::NotInArray(assertion_type) => {
             not_in_array_is_provably_redundant(existing_var_type, assertion_type)
         }
         _ => false,
+    }
+}
+
+/// Computes the `(min_count, Option<max_count>)` bounds of a union's array
+/// members, mirroring Psalm's `TKeyedArray::getMinCount()`/`getMaxCount()`.
+///
+/// Returns `None` when the union contains a non-countable atomic (so the count is
+/// unknown), or when there are no atomics. `max_count` is `None` when an unsealed
+/// or unbounded array is present.
+pub(crate) fn get_union_count_bounds(union: &TUnion) -> Option<(usize, Option<usize>)> {
+    if union.types.is_empty() {
+        return None;
+    }
+
+    let mut min_count = usize::MAX;
+    let mut max_count = Some(0usize);
+
+    for atomic in &union.types {
+        let (atomic_min, atomic_max) = match atomic {
+            TAtomic::TArray { .. } | TAtomic::TList { .. } => (0, None),
+            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => (1, None),
+            // Defer to the keyed-array bounds defined on the type itself, mirroring
+            // Psalm's TKeyedArray::getMinCount()/getMaxCount().
+            TAtomic::TKeyedArray { .. } => {
+                (atomic.get_min_count().unwrap_or(0), atomic.get_max_count())
+            }
+            _ => return None,
+        };
+
+        min_count = min_count.min(atomic_min);
+        max_count = match (max_count, atomic_max) {
+            (Some(existing_max), Some(next_max)) => Some(existing_max.max(next_max)),
+            _ => None,
+        };
+    }
+
+    if min_count == usize::MAX {
+        None
+    } else {
+        Some((min_count, max_count))
     }
 }
 
@@ -427,6 +572,20 @@ fn break_up_path_into_parts(path: &str) -> Vec<String> {
 }
 
 /// Gets the value type for a nested key path.
+/// Resolve the current type for a variable/property-path key (e.g. `$this->foo`),
+/// falling back to the declared property/static type when the key isn't yet a
+/// local. Thin public wrapper over [`get_value_for_key`] for callers (such as
+/// method-call assertion application) that need to seed a property path before
+/// narrowing it. Mirrors the resolution Psalm performs in `Reconciler::reconcile`.
+pub(crate) fn resolve_key_type(
+    key: &str,
+    context: &BlockContext,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> Option<TUnion> {
+    let mut possibly_undefined = false;
+    get_value_for_key(key, context, analyzer, false, false, false, &mut possibly_undefined)
+}
+
 fn get_value_for_key(
     key: &str,
     context: &BlockContext,
@@ -1143,8 +1302,14 @@ fn normalize_array_key_literal(array_key: &str) -> String {
     array_key.to_string()
 }
 
-/// Adjusts array types based on key narrowing.
-fn adjust_array_type(
+/// Propagates a reconciled nested key (`$base[offset]`) into the base array's
+/// type. Mirrors Psalm's `Reconciler::adjustTKeyedArrayType`: it updates the
+/// first array-like atomic's known item for the offset (converting a list / plain
+/// array as needed), keeps the array a list where it can (filling gaps from the
+/// fallback or otherwise dropping list-ness), marks `$base[offset]` undefined when
+/// it lands on more than one offset, and recurses into the parent for deeper
+/// paths with the freshly-updated base type.
+fn adjust_tkeyed_array_type(
     key_parts: Vec<String>,
     context: &mut BlockContext,
     changed_var_ids: &mut FxHashSet<StrId>,
@@ -1156,7 +1321,7 @@ fn adjust_array_type(
         return;
     };
 
-    let dict_keys = if array_key.starts_with('$') {
+    let array_key_offsets = if array_key.starts_with('$') {
         let mut nested_possibly_undefined = false;
         let Some(key_type) = resolve_variable_key_type(
             &array_key,
@@ -1182,84 +1347,142 @@ fn adjust_array_type(
         return;
     };
 
-    let base_var_id = match analyzer
+    let Some(base_var_id) = analyzer
         .interner
         .find(&base_key)
         .or_else(|| get_alternate_var_id(analyzer, &base_key))
-    {
-        Some(id) => id,
-        None => return,
+    else {
+        return;
     };
 
-    let existing_type = match context.locals.get(&base_var_id) {
-        Some(t) => t.clone(),
-        None => return,
-    };
+    // The result is possibly-undefined when it can land on more than one offset.
+    let mut result_type = result_type.clone();
+    if array_key_offsets.len() > 1 {
+        result_type.possibly_undefined = true;
+    }
 
-    let mut new_types = Vec::new();
+    let nested_path_id = analyzer
+        .interner
+        .find(&format!("{}[{}]", base_key, array_key));
 
-    for atomic in &existing_type.types {
-        match atomic {
-            TAtomic::TKeyedArray {
-                properties,
-                is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                let mut new_properties = properties.clone();
-                for dict_key in &dict_keys {
-                    new_properties.insert(dict_key.clone(), result_type.clone());
-                }
+    for offset in &array_key_offsets {
+        let Some(existing_type) = context.locals.get(&base_var_id).cloned() else {
+            return;
+        };
 
-                new_types.push(TAtomic::TKeyedArray {
-                    properties: new_properties,
-                    is_list: *is_list,
-                    sealed: *sealed,
-                    fallback_key_type: fallback_key_type.clone(),
-                    fallback_value_type: fallback_value_type.clone(),
-                });
-            }
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            } => {
-                // Convert to keyed array with the known key
-                let mut properties = rustc_hash::FxHashMap::default();
-                for dict_key in &dict_keys {
-                    properties.insert(dict_key.clone(), result_type.clone());
-                }
-
-                new_types.push(TAtomic::TKeyedArray {
+        // Psalm updates the first matching array-like atomic and stops.
+        let mut new_atomics = existing_type.types.clone();
+        let mut updated = false;
+        for atomic in new_atomics.iter_mut() {
+            let replacement = match atomic {
+                TAtomic::TKeyedArray {
                     properties,
-                    is_list: false,
-                    sealed: false,
-                    fallback_key_type: Some(key_type.clone()),
-                    fallback_value_type: Some(value_type.clone()),
-                });
+                    is_list,
+                    sealed,
+                    fallback_key_type,
+                    fallback_value_type,
+                } => Some(set_keyed_array_offset(
+                    properties,
+                    *is_list,
+                    *sealed,
+                    fallback_key_type.as_deref(),
+                    fallback_value_type.as_deref(),
+                    offset,
+                    &result_type,
+                )),
+                // A generic list (`list<T>`) keeps its uniform element type rather
+                // than being turned into a keyed array — pzoom resolves a dynamic
+                // offset against the element type, not the fallback of a keyed list.
+                TAtomic::TArray {
+                    key_type,
+                    value_type,
+                } => {
+                    // A plain array becomes a keyed array with the offset known and
+                    // the original params as the unsealed fallback.
+                    let mut properties = FxHashMap::default();
+                    properties.insert(offset.clone(), result_type.clone());
+                    Some(TAtomic::TKeyedArray {
+                        properties,
+                        is_list: false,
+                        sealed: false,
+                        fallback_key_type: Some(key_type.clone()),
+                        fallback_value_type: Some(value_type.clone()),
+                    })
+                }
+                _ => None,
+            };
+
+            if let Some(replacement) = replacement {
+                *atomic = replacement;
+                updated = true;
+                break;
             }
-            _ => {
-                new_types.push(atomic.clone());
+        }
+
+        if !updated {
+            continue;
+        }
+
+        let new_base = TUnion::from_types(new_atomics);
+        changed_var_ids.insert(base_var_id);
+        if let Some(nested_path_id) = nested_path_id {
+            changed_var_ids.insert(nested_path_id);
+        }
+        context.locals.insert(base_var_id, new_base.clone());
+
+        // Recurse into the parent for deeper paths, with the updated base type.
+        if base_key.ends_with(']') {
+            adjust_tkeyed_array_type(
+                break_up_path_into_parts(&base_key),
+                context,
+                changed_var_ids,
+                &new_base,
+                analyzer,
+            );
+        }
+    }
+}
+
+/// Sets `offset` to `result_type` in a keyed array, preserving list-ness when the
+/// offset extends the list contiguously, filling an int gap from the fallback, or
+/// otherwise dropping list-ness — mirroring Psalm's list fixup in
+/// `adjustTKeyedArrayType`.
+fn set_keyed_array_offset(
+    properties: &FxHashMap<ArrayKey, TUnion>,
+    is_list: bool,
+    sealed: bool,
+    fallback_key_type: Option<&TUnion>,
+    fallback_value_type: Option<&TUnion>,
+    offset: &ArrayKey,
+    result_type: &TUnion,
+) -> TAtomic {
+    let mut new_properties = properties.clone();
+    new_properties.insert(offset.clone(), result_type.clone());
+
+    let mut new_is_list = is_list;
+    if is_list {
+        // A non-contiguous insert (a string key, or an int that leaves a hole)
+        // drops list-ness. Psalm additionally fills an int hole from the fallback
+        // when one exists, but doing so here over-eagerly invents elements during
+        // reconciliation (e.g. inflating a list's `count`), so pzoom drops to a
+        // keyed array instead.
+        let breaks_list = match offset {
+            ArrayKey::String(_) => true,
+            ArrayKey::Int(index) => {
+                *index != 0 && !properties.contains_key(&ArrayKey::Int(index - 1))
             }
+        };
+        if breaks_list {
+            new_is_list = false;
         }
     }
 
-    if !new_types.is_empty() {
-        changed_var_ids.insert(base_var_id);
-        context
-            .locals
-            .insert(base_var_id, TUnion::from_types(new_types));
-    }
-
-    // Recursively adjust parent arrays
-    if base_key.ends_with(']') {
-        adjust_array_type(
-            break_up_path_into_parts(&base_key),
-            context,
-            changed_var_ids,
-            &existing_type,
-            analyzer,
-        );
+    TAtomic::TKeyedArray {
+        properties: new_properties,
+        is_list: new_is_list,
+        sealed,
+        fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
+        fallback_value_type: fallback_value_type.map(|t| Box::new(t.clone())),
     }
 }
 
@@ -1453,8 +1676,8 @@ pub(crate) fn trigger_issue_for_impossible(
 
     if analysis_data.issues.iter().any(|issue| {
         issue.kind == issue_kind
-            && issue.start_offset == start
-            && issue.end_offset == end
+            && issue.location.start_offset == start
+            && issue.location.end_offset == end
             && issue.message == message
     }) {
         return;

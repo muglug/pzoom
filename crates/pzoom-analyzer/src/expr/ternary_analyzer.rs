@@ -147,11 +147,18 @@ pub fn analyze(
 
     // Apply type reconciliation to the if-branch context
     if !reconcilable_if_types.is_empty() {
-        apply_reconciled_types(
-            analyzer,
+        let mut if_changed_var_ids = FxHashSet::default();
+        let inside_loop = if_context.inside_loop;
+        reconciler::reconcile_keyed_types(
             &reconcilable_if_types,
             &mut if_context,
+            &mut if_changed_var_ids,
+            analyzer,
             analysis_data,
+            inside_loop,
+            false,
+            false,
+            None,
         );
     }
 
@@ -165,7 +172,6 @@ pub fn analyze(
 
     // Analyze the branches
     let mut lhs_type: Option<TUnion> = None;
-    let mut changed_var_ids = FxHashSet::default();
 
     // Check if there is an expression for the true case (full ternary vs elvis)
     if let Some(ref if_expr) = cond.then {
@@ -203,14 +209,22 @@ pub fn analyze(
 
     // Apply negated types to else context
     if !if_scope.negated_types.is_empty() {
-        apply_reconciled_types(
-            analyzer,
+        let inside_loop = else_context.inside_loop;
+        let mut changed_var_ids = FxHashSet::default();
+        reconciler::reconcile_keyed_types(
             &if_scope.negated_types,
             &mut else_context,
+            &mut changed_var_ids,
+            analyzer,
             analysis_data,
+            inside_loop,
+            false,
+            false,
+            None,
         );
 
-        // Remove reconciled clauses
+        // Drop clauses invalidated by the narrowing (mirrors Hakana's load-bearing
+        // remove_reconciled_clause_refs on the else context).
         let (new_clauses, _) = BlockContext::remove_reconciled_clause_refs(
             &else_context.clauses,
             &changed_var_ids,
@@ -417,81 +431,6 @@ fn formula_contradicts_entry_clauses(
     false
 }
 
-/// Apply reconciled types to a context.
-fn apply_reconciled_types(
-    analyzer: &StatementsAnalyzer<'_>,
-    reconciled_types: &BTreeMap<String, Vec<Vec<Assertion>>>,
-    context: &mut BlockContext,
-    analysis_data: &mut FunctionAnalysisData,
-) {
-    if reconciled_types.is_empty() {
-        return;
-    }
-
-    let mut flattened: BTreeMap<String, Vec<Assertion>> = BTreeMap::new();
-    for (var_name, assertion_lists) in reconciled_types {
-        let has_or_group = assertion_lists
-            .iter()
-            .any(|assertion_list| assertion_list.len() > 1);
-
-        if has_or_group {
-            let var_id = analyzer.interner.intern(var_name);
-            let mut current_type = context
-                .locals
-                .get(&var_id)
-                .cloned()
-                .unwrap_or_else(TUnion::mixed);
-
-            for assertion_list in assertion_lists {
-                let mut orred_outcome: Option<TUnion> = None;
-                for assertion in assertion_list {
-                    let narrowed = assertion_reconciler::reconcile(
-                        assertion,
-                        Some(&current_type),
-                        false,
-                        Some(var_name),
-                        analyzer,
-                        analysis_data,
-                        context.inside_loop,
-                        false,
-                    );
-
-                    orred_outcome = Some(match orred_outcome {
-                        Some(existing) => combine_union_types(&existing, &narrowed, false),
-                        None => narrowed,
-                    });
-                }
-
-                if let Some(outcome) = orred_outcome {
-                    current_type = outcome;
-                }
-            }
-
-            context.locals.insert(var_id, current_type);
-        } else {
-            let entry = flattened.entry(var_name.clone()).or_default();
-            for assertion_list in assertion_lists {
-                entry.extend(assertion_list.iter().cloned());
-            }
-        }
-    }
-
-    if !flattened.is_empty() {
-        let mut changed_var_ids = FxHashSet::default();
-        let inside_loop = context.inside_loop;
-        reconciler::reconcile_keyed_types(
-            &flattened,
-            context,
-            &mut changed_var_ids,
-            analyzer,
-            analysis_data,
-            inside_loop,
-            false,
-            false,
-            None,
-        );
-    }
-}
 
 fn merge_direct_assertions_into_reconciled_types(
     reconciled_types: &mut BTreeMap<String, Vec<Vec<Assertion>>>,

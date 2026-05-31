@@ -28,6 +28,15 @@ pub fn reconcile(
             TAtomic::TObject => {
                 return Some(subtract_object(existing_var_type));
             }
+            TAtomic::TScalar => {
+                return Some(subtract_scalar(existing_var_type));
+            }
+            TAtomic::TResource => {
+                return Some(subtract_resource(existing_var_type));
+            }
+            TAtomic::TCallable { .. } => {
+                return Some(subtract_callable(existing_var_type));
+            }
             TAtomic::TBool => {
                 return Some(subtract_bool(existing_var_type));
             }
@@ -69,6 +78,9 @@ pub fn reconcile(
         Assertion::Falsy => Some(reconcile_falsy(existing_var_type)),
         Assertion::IsNotIsset => Some(reconcile_not_isset(existing_var_type, key)),
         Assertion::EmptyCountable => Some(reconcile_empty_countable(existing_var_type)),
+        Assertion::DoesNotHaveAtLeastCount(count) => {
+            Some(reconcile_does_not_have_at_least_count(existing_var_type, *count))
+        }
         Assertion::DoesNotHaveArrayKey(key) => Some(reconcile_no_array_key(existing_var_type, key)),
         _ => None,
     }
@@ -107,15 +119,155 @@ fn subtract_object(existing_var_type: &TUnion) -> TUnion {
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TObject
-            | TAtomic::TNamedObject { .. }
-            | TAtomic::TClosure { .. }
-            | TAtomic::TCallable { .. } => {
+            TAtomic::TObject | TAtomic::TNamedObject { .. } | TAtomic::TClosure { .. } => {
                 // Remove object types
+            }
+            TAtomic::TCallable { .. } => {
+                // A callable is not necessarily an object: it can be a
+                // callable-string or a callable-array. Narrow to those rather
+                // than removing the type entirely. Matches Psalm reconcileObject.
+                acceptable_types.push(TAtomic::TString);
+                acceptable_types.push(TAtomic::TArray {
+                    key_type: Box::new(TUnion::array_key()),
+                    value_type: Box::new(TUnion::mixed()),
+                });
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_object(as_type);
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            _ => {
+                acceptable_types.push(atomic.clone());
+            }
+        }
+    }
+
+    if acceptable_types.is_empty() {
+        TUnion::nothing()
+    } else {
+        TUnion::from_types(acceptable_types)
+    }
+}
+
+/// Returns true if the atomic type belongs to Psalm's `Scalar` hierarchy
+/// (int/float/string/bool families plus numeric, array-key and scalar itself).
+fn is_scalar_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TString
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TClassString { .. }
+            | TAtomic::TBool
+            | TAtomic::TTrue
+            | TAtomic::TFalse
+            | TAtomic::TNumeric
+            | TAtomic::TArrayKey
+            | TAtomic::TScalar
+    )
+}
+
+/// Subtracts all scalar types from a union (`!scalar`). Mirrors Psalm
+/// `reconcileScalar`: keep only non-scalar atomics. Gated on non-mixed, like
+/// Psalm's dispatch (`!$existing_var_type->hasMixed()`).
+fn subtract_scalar(existing_var_type: &TUnion) -> TUnion {
+    if existing_var_type.is_mixed() {
+        return existing_var_type.clone();
+    }
+
+    let mut acceptable_types = Vec::new();
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            _ if is_scalar_atomic(atomic) => {
+                // Remove scalar types
+            }
+            TAtomic::TTemplateParam { as_type, .. } => {
+                if !as_type.is_mixed() {
+                    let subtracted = subtract_scalar(as_type);
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            _ => {
+                acceptable_types.push(atomic.clone());
+            }
+        }
+    }
+
+    if acceptable_types.is_empty() {
+        TUnion::nothing()
+    } else {
+        TUnion::from_types(acceptable_types)
+    }
+}
+
+/// Subtracts resource types from a union (`!resource`). Mirrors Psalm
+/// `reconcileResource`: remove the `resource` atomic, keep everything else.
+fn subtract_resource(existing_var_type: &TUnion) -> TUnion {
+    if existing_var_type.is_mixed() {
+        return existing_var_type.clone();
+    }
+
+    let mut acceptable_types = Vec::new();
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TResource => {
+                // Remove resource
+            }
+            TAtomic::TTemplateParam { as_type, .. } => {
+                if !as_type.is_mixed() {
+                    let subtracted = subtract_resource(as_type);
+                    push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            _ => {
+                acceptable_types.push(atomic.clone());
+            }
+        }
+    }
+
+    if acceptable_types.is_empty() {
+        TUnion::nothing()
+    } else {
+        TUnion::from_types(acceptable_types)
+    }
+}
+
+/// Subtracts callable types from a union (`!callable`). Mirrors Psalm
+/// `reconcileCallable`: remove atomics that are themselves callable types
+/// (`callable`, closures), keeping the rest. (Psalm additionally drops
+/// callmap callable-strings and __invoke objects, which require codebase/
+/// callmap lookups that pzoom does not model in the reconciler.)
+fn subtract_callable(existing_var_type: &TUnion) -> TUnion {
+    let mut acceptable_types = Vec::new();
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TCallable { .. } | TAtomic::TClosure { .. } => {
+                // Remove callable types
+            }
+            TAtomic::TTemplateParam { as_type, .. } => {
+                if !as_type.is_mixed() {
+                    let subtracted = subtract_callable(as_type);
                     push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
@@ -185,10 +337,7 @@ fn subtract_num(existing_var_type: &TUnion) -> TUnion {
     for atomic in &existing_var_type.types {
         match atomic {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
-            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TNumeric => {
@@ -244,8 +393,10 @@ fn subtract_float(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TBool);
             }
             TAtomic::TNumeric => {
-                // numeric - float = int
+                // numeric - float = int | numeric-string; Psalm coarsens the
+                // numeric-string residue to `string`.
                 acceptable_types.push(TAtomic::TInt);
+                acceptable_types.push(TAtomic::TString);
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
@@ -279,10 +430,7 @@ fn subtract_int(existing_var_type: &TUnion) -> TUnion {
     for atomic in &existing_var_type.types {
         match atomic {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
-            | TAtomic::TIntRange { .. } => {
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. } => {
                 // Remove int types
             }
             TAtomic::TScalar => {
@@ -292,8 +440,10 @@ fn subtract_int(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TBool);
             }
             TAtomic::TNumeric => {
-                // numeric - int = float
+                // numeric - int = float | numeric-string; Psalm coarsens the
+                // numeric-string residue to `string`.
                 acceptable_types.push(TAtomic::TFloat);
+                acceptable_types.push(TAtomic::TString);
             }
             TAtomic::TArrayKey => {
                 // array-key - int = string
@@ -392,10 +542,7 @@ fn subtract_arraykey(existing_var_type: &TUnion) -> TUnion {
     for atomic in &existing_var_type.types {
         match atomic {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TPositiveInt
-            | TAtomic::TNegativeInt
-            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
             | TAtomic::TString
             | TAtomic::TLiteralString { .. }
             | TAtomic::TNonEmptyString
@@ -554,7 +701,7 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TNamedObject {
                     name: StrId::TRAVERSABLE,
                     type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
-                });
+                is_static: false, remapped_params: false });
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
@@ -632,14 +779,48 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TFalse);
             }
             TAtomic::TString => {
-                // Could be empty string
+                // The only falsy strings are "" and "0". Matches Psalm.
                 acceptable_types.push(TAtomic::TLiteralString {
                     value: String::new(),
+                });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: "0".to_string(),
+                });
+            }
+            TAtomic::TNonEmptyString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TTruthyString => {
+                // The only falsy non-empty string is "0". (A truthy-string cannot
+                // be "0", so it narrows to nothing here.) Matches Psalm.
+                if !matches!(atomic, TAtomic::TTruthyString) {
+                    acceptable_types.push(TAtomic::TLiteralString {
+                        value: "0".to_string(),
+                    });
+                }
+            }
+            TAtomic::TLowercaseString => {
+                // A lowercase-string can be "" or "0".
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: String::new(),
+                });
+                acceptable_types.push(TAtomic::TLiteralString {
+                    value: "0".to_string(),
                 });
             }
             TAtomic::TInt => {
                 // Could be 0
                 acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
+            }
+            TAtomic::TIntRange { min, max } => {
+                // The only falsy int is 0; keep it only if the range contains 0
+                // (Psalm reconcileFalsyOrEmpty narrows an int range to literal 0).
+                let contains_zero =
+                    min.is_none_or(|m| m <= 0) && max.is_none_or(|m| m >= 0);
+                if contains_zero {
+                    acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
+                }
             }
             TAtomic::TArray { .. } => {
                 // Could be empty array
@@ -653,6 +834,17 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
                     key_type: Box::new(TUnion::nothing()),
                     value_type: Box::new(TUnion::nothing()),
                 });
+            }
+            TAtomic::TKeyedArray { properties, .. } => {
+                // A keyed array is falsy only when empty; if it can be empty (no
+                // required keys), narrow to the empty array. Matches Psalm.
+                let has_required = properties.values().any(|v| !v.possibly_undefined);
+                if !has_required {
+                    acceptable_types.push(TAtomic::TArray {
+                        key_type: Box::new(TUnion::nothing()),
+                        value_type: Box::new(TUnion::nothing()),
+                    });
+                }
             }
             TAtomic::TMixed => {
                 // Mixed could be any falsy value
@@ -796,6 +988,49 @@ fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
     } else {
         TUnion::from_types(acceptable_types)
     }
+}
+
+/// Reconciles a `count($x) < count` assertion (`DoesNotHaveAtLeastCount`).
+///
+/// Mirrors Psalm's `SimpleNegatedAssertionReconciler::reconcileNotNonEmptyCountable`
+/// with a non-null `$count`: removes sealed shapes that always have at least `count`
+/// elements (an impossible `< count`), keeps the rest. The centralized redundant-issue
+/// path reports the impossible/redundant cases.
+fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usize) -> TUnion {
+    let mut acceptable_types = Vec::new();
+    let mut did_remove_type = false;
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TKeyedArray { .. } => {
+                // Mirror Psalm's reconcileNotNonEmptyCountable: a shape whose
+                // getMinCount() already meets the bound can never be shorter.
+                let prop_min_count = atomic.get_min_count().unwrap_or(0);
+
+                if prop_min_count >= count {
+                    // count($a) < count is impossible: the shape is always at least
+                    // `count` long. Drop it (yielding a contradiction).
+                    did_remove_type = true;
+                } else {
+                    // Redundant (always shorter) or possible: keep the shape.
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            _ => {
+                acceptable_types.push(atomic.clone());
+            }
+        }
+    }
+
+    if acceptable_types.is_empty() {
+        return TUnion::nothing();
+    }
+    // Nothing dropped: keep the type verbatim (preserving data-flow nodes) so the
+    // centralized redundant-issue path can detect the no-op via equality.
+    if !did_remove_type {
+        return existing_var_type.clone();
+    }
+    TUnion::from_types(acceptable_types)
 }
 
 /// Reconciles a DoesNotHaveArrayKey assertion.

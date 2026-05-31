@@ -32,18 +32,23 @@ pub fn resolve_hint(
             return_type: None,
             is_pure: None,
         }),
+        // A native `static` return type is the late-static-bound type: keep the
+        // concrete declaring class in `name` for member resolution, and flag it as
+        // static so it is re-resolved at each call site. Mirrors Hakana's is_this.
         Hint::Static(_) => TUnion::new(TAtomic::TNamedObject {
             name: self_class.unwrap_or(StrId::STATIC),
             type_params: None,
+            is_static: self_class.is_some(),
+            remapped_params: false,
         }),
         Hint::Self_(_) => TUnion::new(TAtomic::TNamedObject {
             name: self_class.unwrap_or(StrId::SELF),
             type_params: None,
-        }),
+        is_static: false, remapped_params: false }),
         Hint::Parent(_) => TUnion::new(TAtomic::TNamedObject {
             name: parent_class.unwrap_or(StrId::PARENT),
             type_params: None,
-        }),
+        is_static: false, remapped_params: false }),
         Hint::Identifier(ident) => resolve_identifier_hint(
             ident,
             interner,
@@ -183,11 +188,11 @@ fn resolve_identifier_hint(
         "self" | "static" if self_class.is_some() => TUnion::new(TAtomic::TNamedObject {
             name: self_class.unwrap(),
             type_params: None,
-        }),
+        is_static: false, remapped_params: false }),
         "parent" if parent_class.is_some() => TUnion::new(TAtomic::TNamedObject {
             name: parent_class.unwrap(),
             type_params: None,
-        }),
+        is_static: false, remapped_params: false }),
         "int" | "integer" => TUnion::int(),
         "float" | "double" | "real" => TUnion::float(),
         "string" => TUnion::string(),
@@ -226,7 +231,7 @@ fn resolve_identifier_hint(
             TUnion::new(TAtomic::TNamedObject {
                 name: resolved_name,
                 type_params: None,
-            })
+            is_static: false, remapped_params: false })
         }
     }
 }

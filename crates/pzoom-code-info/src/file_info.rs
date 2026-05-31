@@ -1,0 +1,111 @@
+//! Per-file scanned information.
+//!
+//! Mirrors Hakana's `file_info.rs`: `FileInfo` records what a single scanned
+//! file defines (classes, functions, constants) plus scanner-preprocessed inline
+//! docblock annotations. Split out of [`crate::codebase_info`] (which keeps the
+//! codebase-wide `CodebaseInfo`).
+
+use pzoom_str::StrId;
+use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
+
+use crate::TUnion;
+
+/// Information about a scanned file.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FileInfo {
+    pub path: StrId,
+    /// Classes defined in this file.
+    pub classes: Vec<StrId>,
+    /// Functions defined in this file.
+    pub functions: Vec<StrId>,
+    /// Constants defined in this file.
+    pub constants: Vec<StrId>,
+    /// Hash of file contents for cache invalidation.
+    pub content_hash: String,
+    /// The file contents (for re-parsing during analysis).
+    pub contents: String,
+    /// Whether this file is a stub file.
+    #[serde(default)]
+    pub is_stub: bool,
+    /// Whether this is a *low-precedence* stub (the phpstorm-derived
+    /// `stubs/extensions/*` set). Mirrors Psalm's precedence: pzoom's own curated
+    /// stubs (`CoreGenericFunctions`, `Php*`, `SPL`, …) take precedence over the
+    /// phpstorm-stubs, which fill in only declarations the curated stubs don't define.
+    #[serde(default)]
+    pub is_low_precedence_stub: bool,
+    /// Preprocessed inline docblock annotations keyed by expression/statement offset.
+    #[serde(default)]
+    pub inline_annotations: InlineTypeAnnotations,
+}
+
+/// Scanner-preprocessed inline type annotations for a file.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct InlineTypeAnnotations {
+    /// Inline `@var` annotations keyed by the offset of the annotated expression.
+    #[serde(default)]
+    pub var_annotations: FxHashMap<u32, Vec<InlineVarTypeAnnotation>>,
+    /// Inline callable (`@param`/`@return`) annotations keyed by closure/arrow offset.
+    #[serde(default)]
+    pub callable_annotations: FxHashMap<u32, InlineCallableTypeAnnotation>,
+    /// Inline `@psalm-trace` annotations keyed by statement/expression offset.
+    #[serde(default)]
+    pub trace_annotations: FxHashMap<u32, Vec<InlineTraceAnnotation>>,
+    /// Inline `@psalm-check-type` / `@psalm-check-type-exact` annotations keyed by
+    /// the offset of the statement they precede (or the docblock offset when no
+    /// statement follows, for malformed annotations).
+    #[serde(default)]
+    pub check_type_annotations: FxHashMap<u32, Vec<InlineCheckTypeAnnotation>>,
+}
+
+/// A single inline `@psalm-check-type[-exact]` assertion (`$var = Type`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlineCheckTypeAnnotation {
+    /// The raw left-hand side as written, including a trailing `?` if present
+    /// (e.g. "$foo" or "$foo?"). `None` when the variable is missing.
+    pub checked_var_raw: Option<String>,
+    /// Interned variable id (e.g. "$foo"), with any trailing `?` stripped.
+    pub var_id: Option<StrId>,
+    /// The asserted type, or `None` when the type string is missing/unparseable.
+    pub check_type: Option<TUnion>,
+    /// Whether the assertion marked the variable possibly-undefined (`$foo?`).
+    pub annotation_possibly_undefined: bool,
+    /// Whether this is a `@psalm-check-type-exact` (bidirectional) assertion.
+    pub is_exact: bool,
+}
+
+/// A single inline `@var` annotation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlineVarTypeAnnotation {
+    /// Optional variable name this annotation targets (e.g. "$x").
+    pub var_name: Option<StrId>,
+    pub var_type: TUnion,
+    #[serde(default)]
+    pub is_invalid: bool,
+}
+
+/// Inline callable annotation data for anonymous functions.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct InlineCallableTypeAnnotation {
+    pub params: Vec<InlineCallableParamType>,
+    pub return_type: Option<TUnion>,
+    #[serde(default)]
+    pub has_template_annotation: bool,
+    #[serde(default)]
+    pub is_pure: bool,
+}
+
+/// Inline callable parameter annotation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlineCallableParamType {
+    /// Optional parameter name (e.g. "$x").
+    pub param_name: Option<StrId>,
+    pub param_type: TUnion,
+}
+
+/// Inline trace annotation data.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct InlineTraceAnnotation {
+    /// Variables to trace (e.g. "$x", "$y").
+    pub var_names: Vec<StrId>,
+}

@@ -2,9 +2,13 @@
 
 pub mod if_conditional_scope;
 pub mod if_scope;
+pub mod loop_scope;
+pub mod switch_scope;
 
 pub use if_conditional_scope::IfConditionalScope;
 pub use if_scope::IfScope;
+pub use loop_scope::LoopScope;
+pub use switch_scope::SwitchScope;
 
 use pzoom_str::{Interner, StrId};
 

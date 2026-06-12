@@ -379,6 +379,17 @@ pub fn is_contained_by_in_context(
         return true;
     }
 
+    // Enum cases and enum classes are objects (Psalm's TEnumCase extends
+    // TNamedObject), so a bare `object` container always accepts them.
+    if matches!(container_type_part, TAtomic::TObject)
+        && matches!(
+            input_type_part,
+            TAtomic::TEnumCase { .. } | TAtomic::TEnum { .. }
+        )
+    {
+        return true;
+    }
+
     // Mixed contains everything
     if matches!(
         container_type_part,

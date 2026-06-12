@@ -295,11 +295,10 @@ Non-blank, non-comment lines per mapped file pair. Rust vs PHP counts aren't dir
 | pz | psalm | file | gap |
 |---:|---:|---|---|
 | 95 | 382 | `expr/include_analyzer.rs` | include path resolution (partly intentional — no filesystem resolution) |
-| 46 | 161 | `expr/call/method_call_purity_analyzer.rs` | the standalone analyzer is still the thin impure-call check; mutation-free contexts, memoization and `UnusedMethodCall` now live across the call analyzers, but the full `collect_mutations` verification pass is unbuilt |
 | 36 | 231 | `params_provider/function/array_filter.rs` | the breadth of Psalm's `ArrayFilterParamsProvider` callback-signature synthesis |
 
 For the current file-level gap list against Psalm (whole files with no pzoom port in the scope crates — `FilterUtils.php`, `MethodComparator.php`, `ClassLikeAnalyzer.php`, …) see the auto-generated `docs/PSALM_PARITY_BACKLOG.md`.
 
 ### Open gaps / deferred (notes)
-- Full `collect_mutations` / `@psalm-mutation-free` verification passes remain unbuilt (`function_like_analyzer.rs` owns the closure/arrow purity inference subset only).
+- Purity-context modelling is collapsed: `@psalm-pure`/`@psalm-mutation-free`/`@psalm-external-mutation-free`/`@psalm-immutable` are all enforced (the `Impure*`, `MissingImmutableAnnotation` and `MutableDependency` issues; the `PureAnnotation`/`ImmutableAnnotation`/`MutationFree` suites pass), but pzoom carries a single `enforce_mutation_free` context flag where Psalm distinguishes `pure`/`mutation_free`/`external_mutation_free` context modes, and closure purity is inferred by reconstructing from the emitted impurity issues rather than Psalm's threaded `inferred_impure`/`inferred_has_mutation` flags (see `function_like_analyzer.rs` / `method_call_purity_analyzer.rs` module docs).
 - `PossiblyFalseArgument` *emission* (possibly-`false` input to a parameter that doesn't accept `false`; the issue kind exists): needs accurate `false`/`ignore_falsable` tracking that pzoom lacks for template-bound args and conditional-return stubs (`glob`'s `@psalm-ignore-falsable-return` is dropped when its conditional `@return` is used).

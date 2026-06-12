@@ -796,12 +796,23 @@ fn scrape_type_properties(
         // literal-int: absorbed by int; absorbs literal ints (Psalm's
         // TNonspecificLiteralInt combination).
         TAtomic::TNonspecificLiteralInt => {
-            if !combination.value_types.contains_key("int") {
-                combination
-                    .value_types
-                    .insert("literal-int".to_string(), TAtomic::TNonspecificLiteralInt);
-                // Existing specific literal ints fold into literal-int.
-                combination.ints = None;
+            match combination.value_types.get("int") {
+                Some(TAtomic::TInt) => {}
+                Some(_) => {
+                    // An int range plus literal-int: differing non-literal int
+                    // kinds collapse to plain int (Psalm's class-mismatch rule).
+                    combination.ints = None;
+                    combination
+                        .value_types
+                        .insert("int".to_string(), TAtomic::TInt);
+                }
+                None => {
+                    combination
+                        .value_types
+                        .insert("literal-int".to_string(), TAtomic::TNonspecificLiteralInt);
+                    // Existing specific literal ints fold into literal-int.
+                    combination.ints = None;
+                }
             }
             None
         }
@@ -1327,6 +1338,16 @@ fn scrape_int_range_properties(
         || combination.value_types.contains_key("scalar")
         || combination.value_types.contains_key("numeric")
     {
+        return;
+    }
+
+    // A literal-int plus an int range: differing non-literal int kinds
+    // collapse to plain int (Psalm's class-mismatch rule).
+    if combination.value_types.remove("literal-int").is_some() {
+        combination.ints = None;
+        combination
+            .value_types
+            .insert("int".to_string(), TAtomic::TInt);
         return;
     }
 

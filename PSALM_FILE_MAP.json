@@ -146,6 +146,7 @@
  "crates/pzoom-analyzer/src/statements_analyzer.rs": "Internal/Analyzer/StatementsAnalyzer.php",
  "crates/pzoom-analyzer/src/stmt/attribute_analyzer.rs": "Internal/Analyzer/AttributesAnalyzer.php",
  "crates/pzoom-analyzer/src/stmt/break_analyzer.rs": "Internal/Analyzer/Statements/BreakAnalyzer.php",
+ "crates/pzoom-analyzer/src/stmt/declare_analyzer.rs": "Internal/Analyzer/Statements/DeclareAnalyzer.php",
  "crates/pzoom-analyzer/src/stmt/class_analyzer.rs": "Internal/Analyzer/ClassAnalyzer.php",
  "crates/pzoom-analyzer/src/stmt/continue_analyzer.rs": "Internal/Analyzer/Statements/ContinueAnalyzer.php",
  "crates/pzoom-analyzer/src/stmt/do_analyzer.rs": "Internal/Analyzer/Statements/Block/DoAnalyzer.php",

@@ -29,7 +29,7 @@ jobs:
         run: cargo test --workspace
 
       - name: Inference tests
-        run: cargo run --release -p pzoom-test-runner
+        run: cargo run --release -p pzoom-test-runner -- --reuse-codebase
 
       - name: Checkout Psalm (6.x)
         uses: actions/checkout@v4

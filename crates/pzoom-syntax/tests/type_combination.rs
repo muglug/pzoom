@@ -87,8 +87,10 @@ const CASES: &[Case] = &[
     Case { name: "iterableAorB", expected: "iterable<mixed, A|B>", types: &["iterable<A>", "iterable<B>"] },
     Case { name: "FooAorB", expected: "Foo<A>|Foo<B>", types: &["Foo<A>", "Foo<B>"] },
     Case { name: "traversableOfMixed", expected: "Traversable<mixed, mixed>", types: &["Traversable", "Traversable<mixed, mixed>"] },
-    Case { name: "traversableAndIterator", expected: "Traversable&Iterator", types: &["Traversable&Iterator", "Traversable&Iterator"] },
-    Case { name: "traversableOfMixedAndIterator", expected: "Traversable<mixed, mixed>&Iterator", types: &["Traversable<mixed, mixed>&Iterator", "Traversable<mixed, mixed>&Iterator"] },
+    // pzoom renders intersection members alphabetically (Psalm keeps input
+    // order: `Traversable&Iterator`).
+    Case { name: "traversableAndIterator", expected: "Iterator&Traversable", types: &["Traversable&Iterator", "Traversable&Iterator"] },
+    Case { name: "traversableOfMixedAndIterator", expected: "Iterator&Traversable<mixed, mixed>", types: &["Traversable<mixed, mixed>&Iterator", "Traversable<mixed, mixed>&Iterator"] },
     Case { name: "combineClosures", expected: "Closure(A):void|Closure(B):void", types: &["Closure(A):void", "Closure(B):void"] },
     Case { name: "combineClassStringWithString", expected: "string", types: &["class-string", "string"] },
     Case { name: "combineClassStringWithFalse", expected: "class-string|false", types: &["class-string", "false"] },
@@ -151,11 +153,13 @@ const CASES: &[Case] = &[
 /// if pzoom starts producing Psalm's expected value, the entry must be removed
 /// (the test will fail asking for the promotion). Causes:
 ///
-/// - parse-vocabulary gaps: `callable-array` / `callable-list` /
-///   `empty-scalar` / `non-empty-scalar` parse as opaque named types,
-///   `callable-object` lowers to `object`, `trait-string` to `class-string`,
-///   the non-specific `literal-int` to `int` — so the combiner cannot relate
-///   them the way Psalm does;
+/// - parse-vocabulary gaps: `callable-list` / `empty-scalar` /
+///   `non-empty-scalar` parse as opaque named types, `callable-object`
+///   lowers to `object`, `trait-string` to `class-string`, and
+///   `callable-array` lowers to its keyed-array shape
+///   `list{class-string|object, non-empty-string}` (losing the callable
+///   provenance Psalm's TCallableKeyedArray keeps) — so the combiner cannot
+///   relate them the way Psalm does;
 /// - `arrayTraversableToIterable`: Psalm only recombines a *docblock*
 ///   param-less `Traversable` with an array into `iterable`; the combiner has
 ///   no per-atomic docblock provenance to make that call;
@@ -168,14 +172,19 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
         "arrayTraversableToIterable",
         "Traversable|array<array-key, mixed>",
     ),
-    ("combineCallableAndCallableArray", "callable|callable-array"),
+    (
+        "combineCallableAndCallableArray",
+        "callable|list{class-string|object, non-empty-string}",
+    ),
     ("combineCallableAndCallableList", "callable|callable-list"),
     ("combineCallableAndCallableObject", "callable|object"),
-    ("combineCallableArrayAndCallable", "callable|callable-array"),
+    (
+        "combineCallableArrayAndCallable",
+        "callable|list{class-string|object, non-empty-string}",
+    ),
     ("combineCallableListAndCallable", "callable|callable-list"),
     ("combineCallableObjectAndCallable", "callable|object"),
     ("combineClassStringWithTraitString", "class-string"),
-    ("combineLiteralIntAndNonspecificLiteral", "int"),
     (
         "combineNonEmptyAndEmptyScalar",
         "empty-scalar|non-empty-scalar",
@@ -184,7 +193,6 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
         "combineNonEmptyListWithTKeyedArrayList",
         "non-empty-list<null|string>",
     ),
-    ("combineNonspecificLiteralAndLiteralInt", "int"),
     (
         "combineRefinedClassStringWithTraitString",
         "class-string|class-string<Exception>",

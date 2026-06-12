@@ -300,8 +300,20 @@ pub fn analyze(
         ..IfScope::default()
     };
 
-    // negated_clauses = negateFormula(if_clauses); fall back to an empty formula.
-    if_scope.negated_clauses = negate_formula(if_clauses.clone()).unwrap_or_default();
+    // negated_clauses = negateFormula(if_clauses). When that is too complex
+    // (Psalm's ComplicatedExpressionException), Psalm retries by generating the
+    // formula of `!cond` directly (FormulaGenerator::getFormula on a
+    // VirtualBooleanNot, IfElseAnalyzer.php), which De Morgans the condition
+    // instead of expanding the positive CNF; only then an empty formula.
+    if_scope.negated_clauses = negate_formula(if_clauses.clone()).unwrap_or_else(|_| {
+        crate::formula_generator::get_negated_formula(
+            if_conditional_id,
+            if_stmt.condition,
+            analyzer,
+            analysis_data,
+        )
+        .unwrap_or_default()
+    });
 
     // negated_types = truths of simplifyCNF(context.clauses + negated_clauses).
     {

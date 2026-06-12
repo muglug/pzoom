@@ -308,6 +308,57 @@ fn handle_uop(
     Some(negate_formula(original_clauses))
 }
 
+/// The CNF formula of `!conditional`, built structurally (De Morgan on the
+/// outermost `&&`/`||`) rather than by negating the positive formula.
+///
+/// This mirrors Psalm's fallback in `IfElseAnalyzer` (and `LoopAnalyzer` etc.):
+/// when `Algebra::negateFormula($if_clauses)` throws
+/// `ComplicatedExpressionException`, Psalm retries with
+/// `FormulaGenerator::getFormula(..., new VirtualBooleanNot($stmt->cond), ...)`,
+/// which decomposes `!(a || b)` into `!a && !b` cheaply instead of expanding the
+/// cartesian product of the positive CNF.
+pub fn get_negated_formula(
+    conditional_object_id: (u32, u32),
+    conditional: &Expression<'_>,
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &FunctionAnalysisData,
+) -> Result<Vec<Clause>, String> {
+    let conditional = conditional.unparenthesized();
+
+    if let Expression::Binary(inner) = conditional {
+        match inner.operator {
+            BinaryOperator::Or(_) | BinaryOperator::LowOr(_) => {
+                return negated_and(
+                    conditional_object_id,
+                    inner.lhs,
+                    inner.rhs,
+                    analyzer,
+                    analysis_data,
+                );
+            }
+            BinaryOperator::And(_) | BinaryOperator::LowAnd(_) => {
+                return negated_or(
+                    conditional_object_id,
+                    inner.lhs,
+                    inner.rhs,
+                    analyzer,
+                    analysis_data,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    negate_formula(get_formula(
+        conditional_object_id,
+        span_id(conditional),
+        conditional,
+        analyzer,
+        analysis_data,
+        true,
+    )?)
+}
+
 /// `!a && !b` — the negation of `a || b`.
 fn negated_and(
     conditional_object_id: (u32, u32),
@@ -316,22 +367,14 @@ fn negated_and(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &FunctionAnalysisData,
 ) -> Result<Vec<Clause>, String> {
-    let mut left_clauses = negate_formula(get_formula(
-        conditional_object_id,
-        span_id(left),
-        left,
-        analyzer,
-        analysis_data,
-        true,
-    )?)?;
-    let right_clauses = negate_formula(get_formula(
-        conditional_object_id,
-        span_id(right),
-        right,
-        analyzer,
-        analysis_data,
-        true,
-    )?)?;
+    // Psalm rewrites `!(a || b)` to `!a && !b` (VirtualBooleanAnd of
+    // VirtualBooleanNots) and recurses through getFormula, so each negated
+    // side again gets the De Morgan treatment instead of a brute-force
+    // negate_formula over its positive CNF.
+    let mut left_clauses =
+        get_negated_formula(conditional_object_id, left, analyzer, analysis_data)?;
+    let right_clauses =
+        get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
     left_clauses.extend(right_clauses);
     Ok(left_clauses)
 }
@@ -344,21 +387,11 @@ fn negated_or(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &FunctionAnalysisData,
 ) -> Result<Vec<Clause>, String> {
-    let left_clauses = negate_formula(get_formula(
-        conditional_object_id,
-        span_id(left),
-        left,
-        analyzer,
-        analysis_data,
-        true,
-    )?)?;
-    let right_clauses = negate_formula(get_formula(
-        conditional_object_id,
-        span_id(right),
-        right,
-        analyzer,
-        analysis_data,
-        true,
-    )?)?;
+    // `!(a && b)` => `!a || !b`, with each side recursively De Morganed
+    // (Psalm's VirtualBooleanOr of VirtualBooleanNots).
+    let left_clauses =
+        get_negated_formula(conditional_object_id, left, analyzer, analysis_data)?;
+    let right_clauses =
+        get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
     combine_ored_clauses(left_clauses, right_clauses, conditional_object_id)
 }

@@ -73,8 +73,11 @@ fn get_missing_type(assertion: &Assertion, inside_loop: bool) -> TUnion {
             TUnion::mixed()
         }
         _ => {
+            // Psalm's getMissingType: `Type::getMixed($inside_loop)` — inside
+            // a loop the placeholder keeps its from-loop-isset flavour so the
+            // type combiner can evict it once a concrete type is merged in.
             if inside_loop {
-                TUnion::mixed()
+                TUnion::new(TAtomic::TMixedFromLoopIsset)
             } else {
                 TUnion::mixed()
             }

@@ -87,7 +87,7 @@ fn analyze_path(
         // Psalm `IncludeAnalyzer`: the include path is an `include`
         // taint sink (TaintedInclude when user input reaches it).
         if analyzer.config.taint_analysis {
-            crate::expr::echo_analyzer::add_construct_argument_dataflow(
+            crate::expr::output_constructs::add_construct_argument_dataflow(
                 analyzer,
                 "include",
                 &[pzoom_code_info::data_flow::node::SinkType::Include],

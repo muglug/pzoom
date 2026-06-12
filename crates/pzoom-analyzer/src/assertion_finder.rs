@@ -471,10 +471,20 @@ fn scrape_function_call_assertions(
                 let array_keys =
                     extract_array_keys_from_expr(analyzer, key_arg.value(), analysis_data);
 
+                // Psalm's getArrayKeyExistsAssertions never keys the assertion
+                // path by a class constant's symbolic name: for a
+                // ClassConstFetch key it resolves the constant's literal value
+                // (`$a['key']`, handled below via `array_keys`) and otherwise
+                // drops the var name entirely (AssertionFinder.php).
+                let key_is_class_constant = matches!(
+                    key_arg.value().unparenthesized(),
+                    Expression::Access(Access::ClassConstant(_))
+                );
+
                 let mut added_key_presence_assertion = false;
                 if let Some(array_var_name) = array_var_name.as_ref() {
                     if let Some(key_var_name) = key_var_name.as_ref() {
-                        if is_simple_array_key_identifier(key_var_name) {
+                        if is_simple_array_key_identifier(key_var_name) && !key_is_class_constant {
                             add_array_key_exists_path_assertions(
                                 result,
                                 array_var_name,

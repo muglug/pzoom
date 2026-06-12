@@ -461,7 +461,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 | Statement::Block(_)
                 | Statement::Unset(_)
                 | Statement::Global(_)
-                | Statement::Noop(_) => {
+                | Statement::Noop(_)
+                // Template files: a `@var` docblock may precede a closing tag
+                // or inline HTML (`/** @var Foo $this */ ?> <?= $this->... ?>`).
+                // php-parser attaches such comments to the next statement and
+                // Psalm's StatementsAnalyzer applies their var comments like
+                // any other statement docblock, so these spans are eligible
+                // targets too.
+                | Statement::ClosingTag(_)
+                | Statement::Inline(_)
+                | Statement::EchoTag(_) => {
                     Some((statement.span().start.offset, statement.span().end.offset))
                 }
                 _ => None,

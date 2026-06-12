@@ -37,12 +37,12 @@ pzoom has these, but mirrors little of Psalm's logic. Listed constructs are Psal
 
 | impact | recall | Psalm file → pzoom | missing constructs (top) |
 |---:|---:|---|---|
-| 2656 | 27 | `AssertionFinder.php` → `assertion_finder.rs` | `getExtendedVarId`, `BinaryOp`, `ASSIGNMENT_TO_RIGHT`, `maybeAdd`, `ASSIGNMENT_TO_LEFT`, `strtolower`, `UnexpectedValueException`, `FuncCall` |
+| 2654 | 27 | `AssertionFinder.php` → `assertion_finder.rs` | `getExtendedVarId`, `BinaryOp`, `ASSIGNMENT_TO_RIGHT`, `maybeAdd`, `ASSIGNMENT_TO_LEFT`, `strtolower`, `UnexpectedValueException`, `FuncCall` |
 | 1480 | 6 | `Config.php` → `config.rs, psalm_config.rs` | `isset`, `DIRECTORY_SEPARATOR`, `getIssueHandlers`, `ConfigException`, `UnexpectedValueException`, `getProjectFiles`, `file_exists`, `VoidProgress` |
 | 1442 | 5 | `FunctionLikeAnalyzer.php` → `function_analysis_data.rs, function_like_analyzer.rs` | `return_type`, `return_vars_in_scope`, `getCodebase`, `FunctionStorage`, `return_type_location`, `isset`, `is_static`, `getFQCLN` |
-| 1328 | 28 | `SimpleAssertionReconciler.php` → `simple_assertion_reconciler.rs` | `hasMixed`, `removeType`, `getId`, `getAtomicTypes`, `RECONCILIATION_EMPTY`, `getNever`, `addType`, `replaceAs` |
+| 1326 | 28 | `SimpleAssertionReconciler.php` → `simple_assertion_reconciler.rs` | `hasMixed`, `removeType`, `getId`, `getAtomicTypes`, `RECONCILIATION_EMPTY`, `getNever`, `addType`, `replaceAs` |
 | 1319 | 10 | `Codebase.php` → `codebase_info.rs` | `function_symbol`, `classlikes`, `MethodIdentifier`, `PHPMarkdownContent`, `CompletionItem`, `NamespaceAnalyzer`, `wrap`, `functions` |
-| 992 | 33 | `AssignmentAnalyzer.php` → `assignment_analyzer.rs` | `getAttributes`, `isset`, `getFQCLN`, `setParentNodes`, `BinaryOp`, `AssignOp`, `hasVariable`, `getMessage` |
+| 991 | 33 | `AssignmentAnalyzer.php` → `assignment_analyzer.rs` | `getAttributes`, `isset`, `getFQCLN`, `setParentNodes`, `BinaryOp`, `AssignOp`, `hasVariable`, `getMessage` |
 | 984 | 17 | `ArithmeticOpAnalyzer.php` → `arithmetic_op_analyzer.rs` | `getType`, `Expr`, `combineUnionTypes`, `BinaryOp`, `getIntRange`, `getInt`, `min_bound`, `max_bound` |
 | 952 | 41 | `ArrayFetchAnalyzer.php` → `array_fetch_analyzer.rs` | `getAtomicTypes`, `setType`, `removeType`, `getRootFilePath`, `MutableUnion`, `param_name`, `getGenericKeyType`, `getAttributes` |
 | 888 | 31 | `ArgumentAnalyzer.php` → `argument_analyzer.rs` | `getAtomicTypes`, `hasMixed`, `MethodIdentifier`, `isSingle`, `hasArray`, `FunctionLikeAnalyzer`, `calling_method_id`, `processTaintedness` |
@@ -54,7 +54,7 @@ pzoom has these, but mirrors little of Psalm's logic. Listed constructs are Psal
 | 668 | 49 | `TypeCombiner.php` → `type_combiner.rs` | `isset`, `unset`, `setPossiblyUndefined`, `TGenericObject`, `Codebase`, `setFromDocblock`, `isNever`, `TNonFalsyString` |
 | 664 | 9 | `CallAnalyzer.php` → `call_analyzer.rs` | `getType`, `value`, `isset`, `getAtomicTypes`, `vars_in_scope`, `name`, `getStorage`, `MethodIdentifier` |
 | 587 | 38 | `FunctionCallAnalyzer.php` → `function_call_analyzer.rs` | `setType`, `isFirstClassCallable`, `function_exists`, `isset`, `function_call_info`, `getParts`, `getAttributes`, `is_stubbed` |
-| 585 | 37 | `AssertionReconciler.php` → `assertion_reconciler.rs` | `getId`, `getAtomicTypes`, `interfaceExists`, `IsLooselyEqual`, `triggerIssueForImpossible`, `replaceAs`, `maybeAdd`, `addIntersectionType` |
+| 587 | 37 | `AssertionReconciler.php` → `assertion_reconciler.rs` | `getId`, `getAtomicTypes`, `interfaceExists`, `IsLooselyEqual`, `triggerIssueForImpossible`, `replaceAs`, `maybeAdd`, `addIntersectionType` |
 | 574 | 21 | `ArrayFunctionArgumentsAnalyzer.php` → `array_function_arguments_analyzer.rs` | `value`, `assignByRefParam`, `analyze`, `getArray`, `getListAtomic`, `AssignmentAnalyzer`, `type_params`, `hasArray` |
 | 553 | 27 | `AtomicStaticCallAnalyzer.php` → `atomic_static_call_analyzer.rs` | `analyze`, `methodExists`, `setType`, `MethodIdentifier`, `getArgs`, `calling_method_id`, `TemplateResult`, `ArgumentsAnalyzer` |
 | 549 | 45 | `InstancePropertyAssignmentAnalyzer.php` → `instance_property_assignment_analyzer.rs` | `collect_mutations`, `collect_initializations`, `accepts`, `StaticPropertyFetch`, `FunctionLikeAnalyzer`, `include_location`, `taintProperty`, `isset` |

@@ -701,6 +701,51 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     TUnion::mixed()
                 }
             },
+            UnresolvedConstExpr::Ternary {
+                cond,
+                if_branch,
+                else_branch,
+            } => {
+                // Psalm's ConstantTypeResolver UnresolvedTernary handling: a
+                // single-literal condition picks the branch; anything less
+                // determinable resolves to mixed.
+                let cond_type =
+                    resolve_const_expr(cond, codebase, interner, visiting, hit_cycle, failures);
+                let if_type = if_branch.as_ref().map(|if_expr| {
+                    resolve_const_expr(if_expr, codebase, interner, visiting, hit_cycle, failures)
+                });
+                let else_type = resolve_const_expr(
+                    else_branch,
+                    codebase,
+                    interner,
+                    visiting,
+                    hit_cycle,
+                    failures,
+                );
+                match cond_type.get_single() {
+                    Some(TAtomic::TLiteralInt { value }) => {
+                        if *value != 0 {
+                            return if_type.unwrap_or(cond_type);
+                        }
+                        TUnion::mixed()
+                    }
+                    Some(TAtomic::TLiteralFloat { value }) => {
+                        if *value != 0.0 {
+                            return if_type.unwrap_or(cond_type);
+                        }
+                        TUnion::mixed()
+                    }
+                    Some(TAtomic::TLiteralString { value }) => {
+                        if !value.is_empty() && value != "0" {
+                            return if_type.unwrap_or(cond_type);
+                        }
+                        TUnion::mixed()
+                    }
+                    Some(TAtomic::TTrue) => if_type.unwrap_or(cond_type),
+                    Some(TAtomic::TFalse) | Some(TAtomic::TNull) => else_type,
+                    _ => TUnion::mixed(),
+                }
+            }
             UnresolvedConstExpr::IntOp { op, lhs, rhs } => {
                 use pzoom_code_info::class_constant_info::UnresolvedIntOp;
                 let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);

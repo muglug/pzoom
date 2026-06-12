@@ -224,7 +224,7 @@ pub fn analyze_stmt(
             unset_analyzer::analyze(analyzer, unset_stmt, analysis_data, context)
         }
         Statement::HaltCompiler(_) => Ok(()),
-        Statement::EchoTag(_) => Ok(()),
+        Statement::EchoTag(tag) => echo_analyzer::analyze_tag(analyzer, tag, analysis_data, context),
         Statement::Noop(_) => Ok(()),
         // Non-exhaustive enum - catch future variants
         _ => Ok(()),

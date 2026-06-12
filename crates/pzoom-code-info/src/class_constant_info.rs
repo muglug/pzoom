@@ -93,6 +93,13 @@ pub enum UnresolvedConstExpr {
         case: StrId,
         fetch_name: bool,
     },
+    /// `COND ? IF : ELSE` (Psalm's UnresolvedTernary; a `None` if-branch is
+    /// the short `?:` form).
+    Ternary {
+        cond: Box<UnresolvedConstExpr>,
+        if_branch: Option<Box<UnresolvedConstExpr>>,
+        else_branch: Box<UnresolvedConstExpr>,
+    },
 }
 
 /// Operator for [`UnresolvedConstExpr::IntOp`].

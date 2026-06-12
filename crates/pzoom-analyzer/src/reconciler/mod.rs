@@ -1271,9 +1271,13 @@ fn apply_array_access_to_base_type(
                     Some((**value_type).clone())
                 }
             }
-            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset => {
-                Some(TUnion::mixed())
-            }
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed => Some(TUnion::mixed()),
+            // An access on a loop-isset placeholder keeps the placeholder
+            // flavour: Psalm's getValueForKey passes `$inside_loop` to
+            // `Type::getMixed()` throughout, so nested keys under an
+            // isset-in-loop stay evictable by the type combiner once a
+            // concrete type is merged in.
+            TAtomic::TMixedFromLoopIsset => Some(TUnion::new(TAtomic::TMixedFromLoopIsset)),
             TAtomic::TString | TAtomic::TNonEmptyString | TAtomic::TLiteralString { .. } => {
                 Some(TUnion::string())
             }

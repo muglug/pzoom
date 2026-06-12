@@ -100,6 +100,17 @@ pub(super) fn handle(
         apply_define_side_effect(func_call, arg_positions, analysis_data, context, analyzer);
     }
 
+    if function_name.eq_ignore_ascii_case("constant") {
+        // Psalm's NamedFunctionCallHandler resolves `constant($name)` through
+        // ConstFetchAnalyzer::getConstName/getConstType when the name is a
+        // known literal string.
+        if let Some(const_type) =
+            handle_constant_call(analyzer, func_call, arg_positions, analysis_data, context)
+        {
+            return Some(const_type);
+        }
+    }
+
     // Keep runtime aliases flow-sensitive even when function metadata is unavailable.
     if function_name.eq_ignore_ascii_case("class_alias") {
         apply_class_alias_side_effect(analyzer, func_call, context);
@@ -271,6 +282,51 @@ fn apply_class_alias_side_effect(
         .unwrap_or(source_class);
 
     context.class_aliases.insert(alias_class, source_class);
+}
+
+/// Psalm's `constant()` call handling: the constant name comes from a literal
+/// string argument (ConstFetchAnalyzer::getConstName also accepts any
+/// expression whose inferred type is a single string literal), and the call's
+/// type is the resolved constant's type (ConstFetchAnalyzer::getConstType).
+/// An unknown name leaves the default (mixed) return type in place.
+fn handle_constant_call(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_call: &FunctionCall<'_>,
+    arg_positions: &[Pos],
+    analysis_data: &FunctionAnalysisData,
+    context: &BlockContext,
+) -> Option<TUnion> {
+    let first_arg = func_call.argument_list.arguments.first()?;
+
+    let const_name = extract_literal_string_value(first_arg.value()).or_else(|| {
+        let first_arg_type = analysis_data.expr_types.get(&*arg_positions.first()?)?;
+        if let [TAtomic::TLiteralString { value }] = first_arg_type.types.as_slice() {
+            Some(value.clone())
+        } else {
+            None
+        }
+    })?;
+
+    // Runtime constant names are always fully qualified.
+    let const_name = const_name.trim_start_matches('\\');
+    if const_name.is_empty() {
+        return None;
+    }
+
+    let const_id = analyzer.interner.intern(const_name);
+
+    // `define()`-created constants tracked in this scope take precedence,
+    // matching the `$context->hasVariable($fq_const_name)` branch of
+    // Psalm's getConstType.
+    if let Some(runtime_type) = context.defined_constants.get(&const_id) {
+        return Some(runtime_type.clone());
+    }
+
+    analyzer
+        .codebase
+        .constants
+        .get(&const_id)
+        .map(|const_info| const_info.constant_type.clone())
 }
 
 fn apply_define_side_effect(

@@ -222,7 +222,14 @@ pub fn analyze_property(
 
             // Return the property's declared type, resolving `self`/`static` to the
             // fetched class (Psalm expands the property type at the use site).
-            return prop_info.get_type().cloned().map(|mut property_type| {
+            // An untyped redeclaration falls back to the overridden ancestor
+            // property's type (Psalm's Properties::getPropertyType
+            // overridden_property_ids loop).
+            let own_or_overridden_type = prop_info
+                .get_type()
+                .cloned()
+                .or_else(|| get_overridden_property_type(analyzer.codebase, class_id, prop_id));
+            return own_or_overridden_type.map(|mut property_type| {
                 crate::type_expander::expand_union(
                     analyzer.codebase,
                     analyzer.interner,
@@ -565,13 +572,22 @@ fn get_property_type_inner(
                         prop_id,
                     )
                     .or_else(|| {
-                        prop_info.get_type().map(|property_type| {
-                            substitute_class_template_params(
-                                class_info,
-                                type_params.as_deref(),
-                                property_type,
-                            )
-                        })
+                        // An untyped redeclaration inherits the overridden
+                        // ancestor property's declared type (Psalm's
+                        // Properties::getPropertyType fallback).
+                        prop_info
+                            .get_type()
+                            .cloned()
+                            .or_else(|| {
+                                get_overridden_property_type(analyzer.codebase, *name, prop_id)
+                            })
+                            .map(|property_type| {
+                                substitute_class_template_params(
+                                    class_info,
+                                    type_params.as_deref(),
+                                    &property_type,
+                                )
+                            })
                     })
                     .map(|mut property_type| {
                         // Psalm's AtomicPropertyFetchAnalyzer expands the stored
@@ -902,12 +918,20 @@ fn get_property_type_inner(
                             ));
                         }
 
-                        // Return the property's type
-                        return prop_info.get_type().map(|property_type| {
+                        // Return the property's type. An untyped redeclaration
+                        // (`public $a = "foo";` overriding a parent's
+                        // `@var string|null`) falls back to the overridden
+                        // property's declared type — Psalm's
+                        // Properties::getPropertyType overridden_property_ids
+                        // loop.
+                        let own_or_overridden_type = prop_info.get_type().cloned().or_else(|| {
+                            get_overridden_property_type(analyzer.codebase, *name, prop_id)
+                        });
+                        return own_or_overridden_type.map(|property_type| {
                             substitute_class_template_params(
                                 class_info,
                                 type_params.as_deref(),
-                                property_type,
+                                &property_type,
                             )
                         });
                     } else {
@@ -1045,6 +1069,19 @@ fn get_property_type_inner(
                         }
 
                         if class_info.no_seal_properties {
+                            // Psalm's handleNonExistentProperty
+                            // (AtomicPropertyFetchAnalyzer.php): a class with
+                            // #[AllowDynamicProperties] (own or inherited)
+                            // resolves an undeclared property through its
+                            // `@property`/`@property-read` docblock type when
+                            // one exists; only otherwise is the fetch dynamic.
+                            if let Some(pseudo_property_type) = get_pseudo_property_get_type(
+                                class_info,
+                                type_params.as_deref(),
+                                prop_id,
+                            ) {
+                                return Some(pseudo_property_type);
+                            }
                             return Some(TUnion::mixed());
                         }
 

@@ -1,85 +1,16 @@
-//! Echo/print expression analyzer.
-
-use mago_syntax::ast::ast::echo::Echo;
+//! Shared analysis for output-producing language constructs.
+//!
+//! Psalm models constructs that consume data (`echo`, `print`, `exit`,
+//! `eval`, `include`, backtick shell-exec) as pseudo function calls whose
+//! first parameter is a taint sink, and reports their argument types through
+//! `ArgumentAnalyzer::verifyType`; these helpers are that machinery's shared
+//! core on the pzoom side.
 
 use pzoom_code_info::{Issue, IssueKind, TUnion};
 
 use crate::context::BlockContext;
-use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
-use std::rc::Rc;
-
-/// Analyze an echo statement/expression.
-///
-/// echo outputs one or more expressions and returns void.
-pub fn analyze(
-    analyzer: &StatementsAnalyzer<'_>,
-    echo: &Echo<'_>,
-    pos: Pos,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) {
-    // Psalm: `echo` writes to output, so it is impure from a `@psalm-pure` context.
-    emit_impure_output(analyzer, pos, analysis_data, "echo");
-
-    // Analyze all values being echoed
-    for value in echo.values.iter() {
-        let value_pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);
-        let value_type = analysis_data.expr_types.get(&value_pos).cloned();
-
-        // Check that value is stringable
-        if let Some(t) = value_type {
-            check_stringable(analyzer, &t, value_pos, analysis_data, "echo");
-        }
-    }
-
-    // echo doesn't return a value (void)
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::void()));
-}
-
-/// Analyze a print expression.
-///
-/// print outputs a single expression and returns 1.
-pub fn analyze_print(
-    analyzer: &StatementsAnalyzer<'_>,
-    expr: &mago_syntax::ast::ast::expression::Expression<'_>,
-    pos: Pos,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) {
-    // Analyze the value being printed
-    let value_pos = expression_analyzer::analyze(analyzer, expr, analysis_data, context);
-    let value_type = analysis_data.expr_types.get(&value_pos).cloned();
-
-    // Psalm: `print` writes to output, so it is impure from a `@psalm-pure` context.
-    emit_impure_output(analyzer, pos, analysis_data, "print");
-
-    // Check that value is stringable
-    if let Some(t) = value_type.as_ref() {
-        check_stringable(analyzer, t, value_pos, analysis_data, "print");
-    }
-
-    // `print` is a taint sink with the same kinds as `echo` (Psalm
-    // PrintAnalyzer), wired Hakana-style through argument dataflow.
-    if analyzer.config.taint_analysis
-        && let Some(value_type) = value_type.as_ref()
-    {
-        add_output_call_argument_dataflow(
-            analyzer,
-            "print",
-            0,
-            value_pos,
-            value_type,
-            pos,
-            analysis_data,
-            context,
-        );
-    }
-
-    // print always returns 1
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(pzoom_code_info::TAtomic::TLiteralInt { value: 1 })));
-}
 
 /// Route an `echo`/`print` argument through Hakana's
 /// `argument_analyzer::add_dataflow` with a pseudo-function-like whose param
@@ -194,13 +125,72 @@ pub(crate) fn emit_impure_output(
     ));
 }
 
+/// Report an output construct's argument type the way Psalm's
+/// `ArgumentAnalyzer::verifyType` does against the pseudo-param `string $var`:
+/// `MixedArgument` for mixed values (with the dataflow origin attached),
+/// `InvalidArgument`/`PossiblyInvalidArgument` for non-stringable values,
+/// silence for scalar coercions and null.
+pub(crate) fn verify_output_argument_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    t: &TUnion,
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+    construct_name: &str,
+    argument_offset: usize,
+) {
+    use pzoom_code_info::TAtomic;
+
+    // pzoom's TMixedFromLoopIsset stands in where Psalm's loop fixpoint
+    // infers a precise type (Psalm reports nothing on those echoes, and its
+    // `isVanillaMixed()` likewise excludes from-loop-isset mixed from
+    // mixed-flavoured reporting), so it is exempt here.
+    if t.types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TMixedFromLoopIsset))
+    {
+        return;
+    }
+
+    // Psalm: a mixed input reports MixedArgument and skips the containment
+    // checks entirely. pzoom narrows this to *pure* mixed: its post-if loop
+    // merges union a concrete branch type with a placeholder mixed
+    // (`'foo'|mixed`) where Psalm marks the impossible isset branch
+    // failed_reconciliation and keeps the precise type, so a partial-mixed
+    // union here is a pzoom inference artifact, not a Psalm finding.
+    if t.is_only_mixed() {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        let origin_secondary =
+            crate::data_flow::mixed_origin_secondary(analyzer, analysis_data, t, pos.0);
+        analysis_data.add_issue(
+            Issue::new(
+                IssueKind::MixedArgument,
+                format!(
+                    "Argument {} of {} cannot be mixed, expecting string",
+                    argument_offset + 1,
+                    construct_name
+                ),
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            )
+            .with_secondary_opt(origin_secondary),
+        );
+        return;
+    }
+
+    check_stringable(analyzer, t, pos, analysis_data, construct_name, argument_offset);
+}
+
 /// Check if a type can be converted to a string for output.
 pub(crate) fn check_stringable(
     analyzer: &StatementsAnalyzer<'_>,
     t: &TUnion,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
-    context_name: &str,
+    construct_name: &str,
+    argument_offset: usize,
 ) {
     use pzoom_code_info::TAtomic;
 
@@ -229,6 +219,12 @@ pub(crate) fn check_stringable(
             ) {
                 saw_scalar_coercible = true;
             }
+        } else if matches!(
+            atomic,
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+        ) {
+            // Mixed members are MixedArgument territory (handled above for
+            // pure mixed); they are never reported as InvalidArgument.
         } else if matches!(atomic, TAtomic::TNull) {
             // null coerces to "" at runtime; Psalm reports nothing for echo
             // when the union also has scalar members (PossiblyNullArgument is
@@ -252,16 +248,32 @@ pub(crate) fn check_stringable(
     // When only some members of the union are non-stringable the conversion is
     // merely possibly invalid (Psalm's PossiblyInvalidArgument); it is a hard
     // InvalidArgument only when no member can be converted.
-    let issue_kind = if saw_stringable {
-        IssueKind::PossiblyInvalidArgument
+    let (issue_kind, message) = if saw_stringable {
+        (
+            IssueKind::PossiblyInvalidArgument,
+            format!(
+                "Argument {} of {} expects string, but possibly different type {} provided",
+                argument_offset + 1,
+                construct_name,
+                type_desc
+            ),
+        )
     } else {
-        IssueKind::InvalidArgument
+        (
+            IssueKind::InvalidArgument,
+            format!(
+                "Argument {} of {} expects string, but {} provided",
+                argument_offset + 1,
+                construct_name,
+                type_desc
+            ),
+        )
     };
 
     let (line, col) = analyzer.get_line_column(pos.0);
     analysis_data.add_issue(Issue::new(
         issue_kind,
-        format!("{} cannot convert {} to string", context_name, type_desc),
+        message,
         analyzer.file_path,
         pos.0,
         pos.1,
@@ -270,3 +282,13 @@ pub(crate) fn check_stringable(
     ));
 }
 
+/// Psalm reports `ForbiddenCode` when a construct name appears in the
+/// config's forbiddenFunctions.
+pub(crate) fn is_forbidden_construct(analyzer: &StatementsAnalyzer<'_>, name: &str) -> bool {
+    analyzer.config.forbidden_functions.iter().any(|forbidden| {
+        forbidden
+            .strip_prefix('\\')
+            .unwrap_or(forbidden.as_str())
+            .eq_ignore_ascii_case(name)
+    })
+}

@@ -850,6 +850,15 @@ class C {
 
         let mut symbol_files: FxHashMap<(&str, StrId), FxHashSet<StrId>> = FxHashMap::default();
         for (path, file_info) in &result.codebase.files {
+            // PHP-version overlays re-declare symbols by design (newest-wins
+            // folding) — they are not part of the one-symbol-one-file invariant.
+            if result
+                .interner
+                .lookup(*path)
+                .contains("_php_versions/")
+            {
+                continue;
+            }
             for class in &file_info.classes {
                 symbol_files
                     .entry(("class", *class))

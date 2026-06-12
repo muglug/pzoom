@@ -52,6 +52,22 @@ Writes a Markdown report to `docs/SIMILARITY_REPORT.md` by default (override wit
 via `--psalm-dir`/`--hakana-dir`, the `PSALM_DIR`/`HAKANA_DIR` env vars, common
 sibling paths, or `--clone`.
 
+## `psalm_documentation_test.py`
+
+The pzoom port of Psalm's `tests/DocumentationTest.php`, run in CI: it crawls a
+Psalm checkout's `docs/running_psalm/issues/*.md`, takes the first ```php
+snippet of each issue's page, runs pzoom over it with the per-issue knobs
+Psalm's own test uses (PHP version, suppressed sibling issues, find-unused-code,
+taint mode), and asserts pzoom reports that issue. Genuine gaps live in the
+script's `KNOWN_FAILURES` (with reasons); an entry that *starts passing* fails
+the run so the list stays honest. Deliberate divergences (e.g. `InvalidClass`
+→ `UndefinedClass` under case-sensitive resolution) are mapped in
+`DIVERGENT_EXPECTATIONS`.
+
+```bash
+python3 scripts/psalm_documentation_test.py --psalm-dir /path/to/psalm
+```
+
 ## `psalm_parity.py`
 
 A **Psalm-only**, **method-level** parity scorer — a sharper instrument than the

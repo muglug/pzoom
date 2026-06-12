@@ -463,6 +463,8 @@ pub fn analyze(
                     for index_key in &literal_index_keys {
                         if let Some(value_type) = properties.get(index_key) {
                             has_literal_index_hit = true;
+                            result_ignore_nullable |= value_type.ignore_nullable_issues;
+                            result_ignore_falsable |= value_type.ignore_falsable_issues;
                             if value_type.possibly_undefined {
                                 if fallback_value_type.is_none() {
                                     has_possibly_undefined_offset = true;
@@ -482,6 +484,8 @@ pub fn analyze(
                             }
                         } else if let Some(fallback) = fallback_value_type {
                             has_literal_index_hit = true;
+                            result_ignore_nullable |= fallback.ignore_nullable_issues;
+                            result_ignore_falsable |= fallback.ignore_falsable_issues;
                             for t in &fallback.types {
                                 if !result_types.contains(t) {
                                     result_types.push(t.clone());
@@ -1008,9 +1012,25 @@ pub fn analyze(
             .map(|t| t.get_id(Some(analyzer.interner)))
             .unwrap_or_else(|| "array-key".to_string());
 
+        // A definitely-null / possibly-null index gets Psalm's dedicated
+        // NullArrayOffset / PossiblyNullArrayOffset kinds.
+        let (kind, message) = match index_type.as_ref() {
+            Some(union) if union.is_null() => (
+                IssueKind::NullArrayOffset,
+                "Cannot access value using null offset".to_string(),
+            ),
+            Some(union) if union.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull)) => (
+                IssueKind::PossiblyNullArrayOffset,
+                format!("Cannot access value using possibly null offset {index_type_id}"),
+            ),
+            _ => (
+                IssueKind::InvalidArrayOffset,
+                format!("Invalid array offset type: {index_type_id}"),
+            ),
+        };
         analysis_data.add_issue(Issue::new(
-            IssueKind::InvalidArrayOffset,
-            format!("Invalid array offset type: {}", index_type_id),
+            kind,
+            message,
             analyzer.file_path,
             span.start.offset,
             span.end.offset,
@@ -1586,6 +1606,27 @@ fn check_array_offset(
             if suppress_possible_issue {
                 return false;
             }
+            // A null possibility among otherwise-fitting offsets is Psalm's
+            // PossiblyNullArrayOffset, not the generic possibly-invalid kind.
+            if normalized_index_type
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TNull))
+            {
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::PossiblyNullArrayOffset,
+                    format!(
+                        "Cannot access value using possibly null offset {}",
+                        normalized_index_type.get_id(Some(analyzer.interner))
+                    ),
+                    analyzer.file_path,
+                    span.start.offset,
+                    span.end.offset,
+                    start_line,
+                    0,
+                ));
+                return true;
+            }
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyInvalidArrayOffset,
                 format!(
@@ -1602,6 +1643,19 @@ fn check_array_offset(
         } else {
             if suppress_possible_issue {
                 return false;
+            }
+            // A definitely-null offset is Psalm's NullArrayOffset.
+            if normalized_index_type.is_null() {
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::NullArrayOffset,
+                    "Cannot access value using null offset".to_string(),
+                    analyzer.file_path,
+                    span.start.offset,
+                    span.end.offset,
+                    start_line,
+                    0,
+                ));
+                return true;
             }
             analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArrayOffset,
@@ -1621,6 +1675,7 @@ fn check_array_offset(
 
     let mut has_valid_offset = false;
     let mut has_invalid_offset = false;
+    let mut has_null_offset = false;
     let mut invalid_offset_type = String::new();
 
     for atomic in &index_type.types {
@@ -1648,10 +1703,15 @@ fn check_array_offset(
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TResource
-            | TAtomic::TNull
             | TAtomic::TVoid => {
                 has_invalid_offset = true;
                 invalid_offset_type = atomic.get_id(Some(analyzer.interner));
+            }
+            // Null gets Psalm's dedicated NullArrayOffset /
+            // PossiblyNullArrayOffset kinds (folded into the generic invalid
+            // report only when other invalid offset parts are present too).
+            TAtomic::TNull => {
+                has_null_offset = true;
             }
             TAtomic::TNamedObject { name, .. } => {
                 // Docblocks may carry unresolved class-constant pseudo-types such as `self::FOO`.
@@ -1675,9 +1735,45 @@ fn check_array_offset(
         }
     }
 
+    if has_null_offset && !has_invalid_offset {
+        let span = access.index.span();
+        let start_line = get_line_number(analyzer.source, span.start.offset);
+        if suppress_possible_issue {
+            return false;
+        }
+        if has_valid_offset {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyNullArrayOffset,
+                format!(
+                    "Cannot access value using possibly null offset {}",
+                    index_type.get_id(Some(analyzer.interner))
+                ),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                start_line,
+                0,
+            ));
+        } else {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::NullArrayOffset,
+                "Cannot access value using null offset".to_string(),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                start_line,
+                0,
+            ));
+        }
+        return true;
+    }
+
     if has_invalid_offset {
         let span = access.index.span();
         let start_line = get_line_number(analyzer.source, span.start.offset);
+        if has_null_offset {
+            has_valid_offset = true;
+        }
 
         if has_valid_offset {
             if suppress_possible_issue {
@@ -1835,21 +1931,38 @@ fn check_array_offset_against_expected_branches(
 
     let span = access.index.span();
     let start_line = get_line_number(analyzer.source, span.start.offset);
-    let kind = if has_valid_branch {
-        IssueKind::PossiblyInvalidArrayOffset
-    } else {
-        IssueKind::InvalidArrayOffset
-    };
-
-    let message = if has_valid_branch {
-        format!(
-            "Array offset may be invalid type: {}",
-            normalized_index_type.get_id(Some(analyzer.interner))
+    let index_has_null = normalized_index_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TNull));
+    let (kind, message) = if normalized_index_type.is_null() {
+        (
+            IssueKind::NullArrayOffset,
+            "Cannot access value using null offset".to_string(),
+        )
+    } else if has_valid_branch && index_has_null {
+        (
+            IssueKind::PossiblyNullArrayOffset,
+            format!(
+                "Cannot access value using possibly null offset {}",
+                normalized_index_type.get_id(Some(analyzer.interner))
+            ),
+        )
+    } else if has_valid_branch {
+        (
+            IssueKind::PossiblyInvalidArrayOffset,
+            format!(
+                "Array offset may be invalid type: {}",
+                normalized_index_type.get_id(Some(analyzer.interner))
+            ),
         )
     } else {
-        format!(
-            "Invalid array offset type: {}",
-            normalized_index_type.get_id(Some(analyzer.interner))
+        (
+            IssueKind::InvalidArrayOffset,
+            format!(
+                "Invalid array offset type: {}",
+                normalized_index_type.get_id(Some(analyzer.interner))
+            ),
         )
     };
 

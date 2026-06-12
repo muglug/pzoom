@@ -455,6 +455,11 @@ impl TUnion {
         self.types.iter().any(|t| t.is_falsable())
     }
 
+    /// Whether this union is exactly `false` (Psalm's `Union::isFalse`).
+    pub fn is_false(&self) -> bool {
+        self.types.len() == 1 && matches!(self.types[0], TAtomic::TFalse)
+    }
+
     /// Remove null from this union.
     pub fn remove_null(&mut self) {
         self.types.retain(|t| !matches!(t, TAtomic::TNull));

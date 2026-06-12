@@ -46,9 +46,28 @@ pub(crate) fn fetch(
             .get(&info.file_path)
             .is_some_and(|file_info| file_info.is_stub)
     });
+    // Psalm's FunctionCallReturnTypeFetcher exempts the strpos family from
+    // the internal-falsable ignore: their `false` ("needle not found") is
+    // always reportable, even when internal falsable returns are ignored.
+    let falsable_always_reported = matches!(
+        normalized_name.to_ascii_lowercase().as_str(),
+        "mb_strpos"
+            | "mb_strrpos"
+            | "mb_stripos"
+            | "mb_strripos"
+            | "strpos"
+            | "strrpos"
+            | "stripos"
+            | "strripos"
+            | "strstr"
+            | "stristr"
+            | "strrchr"
+            | "strpbrk"
+            | "array_search"
+    );
     let apply_internal_ignores = |return_type: &mut TUnion| {
         if is_stub_function {
-            if return_type.is_falsable() {
+            if return_type.is_falsable() && !falsable_always_reported {
                 return_type.ignore_falsable_issues = true;
             }
             if return_type.is_nullable() {

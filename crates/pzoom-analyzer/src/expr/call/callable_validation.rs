@@ -3038,7 +3038,7 @@ pub(crate) fn validate_direct_callable_invocation(
 ) {
     check_callable_union_invocability(analyzer, callee_type, analysis_data, pos);
 
-    let Some(callable_signature) = get_first_callable_signature(callee_type) else {
+    let Some(callable_signature) = get_first_callable_signature(analyzer, callee_type) else {
         return;
     };
     let callable_params = &callable_signature.params;
@@ -3086,24 +3086,7 @@ pub(crate) fn validate_direct_callable_invocation(
         ));
     }
 
-    let mut callable_function_info = pzoom_code_info::FunctionLikeInfo::default();
-    callable_function_info.params = callable_params
-        .iter()
-        .map(|param| {
-            let mut param_info = ParamInfo::default();
-            param_info.name = param.name.unwrap_or(StrId::EMPTY);
-            param_info.param_type = Some(param.param_type.clone());
-            param_info.signature_type = None;
-            param_info.has_docblock_type = callable_signature.from_callable_docblock;
-            param_info.is_optional = param.is_optional;
-            param_info.is_variadic = param.is_variadic;
-            param_info.by_ref = param.by_ref;
-            param_info
-        })
-        .collect();
-    callable_function_info.is_variadic = callable_params
-        .last()
-        .is_some_and(|param| param.is_variadic);
+    let callable_function_info = callable_signature.to_function_info();
 
     arguments_analyzer::check_arguments_match(
         analyzer,
@@ -3128,7 +3111,43 @@ pub(crate) struct DirectCallableSignature {
     from_callable_docblock: bool,
 }
 
-fn get_first_callable_signature(callee_type: &TUnion) -> Option<DirectCallableSignature> {
+impl DirectCallableSignature {
+    fn to_function_info(&self) -> pzoom_code_info::FunctionLikeInfo {
+        let mut info = pzoom_code_info::FunctionLikeInfo::default();
+        info.params = self
+            .params
+            .iter()
+            .map(|param| {
+                let mut param_info = ParamInfo::default();
+                param_info.name = param.name.unwrap_or(StrId::EMPTY);
+                param_info.param_type = Some(param.param_type.clone());
+                param_info.signature_type = None;
+                param_info.has_docblock_type = self.from_callable_docblock;
+                param_info.is_optional = param.is_optional;
+                param_info.is_variadic = param.is_variadic;
+                param_info.by_ref = param.by_ref;
+                param_info
+            })
+            .collect();
+        info.is_variadic = self.params.last().is_some_and(|param| param.is_variadic);
+        info
+    }
+}
+
+/// The callee union's callable signature as a synthetic FunctionLikeInfo, so a
+/// direct callable/invokable-object call can seed its closure arguments via
+/// analyze_arguments_with_callable_context like a named call.
+pub(crate) fn direct_callable_function_info(
+    analyzer: &StatementsAnalyzer<'_>,
+    callee_type: &TUnion,
+) -> Option<pzoom_code_info::FunctionLikeInfo> {
+    get_first_callable_signature(analyzer, callee_type).map(|signature| signature.to_function_info())
+}
+
+fn get_first_callable_signature(
+    analyzer: &StatementsAnalyzer<'_>,
+    callee_type: &TUnion,
+) -> Option<DirectCallableSignature> {
     for atomic in &callee_type.types {
         match atomic {
             TAtomic::TCallable {
@@ -3149,16 +3168,39 @@ fn get_first_callable_signature(callee_type: &TUnion) -> Option<DirectCallableSi
                     from_callable_docblock: false,
                 });
             }
+            // An invokable object's __invoke signature drives validation and
+            // closure-argument seeding, as for Psalm's getCallableFromAtomic.
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
+                if let Some(
+                    TAtomic::TClosure {
+                        params: Some(params),
+                        ..
+                    }
+                    | TAtomic::TCallable {
+                        params: Some(params),
+                        ..
+                    },
+                ) = resolve_invokable_object_callable(analyzer, *name, type_params.as_deref())
+                {
+                    return Some(DirectCallableSignature {
+                        params,
+                        from_callable_docblock: false,
+                    });
+                }
+            }
             TAtomic::TTemplateParam { as_type, .. } => {
-                if let Some(signature) = get_first_callable_signature(as_type) {
+                if let Some(signature) = get_first_callable_signature(analyzer, as_type) {
                     return Some(signature);
                 }
             }
             TAtomic::TObjectIntersection { types } => {
                 for nested_atomic in types {
-                    if let Some(signature) =
-                        get_first_callable_signature(&TUnion::new(nested_atomic.clone()))
-                    {
+                    if let Some(signature) = get_first_callable_signature(
+                        analyzer,
+                        &TUnion::new(nested_atomic.clone()),
+                    ) {
                         return Some(signature);
                     }
                 }
@@ -4094,15 +4136,30 @@ fn check_callable_union_invocability(
     }
 
     if has_null {
-        analysis_data.add_issue(Issue::new(
-            IssueKind::PossiblyNullFunctionCall,
-            "Cannot call function on possibly null value",
-            analyzer.file_path,
-            pos.0,
-            pos.1,
-            line,
-            col,
-        ));
+        // Psalm: a callee that can only be null is a NullFunctionCall; null
+        // among other possibilities is a PossiblyNullFunctionCall.
+        let only_null = !has_callable && !has_mixed && !has_invalid;
+        analysis_data.add_issue(if only_null {
+            Issue::new(
+                IssueKind::NullFunctionCall,
+                "Cannot call function on null value",
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            )
+        } else {
+            Issue::new(
+                IssueKind::PossiblyNullFunctionCall,
+                "Cannot call function on possibly null value",
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            )
+        });
     }
 
     if has_invalid {

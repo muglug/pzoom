@@ -405,48 +405,37 @@ pub fn analyze(
                     ));
                 }
 
-                if let Some(concrete_return_type) = strip_mixed_types(&return_type)
-                    && !is_contained_without_coercion(
+                if let Some(concrete_return_type) = strip_mixed_types(&return_type) {
+                    // Psalm's ReturnAnalyzer containment ignores null and
+                    // false outright; NullableReturnStatement and
+                    // FalsableReturnStatement are independent follow-up
+                    // checks below, not alternative kinds of this mismatch.
+                    let contained = is_contained_without_coercion(
                         &concrete_return_type,
                         &comparison_expected_type,
                         analyzer.codebase,
-                        concrete_return_type.ignore_nullable_issues,
-                        concrete_return_type.ignore_falsable_issues,
-                    )
-                {
-                    if let Some((start, end)) = value_issue_pos(analysis_data) {
+                        true,
+                        true,
+                    );
+                    if !contained && let Some((start, end)) = value_issue_pos(analysis_data) {
                         let (line, col) = analyzer.get_line_column(start);
-                        let issue_kind = if concrete_return_type.is_nullable()
-                            && !comparison_expected_type.is_nullable()
-                            && !union_has_template(&comparison_expected_type)
-                            && !concrete_return_type.ignore_nullable_issues
-                        {
-                            IssueKind::NullableReturnStatement
-                        } else if should_emit_falsable_return_statement(
+                        // When the comparison coerced (the inferred type is a
+                        // wider/less-specific version of the declared type) emit
+                        // LessSpecificReturnStatement, otherwise InvalidReturnStatement.
+                        let mut comparison_result =
+                            type_comparator::TypeComparisonResult::new();
+                        type_comparator::union_type_comparator::is_contained_by(
+                            analyzer.codebase,
                             &concrete_return_type,
                             &comparison_expected_type,
-                        ) {
-                            IssueKind::FalsableReturnStatement
+                            true,
+                            true,
+                            &mut comparison_result,
+                        );
+                        let issue_kind = if comparison_result.type_coerced.unwrap_or(false) {
+                            IssueKind::LessSpecificReturnStatement
                         } else {
-                            // Mirror Psalm's ReturnAnalyzer: when the inferred type is not
-                            // contained but the comparison coerced (the inferred type is a
-                            // wider/less-specific version of the declared type) emit
-                            // LessSpecificReturnStatement, otherwise InvalidReturnStatement.
-                            let mut comparison_result =
-                                type_comparator::TypeComparisonResult::new();
-                            type_comparator::union_type_comparator::is_contained_by(
-                                analyzer.codebase,
-                                &concrete_return_type,
-                                &comparison_expected_type,
-                                concrete_return_type.ignore_nullable_issues,
-                                concrete_return_type.ignore_falsable_issues,
-                                &mut comparison_result,
-                            );
-                            if comparison_result.type_coerced.unwrap_or(false) {
-                                IssueKind::LessSpecificReturnStatement
-                            } else {
-                                IssueKind::InvalidReturnStatement
-                            }
+                            IssueKind::InvalidReturnStatement
                         };
 
                         let actual_type_id =
@@ -485,7 +474,78 @@ pub fn analyze(
                             ),
                         );
                     }
-                } else if ret.value.as_ref().is_some_and(|value| {
+
+                    if !concrete_return_type.ignore_nullable_issues
+                        && concrete_return_type.is_nullable()
+                        && !comparison_expected_type.is_nullable()
+                        && !union_has_template(&comparison_expected_type)
+                        && let Some((start, end)) = value_issue_pos(analysis_data)
+                    {
+                        let (line, col) = analyzer.get_line_column(start);
+                        let expected_type_id =
+                            comparison_expected_type.get_id(Some(analyzer.interner));
+                        analysis_data.add_issue(
+                            Issue::new(
+                                IssueKind::NullableReturnStatement,
+                                format!(
+                                    "The type {} does not match the declared return type {}",
+                                    concrete_return_type.get_id(Some(analyzer.interner)),
+                                    expected_type_id
+                                ),
+                                analyzer.file_path,
+                                start,
+                                end,
+                                line,
+                                col,
+                            )
+                            .with_secondary_opt(return_declaration_secondary(
+                                analyzer,
+                                IssueKind::NullableReturnStatement,
+                                &expected_type_id,
+                            )),
+                        );
+                    }
+
+                    if should_emit_falsable_return_statement(
+                        &concrete_return_type,
+                        &comparison_expected_type,
+                    ) && let Some((start, end)) = value_issue_pos(analysis_data)
+                    {
+                        let (line, col) = analyzer.get_line_column(start);
+                        let expected_type_id =
+                            comparison_expected_type.get_id(Some(analyzer.interner));
+                        analysis_data.add_issue(
+                            Issue::new(
+                                IssueKind::FalsableReturnStatement,
+                                format!(
+                                    "The type {} does not match the declared return type {}",
+                                    concrete_return_type.get_id(Some(analyzer.interner)),
+                                    expected_type_id
+                                ),
+                                analyzer.file_path,
+                                start,
+                                end,
+                                line,
+                                col,
+                            )
+                            .with_secondary_opt(return_declaration_secondary(
+                                analyzer,
+                                IssueKind::FalsableReturnStatement,
+                                &expected_type_id,
+                            )),
+                        );
+                    }
+                }
+
+                if strip_mixed_types(&return_type).is_none_or(|concrete| {
+                    is_contained_without_coercion(
+                        &concrete,
+                        &comparison_expected_type,
+                        analyzer.codebase,
+                        true,
+                        true,
+                    )
+                }) && ret.value.as_ref().is_some_and(|value| {
                     should_emit_mixed_return_statement(value, context)
                 }) && let Some((start, end)) = value_issue_pos(analysis_data)
                 {
@@ -856,10 +916,6 @@ pub(crate) fn handle_byref_at_return(
     }
 }
 
-fn unions_are_array_like(left: &TUnion, right: &TUnion) -> bool {
-    is_array_like_union(left) && is_array_like_union(right)
-}
-
 fn strip_mixed_types(union: &TUnion) -> Option<TUnion> {
     let filtered: Vec<_> = union
         .types
@@ -1054,10 +1110,6 @@ fn collect_unknown_class_string_literals_from_union(
     }
 }
 
-fn union_contains_explicit_false(union: &TUnion) -> bool {
-    union.types.iter().any(atomic_contains_explicit_false)
-}
-
 /// If the union contains any object with a `__toString` method (possibly nested in
 /// array value/key types), return a copy with those objects replaced by `string`.
 /// Returns None if no such object is present, so callers can tell whether an implicit
@@ -1196,15 +1248,21 @@ fn atomic_cast_stringable_to_string(
 }
 
 fn should_emit_falsable_return_statement(return_type: &TUnion, expected_type: &TUnion) -> bool {
+    // Psalm ReturnAnalyzer: !ignore_falsable && inferred->isFalsable()
+    // && !declared->isFalsable() && (!declared->hasBool() || declared->isTrue())
+    // && !declared->hasScalar() — hasScalar is the literal `scalar` type only.
     if return_type.ignore_falsable_issues
-        || unions_are_array_like(return_type, expected_type)
-        || !union_contains_explicit_false(return_type)
-        || union_contains_explicit_false(expected_type)
+        || !return_type.is_falsable()
+        || expected_type.is_falsable()
     {
         return false;
     }
 
-    if union_has_scalar(expected_type) {
+    if expected_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TScalar))
+    {
         return false;
     }
 
@@ -1228,55 +1286,6 @@ fn atomic_contains_boolish(atomic: &TAtomic) -> bool {
         TAtomic::TTemplateParam { as_type, .. } => union_has_boolish(as_type),
         TAtomic::TTemplateParamClass { as_type, .. } => atomic_contains_boolish(as_type),
         TAtomic::TObjectIntersection { types } => types.iter().any(atomic_contains_boolish),
-        _ => false,
-    }
-}
-
-fn union_has_scalar(union: &TUnion) -> bool {
-    union
-        .types
-        .iter()
-        .any(|atomic| atomic_contains_scalar(atomic))
-}
-
-fn atomic_contains_scalar(atomic: &TAtomic) -> bool {
-    match atomic {
-        // Boolean types (`bool`/`true`/`false`) are intentionally excluded: Psalm's
-        // falsable-return guard uses `hasScalar()` (TScalar-family, not bool) and a
-        // separate `isTrue()` exception, so a `true`/`bool` expected return still
-        // reaches the boolish check below (which yields FalsableReturnStatement for
-        // an expected `true`).
-        TAtomic::TScalar
-        | TAtomic::TNumeric
-        | TAtomic::TArrayKey
-        | TAtomic::TInt
-        | TAtomic::TFloat
-        | TAtomic::TString
-        | TAtomic::TLiteralInt { .. }
-        | TAtomic::TLiteralFloat { .. }
-        | TAtomic::TLiteralString { .. }
-        | TAtomic::TLiteralClassString { .. }
-        | TAtomic::TNonEmptyString
-        | TAtomic::TNumericString
-        | TAtomic::TNonEmptyNumericString
-        | TAtomic::TLowercaseString
-        | TAtomic::TNonEmptyLowercaseString
-        | TAtomic::TTruthyString
-        | TAtomic::TClassString { .. }
-        | TAtomic::TIntRange { .. } => true,
-        TAtomic::TTemplateParam { as_type, .. } => union_has_scalar(as_type),
-        TAtomic::TTemplateParamClass { as_type, .. } => atomic_contains_scalar(as_type),
-        TAtomic::TObjectIntersection { types } => types.iter().any(atomic_contains_scalar),
-        _ => false,
-    }
-}
-
-fn atomic_contains_explicit_false(atomic: &TAtomic) -> bool {
-    match atomic {
-        TAtomic::TFalse => true,
-        TAtomic::TTemplateParam { as_type, .. } => union_contains_explicit_false(as_type),
-        TAtomic::TTemplateParamClass { as_type, .. } => atomic_contains_explicit_false(as_type),
-        TAtomic::TObjectIntersection { types } => types.iter().any(atomic_contains_explicit_false),
         _ => false,
     }
 }

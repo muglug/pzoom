@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Unit tests
+        run: cargo test --workspace
+
+      - name: Inference tests
+        run: cargo run --release -p pzoom-test-runner
+
+      - name: Checkout Psalm (6.x)
+        uses: actions/checkout@v4
+        with:
+          repository: vimeo/psalm
+          ref: 6.x
+          path: psalm
+
+      - name: Documentation test (Psalm issue docs)
+        run: python3 scripts/psalm_documentation_test.py --psalm-dir psalm

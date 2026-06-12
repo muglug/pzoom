@@ -119,6 +119,29 @@ pub fn analyze(
             analysis_data,
             context,
         );
+    } else if let Some(callable_info) = analysis_data
+        .expr_types
+        .get(&callee_pos)
+        .cloned()
+        .and_then(|callee_type| {
+            crate::expr::call::callable_validation::direct_callable_function_info(
+                analyzer,
+                &callee_type,
+            )
+        })
+    {
+        // A direct callable / invokable-object call: seed closure arguments
+        // from the callable's own parameter signature.
+        analyze_arguments_with_callable_context(
+            analyzer,
+            None,
+            &args,
+            &arg_positions,
+            &callable_info.params,
+            &pzoom_code_info::ttype::template::TemplateResult::default(),
+            analysis_data,
+            context,
+        );
     } else {
         for arg in &args {
             argument_analyzer::analyze(analyzer, arg, analysis_data, context);

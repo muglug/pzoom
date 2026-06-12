@@ -416,6 +416,20 @@ pub(crate) fn emit_arithmetic_operand_issue(
         return;
     };
 
+    if union.is_null() {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::NullOperand,
+            "Cannot use arithmetic on null".to_string(),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+        return;
+    }
+
     if union
         .types
         .iter()
@@ -451,13 +465,26 @@ pub(crate) fn emit_arithmetic_operand_issue(
         return;
     }
 
-    // Psalm does not raise InvalidOperand for arithmetic on mixed; it is handled
-    // by mixed-flow issue types elsewhere.
+    // Psalm's ArithmeticOpAnalyzer reports a mixed operand as MixedOperand
+    // and skips the remaining validation for it.
     if union
         .types
         .iter()
-        .any(|atomic| matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed))
+        .any(|atomic| matches!(
+            atomic,
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+        ))
     {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::MixedOperand,
+            "Operand cannot be mixed".to_string(),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
         return;
     }
 

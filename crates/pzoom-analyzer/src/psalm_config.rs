@@ -312,8 +312,15 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
                     config.error_level = ErrorLevel::from_int(n);
                 }
             }
+            // Psalm's findUnusedCode also turns on the post-analysis
+            // unused-declaration pass (Codebase::reportUnusedCode). pzoom's
+            // declaration pass only sees per-file references (no whole-program
+            // aggregation yet), so wiring it to `find_unused_code` here would
+            // flag every cross-file-referenced class/method as unused; only
+            // the unused-variable half is honoured until references are
+            // aggregated codebase-wide.
             "findUnusedCode" | "findUnusedVariablesAndParams" => {
-                config.report_unused = value == "true";
+                config.report_unused = value == "true" || value == "auto";
             }
             "findUnusedPsalmSuppress" => {
                 config.find_unused_suppress = value == "true";

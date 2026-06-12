@@ -143,6 +143,8 @@ pub enum IssueKind {
     MissingPropertyType,
     MissingConstructor,
     MissingDependency,
+    ExtensionRequirementViolation,
+    ImplementationRequirementViolation,
     MissingClosureReturnType,
     MissingClosureParamType,
 
@@ -153,7 +155,7 @@ pub enum IssueKind {
 
     // Unused code
     UnusedVariable,
-    UnusedParameter,
+    UnusedParam,
     UnusedProperty,
     UnusedMethod,
     UnusedClass,
@@ -578,7 +580,7 @@ impl Issue {
             | IssueKind::DeprecatedConstant => IssueSeverity::Warning,
 
             IssueKind::UnusedVariable
-            | IssueKind::UnusedParameter
+            | IssueKind::UnusedParam
             | IssueKind::UnusedProperty
             | IssueKind::UnusedMethod
             | IssueKind::UnusedClass

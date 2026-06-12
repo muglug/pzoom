@@ -597,12 +597,16 @@ pub fn analyze_with_known_type(
                                     let localized_value_type =
                                         strip_ignored_null_false(&localized_value_type);
                                     let mut comparison_result = TypeComparisonResult::new();
+                                    // Psalm's property containment ignores null
+                                    // and false; the dedicated PossiblyNull/
+                                    // PossiblyFalsePropertyAssignmentValue
+                                    // checks below handle those on a match.
                                     let is_contained = union_type_comparator::is_contained_by(
                                         analyzer.codebase,
                                         &localized_value_type,
                                         &prop_type,
-                                        false,
-                                        false,
+                                        true,
+                                        true,
                                         &mut comparison_result,
                                     );
 
@@ -621,6 +625,78 @@ pub fn analyze_with_known_type(
                                             ),
                                             Some(bound_pos),
                                         );
+
+                                        let class_name = analyzer.interner.lookup(*name);
+                                        let (line, col) = analyzer.get_line_column(pos.0);
+                                        // A template-typed property accepts what its
+                                        // bound accepts; a mixed property accepts
+                                        // anything (Psalm skips both).
+                                        let prop_accepts_null = prop_type.is_nullable()
+                                            || prop_type.is_mixed()
+                                            || prop_type.types.iter().any(|atomic| match atomic {
+                                                TAtomic::TTemplateParam { as_type, .. } => {
+                                                    as_type.is_nullable() || as_type.is_mixed()
+                                                }
+                                                _ => false,
+                                            });
+                                        let prop_accepts_false = prop_type.is_falsable()
+                                            || prop_type.is_mixed()
+                                            || prop_type.types.iter().any(|atomic| match atomic {
+                                                TAtomic::TTemplateParam { as_type, .. } => {
+                                                    as_type.is_falsable() || as_type.is_mixed()
+                                                }
+                                                _ => false,
+                                            });
+                                        if !localized_value_type.ignore_nullable_issues
+                                            && localized_value_type.is_nullable()
+                                            && !prop_accepts_null
+                                        {
+                                            analysis_data.add_issue(Issue::new(
+                                                IssueKind::PossiblyNullPropertyAssignmentValue,
+                                                format!(
+                                                    "Property {}::${} expects {}, possibly different type {} provided",
+                                                    class_name,
+                                                    prop_name,
+                                                    prop_type.get_id(Some(analyzer.interner)),
+                                                    localized_value_type
+                                                        .get_id(Some(analyzer.interner))
+                                                ),
+                                                analyzer.file_path,
+                                                pos.0,
+                                                pos.1,
+                                                line,
+                                                col,
+                                            ));
+                                        } else if !localized_value_type.ignore_falsable_issues
+                                            && localized_value_type.is_falsable()
+                                            && !prop_accepts_false
+                                            && !prop_type
+                                                .types
+                                                .iter()
+                                                .any(|atomic| matches!(
+                                                    atomic,
+                                                    TAtomic::TBool
+                                                        | TAtomic::TTrue
+                                                        | TAtomic::TScalar
+                                                ))
+                                        {
+                                            analysis_data.add_issue(Issue::new(
+                                                IssueKind::PossiblyFalsePropertyAssignmentValue,
+                                                format!(
+                                                    "Property {}::${} expects {}, possibly different type {} provided",
+                                                    class_name,
+                                                    prop_name,
+                                                    prop_type.get_id(Some(analyzer.interner)),
+                                                    localized_value_type
+                                                        .get_id(Some(analyzer.interner))
+                                                ),
+                                                analyzer.file_path,
+                                                pos.0,
+                                                pos.1,
+                                                line,
+                                                col,
+                                            ));
+                                        }
                                     }
 
                                     if !is_contained {

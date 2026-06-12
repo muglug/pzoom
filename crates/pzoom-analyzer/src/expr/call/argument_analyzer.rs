@@ -920,17 +920,20 @@ pub fn verify_type(
             return;
         }
 
-        // NOTE: the `PossiblyFalseArgument` emission (a possibly-`false` input) is
-        // still gated on two upstream gaps that currently cause false positives:
-        //   * scan-time docblock parsing drops `@psalm-ignore-falsable-return` when it
-        //     follows a long multi-line `@psalm-return` (e.g. `glob`), so a falsable
-        //     return that Psalm marks ignorable is reported here; and
-        //   * `TUnion` derives `PartialEq` over `is_falsable`, so the flag leaks into
-        //     reconciliation/dedup equality (Psalm compares by id), perturbing
-        //     unrelated results (e.g. `IntRange/assertOutOfRange`).
-        // The resolution-layer `ignore_falsable` propagation is fixed; the issue kind
-        // exists; enable this emission once the two gaps above are closed.
-        let _ = arg_type.ignore_falsable_issues;
+        if arg_type.is_falsable() && !arg_type.ignore_falsable_issues {
+            add_issue(
+                analyzer,
+                analysis_data,
+                arg_pos,
+                IssueKind::PossiblyFalseArgument,
+                format!(
+                    "Argument {} of {} cannot be false, possibly {} value expected",
+                    argument_offset + 1,
+                    callable_name,
+                    param_type.get_id(Some(analyzer.interner))
+                ),
+            );
+        }
     }
 
     // Hakana `verify_type`'s tail: transfer any type-variable bounds the

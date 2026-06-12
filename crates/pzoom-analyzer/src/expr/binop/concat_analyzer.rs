@@ -155,20 +155,47 @@ pub(crate) fn emit_concat_operand_issue(
         return;
     }
 
-    if union_has_explicit_null(union) && !union.ignore_nullable_issues {
-        let (line, col) = analyzer.get_line_column(pos.0);
+    // Psalm's ConcatAnalyzer::analyzeOperand ordering: a definitely-null /
+    // definitely-false operand reports NullOperand / FalseOperand and stops;
+    // null or false inside a wider union reports the Possibly* variants.
+    let (line, col) = analyzer.get_line_column(pos.0);
+    let mut emit = |kind: IssueKind, message: String| {
         analysis_data.add_issue(Issue::new(
-            IssueKind::PossiblyNullOperand,
-            format!(
-                "Cannot concatenate with possibly null type {}",
-                union.get_id(Some(analyzer.interner))
-            ),
+            kind,
+            message,
             analyzer.file_path,
             pos.0,
             pos.1,
             line,
             col,
         ));
+    };
+    let union_id = union.get_id(Some(analyzer.interner));
+    if union.is_null() {
+        emit(
+            IssueKind::NullOperand,
+            format!("Cannot concatenate with a {union_id}"),
+        );
+        return;
+    }
+    if union.is_false() {
+        emit(
+            IssueKind::FalseOperand,
+            format!("Cannot concatenate with a {union_id}"),
+        );
+        return;
+    }
+    if union_has_explicit_null(union) && !union.ignore_nullable_issues {
+        emit(
+            IssueKind::PossiblyNullOperand,
+            format!("Cannot concatenate with possibly null type {union_id}"),
+        );
+    }
+    if union.is_falsable() && !union.ignore_falsable_issues {
+        emit(
+            IssueKind::PossiblyFalseOperand,
+            format!("Cannot concatenate with a possibly false {union_id}"),
+        );
     }
 
     let mut has_valid = false;

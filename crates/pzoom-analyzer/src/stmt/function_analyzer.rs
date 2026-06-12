@@ -354,6 +354,8 @@ pub fn analyze_with_namespace(
             return_types_start,
             &fqn,
         );
+
+        maybe_emit_missing_param_type_issues(&func_analyzer, info, analysis_data, &fqn);
     }
 
     // Drop this function's recorded return/yield types so an enclosing
@@ -383,6 +385,78 @@ pub fn analyze_with_namespace(
     }
 
     Ok(())
+}
+
+/// Psalm's MissingParamType for plain functions (the method version lives in
+/// class_analyzer): an untyped param with neither signature nor docblock type.
+fn maybe_emit_missing_param_type_issues(
+    analyzer: &StatementsAnalyzer<'_>,
+    function_info: &pzoom_code_info::FunctionLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+    function_name: &str,
+) {
+    let has_assertions = !function_info.assertions.is_empty()
+        || !function_info.if_true_assertions.is_empty()
+        || !function_info.if_false_assertions.is_empty();
+    if has_assertions {
+        return;
+    }
+    // Psalm types a param that a conditional `@return ($p is X ? ...)` or
+    // `properties-of<$p>` references (it becomes a function template), so
+    // MissingParamType does not fire for it; pzoom keeps the param untyped
+    // and resolves the conditional at the call, so mirror the skip here.
+    fn return_type_references_param(union: &TUnion, param_names: &[pzoom_str::StrId]) -> bool {
+        union.types.iter().any(|atomic| match atomic {
+            TAtomic::TConditional(conditional) => {
+                param_names.contains(&conditional.param_name)
+                    || return_type_references_param(&conditional.if_true_type, param_names)
+                    || return_type_references_param(&conditional.if_false_type, param_names)
+            }
+            TAtomic::TTemplateParam { name, .. } => param_names.contains(name),
+            TAtomic::TTemplatePropertiesOf {
+                param_name: subject,
+                ..
+            } => param_names.contains(subject),
+            // `properties-of<$a>` parses the `$a` subject as a named object
+            // before the resolution pass rewrites it to the template form.
+            TAtomic::TPropertiesOf { classlike_name, .. } => {
+                param_names.contains(classlike_name)
+            }
+            _ => false,
+        })
+    }
+    for param in &function_info.params {
+        // Docblock references spell the param either bare or as `$name`.
+        let mut param_names = vec![param.name];
+        let bare = analyzer.interner.lookup(param.name);
+        let with_sigil = format!("${}", bare.trim_start_matches('$'));
+        if let Some(id) = analyzer.interner.find(&with_sigil) {
+            param_names.push(id);
+        }
+        if let Some(id) = analyzer.interner.find(bare.trim_start_matches('$')) {
+            param_names.push(id);
+        }
+        let docblock_types_param = function_info
+            .return_type
+            .as_ref()
+            .is_some_and(|return_type| return_type_references_param(return_type, &param_names));
+        if param.signature_type.is_none() && param.param_type.is_none() && !docblock_types_param {
+            let (line, col) = analyzer.get_line_column(param.start_offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::MissingParamType,
+                format!(
+                    "Argument {} of {} does not have a type",
+                    analyzer.interner.lookup(param.name),
+                    function_name
+                ),
+                analyzer.file_path,
+                param.start_offset,
+                param.start_offset.saturating_add(1),
+                line,
+                col,
+            ));
+        }
+    }
 }
 
 fn maybe_emit_missing_return_type_issue(
@@ -888,6 +962,54 @@ pub(crate) fn verify_missing_return_checks(
                 analysis_data,
             );
         }
+    }
+
+    // Psalm ReturnTypeAnalyzer's independent declaration checks, run
+    // regardless of the containment outcome: a nullable/falsable inferred
+    // return against a declaration that allows neither.
+    if !inferred.ignore_nullable_issues
+        && inferred.is_nullable()
+        && !declared.is_nullable()
+        && !declared
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+        && !declared.is_void()
+    {
+        emit(
+            IssueKind::InvalidNullableReturnType,
+            format!(
+                "The declared return type '{}' for {} is not nullable, but '{}' contains null",
+                declared.get_id(Some(analyzer.interner)),
+                cased_name,
+                inferred.get_id(Some(analyzer.interner))
+            ),
+            analysis_data,
+        );
+    }
+
+    if !inferred.ignore_falsable_issues
+        && inferred.is_falsable()
+        && !declared.is_falsable()
+        && !declared
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse))
+        && !declared
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TScalar))
+    {
+        emit(
+            IssueKind::InvalidFalsableReturnType,
+            format!(
+                "The declared return type '{}' for {} does not allow false, but '{}' contains false",
+                declared.get_id(Some(analyzer.interner)),
+                cased_name,
+                inferred.get_id(Some(analyzer.interner))
+            ),
+            analysis_data,
+        );
     }
 }
 

@@ -425,7 +425,7 @@ fn is_ignored_for_unused_param(var_name: &str) -> bool {
     var_name.starts_with("$_") || (var_name.starts_with("$unused") && var_name != "$unused")
 }
 
-/// Report UnusedVariable / UnusedForeachValue / UnusedParameter /
+/// Report UnusedVariable / UnusedForeachValue / UnusedParam /
 /// UnusedClosureParam from the function-body data flow graph.
 ///
 /// Variables: Psalm's `StatementsAnalyzer::checkUnreferencedVars` — every
@@ -535,7 +535,7 @@ fn report_unused_variables(
                     let (line, col) = stmt_analyzer.get_line_column(param.span.0);
                     new_issues.push(Issue::new(
                         if method_final {
-                            IssueKind::UnusedParameter
+                            IssueKind::UnusedParam
                         } else {
                             IssueKind::PossiblyUnusedParam
                         },
@@ -609,7 +609,7 @@ fn report_unused_variables(
                 if param.is_closure {
                     IssueKind::UnusedClosureParam
                 } else {
-                    IssueKind::UnusedParameter
+                    IssueKind::UnusedParam
                 },
                 format!(
                     "Param {} is never referenced in this method",
@@ -980,7 +980,7 @@ fn suppresses_issue(token: &str, issue_name: &str) -> bool {
         }
         // Psalm's issue class is UnusedParam; the pzoom kind follows Hakana.
         "UnusedParam" => {
-            return issue_name == "UnusedParameter";
+            return issue_name == "UnusedParam";
         }
         "MixedReturnStatement" | "MixedInferredReturnType" => {
             return issue_name == "MixedReturnStatement";

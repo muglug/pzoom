@@ -1686,6 +1686,8 @@ fn check_trait_requirements(
         return;
     }
 
+    let class_name_str = analyzer.interner.lookup(class_info.name);
+
     let mut extended_classes: FxHashSet<StrId> = class_info
         .all_parent_classes
         .iter()
@@ -1721,11 +1723,12 @@ fn check_trait_requirements(
                 dependency_name_pos(dependency_spans, resolved_trait, dependency_fallback);
             let (line, col) = analyzer.get_line_column(start);
             analysis_data.add_issue(Issue::new(
-                IssueKind::MissingDependency,
+                IssueKind::ExtensionRequirementViolation,
                 format!(
-                    "Trait {} requires using class to extend {}",
+                    "Trait {} requires using class to extend {}, but {} does not",
                     analyzer.interner.lookup(resolved_trait),
-                    analyzer.interner.lookup(required_parent)
+                    analyzer.interner.lookup(required_parent),
+                    class_name_str
                 ),
                 analyzer.file_path,
                 start,
@@ -1745,11 +1748,12 @@ fn check_trait_requirements(
                 dependency_name_pos(dependency_spans, resolved_trait, dependency_fallback);
             let (line, col) = analyzer.get_line_column(start);
             analysis_data.add_issue(Issue::new(
-                IssueKind::MissingDependency,
+                IssueKind::ImplementationRequirementViolation,
                 format!(
-                    "Trait {} requires using class to implement {}",
+                    "Trait {} requires using class to implement {}, but {} does not",
                     analyzer.interner.lookup(resolved_trait),
-                    analyzer.interner.lookup(required_interface)
+                    analyzer.interner.lookup(required_interface),
+                    class_name_str
                 ),
                 analyzer.file_path,
                 start,

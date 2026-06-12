@@ -41,6 +41,22 @@ pub(super) fn handle(
         );
     }
 
+    if function_name.eq_ignore_ascii_case("var_dump")
+        || function_name.eq_ignore_ascii_case("shell_exec")
+    {
+        // Psalm's NamedFunctionCallHandler flags these unconditionally.
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::ForbiddenCode,
+            format!("Unsafe {}", function_name.to_ascii_lowercase()),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
     if function_name.eq_ignore_ascii_case("get_called_class") {
         return Some(infer_get_called_class_return_type(analyzer, context));
     }

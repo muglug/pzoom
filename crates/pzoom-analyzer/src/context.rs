@@ -208,12 +208,9 @@ pub struct BlockContext {
     /// Whether we're inside a conditional expression.
     pub inside_conditional: bool,
 
-    /// Whether we're inside an isset() call.
+    /// Whether we're inside an isset() call (Psalm's Context::inside_isset,
+    /// also set for empty() and the left side of `??`).
     pub inside_isset: bool,
-
-    /// Whether we're inside an empty() call specifically (a subset of
-    /// inside_isset): Psalm reports never-in-scope variables there.
-    pub inside_empty: bool,
 
     /// Whether we're analyzing an argument of class_exists()/interface_exists()
     /// /enum_exists()/trait_exists()/class_alias(): `X::class` existence checks
@@ -417,7 +414,6 @@ impl BlockContext {
             inside_throw: false,
             inside_conditional: self.inside_conditional,
             inside_isset: false,
-            inside_empty: false,
             inside_class_exists: false,
             inside_assignment_root: false,
             inside_unset: false,

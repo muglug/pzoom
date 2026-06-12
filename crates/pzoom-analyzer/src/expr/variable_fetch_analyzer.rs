@@ -276,16 +276,25 @@ fn maybe_emit_undefined_variable(
     }
 
     if context.inside_isset || context.inside_unset {
-        // Psalm still reports a variable that was never possibly in scope (a
-        // likely typo) inside empty(); isset()/unset() never report.
-        if !context.inside_empty || context.inside_unset {
-            return;
-        }
+        // Psalm's PossiblyUndefined(Global)Variable report (the
+        // vars_possibly_in_scope/first-appearance branch of
+        // VariableFetchAnalyzer) is gated on
+        // `!$context->inside_isset && !$context->inside_unset`: a variable
+        // with a prior appearance never reports inside isset()/empty()/unset().
         let possibly_in_scope = context.vars_possibly_in_scope.contains(var_name)
             || context
                 .vars_possibly_in_scope
                 .contains(&get_alternate_var_id(var_name));
         if possibly_in_scope {
+            return;
+        }
+        // A never-defined variable still reports, except inside
+        // isset()/empty() at non-function scope (Psalm's
+        // VariableFetchAnalyzer: `!$context->inside_isset ||
+        // $statements_analyzer->getSource() instanceof FunctionLikeAnalyzer`
+        // gates the Undefined(Global)Variable report; UnsetAnalyzer only sets
+        // inside_unset, so unset() reports in both scopes).
+        if context.inside_isset && analyzer.function_info.is_none() {
             return;
         }
     }

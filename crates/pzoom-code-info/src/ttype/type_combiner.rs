@@ -965,6 +965,34 @@ fn scrape_list_properties(
     combination.all_arrays_callable = false;
 }
 
+/// Psalm's `TypeCombination::fallbackKeyContains`: whether the accumulated
+/// fallback key type covers the given array key.
+fn fallback_key_contains(objectlike_key_type: Option<&TUnion>, key: &ArrayKey) -> bool {
+    let Some(key_type) = objectlike_key_type else {
+        return false;
+    };
+    key_type.types.iter().any(|atomic| match atomic {
+        TAtomic::TArrayKey => true,
+        TAtomic::TLiteralInt { value } => matches!(key, ArrayKey::Int(k) if k == value),
+        TAtomic::TLiteralString { value } => matches!(key, ArrayKey::String(k) if k == value),
+        TAtomic::TIntRange { min, max } => match key {
+            ArrayKey::Int(k) => min.is_none_or(|min| min <= *k) && max.is_none_or(|max| *k <= max),
+            ArrayKey::String(_) => false,
+        },
+        TAtomic::TString
+        | TAtomic::TNonEmptyString
+        | TAtomic::TNumericString
+        | TAtomic::TNonEmptyNumericString
+        | TAtomic::TLowercaseString
+        | TAtomic::TNonEmptyLowercaseString
+        | TAtomic::TTruthyString
+        | TAtomic::TCallableString
+        | TAtomic::TClassString { .. } => matches!(key, ArrayKey::String(_)),
+        TAtomic::TInt | TAtomic::TNonspecificLiteralInt => matches!(key, ArrayKey::Int(_)),
+        _ => false,
+    })
+}
+
 fn scrape_keyed_array_properties(
     combination: &mut TypeCombination,
     properties: std::sync::Arc<FxHashMap<ArrayKey, TUnion>>,
@@ -990,6 +1018,11 @@ fn scrape_keyed_array_properties(
         std::sync::Arc::try_unwrap(properties).unwrap_or_else(|shared| (*shared).clone())
     {
         let mut entry_value_type = value_type;
+        let candidate_possibly_undefined = entry_value_type.possibly_undefined;
+        let prior_entry_possibly_undefined = combination
+            .objectlike_entries
+            .get(&key)
+            .map(|entry_type| entry_type.possibly_undefined);
 
         // If this key only appears in one branch, mark it as possibly undefined.
         if !combination.objectlike_entries.contains_key(&key) && existing_entries {
@@ -1018,6 +1051,22 @@ fn scrape_keyed_array_properties(
                 .insert(key.clone(), entry_value_type);
         }
 
+        // Psalm's TypeCombiner: a key that's possibly undefined on either side
+        // and covered by the previously-accumulated fallback key type also
+        // absorbs the accumulated fallback value type (the other shape may
+        // carry it under its `...<K, V>` params).
+        if (candidate_possibly_undefined || prior_entry_possibly_undefined.unwrap_or(true))
+            && fallback_key_contains(combination.objectlike_key_type.as_ref(), &key)
+        {
+            if let Some(fallback_value) = combination.objectlike_value_type.clone() {
+                if let Some(entry_type) = combination.objectlike_entries.get(&key) {
+                    let combined =
+                        combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
+                    combination.objectlike_entries.insert(key.clone(), combined);
+                }
+            }
+        }
+
         missing_entries.retain(|k| k != &key);
 
         let is_possibly_undefined = combination
@@ -1027,15 +1076,6 @@ fn scrape_keyed_array_properties(
 
         if !is_possibly_undefined {
             has_defined_keys = true;
-        }
-    }
-
-    // Keys missing in this branch become possibly undefined after merge.
-    if !overwrite_empty_array {
-        for missing_key in missing_entries {
-            if let Some(existing_type) = combination.objectlike_entries.get_mut(&missing_key) {
-                existing_type.possibly_undefined = true;
-            }
         }
     }
 
@@ -1058,6 +1098,32 @@ fn scrape_keyed_array_properties(
                 fallback_value
             },
         );
+    }
+
+    // Keys missing in this branch become possibly undefined after merge, and
+    // absorb the merged fallback value type when the merged fallback key type
+    // covers them (Psalm's TypeCombiner missing-entries handling, which runs
+    // after this shape's fallback params are folded in).
+    if !overwrite_empty_array {
+        for missing_key in missing_entries {
+            if let Some(existing_type) = combination.objectlike_entries.get_mut(&missing_key) {
+                existing_type.possibly_undefined = true;
+            }
+            if fallback_key_contains(combination.objectlike_key_type.as_ref(), &missing_key) {
+                if let Some(fallback_value) = combination.objectlike_value_type.clone() {
+                    if let Some(entry_type) = combination.objectlike_entries.get(&missing_key) {
+                        let combined = combine_union_types(
+                            entry_type,
+                            &fallback_value,
+                            overwrite_empty_array,
+                        );
+                        combination
+                            .objectlike_entries
+                            .insert(missing_key.clone(), combined);
+                    }
+                }
+            }
+        }
     }
 
     if !has_defined_keys {

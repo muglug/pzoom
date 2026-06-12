@@ -491,6 +491,7 @@ fn apply_case_equality_clauses(
         analysis_data,
         Some(id),
         crate::reconciler::EmissionMode::Silent,
+        true,
     );
 
     if !case_clauses.is_empty() {

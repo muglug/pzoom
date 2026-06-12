@@ -382,6 +382,30 @@ fn intersect_atomic_with_atomic_inner(
         return Some(existing_atomic.clone());
     }
 
+    // Psalm's intersectAtomicTypes: the empty array (`array<never, never>`)
+    // and a non-empty array-like are disjoint — neither is contained by the
+    // other, so Type::intersectUnionTypes finds no intersection and returns
+    // null (this is what resolves `TArray is array<never, never>` to the
+    // else branch for a non-empty bound in conditional return types).
+    let is_empty_array_atomic = |atomic: &TAtomic| match atomic {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        } => key_type.is_nothing() && value_type.is_nothing(),
+        _ => false,
+    };
+    let is_non_empty_array_like = |atomic: &TAtomic| {
+        matches!(
+            atomic,
+            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. }
+        )
+    };
+    if (is_empty_array_atomic(existing_atomic) && is_non_empty_array_like(assertion_atomic))
+        || (is_non_empty_array_like(existing_atomic) && is_empty_array_atomic(assertion_atomic))
+    {
+        return None;
+    }
+
     // Handle specific type intersections
     match (existing_atomic, assertion_atomic) {
         // int types

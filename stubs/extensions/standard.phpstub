@@ -6232,10 +6232,6 @@ function array_walk_recursive(object|array &$array, callable $callback, mixed $a
 
 /**
  * @psalm-taint-sink extract $array
- *
- * @param array<string, mixed> $array
- *
- * @return int<0, max>
  */
 function extract(array &$array, int $flags = EXTR_OVERWRITE, string $prefix = ''): int
 {

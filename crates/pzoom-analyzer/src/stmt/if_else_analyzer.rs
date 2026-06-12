@@ -223,6 +223,7 @@ pub fn analyze(
         reconciler::EmissionMode::ImpossibleOnly,
         Some(&pre_narrowed_vars),
         Some(&omit_report_vars),
+        true,
     );
     promote_asserted_vars_to_assigned( &assertion_result.if_true, &mut if_context);
     promote_guaranteed_true_condition_assignments(analyzer, if_stmt.condition, &mut if_context);
@@ -716,6 +717,10 @@ pub fn analyze(
             analysis_data,
             None,
             reconciler::EmissionMode::Silent,
+            // This reconciles directly into the OUTER context (Psalm threads
+            // the leaving-if continuation through the else fork instead), so
+            // the dependent-key sweep must not run here.
+            false,
         );
 
         // The assertion finder narrows some negations the formula→reconcile path
@@ -1256,20 +1261,29 @@ fn intersect_set(left: &FxHashSet<VarName>, right: &FxHashSet<VarName>) -> FxHas
 /// Apply clauses to a context by simplifying the CNF formula and extracting
 /// truths. Returns the reconciler's changed var ids (Psalm's
 /// `$cond_changed_var_ids`), which feed `if_cond_changed_var_ids`.
+/// `sweep_dependent_keys`: Psalm only runs the post-reconcile dependent-key
+/// sweep on branch-entry (forked) contexts — IfAnalyzer/ElseIfAnalyzer/
+/// ElseAnalyzer. When this helper reconciles facts directly into an OUTER
+/// context (pzoom's leaving-if shortcut, where Psalm threads the result
+/// through the else fork's new/redefined vars instead), the sweep must not
+/// run: Psalm's outer context keeps sibling dim entries like `$arr['a']`.
 pub(crate) fn apply_clauses_to_context(
     analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
     analysis_data: &mut FunctionAnalysisData,
     creating_conditional_id: Option<(u32, u32)>,
     emission_mode: reconciler::EmissionMode,
+    sweep_dependent_keys: bool,
 ) -> FxHashSet<VarName> {
-    apply_clauses_to_context_with_prenarrowed(
+    apply_clauses_to_context_full(
         analyzer,
         context,
         analysis_data,
         creating_conditional_id,
         emission_mode,
         None,
+        None,
+        sweep_dependent_keys,
     )
 }
 
@@ -1296,6 +1310,7 @@ fn apply_clauses_to_context_with_prenarrowed(
         emission_mode,
         pre_narrowed_vars,
         None,
+        true,
     )
 }
 
@@ -1312,6 +1327,7 @@ fn apply_clauses_to_context_full(
     emission_mode: reconciler::EmissionMode,
     pre_narrowed_vars: Option<&FxHashSet<VarName>>,
     omit_report_vars: Option<&FxHashSet<VarName>>,
+    sweep_dependent_keys: bool,
 ) -> FxHashSet<VarName> {
     if context.clauses.is_empty() {
         return FxHashSet::default();
@@ -1378,7 +1394,8 @@ fn apply_clauses_to_context_full(
             &clause_removal_ids,
         )
         .0;
-
+    }
+    if !clause_removal_ids.is_empty() && sweep_dependent_keys {
         // Psalm's IfAnalyzer/ElseIfAnalyzer/ElseAnalyzer follow the reconcile
         // with a dependent-key sweep: a changed root (including `$this`, which
         // the reconciler itself spares) invalidates memoized paths containing

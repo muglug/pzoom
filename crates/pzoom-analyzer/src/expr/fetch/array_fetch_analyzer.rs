@@ -1159,7 +1159,7 @@ pub fn analyze(
     }
 
     // Set the result type using the type combiner for proper simplification
-    let result_union = if result_types.is_empty() {
+    let mut result_union = if result_types.is_empty() {
         if emitted_offset_issue {
             TUnion::nothing()
         } else {
@@ -1173,6 +1173,24 @@ pub fn analyze(
         result_union.ignore_falsable_issues |= result_ignore_falsable;
         result_union
     };
+    // Psalm's ArrayFetchAnalyzer: inside isset()/empty() a non-mixed fetch is
+    // widened with |null — the offset may be absent, so the operand of e.g.
+    // `empty($a["a"])` is never treated as definitely set
+    // (`$stmt_type = Type::combineUnionTypes($stmt_type, Type::getNull())`).
+    // A possibly-undefined offset is widened even when mixed (Psalm's
+    // `elseif ($stmt_type->possibly_undefined)` branch adds null in place of
+    // reporting PossiblyUndefinedArrayOffset inside isset()/unset()).
+    if context.inside_isset && (!result_union.has_mixed() || has_possibly_undefined_offset) {
+        if result_union.is_nothing() {
+            // combineUnionTypes(never, null) collapses to null.
+            let from_docblock = result_union.from_docblock;
+            result_union = TUnion::null();
+            result_union.from_docblock = from_docblock;
+        } else if !result_union.is_nullable() {
+            result_union.add_type(TAtomic::TNull);
+        }
+    }
+    let result_union = result_union;
     // Psalm's ArrayFetchAnalyzer tail: a fetch from a provably-empty array
     // reports EmptyArrayAccess and degrades to mixed rather than flowing a
     // `never` into later expressions.

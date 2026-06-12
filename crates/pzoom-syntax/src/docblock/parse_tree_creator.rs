@@ -96,6 +96,16 @@ impl ParseTreeCreator {
                 "|" => self.handle_bar()?,
                 "&" => self.handle_ampersand()?,
                 "is" | "as" | "of" => self.handle_is_or_as(&value)?,
+                // Inline variance modifiers in generic type parameters
+                // (PHPStan syntax, e.g. `Foo<covariant string>`) are silently
+                // skipped. Mirrors Psalm f6cbb808.
+                "covariant" | "contravariant" => {
+                    if self.t + 1 < self.type_token_count
+                        && self.type_tokens[self.t + 1].value == " "
+                    {
+                        self.t += 1;
+                    }
+                }
                 _ => self.handle_value(self.t)?,
             }
 

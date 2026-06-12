@@ -2024,6 +2024,21 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             Some(&class_info.constants),
                         );
 
+                        // Docblock assertions parse while the
+                        // conditional-subject scope is alive too: a
+                        // conditional assertion type (`@psalm-assert-if-true
+                        // =(T is '' ? ...)`) registers its subject template so
+                        // call sites keep literal bounds for it.
+                        let parsed_assertions = self.get_docblock_assertions(
+                            &parsed,
+                            member_self_class,
+                            class_info.parent_class,
+                            Some(&method_template_map),
+                        );
+                        assertions.extend(parsed_assertions.assertions);
+                        if_true_assertions.extend(parsed_assertions.if_true_assertions);
+                        if_false_assertions.extend(parsed_assertions.if_false_assertions);
+
                         let generated_conditional_templates = std::mem::take(
                             &mut self.conditional_subject_scope.generated_templates,
                         );
@@ -2061,16 +2076,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             return_type.as_mut(),
                             signature_return_type.as_ref(),
                         );
-
-                        let parsed_assertions = self.get_docblock_assertions(
-                            &parsed,
-                            member_self_class,
-                            class_info.parent_class,
-                            Some(&method_template_map),
-                        );
-                        assertions.extend(parsed_assertions.assertions);
-                        if_true_assertions.extend(parsed_assertions.if_true_assertions);
-                        if_false_assertions.extend(parsed_assertions.if_false_assertions);
 
                         let (scanned_taints, _raw_conditional_escapes) =
                             self.scan_docblock_taints(&parsed, &mut params, is_pure);
@@ -4950,16 +4955,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 AssertionType::NotNull
             }
         } else {
+            // A conditional assertion type (`=(T is '' ? string :
+            // non-empty-string)` on str_contains and friends) keeps its
+            // TConditional structure — Psalm parses it like a conditional
+            // return type — so the call site picks a branch from the
+            // template bounds the arguments inferred. Parsing it here also
+            // registers the subject template on the function-like, exempting
+            // its bounds from literal generalization.
+            let conditional_type = self.parse_docblock_conditional_return_type(
+                assertion_source,
+                self_class,
+                parent_class,
+                template_map,
+                None,
+            );
+
             // `value-of<Enum::CASE>`-style utilities resolve with class
             // context (enum case values, class constants).
-            let parsed_type = self
-                .try_resolve_docblock_utility_type(
-                    assertion_source,
-                    self_class,
-                    parent_class,
-                    template_map,
-                    None,
-                )
+            let parsed_type = conditional_type
+                .map(docblock_conditional_union)
+                .or_else(|| {
+                    self.try_resolve_docblock_utility_type(
+                        assertion_source,
+                        self_class,
+                        parent_class,
+                        template_map,
+                        None,
+                    )
+                })
                 .unwrap_or_else(|| {
                     let parsed_type = crate::docblock::parse_type_string(
                         assertion_source,

@@ -290,6 +290,7 @@ pub enum IssueKind {
     ParseError,
     InternalError,
     UnrecognizedExpression,
+    UnrecognizedStatement,
 
     // Argument coercion
     ArgumentTypeCoercion,

@@ -4,6 +4,7 @@ pub mod attribute_analyzer;
 pub mod break_analyzer;
 pub mod class_analyzer;
 pub mod continue_analyzer;
+pub mod declare_analyzer;
 pub mod scope_analyzer;
 pub mod do_analyzer;
 pub mod echo_analyzer;

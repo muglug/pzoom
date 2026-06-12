@@ -1,0 +1,2 @@
+RedundantConditionGivenDocblockType - input.php:12:16 - string can never contain null
+RedundantConditionGivenDocblockType - input.php:12:9 - Docblock-defined type string for $first is never null

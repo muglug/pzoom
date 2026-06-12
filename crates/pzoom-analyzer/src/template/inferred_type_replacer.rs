@@ -4,36 +4,55 @@
 //! after standin substitution, replace remaining template atomics from inferred
 //! template types.
 
-use pzoom_code_info::{FunctionLikeParameter, TAtomic, TUnion};
+use pzoom_code_info::{
+    CodebaseInfo, FunctionLikeParameter, GenericParent, TAtomic, TUnion, TemplateResult,
+    combine_union_types,
+};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
-use crate::template::TemplateMap;
+
+use crate::template::{
+    lower_bounds_get, lower_bounds_insert, template_result_is_empty, template_types_get,
+};
 
 /// Replaces remaining template atomics using inferred/default template maps.
-pub fn replace(
+/// Without a codebase, conditional types fall back to the union of their
+/// branches; call [`replace_in`] where conditionals should pick a branch.
+pub fn replace(union: &TUnion, template_result: &TemplateResult) -> TUnion {
+    replace_in(None, union, template_result)
+}
+
+/// [`replace`] with a codebase for conditional-branch selection (Psalm's
+/// `TemplateInferredTypeReplacer::replace`, whose `replaceConditional` needs
+/// the codebase for containment/intersection checks).
+pub fn replace_in(
+    codebase: Option<&CodebaseInfo>,
     union: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> TUnion {
-    if template_replacements.is_empty() && template_defaults.is_empty() {
+    if template_result_is_empty(template_result) && !union_contains_conditional(union) {
         return union.clone();
     }
 
-    replace_union(
-        union,
-        template_replacements,
-        template_defaults,
-        &mut FxHashSet::default(),
-    )
+    replace_union(codebase, union, template_result, &mut FxHashSet::default())
+}
+
+fn union_contains_conditional(union: &TUnion) -> bool {
+    union
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TConditional(_)))
 }
 
 fn replace_union(
+    codebase: Option<&CodebaseInfo>,
     union: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TUnion {
     let mut new_types = Vec::new();
+    let mut bound_ignore_nullable = false;
+    let mut bound_ignore_falsable = false;
 
     for atomic_type in &union.types {
         match atomic_type {
@@ -43,13 +62,17 @@ fn replace_union(
                 as_type,
             } => {
                 if let Some(template_type) = resolve_template_union(
+                    codebase,
                     *name,
                     *defining_entity,
                     as_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ) {
+                    // The inferred bound's ignore flags travel with it into
+                    // the substituted union.
+                    bound_ignore_nullable |= template_type.ignore_nullable_issues;
+                    bound_ignore_falsable |= template_type.ignore_falsable_issues;
                     for template_type_part in template_type.types {
                         push_unique(&mut new_types, template_type_part);
                     }
@@ -60,9 +83,9 @@ fn replace_union(
                             name: *name,
                             defining_entity: *defining_entity,
                             as_type: Box::new(replace_union(
+                                codebase,
                                 as_type,
-                                template_replacements,
-                                template_defaults,
+                                template_result,
                                 resolving_templates,
                             )),
                         },
@@ -75,11 +98,11 @@ fn replace_union(
                 as_type,
             } => {
                 if let Some(class_template_type) = resolve_template_class_union(
+                    codebase,
                     *name,
                     *defining_entity,
                     as_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ) {
                     for template_type_part in class_template_type.types {
@@ -92,9 +115,9 @@ fn replace_union(
                             name: *name,
                             defining_entity: *defining_entity,
                             as_type: Box::new(replace_atomic(
+                                codebase,
                                 as_type,
-                                template_replacements,
-                                template_defaults,
+                                template_result,
                                 resolving_templates,
                             )),
                         },
@@ -113,11 +136,11 @@ fn replace_union(
             } => {
                 let is_key_of = matches!(atomic_type, TAtomic::TTemplateKeyOf { .. });
                 if let Some(resolved) = resolve_template_key_value_of(
+                    codebase,
                     *param_name,
                     *defining_entity,
                     is_key_of,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ) {
                     for resolved_part in resolved.types {
@@ -132,26 +155,37 @@ fn replace_union(
                 defining_entity,
                 visibility_filter,
             } => {
-                if let Some(properties_of) = template_replacements
-                    .get(*param_name, *defining_entity)
-                    .and_then(single_named_object_name)
-                    .map(|classlike_name| TAtomic::TPropertiesOf {
-                        classlike_name,
-                        visibility_filter: *visibility_filter,
-                    })
+                if let Some(properties_of) =
+                    lower_bounds_get(template_result, *param_name, *defining_entity)
+                        .and_then(|replacement| single_named_object_name(&replacement))
+                        .map(|classlike_name| TAtomic::TPropertiesOf {
+                            classlike_name,
+                            visibility_filter: *visibility_filter,
+                        })
                 {
                     push_unique(&mut new_types, properties_of);
                 } else {
                     push_unique(&mut new_types, atomic_type.clone());
                 }
             }
+            TAtomic::TConditional(conditional) => {
+                let resolved = replace_conditional(
+                    codebase,
+                    conditional,
+                    template_result,
+                    resolving_templates,
+                );
+                for resolved_part in resolved.types {
+                    push_unique(&mut new_types, resolved_part);
+                }
+            }
             _ => {
                 push_unique(
                     &mut new_types,
                     replace_atomic(
+                        codebase,
                         atomic_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     ),
                 );
@@ -167,15 +201,167 @@ fn replace_union(
     result.from_docblock = union.from_docblock;
     result.is_resolved = union.is_resolved;
     result.parent_nodes = union.parent_nodes.clone();
-    result.ignore_nullable_issues = union.ignore_nullable_issues;
-    result.ignore_falsable_issues = union.ignore_falsable_issues;
+    result.ignore_nullable_issues = union.ignore_nullable_issues || bound_ignore_nullable;
+    result.ignore_falsable_issues = union.ignore_falsable_issues || bound_ignore_falsable;
+    // Shape property unions pass through here: an optional key must stay
+    // optional after substitution.
+    result.possibly_undefined = union.possibly_undefined;
     result
 }
 
+/// Psalm's `TemplateInferredTypeReplacer::replaceConditional`: pick a
+/// conditional type's branch from the subject template's inferred bound.
+/// Bound atomics fully contained by the conditional type select the if
+/// branch; atomics provably disjoint from it select the else branch (each
+/// recursing with the subject refined to the matching atomics); anything
+/// undecidable — or a missing bound/codebase — yields the union of both
+/// branches.
+fn replace_conditional(
+    codebase: Option<&CodebaseInfo>,
+    conditional: &pzoom_code_info::t_atomic::ConditionalReturnType,
+    template_result: &TemplateResult,
+    resolving_templates: &mut FxHashSet<StrId>,
+) -> TUnion {
+    let template_type = lower_bounds_get(
+        template_result,
+        conditional.param_name,
+        conditional.defining_entity,
+    );
+
+    let mut if_template_type: Option<TUnion> = None;
+    let mut else_template_type: Option<TUnion> = None;
+
+    if let (Some(mut template_type), Some(codebase)) = (template_type, codebase) {
+        let as_type = replace_union(
+            Some(codebase),
+            &conditional.as_type,
+            template_result,
+            resolving_templates,
+        );
+
+        if as_type.is_nullable() && template_type.is_void() {
+            template_type = TUnion::new(TAtomic::TNull);
+        }
+
+        let conditional_type = replace_union(
+            Some(codebase),
+            &conditional.conditional_type,
+            template_result,
+            resolving_templates,
+        );
+
+        // Psalm collapses a mixed-carrying bound to the single mixed atomic.
+        let candidate_atomics: Vec<&TAtomic> = if let Some(mixed) = template_type
+            .types
+            .iter()
+            .find(|atomic| matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed))
+        {
+            vec![mixed]
+        } else {
+            template_type.types.iter().collect()
+        };
+
+        let mut matching_if_types: Vec<TAtomic> = Vec::new();
+        let mut matching_else_types: Vec<TAtomic> = Vec::new();
+
+        for candidate_atomic in candidate_atomics {
+            let candidate = TUnion::new(candidate_atomic.clone());
+            let mut comparison_result =
+                crate::type_comparator::type_comparison_result::TypeComparisonResult::new();
+            if crate::type_comparator::union_type_comparator::is_contained_by(
+                codebase,
+                &candidate,
+                &conditional_type,
+                false,
+                false,
+                &mut comparison_result,
+            ) && !(matches!(candidate_atomic, TAtomic::TInt)
+                && conditional_type.get_id(None) == "float")
+            {
+                matching_if_types.push(candidate_atomic.clone());
+            } else if crate::reconciler::assertion_reconciler::intersect_union_with_union_with_codebase(
+                &candidate,
+                &conditional_type,
+                Some(codebase),
+            )
+            .is_none()
+            {
+                matching_else_types.push(candidate_atomic.clone());
+            }
+        }
+
+        if !matching_if_types.is_empty() {
+            let if_candidate_type = TUnion::from_types(matching_if_types);
+            let mut refined_result = template_result.clone();
+            lower_bounds_insert(
+                &mut refined_result,
+                conditional.param_name,
+                conditional.defining_entity,
+                if_candidate_type,
+            );
+            if_template_type = Some(replace_union(
+                Some(codebase),
+                &conditional.if_true_type,
+                &refined_result,
+                resolving_templates,
+            ));
+        }
+
+        if !matching_else_types.is_empty() {
+            let else_candidate_type = TUnion::from_types(matching_else_types);
+            let mut comparison_result =
+                crate::type_comparator::type_comparison_result::TypeComparisonResult::new();
+            if crate::type_comparator::union_type_comparator::is_contained_by(
+                codebase,
+                &else_candidate_type,
+                &as_type,
+                false,
+                false,
+                &mut comparison_result,
+            ) {
+                let mut refined_result = template_result.clone();
+                lower_bounds_insert(
+                    &mut refined_result,
+                    conditional.param_name,
+                    conditional.defining_entity,
+                    else_candidate_type,
+                );
+                else_template_type = Some(replace_union(
+                    Some(codebase),
+                    &conditional.if_false_type,
+                    &refined_result,
+                    resolving_templates,
+                ));
+            }
+        }
+    }
+
+    match (if_template_type, else_template_type) {
+        (None, None) => {
+            let if_type = replace_union(
+                codebase,
+                &conditional.if_true_type,
+                template_result,
+                resolving_templates,
+            );
+            let else_type = replace_union(
+                codebase,
+                &conditional.if_false_type,
+                template_result,
+                resolving_templates,
+            );
+            combine_union_types(&if_type, &else_type, false)
+        }
+        (Some(if_type), None) => if_type,
+        (None, Some(else_type)) => else_type,
+        (Some(if_type), Some(else_type)) => combine_union_types(&if_type, &else_type, false),
+    }
+}
+
 fn replace_atomic(
+    codebase: Option<&CodebaseInfo>,
     atomic: &TAtomic,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TAtomic {
     match atomic {
@@ -184,15 +370,15 @@ fn replace_atomic(
             value_type,
         } => TAtomic::TArray {
             key_type: Box::new(replace_union(
+                codebase,
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
             value_type: Box::new(replace_union(
+                codebase,
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
         },
@@ -201,31 +387,31 @@ fn replace_atomic(
             value_type,
         } => TAtomic::TNonEmptyArray {
             key_type: Box::new(replace_union(
+                codebase,
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
             value_type: Box::new(replace_union(
+                codebase,
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
         },
         TAtomic::TList { value_type } => TAtomic::TList {
             value_type: Box::new(replace_union(
+                codebase,
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
         },
         TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
             value_type: Box::new(replace_union(
+                codebase,
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
         },
@@ -237,35 +423,35 @@ fn replace_atomic(
             fallback_value_type,
         } => {
             let mut new_properties = FxHashMap::default();
-            for (key, value) in properties {
+            for (key, value) in properties.iter() {
                 new_properties.insert(
                     key.clone(),
                     replace_union(
+                        codebase,
                         value,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     ),
                 );
             }
 
             TAtomic::TKeyedArray {
-                properties: new_properties,
+                properties: std::sync::Arc::new(new_properties),
                 is_list: *is_list,
                 sealed: *sealed,
                 fallback_key_type: fallback_key_type.as_ref().map(|fallback_key| {
                     Box::new(replace_union(
+                        codebase,
                         fallback_key,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     ))
                 }),
                 fallback_value_type: fallback_value_type.as_ref().map(|fallback_value| {
                     Box::new(replace_union(
+                        codebase,
                         fallback_value,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     ))
                 }),
@@ -283,9 +469,9 @@ fn replace_atomic(
                     .iter()
                     .map(|type_param| {
                         replace_union(
+                            codebase,
                             type_param,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                             resolving_templates,
                         )
                     })
@@ -299,9 +485,9 @@ fn replace_atomic(
                 .iter()
                 .map(|nested_type| {
                     replace_atomic(
+                        codebase,
                         nested_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     )
                 })
@@ -318,9 +504,9 @@ fn replace_atomic(
                     .map(|param| FunctionLikeParameter {
                         name: param.name,
                         param_type: replace_union(
+                            codebase,
                             &param.param_type,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                             resolving_templates,
                         ),
                         is_optional: param.is_optional,
@@ -331,9 +517,9 @@ fn replace_atomic(
             }),
             return_type: return_type.as_ref().map(|return_type| {
                 Box::new(replace_union(
+                    codebase,
                     return_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ))
             }),
@@ -350,9 +536,9 @@ fn replace_atomic(
                     .map(|param| FunctionLikeParameter {
                         name: param.name,
                         param_type: replace_union(
+                            codebase,
                             &param.param_type,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                             resolving_templates,
                         ),
                         is_optional: param.is_optional,
@@ -363,9 +549,9 @@ fn replace_atomic(
             }),
             return_type: return_type.as_ref().map(|return_type| {
                 Box::new(replace_union(
+                    codebase,
                     return_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ))
             }),
@@ -376,24 +562,24 @@ fn replace_atomic(
             value_type,
         } => TAtomic::TIterable {
             key_type: Box::new(replace_union(
+                codebase,
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
             value_type: Box::new(replace_union(
+                codebase,
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             )),
         },
         TAtomic::TClassString { as_type } => TAtomic::TClassString {
             as_type: as_type.as_ref().map(|as_type| {
                 Box::new(replace_atomic(
+                    codebase,
                     as_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                     resolving_templates,
                 ))
             }),
@@ -404,11 +590,11 @@ fn replace_atomic(
             as_type,
         } => {
             if let Some(template_type) = resolve_template_union(
+                codebase,
                 *name,
                 *defining_entity,
                 as_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             ) {
                 first_atomic_or_mixed(&template_type)
@@ -417,9 +603,9 @@ fn replace_atomic(
                     name: *name,
                     defining_entity: *defining_entity,
                     as_type: Box::new(replace_union(
+                        codebase,
                         as_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     )),
                 }
@@ -431,11 +617,11 @@ fn replace_atomic(
             as_type,
         } => {
             if let Some(class_template_type) = resolve_template_class_union(
+                codebase,
                 *name,
                 *defining_entity,
                 as_type,
-                template_replacements,
-                template_defaults,
+                template_result,
                 resolving_templates,
             ) {
                 first_atomic_or_mixed(&class_template_type)
@@ -444,9 +630,9 @@ fn replace_atomic(
                     name: *name,
                     defining_entity: *defining_entity,
                     as_type: Box::new(replace_atomic(
+                        codebase,
                         as_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                         resolving_templates,
                     )),
                 }
@@ -460,26 +646,21 @@ fn replace_atomic(
 /// producing the keys (resp. values) of that bound. Mirrors Psalm's
 /// `TemplateInferredTypeReplacer::replaceTemplateKeyOfValueOf`.
 fn resolve_template_key_value_of(
+    codebase: Option<&CodebaseInfo>,
     template_name: StrId,
-    defining_entity: StrId,
+    defining_entity: GenericParent,
     is_key_of: bool,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
     // Resolve only against a concrete inferred binding, never a declared bound, so the
     // deferred `key-of<T>` survives body analysis (where only the bound is known).
-    let replacement = template_replacements.get(template_name, defining_entity)?;
+    let replacement = lower_bounds_get(template_result, template_name, defining_entity)?;
 
     if !resolving_templates.insert(template_name) {
         return None;
     }
-    let resolved = replace_union(
-        replacement,
-        template_replacements,
-        template_defaults,
-        resolving_templates,
-    );
+    let resolved = replace_union(codebase, &replacement, template_result, resolving_templates);
     resolving_templates.remove(&template_name);
 
     Some(if is_key_of {
@@ -490,16 +671,19 @@ fn resolve_template_key_value_of(
 }
 
 fn resolve_template_union(
+    codebase: Option<&CodebaseInfo>,
     template_name: StrId,
-    defining_entity: StrId,
+    defining_entity: GenericParent,
     as_type: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
-    let replacement = template_replacements
-        .get(template_name, defining_entity)
-        .or_else(|| template_defaults.get(template_name, defining_entity))?;
+    let replacement = lower_bounds_get(template_result, template_name, defining_entity).or_else(
+        || {
+            template_types_get(template_result, template_name, defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
+        },
+    )?;
 
     // A self-referential replacement (`T -> T`) means the parameter is bound to
     // itself — typically a `$this`/`self` method call inside the defining class,
@@ -519,12 +703,7 @@ fn resolve_template_union(
         return Some(as_type.clone());
     }
 
-    let resolved = replace_union(
-        replacement,
-        template_replacements,
-        template_defaults,
-        resolving_templates,
-    );
+    let resolved = replace_union(codebase, &replacement, template_result, resolving_templates);
     resolving_templates.remove(&template_name);
 
     // Psalm: if inferred replacement is mixed but template bound is not mixed, keep the bound.
@@ -536,16 +715,19 @@ fn resolve_template_union(
 }
 
 fn resolve_template_class_union(
+    codebase: Option<&CodebaseInfo>,
     template_name: StrId,
-    defining_entity: StrId,
+    defining_entity: GenericParent,
     as_type: &TAtomic,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
-    let replacement = template_replacements
-        .get(template_name, defining_entity)
-        .or_else(|| template_defaults.get(template_name, defining_entity))?;
+    let replacement = lower_bounds_get(template_result, template_name, defining_entity).or_else(
+        || {
+            template_types_get(template_result, template_name, defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
+        },
+    )?;
 
     if !resolving_templates.insert(template_name) {
         return Some(TUnion::new(TAtomic::TClassString {
@@ -553,12 +735,7 @@ fn resolve_template_class_union(
         }));
     }
 
-    let resolved = replace_union(
-        replacement,
-        template_replacements,
-        template_defaults,
-        resolving_templates,
-    );
+    let resolved = replace_union(codebase, &replacement, template_result, resolving_templates);
     resolving_templates.remove(&template_name);
 
     let mut class_template_types = Vec::new();

@@ -9,9 +9,9 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unset::Unset;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::algebra::ClauseKey;
+use pzoom_code_info::VarName;
 use pzoom_code_info::ttype::type_combiner;
-use pzoom_code_info::{ArrayKey, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{ArrayKey, Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -31,14 +31,43 @@ pub fn analyze(
         context.inside_unset = was_inside_unset;
 
         if let Expression::Variable(Variable::Direct(direct)) = value.unparenthesized() {
-            let var_id = analyzer.interner.intern(direct.name);
-            context.remove_var(var_id);
+            let var_id = VarName::new(direct.name);
+            context.remove_var(&var_id);
             continue;
         }
 
         let Expression::Access(access) = value else {
             if let Expression::ArrayAccess(array_access) = value {
-                handle_array_unset(analyzer, array_access, context);
+                // `unset($arr[$k])` mutates `$arr` — the base variable's
+                // dataflow is consumed (Psalm registers the unset as a use).
+                // Capture parents before handle_array_unset rebuilds the type.
+                if analysis_data.data_flow_graph.kind
+                    == pzoom_code_info::GraphKind::FunctionBody
+                    && let Expression::Variable(Variable::Direct(base_direct)) =
+                        array_access.array.unparenthesized()
+                    && let Some(base_type) = context.get_var_type(base_direct.name)
+                {
+                    let span = array_access.array.span();
+                    let unset_sink = pzoom_code_info::DataFlowNode::get_for_unlabelled_sink(
+                        crate::data_flow::make_data_flow_node_position(
+                            analyzer,
+                            (span.start.offset, span.end.offset),
+                        ),
+                    );
+                    let parent_nodes = base_type.parent_nodes.clone();
+                    for parent_node in &parent_nodes {
+                        analysis_data.data_flow_graph.add_path(
+                            &parent_node.id,
+                            &unset_sink.id,
+                            pzoom_code_info::PathKind::Default,
+                            vec![],
+                            vec![],
+                        );
+                    }
+                    analysis_data.data_flow_graph.add_node(unset_sink);
+                }
+
+                handle_array_unset(array_access, context);
             }
             continue;
         };
@@ -53,7 +82,7 @@ pub fn analyze(
 
         let object_span = property_access.object.span();
         let Some(object_type) =
-            analysis_data.get_expr_type((object_span.start.offset, object_span.end.offset))
+            analysis_data.expr_types.get(&(object_span.start.offset, object_span.end.offset)).cloned()
         else {
             continue;
         };
@@ -97,7 +126,6 @@ pub fn analyze(
 }
 
 fn handle_array_unset(
-    analyzer: &StatementsAnalyzer<'_>,
     array_access: &ArrayAccess<'_>,
     context: &mut BlockContext,
 ) {
@@ -107,8 +135,8 @@ fn handle_array_unset(
 
     let unset_key = get_literal_array_key(array_access.index);
 
-    let base_var_id = analyzer.interner.intern(base_var_name);
-    let Some(existing_type) = context.get_var_type(base_var_id).cloned() else {
+    let base_var_id = VarName::new(base_var_name);
+    let Some(existing_type) = context.get_var_type(&base_var_id).cloned() else {
         return;
     };
 
@@ -118,14 +146,41 @@ fn handle_array_unset(
         array_access.array.unparenthesized(),
         Expression::Variable(Variable::Direct(_))
     ) {
-        clear_array_path_types_for_base_var(analyzer, context, base_var_name);
+        // Psalm's UnsetAnalyzer demotes the immediate receiver's type in place
+        // (its root_var_id is the dim-fetch receiver, e.g. `$a['x']`): a
+        // non-empty array becomes possibly empty, shapes lose the key. Keeping
+        // the demoted entry (rather than just dropping it) lets loop merging
+        // see the change, so a later `empty()` check stays live.
+        let receiver_key =
+            crate::expression_identifier::get_expression_var_key(array_access.array);
+        let receiver_type = receiver_key
+            .as_ref()
+            .and_then(|key| context.get_var_type(key).cloned());
+
+        clear_array_path_types_for_base_var( context, base_var_name);
         remove_var_clauses_from_context(context, base_var_name);
         // Mark the root variable as changed so branch merging can invalidate
         // stale path-based clauses from sibling branches.
         context.set_var_type(base_var_id, existing_type);
+
+        if let (Some(receiver_key), Some(receiver_type)) = (receiver_key, receiver_type) {
+            let demoted = demote_array_type_after_unset(&receiver_type, unset_key.as_ref());
+            context.set_var_type(receiver_key, demoted);
+        }
         return;
     }
 
+    let demoted = demote_array_type_after_unset(&existing_type, unset_key.as_ref());
+    context.set_var_type(base_var_id, demoted);
+    clear_array_path_types_for_base_var( context, base_var_name);
+    remove_var_clauses_from_context(context, base_var_name);
+}
+
+/// Rebuild an array type after `unset($arr[<key>])` (the per-atomic demotion in
+/// Psalm's UnsetAnalyzer): shapes lose the key (or mark every entry
+/// possibly-undefined for a dynamic key), non-empty arrays/lists become possibly
+/// empty, and list contiguity is broken.
+fn demote_array_type_after_unset(existing_type: &TUnion, unset_key: Option<&ArrayKey>) -> TUnion {
     let mut updated_types = Vec::with_capacity(existing_type.types.len());
 
     for atomic in &existing_type.types {
@@ -137,54 +192,92 @@ fn handle_array_unset(
                 fallback_key_type,
                 fallback_value_type,
             } => {
-                if let Some(unset_key) = unset_key.as_ref() {
-                    let mut next_properties = properties.clone();
+                if let Some(unset_key) = unset_key {
+                    let mut next_properties = (**properties).clone();
+
+                    // Removing a non-last entry from a list (or any entry of an
+                    // unsealed list) breaks contiguity (Psalm's UnsetAnalyzer).
+                    let mut next_is_list = *is_list;
+                    if fallback_value_type.is_some() {
+                        next_is_list = false;
+                    } else if next_properties.contains_key(unset_key)
+                        && *unset_key != ArrayKey::Int(next_properties.len() as i64 - 1)
+                    {
+                        next_is_list = false;
+                    }
                     next_properties.remove(unset_key);
 
+                    if next_properties.is_empty() {
+                        // No known entries left: an unsealed shape degrades to
+                        // its fallback array, a sealed one to the empty array.
+                        if let (Some(fallback_key), Some(fallback_value)) =
+                            (fallback_key_type, fallback_value_type)
+                        {
+                            updated_types.push(TAtomic::TArray {
+                                key_type: fallback_key.clone(),
+                                value_type: fallback_value.clone(),
+                            });
+                        } else {
+                            updated_types.push(TAtomic::TArray {
+                                key_type: Box::new(TUnion::nothing()),
+                                value_type: Box::new(TUnion::nothing()),
+                            });
+                        }
+                    } else {
+                        updated_types.push(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(next_properties),
+                            is_list: next_is_list,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        });
+                    }
+                } else {
+                    // Unknown offset: every known entry may have been the one
+                    // removed — Psalm marks them all possibly-undefined and the
+                    // shape stops being a list.
+                    let mut next_properties = (**properties).clone();
+                    for property_type in next_properties.values_mut() {
+                        property_type.possibly_undefined = true;
+                    }
+
                     updated_types.push(TAtomic::TKeyedArray {
-                        properties: next_properties,
-                        is_list: *is_list,
+                        properties: std::sync::Arc::new(next_properties),
+                        is_list: false,
                         sealed: *sealed,
                         fallback_key_type: fallback_key_type.clone(),
                         fallback_value_type: fallback_value_type.clone(),
                     });
-                } else {
-                    let mut combined_value: Option<TUnion> = fallback_value_type
-                        .as_deref()
-                        .map(|value_type| value_type.clone());
-
-                    for property_type in properties.values() {
-                        combined_value = Some(match combined_value {
-                            Some(existing) => {
-                                combine_union_types(&existing, property_type, false)
-                            }
-                            None => property_type.clone(),
-                        });
-                    }
-
-                    let combined_key = fallback_key_type
-                        .as_deref()
-                        .map(|key_type| key_type.clone())
-                        .unwrap_or_else(TUnion::array_key);
-
-                    updated_types.push(TAtomic::TArray {
-                        key_type: Box::new(combined_key),
-                        value_type: Box::new(combined_value.unwrap_or_else(TUnion::mixed)),
-                    });
                 }
             }
+            // Non-emptiness never survives an unset of an arbitrary offset.
+            TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            } => {
+                updated_types.push(TAtomic::TArray {
+                    key_type: key_type.clone(),
+                    value_type: value_type.clone(),
+                });
+            }
+            TAtomic::TNonEmptyList { value_type } | TAtomic::TList { value_type } => {
+                // Unsetting an offset breaks list contiguity (Psalm sets
+                // is_list = false), so degrade to an int-keyed array.
+                updated_types.push(TAtomic::TArray {
+                    key_type: Box::new(TUnion::new(TAtomic::TInt)),
+                    value_type: value_type.clone(),
+                });
+            }
+            TAtomic::TNonEmptyMixed => updated_types.push(TAtomic::TMixed),
             _ => updated_types.push(atomic.clone()),
         }
     }
 
     let combined = type_combiner::combine(updated_types, false);
-    context.set_var_type(base_var_id, TUnion::from_types(combined));
-    clear_array_path_types_for_base_var(analyzer, context, base_var_name);
-    remove_var_clauses_from_context(context, base_var_name);
+    TUnion::from_types(combined)
 }
 
 fn clear_array_path_types_for_base_var(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -192,14 +285,8 @@ fn clear_array_path_types_for_base_var(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .starts_with(&prefix)
-        })
+        .filter(|var_id| var_id.starts_with(&prefix))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -210,25 +297,9 @@ fn clear_array_path_types_for_base_var(
 }
 
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
-    context.clauses.retain(|clause| {
-        !clause
-            .possibilities
-            .keys()
-            .any(|key| matches_assignment_target_key(key, assigned_var_name))
-    });
+    context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
 
-fn matches_assignment_target_key(key: &ClauseKey, assigned_var_name: &str) -> bool {
-    match key {
-        ClauseKey::Name(name) => {
-            name == assigned_var_name
-                || name.starts_with(&format!("{}[", assigned_var_name))
-                || name.starts_with(&format!("{}->", assigned_var_name))
-                || name.contains(&format!("[{}]", assigned_var_name))
-        }
-        ClauseKey::Range(..) => false,
-    }
-}
 
 fn get_literal_array_key(expr: &Expression<'_>) -> Option<ArrayKey> {
     match expr.unparenthesized() {

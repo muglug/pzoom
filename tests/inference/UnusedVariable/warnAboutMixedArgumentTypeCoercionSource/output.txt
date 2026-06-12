@@ -1,0 +1,2 @@
+MixedArgumentTypeCoercion - input.php:12:24 - Argument 1 of takesArrayOfString expects array<array-key, string>, but parent type list{mixed} provided
+    input.php:10:21 - Consider improving the type here

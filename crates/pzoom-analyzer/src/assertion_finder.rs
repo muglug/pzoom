@@ -8,7 +8,8 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
+use pzoom_code_info::AssertionSet;
+use pzoom_code_info::VarName;
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::access::{Access, ClassConstantAccess};
 use mago_syntax::ast::ast::binary::{Binary, BinaryOperator};
@@ -35,6 +36,8 @@ use crate::expression_identifier;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::reconciler::assertion_reconciler;
 use crate::statements_analyzer::StatementsAnalyzer;
+use pzoom_code_info::TemplateResult;
+use crate::type_expander::localize_special_class_type_union;
 
 /// Result of assertion extraction.
 pub struct AssertionResult {
@@ -42,10 +45,18 @@ pub struct AssertionResult {
     pub if_true_clauses: Vec<Clause>,
     /// Clauses that are true when the expression is false (CNF formula).
     pub if_false_clauses: Vec<Clause>,
-    /// Assertions that are true when the expression is true (flat map for compatibility).
-    pub if_true: BTreeMap<String, Vec<Assertion>>,
-    /// Assertions that are true when the expression is false (flat map for compatibility).
-    pub if_false: BTreeMap<String, Vec<Assertion>>,
+    /// Assertions that are true when the expression is true. Mirrors Psalm's
+    /// AssertionFinder `$if_types` shape (`array<string, list<list<Assertion>>>`):
+    /// the outer list is AND-ed groups, each inner list is OR-ed alternatives.
+    pub if_true: BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    /// Assertions that are true when the expression is false (same
+    /// `[var][group][alternative]` shape as `if_true`).
+    pub if_false: BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    /// Vars narrowed by an UNCONDITIONAL `@psalm-assert` of a call inside the
+    /// condition. Psalm applies those to the condition context before the
+    /// formula reconciles, so contradictions there never report; pzoom omits
+    /// the vars from entry-reconcile reporting instead.
+    pub silently_asserted_vars: FxHashSet<VarName>,
 }
 
 impl AssertionResult {
@@ -55,6 +66,7 @@ impl AssertionResult {
             if_false_clauses: Vec::new(),
             if_true: BTreeMap::new(),
             if_false: BTreeMap::new(),
+            silently_asserted_vars: FxHashSet::default(),
         }
     }
 }
@@ -66,7 +78,28 @@ pub fn get_assertions(
     analysis_data: &FunctionAnalysisData,
 ) -> AssertionResult {
     let cond_id = get_expr_id(expr);
-    scrape_assertions(analyzer, expr, cond_id, analysis_data)
+    let mut result = scrape_assertions(analyzer, expr, cond_id, analysis_data);
+    strip_assignment_key_prefix(&mut result.if_true);
+    strip_assignment_key_prefix(&mut result.if_false);
+    result
+}
+
+/// Strip the `=` assignment marker from assertion-map keys (the clause layer
+/// keeps the information as Clause::redefined_vars; map consumers reconcile by
+/// plain variable name).
+fn strip_assignment_key_prefix(map: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>) {
+    let prefixed: Vec<VarName> = map
+        .keys()
+        .filter(|key| key.starts_with('='))
+        .cloned()
+        .collect();
+    for key in prefixed {
+        if let Some(assertions) = map.remove(&key) {
+            map.entry(VarName::new(key.trim_start_matches('=')))
+                .or_default()
+                .extend(assertions);
+        }
+    }
 }
 
 fn get_expr_id(expr: &Expression<'_>) -> (u32, u32) {
@@ -91,6 +124,43 @@ fn scrape_assertions(
         Expression::Call(call) => {
             scrape_function_call_assertions(analyzer, call, &mut result, cond_id, analysis_data);
             add_nullsafe_object_assertions(call, &mut result, cond_id);
+
+            // Psalm's catch-all `$if_types[getExtendedVarId($cond)] = Truthy`:
+            // a *memoized* no-arg method call used as a condition asserts on
+            // its memoization key (`$e->getPrevious()` re-calls then reuse
+            // the narrowed entry). getExtendedVarId only keys method calls
+            // flagged `memoizable` by MethodCallPurityAnalyzer.
+            // The narrowing applies through the assertion maps only — pzoom's
+            // clause algebra flags contradictions on these keys in spots
+            // Psalm stays silent (TypeCombiner's nested array_type_params
+            // checks), so the keys stay out of the CNF formula.
+            if result.if_true.is_empty()
+                && result.if_false.is_empty()
+                && matches!(call, Call::Method(_) | Call::NullSafeMethod(_))
+                && analysis_data
+                    .memoizable_method_call_offsets
+                    .contains(&(expr.span().start.offset))
+                && let Some(var_name) = expression_identifier::get_expression_var_key(expr)
+            {
+                // The clauses make the narrowing reach the branch contexts'
+                // entry reconcile (assertion maps alone are only consulted by
+                // the contradiction reporter).
+                let truthy_clause =
+                    create_single_var_clause(&var_name, Assertion::Truthy, cond_id);
+                result.if_true_clauses.push(truthy_clause);
+                let falsy_clause = create_single_var_clause(&var_name, Assertion::Falsy, cond_id);
+                result.if_false_clauses.push(falsy_clause);
+                result
+                    .if_true
+                    .entry(var_name.clone())
+                    .or_default()
+                    .push(vec![Assertion::Truthy]);
+                result
+                    .if_false
+                    .entry(var_name)
+                    .or_default()
+                    .push(vec![Assertion::Falsy]);
+            }
         }
         Expression::Binary(binary) => {
             return scrape_binary_assertions(analyzer, binary, cond_id, analysis_data);
@@ -108,21 +178,26 @@ fn scrape_assertions(
                 let falsy_clause = create_single_var_clause(&var_name, Assertion::Falsy, cond_id);
                 result.if_false_clauses.push(falsy_clause);
 
-                // Also populate flat maps for compatibility
+                // Also populate the grouped maps (one singleton AND group each)
                 result
                     .if_true
                     .entry(var_name.clone())
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![Assertion::Truthy]);
                 result
                     .if_false
                     .entry(var_name)
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![Assertion::Falsy]);
             }
         }
         Expression::Access(Access::Property(_))
-        | Expression::Access(Access::NullSafeProperty(_)) => {
+        | Expression::Access(Access::NullSafeProperty(_))
+        | Expression::Access(Access::StaticProperty(_))
+        // Psalm's catch-all `$if_types[getExtendedVarId($cond)] = Truthy`
+        // covers array fetches too: `if ($arr['k'])` narrows the
+        // `$arr['k']` entry for re-fetches in the body.
+        | Expression::ArrayAccess(_) => {
             if let Some(var_name) = expression_identifier::get_expression_var_key(expr) {
                 let truthy_clause = create_single_var_clause(&var_name, Assertion::Truthy, cond_id);
                 result.if_true_clauses.push(truthy_clause);
@@ -134,12 +209,12 @@ fn scrape_assertions(
                     .if_true
                     .entry(var_name.clone())
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![Assertion::Truthy]);
                 result
                     .if_false
                     .entry(var_name)
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![Assertion::Falsy]);
             }
         }
         Expression::Assignment(assignment) => {
@@ -161,12 +236,12 @@ fn scrape_assertions(
                     .if_true
                     .entry(assigned_var_name.clone())
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![Assertion::Truthy]);
                 rhs_result
                     .if_false
                     .entry(assigned_var_name)
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![Assertion::Falsy]);
             }
 
             return rhs_result;
@@ -207,7 +282,7 @@ fn add_nullsafe_object_assertions(
         .if_true
         .entry(object_var_name)
         .or_default()
-        .push(assertion);
+        .push(vec![assertion]);
 }
 
 fn scrape_construct_assertions(
@@ -247,20 +322,35 @@ fn scrape_construct_assertions(
         }
         Construct::Empty(empty) => {
             if let Some(var_name) = get_assertable_var_name(empty.value) {
-                let true_clause = create_single_var_clause(&var_name, Assertion::Falsy, cond_id);
-                let false_clause = create_single_var_clause(&var_name, Assertion::Truthy, cond_id);
+                // Psalm: a settled plain variable gets Falsy (negating to
+                // Truthy); anything else gets Empty_/NonEmpty — NonEmpty
+                // additionally drives nested base-isset narrowing for
+                // array-path keys (addNestedAssertions).
+                let is_settled_plain_var = matches!(
+                    empty.value.unparenthesized(),
+                    Expression::Variable(Variable::Direct(_))
+                );
+                let (true_assertion, negated_assertion) = if is_settled_plain_var {
+                    (Assertion::Falsy, Assertion::Truthy)
+                } else {
+                    (Assertion::Empty, Assertion::NonEmpty)
+                };
+                let true_clause =
+                    create_single_var_clause(&var_name, true_assertion.clone(), cond_id);
+                let false_clause =
+                    create_single_var_clause(&var_name, negated_assertion.clone(), cond_id);
                 result.if_true_clauses.push(true_clause);
                 result.if_false_clauses.push(false_clause);
                 result
                     .if_true
                     .entry(var_name.clone())
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![true_assertion]);
                 result
                     .if_false
                     .entry(var_name)
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![negated_assertion]);
             }
         }
         _ => {}
@@ -271,12 +361,31 @@ fn scrape_construct_assertions(
 
 /// Creates a clause with a single variable and assertion.
 fn create_single_var_clause(var_name: &str, assertion: Assertion, cond_id: (u32, u32)) -> Clause {
-    let mut possibilities = BTreeMap::new();
-    let mut var_possibilities = IndexMap::new();
-    var_possibilities.insert(assertion.to_hash(), assertion);
-    possibilities.insert(ClauseKey::Name(var_name.to_string()), var_possibilities);
+    // `=`-prefixed keys mark assignment-derived assertions: strip the prefix
+    // and record the var in the clause's redefined_vars (Psalm strips it in
+    // its FormulaGenerator).
+    let (var_name, redefined) = match var_name.strip_prefix('=') {
+        Some(stripped) => (stripped, true),
+        None => (var_name, false),
+    };
 
-    Clause::new(possibilities, cond_id, cond_id, None, None, None)
+    // Psalm's FormulaGenerator marks clauses built from equality assertions
+    // as `generated`, which exempts them from "has already been asserted"
+    // redundancy checks (two dynamic-key issets on one base var legitimately
+    // produce identical `=isset` clauses).
+    let has_equality = assertion.has_equality();
+
+    let mut possibilities = BTreeMap::new();
+    let mut var_possibilities = AssertionSet::default();
+    var_possibilities.insert(assertion.to_hash(), assertion);
+    possibilities.insert(ClauseKey::Name(VarName::new(var_name)), var_possibilities);
+
+    let clause = Clause::new(possibilities, cond_id, cond_id, None, None, Some(has_equality));
+    if redefined {
+        clause.mark_redefined(VarName::new(var_name))
+    } else {
+        clause
+    }
 }
 
 /// Extracts assertions from a function call (e.g., is_string($x), isset($x)).
@@ -303,6 +412,18 @@ fn scrape_function_call_assertions(
                 .strip_prefix('\\')
                 .unwrap_or(raw_func_name)
                 .to_ascii_lowercase();
+
+            // A bare `count($x)` / `sizeof($x)` condition: truthy means the
+            // countable is non-empty, falsy empty (Psalm's AssertionFinder
+            // count handling without a comparison).
+            if (normalized_func_name == "count" || normalized_func_name == "sizeof")
+                && let Some(first_arg) = func_call.argument_list.arguments.first()
+                && let Some(var_name) =
+                    crate::expression_identifier::get_expression_var_key(first_arg.value())
+            {
+                add_empty_countable_assertions(result, &var_name, false, cond_id);
+                return;
+            }
 
             // Handle isset() specially
             if normalized_func_name == "isset" {
@@ -345,7 +466,7 @@ fn scrape_function_call_assertions(
                 let key_var_name = get_argument_var_name(key_arg);
 
                 let haystack_type = analysis_data
-                    .get_expr_type(get_expr_id(array_arg.value()))
+                    .expr_types.get(&get_expr_id(array_arg.value())).cloned()
                     .map(|union| (*union).clone());
                 let array_keys =
                     extract_array_keys_from_expr(analyzer, key_arg.value(), analysis_data);
@@ -412,7 +533,7 @@ fn scrape_function_call_assertions(
 
                 let haystack_pos = get_expr_id(haystack_arg.value());
                 let Some(haystack_type) = analysis_data
-                    .get_expr_type(haystack_pos)
+                    .expr_types.get(&haystack_pos).cloned()
                     .map(|union| (*union).clone())
                 else {
                     return;
@@ -427,6 +548,22 @@ fn scrape_function_call_assertions(
                     return;
                 };
                 let Some(function_name) = extract_literal_function_name(first_arg.value()) else {
+                    // Psalm: `function_exists($var)` asserts the variable is a
+                    // callable-string when true (AssertionFinder's
+                    // hasFunctionExistsCheck → IsType(TCallableString)).
+                    if let Some(var_name) =
+                        crate::expression_identifier::get_expression_var_key(first_arg.value())
+                    {
+                        let assertion = Assertion::IsType(TAtomic::TCallableString);
+                        let true_clause =
+                            create_single_var_clause(&var_name, assertion.clone(), cond_id);
+                        result.if_true_clauses.push(true_clause);
+                        result
+                            .if_true
+                            .entry(var_name)
+                            .or_default()
+                            .push(vec![assertion]);
+                    }
                     return;
                 };
 
@@ -439,12 +576,12 @@ fn scrape_function_call_assertions(
                     .if_true
                     .entry(exists_key.clone())
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![Assertion::Truthy]);
                 result
                     .if_false
                     .entry(exists_key)
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![Assertion::Falsy]);
                 return;
             }
 
@@ -483,12 +620,36 @@ fn scrape_function_call_assertions(
                     .if_true
                     .entry(exists_key.clone())
                     .or_default()
-                    .push(Assertion::Truthy);
+                    .push(vec![Assertion::Truthy]);
                 result
                     .if_false
                     .entry(exists_key)
                     .or_default()
-                    .push(Assertion::Falsy);
+                    .push(vec![Assertion::Falsy]);
+
+                // Psalm narrows the object itself to an object-with-methods;
+                // pzoom models the `__toString` case as stringable-object so
+                // a subsequent (string) cast sees it.
+                if method_name.eq_ignore_ascii_case("__toString")
+                    && let Some(target_var_name) = get_argument_var_name(target_arg)
+                {
+                    let stringable = TAtomic::TObjectWithProperties {
+                        properties: Default::default(),
+                        is_stringable: true,
+                        is_invokable: false,
+                    };
+                    let stringable_clause = create_single_var_clause(
+                        &target_var_name,
+                        Assertion::IsType(stringable.clone()),
+                        cond_id,
+                    );
+                    result.if_true_clauses.push(stringable_clause);
+                    result
+                        .if_true
+                        .entry(target_var_name)
+                        .or_default()
+                        .push(vec![Assertion::IsType(stringable)]);
+                }
                 return;
             }
 
@@ -506,11 +667,20 @@ fn scrape_function_call_assertions(
                     // class), so we must not assert `not class-string` in the false branch
                     // - doing so makes a following interface_exists() look paradoxical.
                     // Matches Psalm.
+                    //
+                    // Psalm's assertion atoms differ per function (TClassString
+                    // carries is_interface/is_enum flavors), so a chain like
+                    // `!class_exists($x) && !interface_exists($x)` never forms
+                    // duplicate clauses. pzoom's TClassString has no flavors;
+                    // mark these clauses generated so the "has already been
+                    // asserted" duplicate check skips them regardless of the
+                    // order the existence checks appear in.
                     add_positive_only_type_assertion(
                         result,
                         var_name,
                         TAtomic::TClassString { as_type: None },
                         cond_id,
+                        true,
                     );
                     return;
                 }
@@ -526,12 +696,12 @@ fn scrape_function_call_assertions(
                         .if_true
                         .entry(exists_key.clone())
                         .or_default()
-                        .push(Assertion::Truthy);
+                        .push(vec![Assertion::Truthy]);
                     result
                         .if_false
                         .entry(exists_key)
                         .or_default()
-                        .push(Assertion::Falsy);
+                        .push(vec![Assertion::Falsy]);
                     return;
                 }
 
@@ -548,12 +718,12 @@ fn scrape_function_call_assertions(
                         .if_true
                         .entry(exists_key.clone())
                         .or_default()
-                        .push(Assertion::Truthy);
+                        .push(vec![Assertion::Truthy]);
                     result
                         .if_false
                         .entry(exists_key)
                         .or_default()
-                        .push(Assertion::Falsy);
+                        .push(vec![Assertion::Falsy]);
                 }
                 return;
             }
@@ -568,7 +738,7 @@ fn scrape_function_call_assertions(
                 let Some(var_name) = get_argument_var_name(subject_arg) else {
                     return;
                 };
-                let subject_type = analysis_data.get_expr_type(get_expr_id(subject_arg.value()));
+                let subject_type = analysis_data.expr_types.get(&get_expr_id(subject_arg.value())).cloned();
                 let subject_prefers_class_string =
                     subject_type.is_some_and(|ty| union_is_definitely_string_like(&ty));
 
@@ -589,7 +759,7 @@ fn scrape_function_call_assertions(
 
                     add_type_assertions(result, var_name.clone(), asserted_type, true, cond_id);
                 } else if let Some(class_string_union) =
-                    analysis_data.get_expr_type(get_expr_id(class_arg.value()))
+                    analysis_data.expr_types.get(&get_expr_id(class_arg.value())).cloned()
                 {
                     if let Some(classlike_atomic) =
                         extract_classlike_from_class_string_union(analyzer, &class_string_union)
@@ -617,7 +787,7 @@ fn scrape_function_call_assertions(
                         {
                             add_type_assertions(
                                 result,
-                                "$this".to_string(),
+                                VarName::new_static("$this"),
                                 TAtomic::TNamedObject {
                                     name: class_id,
                                     type_params: None,
@@ -642,9 +812,9 @@ fn scrape_function_call_assertions(
                     return;
                 };
 
-                let subject_type = analysis_data.get_expr_type(get_expr_id(subject_arg.value()));
-                let subject_prefers_class_string = subject_type.is_some_and(|ty| {
-                    union_is_definitely_string_like(&ty)
+                let subject_type = analysis_data.expr_types.get(&get_expr_id(subject_arg.value())).cloned();
+                let subject_prefers_class_string = subject_type.as_ref().is_some_and(|ty| {
+                    union_is_definitely_string_like(ty)
                         || ty.types.iter().all(|atomic| {
                             matches!(
                                 atomic,
@@ -652,6 +822,33 @@ fn scrape_function_call_assertions(
                             )
                         })
                 });
+                // A mixed subject could be either an instance or a class
+                // name: Psalm asserts `Foo|class-string<Foo>`.
+                let subject_is_ambiguous = subject_type
+                    .as_ref()
+                    .is_none_or(|ty| ty.is_mixed());
+
+                if subject_is_ambiguous
+                    && let Some(class_id) = resolve_class_string_arg(analyzer, class_arg.value())
+                {
+                    let object_form = TAtomic::TNamedObject {
+                        name: class_id,
+                        type_params: None,
+                        is_static: false,
+                        remapped_params: false,
+                    };
+                    let class_string_form = TAtomic::TClassString {
+                        as_type: Some(Box::new(object_form.clone())),
+                    };
+                    let orred = vec![
+                        Assertion::IsType(object_form),
+                        Assertion::IsType(class_string_form),
+                    ];
+                    result
+                        .if_true_clauses
+                        .push(create_var_clause(&var_name, &orred, cond_id));
+                    return;
+                }
 
                 let asserted_type = if let Some(class_id) =
                     resolve_class_string_arg(analyzer, class_arg.value())
@@ -670,7 +867,7 @@ fn scrape_function_call_assertions(
                         is_static: false, remapped_params: false }
                     }
                 } else if let Some(class_string_union) =
-                    analysis_data.get_expr_type(get_expr_id(class_arg.value()))
+                    analysis_data.expr_types.get(&get_expr_id(class_arg.value())).cloned()
                 {
                     let Some(classlike_atomic) =
                         extract_classlike_from_class_string_union(analyzer, &class_string_union)
@@ -704,7 +901,7 @@ fn scrape_function_call_assertions(
                         .argument_list
                         .arguments
                         .first()
-                        .and_then(|arg| analysis_data.get_expr_type(get_expr_id(arg.value())))
+                        .and_then(|arg| analysis_data.expr_types.get(&get_expr_id(arg.value())).cloned())
                         .and_then(|arg_type| get_array_assertion_from_union(&arg_type))
                         .unwrap_or_else(|| TAtomic::TArray {
                             key_type: Box::new(TUnion::array_key()),
@@ -736,10 +933,14 @@ fn scrape_function_call_assertions(
             };
 
             if !is_narrowing {
-                if let Some(function_info) = resolve_functionlike_for_call(analyzer, call) {
+                if let Some((function_info, receiver)) =
+                    resolve_functionlike_for_call(analyzer, call, analysis_data)
+                {
                     apply_callsite_assertions(
                         analyzer,
                         function_info,
+                        receiver,
+                        call_receiver_var_key(call).as_deref(),
                         func_call.argument_list.arguments.as_slice(),
                         analysis_data,
                         result,
@@ -777,15 +978,17 @@ fn scrape_function_call_assertions(
                 .if_true
                 .entry(var_name.clone())
                 .or_default()
-                .push(Assertion::IsType(assertion_type.clone()));
+                .push(vec![Assertion::IsType(assertion_type.clone())]);
             result
                 .if_false
                 .entry(var_name)
                 .or_default()
-                .push(Assertion::IsNotType(assertion_type));
+                .push(vec![Assertion::IsNotType(assertion_type)]);
         }
         _ => {
-            if let Some(function_info) = resolve_functionlike_for_call(analyzer, call) {
+            if let Some((function_info, receiver)) =
+                resolve_functionlike_for_call(analyzer, call, analysis_data)
+            {
                 let args = match call {
                     Call::Method(method_call) => method_call.argument_list.arguments.as_slice(),
                     Call::NullSafeMethod(method_call) => {
@@ -800,6 +1003,8 @@ fn scrape_function_call_assertions(
                 apply_callsite_assertions(
                     analyzer,
                     function_info,
+                    receiver,
+                    call_receiver_var_key(call).as_deref(),
                     args,
                     analysis_data,
                     result,
@@ -845,6 +1050,12 @@ fn scrape_binary_assertions(
             // True branch: combine all clauses (AND)
             result.if_true_clauses.extend(left_result.if_true_clauses);
             result.if_true_clauses.extend(right_result.if_true_clauses);
+            result
+                .silently_asserted_vars
+                .extend(left_result.silently_asserted_vars.iter().cloned());
+            result
+                .silently_asserted_vars
+                .extend(right_result.silently_asserted_vars.iter().cloned());
 
             // False branch: negate of (left AND right) = !left OR !right
             // This is handled by combine_ored_clauses on the negated formulas
@@ -855,16 +1066,37 @@ fn scrape_binary_assertions(
                     right_result.if_false_clauses,
                     cond_id,
                 ) {
+                    // Rebuild the if_false map from the disjunction's unit
+                    // truths: when both sides constrain the same key the OR can
+                    // collapse (`!(!($p = a) && !($p = b))` -> `$p` truthy).
+                    let mut referenced = FxHashSet::default();
+                    let (truths, _) = pzoom_code_info::algebra::get_truths_from_formula(
+                        combined.iter().collect(),
+                        None,
+                        &mut referenced,
+                    );
+                    for (var, groups) in truths {
+                        for group in groups {
+                            if group.len() == 1 {
+                                result
+                                    .if_false
+                                    .entry(var.clone())
+                                    .or_default()
+                                    .push(group);
+                            }
+                        }
+                    }
                     result.if_false_clauses = combined;
                 }
             }
 
-            // Flat map compatibility
-            for (var, assertions) in left_result.if_true {
-                result.if_true.entry(var).or_default().extend(assertions);
+            // Both operands' AND groups apply on the true path (Psalm ANDs the
+            // two sides' $if_types).
+            for (var, groups) in left_result.if_true {
+                result.if_true.entry(var).or_default().extend(groups);
             }
-            for (var, assertions) in right_result.if_true {
-                result.if_true.entry(var).or_default().extend(assertions);
+            for (var, groups) in right_result.if_true {
+                result.if_true.entry(var).or_default().extend(groups);
             }
         }
         BinaryOperator::Or(_) | BinaryOperator::LowOr(_) => {
@@ -904,12 +1136,13 @@ fn scrape_binary_assertions(
                 .if_false_clauses
                 .extend(right_result.if_false_clauses);
 
-            // Flat map compatibility
-            for (var, assertions) in left_result.if_false {
-                result.if_false.entry(var).or_default().extend(assertions);
+            // Both operands' AND groups apply on the false path (De Morgan on
+            // `||`: each side's if_false facts hold).
+            for (var, groups) in left_result.if_false {
+                result.if_false.entry(var).or_default().extend(groups);
             }
-            for (var, assertions) in right_result.if_false {
-                result.if_false.entry(var).or_default().extend(assertions);
+            for (var, groups) in right_result.if_false {
+                result.if_false.entry(var).or_default().extend(groups);
             }
         }
         BinaryOperator::Identical(_) => {
@@ -980,16 +1213,56 @@ fn scrape_instanceof_assertions(
         return;
     };
 
+    // `$x instanceof $this`: Psalm's getInstanceOfAssertions emits an
+    // IsIdentical assertion on `static` bound to the declaring class
+    // (`$x = A&static`), an equality so impossibilities never report.
+    if let Expression::Variable(Variable::Direct(direct)) = binary.rhs.unparenthesized()
+        && direct.name == "$this"
+    {
+        if let Some(declaring_class) = analyzer.get_declaring_class() {
+            let assertion_type = TAtomic::TNamedObject {
+                name: declaring_class,
+                type_params: None,
+                is_static: true,
+                remapped_params: false,
+            };
+            add_equality_assertions(result, var_name, assertion_type, true, cond_id);
+        }
+        return;
+    }
+
     let assertion_type = if let Some(class_id) = resolve_class_expression(analyzer, binary.rhs) {
         if class_id == pzoom_str::StrId::EMPTY {
             return;
         }
 
+        // `instanceof self`/`parent` resolve to the concrete class here
+        // (Psalm's getInstanceOfAssertions); `static` stays late-bound — the
+        // expander binds it per receiver.
+        let resolved_class_id = if class_id == pzoom_str::StrId::SELF {
+            match analyzer.get_declaring_class() {
+                Some(declaring_class) => declaring_class,
+                None => class_id,
+            }
+        } else if class_id == pzoom_str::StrId::PARENT {
+            match analyzer.get_declaring_class().and_then(|declaring_class| {
+                analyzer
+                    .codebase
+                    .get_class(declaring_class)
+                    .and_then(|class_info| class_info.parent_class)
+            }) {
+                Some(parent_class) => parent_class,
+                None => class_id,
+            }
+        } else {
+            class_id
+        };
+
         TAtomic::TNamedObject {
-            name: class_id,
+            name: resolved_class_id,
             type_params: None,
         is_static: false, remapped_params: false }
-    } else if let Some(class_string_union) = analysis_data.get_expr_type(get_expr_id(binary.rhs)) {
+    } else if let Some(class_string_union) = analysis_data.expr_types.get(&get_expr_id(binary.rhs)).cloned() {
         let Some(classlike_atomic) =
             extract_classlike_from_class_string_union(analyzer, &class_string_union)
         else {
@@ -1019,12 +1292,12 @@ fn scrape_instanceof_assertions(
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(Assertion::IsType(assertion_type.clone()));
+        .push(vec![Assertion::IsType(assertion_type.clone())]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(Assertion::IsNotType(assertion_type));
+        .push(vec![Assertion::IsNotType(assertion_type)]);
 }
 
 /// Extracts assertions from equality comparisons.
@@ -1043,18 +1316,6 @@ fn scrape_equality_assertions(
 
     if let Some((var_name, cast_type)) = get_cast_type_comparison(binary.lhs, binary.rhs) {
         add_type_assertions(result, var_name, cast_type, is_positive, cond_id);
-        return;
-    }
-
-    if let Some((var_name, class_id)) =
-        get_class_string_var_comparison(analyzer, binary.lhs, binary.rhs)
-    {
-        if class_id != StrId::EMPTY {
-            let assertion_type = TAtomic::TLiteralClassString {
-                name: analyzer.interner.lookup(class_id).to_string(),
-            };
-            add_type_assertions(result, var_name, assertion_type, is_positive, cond_id);
-        }
         return;
     }
 
@@ -1083,26 +1344,32 @@ fn scrape_equality_assertions(
             is_static: false, remapped_params: false };
             let is_static_origin = var_name == "@static";
             let primary_var = if is_static_origin { "$this" } else { var_name.as_str() };
-            let target_clauses = if is_positive {
-                &mut result.if_true_clauses
-            } else {
-                &mut result.if_false_clauses
-            };
-            let target_map = if is_positive {
-                &mut result.if_true
-            } else {
-                &mut result.if_false
-            };
 
-            push_assertion(
-                target_clauses,
-                target_map,
-                primary_var,
-                Assertion::IsType(assertion_type.clone()),
+            // Psalm models get_class comparisons as IsClassEqual/IsClassNotEqual —
+            // equality assertions, which never report redundancy. A `!==`
+            // comparison produces the *negative* fact as an if-true assertion
+            // (Psalm's getGetclassInequalityAssertions), so the narrowing flows
+            // through the formula and the else path derives `IsEqual` by clause
+            // negation.
+            add_equality_assertions(
+                result,
+                VarName::new(primary_var),
+                assertion_type,
+                is_positive,
                 cond_id,
             );
 
             if is_static_origin {
+                let target_clauses = if is_positive {
+                    &mut result.if_true_clauses
+                } else {
+                    &mut result.if_false_clauses
+                };
+                let target_map = if is_positive {
+                    &mut result.if_true
+                } else {
+                    &mut result.if_false
+                };
                 push_assertion(
                     target_clauses,
                     target_map,
@@ -1114,6 +1381,21 @@ fn scrape_equality_assertions(
                     cond_id,
                 );
             }
+        }
+        return;
+    }
+
+    // A plain class-string variable compared to a literal `B::class`. This must
+    // run after the get_class/`$x::class` paths above: `$a::class == B::class`
+    // asserts on the *object* `$a` (Psalm's IsClassEqual), not a class-string.
+    if let Some((var_name, class_id)) =
+        get_class_string_var_comparison(analyzer, binary.lhs, binary.rhs)
+    {
+        if class_id != StrId::EMPTY {
+            let assertion_type = TAtomic::TLiteralClassString {
+                name: analyzer.interner.lookup(class_id).to_string(),
+            };
+            add_type_assertions(result, var_name, assertion_type, is_positive, cond_id);
         }
         return;
     }
@@ -1133,7 +1415,41 @@ fn scrape_equality_assertions(
                 TAtomic::TFalse
             };
 
-            add_type_assertions(result, var_name, assertion_type, is_positive, cond_id);
+            add_type_assertions(result, var_name.clone(), assertion_type, is_positive, cond_id);
+            // A call compared with === true/false still contributes its
+            // custom @psalm-assert-if-* facts about OTHER variables (Psalm
+            // unwraps the comparison); the call's own truthiness fact is
+            // already covered by the strict assertion above.
+            if matches!(compared_expr.unparenthesized(), Expression::Call(_)) {
+                let mut inner = scrape_assertions(analyzer, compared_expr, cond_id, analysis_data);
+                let own_key = var_name;
+                inner.if_true.retain(|key, _| *key != own_key);
+                inner.if_false.retain(|key, _| *key != own_key);
+                let own_clause_key =
+                    pzoom_code_info::algebra::clause::ClauseKey::Name(own_key.clone());
+                inner
+                    .if_true_clauses
+                    .retain(|clause| !clause.possibilities.contains_key(&own_clause_key));
+                inner
+                    .if_false_clauses
+                    .retain(|clause| !clause.possibilities.contains_key(&own_clause_key));
+                let true_means_inner_true = if is_positive {
+                    literal_bool
+                } else {
+                    !literal_bool
+                };
+                if true_means_inner_true {
+                    result.if_true_clauses.extend(inner.if_true_clauses);
+                    result.if_false_clauses.extend(inner.if_false_clauses);
+                    merge_assertion_maps(&mut result.if_true, inner.if_true);
+                    merge_assertion_maps(&mut result.if_false, inner.if_false);
+                } else {
+                    result.if_true_clauses.extend(inner.if_false_clauses);
+                    result.if_false_clauses.extend(inner.if_true_clauses);
+                    merge_assertion_maps(&mut result.if_true, inner.if_false);
+                    merge_assertion_maps(&mut result.if_false, inner.if_true);
+                }
+            }
             return;
         }
 
@@ -1194,12 +1510,12 @@ fn scrape_equality_assertions(
                 .if_true
                 .entry(var_name.clone())
                 .or_default()
-                .push(true_assertion);
+                .push(vec![true_assertion]);
             result
                 .if_false
                 .entry(var_name)
                 .or_default()
-                .push(false_assertion);
+                .push(vec![false_assertion]);
             return;
         }
     }
@@ -1226,7 +1542,7 @@ fn scrape_equality_assertions(
         return;
     }
 
-    try_add_typed_value_comparison_assertions(
+    if try_add_typed_value_comparison_assertions(
         result,
         binary.lhs,
         binary.rhs,
@@ -1234,7 +1550,93 @@ fn scrape_equality_assertions(
         is_strict,
         cond_id,
         analysis_data,
-    );
+    ) {
+        return;
+    }
+
+    // Psalm's `scrapeEqualityAssertions` tail: "both side of the Identical can
+    // be asserted to the intersection of both". Only `===` conditionals get
+    // this, and only on the true path — the false path falls out of formula
+    // negation (Psalm's inequality scraper has no such branch).
+    if is_positive && is_strict {
+        add_identical_intersection_assertions(
+            result,
+            binary.lhs,
+            binary.rhs,
+            cond_id,
+            analysis_data,
+        );
+    }
+}
+
+/// Port of the tail of Psalm's `AssertionFinder::scrapeEqualityAssertions`:
+/// `$a === $b` narrows each operand to the intersection of the two operand
+/// types, asserted as orred `IsIdentical` atomics on any operand whose own
+/// type differs from the intersection.
+///
+/// Psalm additionally reports `TypeDoesNotContainType` when
+/// `canExpressionTypesBeIdentical` fails; the assertion finder has no issue
+/// sink, so an empty intersection just produces no assertions here.
+fn add_identical_intersection_assertions(
+    result: &mut AssertionResult,
+    left_expr: &Expression<'_>,
+    right_expr: &Expression<'_>,
+    cond_id: (u32, u32),
+    analysis_data: &FunctionAnalysisData,
+) {
+    let Some(var_type) = analysis_data.expr_types.get(&get_expr_id(left_expr)).cloned() else {
+        return;
+    };
+    let Some(other_type) = analysis_data.expr_types.get(&get_expr_id(right_expr)).cloned() else {
+        return;
+    };
+
+    let Some(intersection_type) =
+        assertion_reconciler::intersect_union_with_union(&var_type, &other_type)
+    else {
+        return;
+    };
+
+    let all_assertions: Vec<Assertion> = intersection_type
+        .types
+        .iter()
+        .map(|atomic| Assertion::IsEqual(atomic.clone()))
+        .collect();
+
+    let intersection_id = intersection_type.get_id(None);
+
+    if let Some(var_name_left) = expression_identifier::get_expression_var_key(left_expr)
+        && var_type.get_id(None) != intersection_id
+    {
+        result
+            .if_true_clauses
+            .push(create_var_clause(&var_name_left, &all_assertions, cond_id));
+        // Psalm files the orred group into `$if_types` as one AND group; pzoom
+        // keeps multi-atomic groups in the clause form only (the map consumers
+        // reconcile them via the formula path), matching prior behavior.
+        if let [single_assertion] = all_assertions.as_slice() {
+            result
+                .if_true
+                .entry(var_name_left)
+                .or_default()
+                .push(vec![single_assertion.clone()]);
+        }
+    }
+
+    if let Some(var_name_right) = expression_identifier::get_expression_var_key(right_expr)
+        && other_type.get_id(None) != intersection_id
+    {
+        result
+            .if_true_clauses
+            .push(create_var_clause(&var_name_right, &all_assertions, cond_id));
+        if let [single_assertion] = all_assertions.as_slice() {
+            result
+                .if_true
+                .entry(var_name_right)
+                .or_default()
+                .push(vec![single_assertion.clone()]);
+        }
+    }
 }
 
 fn has_null_comparison(
@@ -1276,31 +1678,57 @@ fn try_add_typed_value_comparison_assertions(
     cond_id: (u32, u32),
     analysis_data: &FunctionAnalysisData,
 ) -> bool {
-    if let Some(right_type) = get_expression_assertion_type(right_expr, analysis_data) {
-        if is_strict || is_safe_loose_equality_literal_assertion(&right_type) {
-            if let Some(left_var_name) = get_assertable_var_name(left_expr) {
-                add_type_assertions(result, left_var_name, right_type, is_positive, cond_id);
-                if is_positive {
-                    add_array_access_presence_assertion(result, left_expr, cond_id);
+    // Psalm's `hasTypedValueComparison` position gates: a typed value on the
+    // right only fires when the right side is not a variable-ish expression or
+    // the left side is one (`ASSIGNMENT_TO_RIGHT`); a typed value on the left
+    // only fires when the left side is not variable-ish (`ASSIGNMENT_TO_LEFT`).
+    // Plain `$a === $b` comparisons fall through to the type-intersection
+    // branch instead.
+    if !is_variable_ish_expression(right_expr) || is_variable_ish_expression(left_expr) {
+        if let Some(right_type) = get_expression_assertion_type(right_expr, analysis_data) {
+            if is_strict || is_safe_loose_equality_literal_assertion(&right_type) {
+                if let Some(left_var_name) = get_assertable_var_name(left_expr) {
+                    // `$a['k'] === <value>` implies the entry exists and is
+                    // non-null — unless the compared value IS null.
+                    let value_is_null = matches!(right_type, TAtomic::TNull);
+                    add_generated_type_assertions(result, left_var_name, right_type, is_positive, cond_id);
+                    if is_positive && !value_is_null {
+                        add_array_access_presence_assertion(result, left_expr, cond_id);
+                    }
+                    return true;
                 }
-                return true;
             }
         }
     }
 
-    if let Some(left_type) = get_expression_assertion_type(left_expr, analysis_data) {
-        if is_strict || is_safe_loose_equality_literal_assertion(&left_type) {
-            if let Some(right_var_name) = get_assertable_var_name(right_expr) {
-                add_type_assertions(result, right_var_name, left_type, is_positive, cond_id);
-                if is_positive {
-                    add_array_access_presence_assertion(result, right_expr, cond_id);
+    if !is_variable_ish_expression(left_expr) {
+        if let Some(left_type) = get_expression_assertion_type(left_expr, analysis_data) {
+            if is_strict || is_safe_loose_equality_literal_assertion(&left_type) {
+                if let Some(right_var_name) = get_assertable_var_name(right_expr) {
+                    let value_is_null = matches!(left_type, TAtomic::TNull);
+                    add_generated_type_assertions(result, right_var_name, left_type, is_positive, cond_id);
+                    if is_positive && !value_is_null {
+                        add_array_access_presence_assertion(result, right_expr, cond_id);
+                    }
+                    return true;
                 }
-                return true;
             }
         }
     }
 
     false
+}
+
+/// Psalm's `Variable`/`PropertyFetch`/`StaticPropertyFetch` check in
+/// `hasTypedValueComparison` — the expression kinds whose inferred *value*
+/// should not be treated as a typed-value comparison target.
+fn is_variable_ish_expression(expr: &Expression<'_>) -> bool {
+    matches!(
+        expr.unparenthesized(),
+        Expression::Variable(_)
+            | Expression::Access(Access::Property(_))
+            | Expression::Access(Access::StaticProperty(_))
+    )
 }
 
 fn is_safe_loose_equality_literal_assertion(assertion_type: &TAtomic) -> bool {
@@ -1342,8 +1770,11 @@ fn try_add_assignment_null_comparison_assertions(
     let Some(var_name) = get_assignment_target_var_name(assignment.lhs) else {
         return false;
     };
+    // Assignment-derived facts describe the post-assignment value — mark the
+    // key with Psalm's `=` prefix (Clause::redefined_vars).
+    let var_name = VarName::from(format!("={var_name}"));
 
-    let Some(assigned_union) = analysis_data.get_expr_type(get_expr_id(assignment_expr)) else {
+    let Some(assigned_union) = analysis_data.expr_types.get(&get_expr_id(assignment_expr)).cloned() else {
         return false;
     };
 
@@ -1414,11 +1845,11 @@ fn add_array_access_presence_assertion(
 fn get_cast_type_comparison(
     lhs: &Expression<'_>,
     rhs: &Expression<'_>,
-) -> Option<(String, TAtomic)> {
+) -> Option<(VarName, TAtomic)> {
     fn extract_cast_type(
         cast_expr: &Expression<'_>,
         compared_expr: &Expression<'_>,
-    ) -> Option<(String, TAtomic)> {
+    ) -> Option<(VarName, TAtomic)> {
         let Expression::UnaryPrefix(unary) = cast_expr.unparenthesized() else {
             return None;
         };
@@ -1466,31 +1897,12 @@ fn scrape_inequality_assertions(
         return;
     }
 
+    // Psalm's hasSuperiorNumberCheck only matches single *int* literal
+    // comparisons (handled above); a float-literal comparison like
+    // `$avg > 1.1` asserts nothing.
     if try_add_int_range_inequality_assertions(result, binary, cond_id) {
         return;
     }
-
-    let Some(var_name) =
-        get_assertable_var_name(binary.lhs).or_else(|| get_assertable_var_name(binary.rhs))
-    else {
-        return;
-    };
-
-    let has_numeric_literal = is_numeric_literal(binary.lhs) || is_numeric_literal(binary.rhs);
-    if !has_numeric_literal {
-        return;
-    }
-
-    result.if_true_clauses.push(create_single_var_clause(
-        &var_name,
-        Assertion::IsNotType(TAtomic::TNull),
-        cond_id,
-    ));
-    result
-        .if_true
-        .entry(var_name)
-        .or_default()
-        .push(Assertion::IsNotType(TAtomic::TNull));
 }
 
 fn try_add_int_range_inequality_assertions(
@@ -1559,12 +1971,12 @@ fn try_add_int_range_inequality_assertions(
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(Assertion::IsType(true_range));
+        .push(vec![Assertion::IsType(true_range)]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(Assertion::IsType(false_range));
+        .push(vec![Assertion::IsType(false_range)]);
 
     true
 }
@@ -1578,24 +1990,22 @@ fn add_empty_string_assertions(
     let empty_string = TAtomic::TLiteralString {
         value: String::new(),
     };
-    let non_empty_string = TAtomic::TNonEmptyString;
 
-    // For `$s === ""` the true branch is the empty literal and the false branch
-    // is `non-empty-string`; `$s !== ""` swaps them. Each branch carries exactly
-    // one positive type assertion — pairing `IsType(non-empty-string)` with a
-    // redundant `IsNotType("")` on the *same* branch (as add_type_assertions
-    // would) makes the second assertion reconcile against an already-narrowed
-    // type and spuriously fire RedundantCondition. Psalm narrows to
-    // non-empty-string without any redundant-condition issue.
+    // Psalm keeps the literal comparison in the assertion itself
+    // (`IsIdentical('')` / `IsNotIdentical('')`), so formula negation is
+    // exact — the fall-through of `if ($s !== "") {…}` knows `$s === ""`.
+    // The non-empty-string refinement happens in the reconciler
+    // (`string − "" ⇒ non-empty-string`, Psalm's
+    // `handleLiteralNegatedEquality`), not in the assertion.
     let (true_assertion, false_assertion) = if is_positive {
         (
-            Assertion::IsType(empty_string),
-            Assertion::IsType(non_empty_string),
+            Assertion::IsEqual(empty_string.clone()),
+            Assertion::IsNotEqual(empty_string),
         )
     } else {
         (
-            Assertion::IsType(non_empty_string),
-            Assertion::IsType(empty_string),
+            Assertion::IsNotEqual(empty_string.clone()),
+            Assertion::IsEqual(empty_string),
         )
     };
 
@@ -1606,9 +2016,9 @@ fn add_empty_string_assertions(
     ));
     result
         .if_true
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(true_assertion);
+        .push(vec![true_assertion]);
     result.if_false_clauses.push(create_single_var_clause(
         var_name,
         false_assertion.clone(),
@@ -1616,9 +2026,9 @@ fn add_empty_string_assertions(
     ));
     result
         .if_false
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(false_assertion);
+        .push(vec![false_assertion]);
 }
 
 fn add_empty_countable_assertions(
@@ -1650,14 +2060,14 @@ fn add_empty_countable_assertions(
     ));
     result
         .if_true
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(true_assertion);
+        .push(vec![true_assertion]);
     result
         .if_false
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(false_assertion);
+        .push(vec![false_assertion]);
 }
 
 fn try_add_count_equality_assertions(
@@ -1708,12 +2118,12 @@ fn try_add_count_equality_assertions(
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(true_assertion);
+        .push(vec![true_assertion]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(false_assertion);
+        .push(vec![false_assertion]);
 
     true
 }
@@ -1792,12 +2202,12 @@ fn try_add_count_inequality_assertions(
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(true_assertion);
+        .push(vec![true_assertion]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(false_assertion);
+        .push(vec![false_assertion]);
 
     true
 }
@@ -1817,9 +2227,39 @@ fn scrape_unary_assertions(
             let inner_result = scrape_assertions(analyzer, unary.operand, cond_id, analysis_data);
 
             result.if_true_clauses = inner_result.if_false_clauses;
-            result.if_false_clauses = inner_result.if_true_clauses;
+            result.if_false_clauses = inner_result.if_true_clauses.clone();
             result.if_true = inner_result.if_false;
             result.if_false = inner_result.if_true;
+
+            // Psalm negates the operand's FORMULA (FormulaGenerator's
+            // BooleanNot → negateFormula). For a bare call whose clauses come
+            // solely from custom assertions, that negation is exact:
+            // `!$this->assertsNull()` implies ¬(a is null). Boolean structure
+            // inside the operand would need range-keyed opaque clauses to
+            // negate soundly, so only the call case derives facts.
+            if result.if_true.is_empty()
+                && result.if_true_clauses.is_empty()
+                && matches!(unary.operand.unparenthesized(), Expression::Call(_))
+                && !inner_result.if_true_clauses.is_empty()
+                && let Ok(negated) =
+                    pzoom_code_info::algebra::negate_formula(inner_result.if_true_clauses)
+            {
+                for clause in &negated {
+                    if clause.possibilities.len() == 1
+                        && let Some((
+                            pzoom_code_info::algebra::clause::ClauseKey::Name(var_name),
+                            possibilities,
+                        )) = clause.possibilities.iter().next()
+                    {
+                        result
+                            .if_true
+                            .entry(var_name.clone())
+                            .or_default()
+                            .push(possibilities.values().cloned().collect());
+                    }
+                }
+                result.if_true_clauses = negated;
+            }
         }
         _ => {}
     }
@@ -1827,10 +2267,15 @@ fn scrape_unary_assertions(
     result
 }
 
+/// The receiver of a resolved instance call: class id plus any generic type
+/// params, used to substitute class templates in callsite assertions.
+type CallReceiver = Option<(StrId, Option<Vec<TUnion>>)>;
+
 fn resolve_functionlike_for_call<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
     call: &Call<'_>,
-) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
+    analysis_data: &FunctionAnalysisData,
+) -> Option<(&'a pzoom_code_info::FunctionLikeInfo, CallReceiver)> {
     match call {
         Call::Function(func_call) => {
             let Expression::Identifier(identifier) = func_call.function.unparenthesized() else {
@@ -1869,15 +2314,20 @@ fn resolve_functionlike_for_call<'a>(
                                     .is_some_and(|segment| segment == bare_name)
                         })
                 })
+                .map(|function_info| (function_info, None))
         }
-        Call::Method(method_call) => {
-            resolve_methodlike_for_instance_call(analyzer, method_call.object, &method_call.method)
-        }
+        Call::Method(method_call) => resolve_methodlike_for_instance_call(
+            analyzer,
+            method_call.object,
+            &method_call.method,
+            analysis_data,
+        ),
         Call::NullSafeMethod(method_call) => {
-            resolve_methodlike_for_nullsafe_call(analyzer, method_call)
+            resolve_methodlike_for_nullsafe_call(analyzer, method_call, analysis_data)
         }
         Call::StaticMethod(static_call) => {
             resolve_methodlike_for_static_call(analyzer, static_call)
+                .map(|function_info| (function_info, None))
         }
     }
 }
@@ -1886,28 +2336,52 @@ fn resolve_methodlike_for_instance_call<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
     object: &Expression<'_>,
     method: &ClassLikeMemberSelector<'_>,
-) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
+    analysis_data: &FunctionAnalysisData,
+) -> Option<(&'a pzoom_code_info::FunctionLikeInfo, CallReceiver)> {
     let ClassLikeMemberSelector::Identifier(method_identifier) = method else {
         return None;
     };
 
-    let class_id = match object.unparenthesized() {
+    let receiver = match object.unparenthesized() {
         Expression::Variable(Variable::Direct(direct)) if direct.name == "$this" => {
-            analyzer.get_declaring_class()
+            analyzer.get_declaring_class().map(|class_id| (class_id, None))
         }
-        _ => None,
+        other => {
+            // Non-$this receivers: use the inferred expression type, so class
+            // templates in the assertion resolve through the receiver's type
+            // params (e.g. `Type<list<int>>::is(...)` asserting `T $toCheck`).
+            analysis_data
+                .expr_types.get(&get_expr_id(other)).cloned()
+                .and_then(|object_type| {
+                    object_type.types.iter().find_map(|atomic| match atomic {
+                        TAtomic::TNamedObject {
+                            name, type_params, ..
+                        } => Some((*name, type_params.clone())),
+                        _ => None,
+                    })
+                })
+        }
     }?;
 
-    let class_info = analyzer.codebase.get_class(class_id)?;
+    let class_info = analyzer.codebase.get_class(receiver.0)?;
     let method_id = analyzer.interner.intern(method_identifier.value);
-    class_info.methods.get(&method_id)
+    class_info
+        .methods
+        .get(&method_id)
+        .map(|method| (&**method, Some(receiver)))
 }
 
 fn resolve_methodlike_for_nullsafe_call<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
     method_call: &NullSafeMethodCall<'_>,
-) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    resolve_methodlike_for_instance_call(analyzer, method_call.object, &method_call.method)
+    analysis_data: &FunctionAnalysisData,
+) -> Option<(&'a pzoom_code_info::FunctionLikeInfo, CallReceiver)> {
+    resolve_methodlike_for_instance_call(
+        analyzer,
+        method_call.object,
+        &method_call.method,
+        analysis_data,
+    )
 }
 
 fn resolve_methodlike_for_static_call<'a>(
@@ -1918,111 +2392,286 @@ fn resolve_methodlike_for_static_call<'a>(
         return None;
     };
 
-    let class_id = resolve_class_expression(analyzer, static_call.class)?;
+    let mut class_id = resolve_class_expression(analyzer, static_call.class)?;
+    // self::/static:: calls resolve against the declaring class so their
+    // method storage (and custom @psalm-assert-if-* annotations) is found;
+    // instanceof keeps the late-bound `static` semantics, so the rewrite
+    // lives here rather than in resolve_class_expression.
+    if class_id == StrId::SELF || class_id == StrId::STATIC {
+        class_id = analyzer.get_declaring_class()?;
+    }
     let class_info = analyzer.codebase.get_class(class_id)?;
     let method_id = analyzer.interner.intern(method_identifier.value);
-    class_info.methods.get(&method_id)
+    class_info.methods.get(&method_id).map(|method| &**method)
+}
+
+/// The context key for a call's receiver expression, used to localize
+/// `$this->...`-rooted docblock assertions (Psalm rewrites `$this->` to the
+/// receiver's var id in processCustomAssertion).
+fn call_receiver_var_key(call: &Call<'_>) -> Option<String> {
+    match call {
+        Call::Method(method_call) => {
+            expression_identifier::get_expression_var_key(method_call.object)
+                .map(|key| key.to_string())
+        }
+        Call::NullSafeMethod(method_call) => {
+            expression_identifier::get_expression_var_key(method_call.object)
+                .map(|key| key.to_string())
+        }
+        _ => None,
+    }
 }
 
 fn apply_callsite_assertions(
     analyzer: &StatementsAnalyzer<'_>,
     function_info: &pzoom_code_info::FunctionLikeInfo,
+    receiver: CallReceiver,
+    receiver_var_key: Option<&str>,
     args: &[mago_syntax::ast::ast::argument::Argument<'_>],
     analysis_data: &FunctionAnalysisData,
     result: &mut AssertionResult,
     cond_id: (u32, u32),
 ) {
-    let template_defaults = function_call_analyzer::get_template_defaults(function_info);
+    let mut template_result = function_call_analyzer::get_template_defaults(function_info);
     let arg_refs: Vec<_> = args.iter().collect();
     let arg_positions: Vec<_> = args.iter().map(|arg| get_expr_id(arg.value())).collect();
-    let template_replacements = function_call_analyzer::infer_template_replacements_from_args(
+    function_call_analyzer::infer_template_replacements_from_args(
         analyzer,
         &arg_refs,
         &arg_positions,
         &function_info.params,
-        &template_defaults,
+        &mut template_result,
         analysis_data,
         &BlockContext::new(),
     );
+
+    // Class templates in the assertion resolve through the receiver: its
+    // generic type params first, then any `@extends` substitutions.
+    if let Some((receiver_class_id, receiver_type_params)) = receiver
+        && let Some(receiver_class_info) = analyzer.codebase.get_class(receiver_class_id)
+    {
+        let mut receiver_replacements =
+            function_call_analyzer::infer_class_template_replacements_from_type_params(
+                receiver_class_info,
+                receiver_type_params.as_deref(),
+            );
+        function_call_analyzer::infer_class_template_replacements_from_extended_params(
+            &mut receiver_replacements,
+            receiver_class_info,
+        );
+        function_call_analyzer::overlay_template_replacements(
+            &mut template_result,
+            receiver_replacements,
+        );
+    }
+
+    // Unconditional @psalm-assert targets narrow before the conditional
+    // formula reconciles (Psalm applies them to the condition context), so
+    // their contradictions never report at the if entry.
+    for assertion in &function_info.assertions {
+        let assertion_name_str = analyzer.interner.lookup(assertion.var_id);
+        let target_name = assertion_name_str.trim_start_matches('$');
+        if let Some(param_idx) = function_info.params.iter().position(|param| {
+            analyzer.interner.lookup(param.name).as_ref().trim_start_matches('$') == target_name
+        }) && let Some(argument) = args.get(param_idx)
+            && let Some(var_key) =
+                expression_identifier::get_expression_var_key(argument.value())
+        {
+            result.silently_asserted_vars.insert(var_key);
+        }
+    }
 
     apply_assertion_list(
         analyzer,
         &function_info.params,
         &function_info.if_true_assertions,
         args,
-        &template_defaults,
-        &template_replacements,
+        receiver_var_key,
+        &template_result,
+        false,
         &mut result.if_true,
         &mut result.if_true_clauses,
         cond_id,
+        function_info.declaring_class,
     );
     apply_assertion_list(
         analyzer,
         &function_info.params,
         &function_info.if_false_assertions,
         args,
-        &template_defaults,
-        &template_replacements,
+        receiver_var_key,
+        &template_result,
+        false,
         &mut result.if_false,
         &mut result.if_false_clauses,
         cond_id,
+        function_info.declaring_class,
+    );
+    // Psalm folds `@psalm-assert-if-false X` into the *if-true* assertion set as
+    // the negation of X (processCustomAssertion's `rule[0]->getNegation()`), so
+    // the fact reaches the condition formula and the else path recovers X via
+    // clause negation.
+    apply_assertion_list(
+        analyzer,
+        &function_info.params,
+        &function_info.if_false_assertions,
+        args,
+        receiver_var_key,
+        &template_result,
+        true,
+        &mut result.if_true,
+        &mut result.if_true_clauses,
+        cond_id,
+        function_info.declaring_class,
     );
 }
 
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn apply_assertion_list(
     analyzer: &StatementsAnalyzer<'_>,
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
     assertions: &[FunctionLikeAssertion],
     args: &[mago_syntax::ast::ast::argument::Argument<'_>],
-    template_defaults: &crate::template::TemplateMap,
-    template_replacements: &crate::template::TemplateMap,
-    target_map: &mut BTreeMap<String, Vec<Assertion>>,
+    receiver_var_key: Option<&str>,
+    template_result: &TemplateResult,
+    negate: bool,
+    target_map: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
     target_clauses: &mut Vec<Clause>,
     cond_id: (u32, u32),
+    declaring_class: Option<StrId>,
 ) {
     for assertion in assertions {
-        let Some(param_idx) = find_assertion_param_index(analyzer, params, assertion.var_id) else {
-            continue;
-        };
-        let Some(argument) = args.get(param_idx) else {
-            continue;
-        };
-        let Some(argument_var_name) =
-            expression_identifier::get_expression_var_key(argument.value())
-        else {
-            continue;
-        };
-        let Some(param_name) = params
-            .get(param_idx)
-            .map(|param| analyzer.interner.lookup(param.name))
-        else {
-            continue;
-        };
-        let assertion_name = analyzer.interner.lookup(assertion.var_id);
-        let Some(var_name) = map_assertion_var_to_argument(
-            assertion_name.as_ref(),
-            param_name.as_ref(),
-            &argument_var_name,
-        ) else {
-            continue;
+        let assertion_name_str = analyzer.interner.lookup(assertion.var_id);
+        // `$this->prop` / `$this->method()` assertion targets localize to the
+        // call's receiver (Psalm's processCustomAssertion rewrites the
+        // `$this->` prefix to the receiver var id).
+        let var_name: String = if assertion_name_str.as_ref() == "$this" {
+            // A bare `$this` assertion (`@psalm-assert-if-true T $this`)
+            // narrows the call's receiver (Psalm rewrites it to the
+            // receiver's var id).
+            let Some(receiver_key) = receiver_var_key else {
+                continue;
+            };
+            receiver_key.to_string()
+        } else if let Some(rest) = assertion_name_str.strip_prefix("$this->") {
+            let Some(receiver_key) = receiver_var_key else {
+                continue;
+            };
+            format!("{receiver_key}->{rest}")
+        } else if assertion_name_str.contains("::$") {
+            // A static property target (`self::$q`, `A::$q`) keys the scope
+            // entry verbatim (expression_identifier spells fetches the same
+            // way).
+            assertion_name_str.to_string()
+        } else {
+            let Some(param_idx) = find_assertion_param_index(analyzer, params, assertion.var_id)
+            else {
+                continue;
+            };
+            let Some(argument) = args.get(param_idx) else {
+                continue;
+            };
+            let Some(argument_var_name) =
+                expression_identifier::get_expression_var_key(argument.value())
+            else {
+                continue;
+            };
+            let Some(param_name) = params
+                .get(param_idx)
+                .map(|param| analyzer.interner.lookup(param.name))
+            else {
+                continue;
+            };
+            let Some(mapped) = map_assertion_var_to_argument(
+                assertion_name_str.as_ref(),
+                param_name.as_ref(),
+                &argument_var_name,
+            ) else {
+                continue;
+            };
+            mapped
         };
 
+        // Scope keys lowercase `name()` call segments (PHP method names are
+        // case-insensitive); canonicalize the assertion target the same way.
+        let var_name = canonicalize_call_segments(&var_name);
+
+        let mut resolved_assertion_type =
+            replace_assertion_templates(&assertion.assertion_type, template_result);
+        // `self::T*`-style tokens in the assertion type resolve against the
+        // declaring class (Psalm's TypeExpander pass on assertion rules).
+        if let Some(declaring_class) = declaring_class {
+            let parent_class = analyzer
+                .codebase
+                .get_class(declaring_class)
+                .and_then(|class_info| class_info.parent_class);
+            resolved_assertion_type = match resolved_assertion_type {
+                AssertionType::IsType(union) => AssertionType::IsType(
+                    crate::type_expander::localize_special_class_type_union(
+                        analyzer.codebase,
+                        analyzer.interner,
+                        &union,
+                        declaring_class,
+                        declaring_class,
+                        parent_class,
+                    ),
+                ),
+                other => other,
+            };
+        }
         let converted_assertions =
-            convert_functionlike_assertion_type(&replace_assertion_templates(
-                &assertion.assertion_type,
-                template_replacements,
-                template_defaults,
-            ));
+            convert_functionlike_assertion_type(&resolved_assertion_type);
         if converted_assertions.is_empty() {
             continue;
         }
 
-        target_clauses.push(create_var_clause(&var_name, &converted_assertions, cond_id));
-        target_map
-            .entry(var_name)
-            .or_default()
-            .extend(converted_assertions);
+        if negate {
+            // De Morgan: ¬(A ∨ B) = ¬A ∧ ¬B — one single-assertion clause (and
+            // one singleton AND group) per negated alternative.
+            for converted in converted_assertions {
+                let negated = converted.get_negation();
+                if matches!(negated, Assertion::Any) {
+                    continue;
+                }
+                target_clauses.push(create_var_clause(
+                    &var_name,
+                    std::slice::from_ref(&negated),
+                    cond_id,
+                ));
+                target_map
+                    .entry(VarName::new(&var_name))
+                    .or_default()
+                    .push(vec![negated]);
+            }
+        } else {
+            // A union assertion (`@psalm-assert-if-true A|B $x`) is one OR
+            // group — Psalm's processCustomAssertion files the whole orred rule
+            // as a single `$if_types` entry, not AND-ed facts.
+            target_clauses.push(create_var_clause(&var_name, &converted_assertions, cond_id));
+            target_map
+                .entry(var_name.into())
+                .or_default()
+                .push(converted_assertions);
+        }
     }
+}
+
+/// Lowercase the `name()` call segments of a var key (scope keys for
+/// memoized method calls are lowercased; docblock assertion targets may
+/// spell the method differently).
+fn canonicalize_call_segments(var_name: &str) -> String {
+    var_name
+        .split("->")
+        .map(|segment| {
+            if let Some(call) = segment.strip_suffix("()") {
+                format!("{}()", call.to_ascii_lowercase())
+            } else {
+                segment.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("->")
 }
 
 fn find_assertion_param_index(
@@ -2078,10 +2727,26 @@ fn map_assertion_var_to_argument(
     None
 }
 
-fn convert_functionlike_assertion_type(assertion_type: &AssertionType) -> Vec<Assertion> {
+pub(crate) fn convert_functionlike_assertion_type(assertion_type: &AssertionType) -> Vec<Assertion> {
     match assertion_type {
         AssertionType::IsType(union) => {
-            union.types.iter().cloned().map(Assertion::IsType).collect()
+            union
+                .types
+                .iter()
+                // Reserved-word string literals alongside other members
+                // ('self'/'static' in ReflectionNamedType::isBuiltin's
+                // assertion) drop out of the narrowing in Psalm.
+                .filter(|atomic| {
+                    union.types.len() == 1
+                        || !matches!(
+                            atomic,
+                            TAtomic::TLiteralString { value }
+                                if matches!(value.as_str(), "self" | "static" | "parent")
+                        )
+                })
+                .cloned()
+                .map(Assertion::IsType)
+                .collect()
         }
         AssertionType::IsEqual(union) | AssertionType::IsLooselyEqual(union) => union
             .types
@@ -2110,50 +2775,129 @@ fn convert_functionlike_assertion_type(assertion_type: &AssertionType) -> Vec<As
 
 fn replace_assertion_templates(
     assertion_type: &AssertionType,
-    template_replacements: &crate::template::TemplateMap,
-    template_defaults: &crate::template::TemplateMap,
+    template_result: &TemplateResult,
 ) -> AssertionType {
     match assertion_type {
         AssertionType::IsType(union) => {
             AssertionType::IsType(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
             ))
         }
         AssertionType::IsEqual(union) => {
             AssertionType::IsEqual(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
             ))
         }
         AssertionType::IsLooselyEqual(union) => {
             AssertionType::IsLooselyEqual(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
             ))
         }
         AssertionType::IsNotType(union) => {
             AssertionType::IsNotType(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
             ))
         }
         AssertionType::IsNotEqual(union) => {
             AssertionType::IsNotEqual(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
             ))
         }
         AssertionType::IsNotLooselyEqual(union) => {
             AssertionType::IsNotLooselyEqual(function_call_analyzer::replace_templates_in_union(
                 union,
-                template_replacements,
-                template_defaults,
+                template_result,
+            ))
+        }
+        AssertionType::Truthy => AssertionType::Truthy,
+        AssertionType::Falsy => AssertionType::Falsy,
+        AssertionType::NotNull => AssertionType::NotNull,
+        AssertionType::NotEmpty => AssertionType::NotEmpty,
+    }
+}
+
+/// Replaces template references in a functionlike assertion's type and
+/// localizes `self`/`static`/`parent` to the call's concrete classes —
+/// Psalm's `Possibilities::getUntemplatedCopy`.
+pub(crate) fn get_untemplated_copy(
+    codebase: &pzoom_code_info::CodebaseInfo,
+    interner: &pzoom_str::Interner,
+    assertion_type: &AssertionType,
+    template_result: &TemplateResult,
+    self_class_id: StrId,
+    static_class_id: StrId,
+    parent_class_id: Option<StrId>,
+) -> AssertionType {
+    match assertion_type {
+        AssertionType::IsType(asserted_type) => {
+            AssertionType::IsType(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
+            ))
+        }
+        AssertionType::IsEqual(asserted_type) => {
+            AssertionType::IsEqual(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
+            ))
+        }
+        AssertionType::IsLooselyEqual(asserted_type) => {
+            AssertionType::IsLooselyEqual(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
+            ))
+        }
+        AssertionType::IsNotType(asserted_type) => {
+            AssertionType::IsNotType(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
+            ))
+        }
+        AssertionType::IsNotEqual(asserted_type) => {
+            AssertionType::IsNotEqual(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
+            ))
+        }
+        AssertionType::IsNotLooselyEqual(asserted_type) => {
+            AssertionType::IsNotLooselyEqual(localize_special_class_type_union(codebase, interner,
+                &function_call_analyzer::replace_templates_in_union(
+                    asserted_type,
+                    template_result,
+                ),
+                self_class_id,
+                static_class_id,
+                parent_class_id,
             ))
         }
         AssertionType::Truthy => AssertionType::Truthy,
@@ -2164,14 +2908,18 @@ fn replace_assertion_templates(
 }
 
 fn create_var_clause(var_name: &str, assertions: &[Assertion], cond_id: (u32, u32)) -> Clause {
+    // Like Psalm's FormulaGenerator, equality-derived clauses are `generated`
+    // (keyed off the first assertion, matching `$orred_types[0]->hasEquality()`).
+    let has_equality = assertions.first().is_some_and(Assertion::has_equality);
+
     let mut possibilities = BTreeMap::new();
-    let mut var_possibilities = IndexMap::new();
+    let mut var_possibilities = AssertionSet::default();
     for assertion in assertions {
         var_possibilities.insert(assertion.to_hash(), assertion.clone());
     }
-    possibilities.insert(ClauseKey::Name(var_name.to_string()), var_possibilities);
+    possibilities.insert(ClauseKey::Name(VarName::new(var_name)), var_possibilities);
 
-    Clause::new(possibilities, cond_id, cond_id, None, None, None)
+    Clause::new(possibilities, cond_id, cond_id, None, None, Some(has_equality))
 }
 
 fn resolve_class_expression(
@@ -2207,15 +2955,15 @@ fn resolve_class_expression(
 }
 
 /// Gets the variable name from a variable.
-fn get_var_name(var: &Variable<'_>) -> Option<String> {
+fn get_var_name(var: &Variable<'_>) -> Option<VarName> {
     match var {
-        Variable::Direct(direct) => Some(direct.name.to_string()),
+        Variable::Direct(direct) => Some(VarName::new(direct.name)),
         _ => None,
     }
 }
 
 /// Gets the variable name from an argument.
-fn get_argument_var_name(arg: &mago_syntax::ast::ast::argument::Argument<'_>) -> Option<String> {
+fn get_argument_var_name(arg: &mago_syntax::ast::ast::argument::Argument<'_>) -> Option<VarName> {
     expression_identifier::get_expression_var_key(arg.value())
         .or_else(|| extract_class_constant_origin_var_name(arg.value()))
 }
@@ -2223,8 +2971,8 @@ fn get_argument_var_name(arg: &mago_syntax::ast::ast::argument::Argument<'_>) ->
 struct IssetExprAssertions {
     if_true_clauses: Vec<Clause>,
     if_false_clauses: Vec<Clause>,
-    if_true: BTreeMap<String, Vec<Assertion>>,
-    if_false: BTreeMap<String, Vec<Assertion>>,
+    if_true: BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    if_false: BTreeMap<VarName, Vec<Vec<Assertion>>>,
 }
 
 impl IssetExprAssertions {
@@ -2240,7 +2988,7 @@ impl IssetExprAssertions {
 
 fn push_assertion(
     branch_clauses: &mut Vec<Clause>,
-    branch_map: &mut BTreeMap<String, Vec<Assertion>>,
+    branch_map: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
     var_name: &str,
     assertion: Assertion,
     cond_id: (u32, u32),
@@ -2251,9 +2999,9 @@ fn push_assertion(
         cond_id,
     ));
     branch_map
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name.strip_prefix('=').unwrap_or(var_name)))
         .or_default()
-        .push(assertion);
+        .push(vec![assertion]);
 }
 
 fn get_isset_assertions_for_expr(
@@ -2276,9 +3024,15 @@ fn get_isset_assertions_for_expr(
 
         let var_is_defined_non_null_checkable = is_direct_variable && {
             let var_pos = (expr.start_offset() as u32, expr.end_offset() as u32);
-            analysis_data
-                .get_expr_type(var_pos)
-                .is_some_and(|var_type| !var_type.is_mixed() && !var_type.possibly_undefined)
+            analysis_data.expr_types.get(&var_pos).cloned().is_some_and(|var_type| {
+                !var_type.is_mixed()
+                    && !var_type.possibly_undefined
+                    // A var assigned inside a try (or catch) may be undefined
+                    // here even though its type looks settled — Psalm keeps
+                    // the `isset` assertion for those
+                    // (`!$var_type->possibly_undefined_from_try`).
+                    && !var_type.possibly_undefined_from_try
+            })
         };
 
         if var_is_defined_non_null_checkable {
@@ -2311,6 +3065,26 @@ fn get_isset_assertions_for_expr(
                 Assertion::IsNotIsset,
                 cond_id,
             );
+        }
+    } else {
+        // Psalm's AssertionFinder: when the full isset target has no resolvable
+        // var id (e.g. a dynamic array key), walk up the array-access chain to
+        // the first resolvable prefix and assert `=isset` there. Only the
+        // if_true direction exists — `=isset` is an equality assertion whose
+        // negation is `Any`, so nothing is learned on the false branch.
+        let mut array_root = expr.unparenthesized();
+        while let Expression::ArrayAccess(array_access) = array_root {
+            array_root = array_access.array.unparenthesized();
+            if let Some(var_name) = expression_identifier::get_expression_var_key(array_root) {
+                push_assertion(
+                    &mut result.if_true_clauses,
+                    &mut result.if_true,
+                    &var_name,
+                    Assertion::IsEqualIsset,
+                    cond_id,
+                );
+                break;
+            }
         }
     }
 
@@ -2348,14 +3122,14 @@ fn add_in_array_assertions(
 
     result
         .if_true
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(Assertion::InArray(value_type.clone()));
+        .push(vec![Assertion::InArray(value_type.clone())]);
     result
         .if_false
-        .entry(var_name.to_string())
+        .entry(VarName::new(var_name))
         .or_default()
-        .push(Assertion::NotInArray(value_type));
+        .push(vec![Assertion::NotInArray(value_type)]);
 }
 
 fn extract_in_array_value_union(haystack_type: &TUnion) -> Option<TUnion> {
@@ -2458,7 +3232,7 @@ fn get_array_assertion_from_union(union: &TUnion) -> Option<TAtomic> {
                     });
                 }
 
-                for (prop_key, prop_type) in properties {
+                for (prop_key, prop_type) in properties.iter() {
                     let prop_key_type = match prop_key {
                         ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
                         ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
@@ -2595,14 +3369,14 @@ fn add_array_key_exists_path_assertions(
 
     result
         .if_true
-        .entry(assertion_var_name.clone())
+        .entry(VarName::new(&assertion_var_name))
         .or_default()
-        .push(Assertion::ArrayKeyExists);
+        .push(vec![Assertion::ArrayKeyExists]);
     result
         .if_false
-        .entry(assertion_var_name)
+        .entry(assertion_var_name.into())
         .or_default()
-        .push(Assertion::ArrayKeyDoesNotExist);
+        .push(vec![Assertion::ArrayKeyDoesNotExist]);
 }
 
 fn format_array_key_for_assertion_path(array_key: &ArrayKey) -> String {
@@ -2629,7 +3403,7 @@ fn extract_array_keys_from_expr(
     }
 
     let expr_pos = get_expr_id(expr);
-    let Some(expr_type) = analysis_data.get_expr_type(expr_pos) else {
+    let Some(expr_type) = analysis_data.expr_types.get(&expr_pos).cloned() else {
         return keys;
     };
 
@@ -2780,7 +3554,7 @@ fn get_literal_array_key(expr: &Expression<'_>) -> Option<ArrayKey> {
     }
 }
 
-fn get_assertable_var_name(expr: &Expression<'_>) -> Option<String> {
+fn get_assertable_var_name(expr: &Expression<'_>) -> Option<VarName> {
     if let Some(var_name) = expression_identifier::get_expression_var_key(expr) {
         return Some(var_name);
     }
@@ -2790,7 +3564,13 @@ fn get_assertable_var_name(expr: &Expression<'_>) -> Option<String> {
     }
 
     match expr.unparenthesized() {
-        Expression::Assignment(assignment) => get_assignment_target_var_name(assignment.lhs),
+        Expression::Assignment(assignment) => {
+            // Psalm prefixes assignment-derived keys with `=` so the formula
+            // layer knows the fact describes the var's *post-assignment*
+            // value (Clause::redefined_vars).
+            get_assignment_target_var_name(assignment.lhs)
+                .map(|var_name| VarName::from(format!("={var_name}")))
+        }
         Expression::Parenthesized(parenthesized) => {
             get_assertable_var_name(parenthesized.expression)
         }
@@ -2798,11 +3578,11 @@ fn get_assertable_var_name(expr: &Expression<'_>) -> Option<String> {
     }
 }
 
-fn get_assignment_target_var_name(expr: &Expression<'_>) -> Option<String> {
+fn get_assignment_target_var_name(expr: &Expression<'_>) -> Option<VarName> {
     expression_identifier::get_expression_var_key(expr)
 }
 
-fn collect_assigned_var_names(expr: &Expression<'_>, assigned: &mut FxHashSet<String>) {
+fn collect_assigned_var_names(expr: &Expression<'_>, assigned: &mut FxHashSet<VarName>) {
     match expr.unparenthesized() {
         Expression::Assignment(assignment) => {
             if let Some(var_name) = expression_identifier::get_expression_var_key(assignment.lhs) {
@@ -2825,9 +3605,9 @@ fn collect_assigned_var_names(expr: &Expression<'_>, assigned: &mut FxHashSet<St
     }
 }
 
-fn filter_clauses_for_assigned_vars(clauses: &mut Vec<Clause>, assigned: &FxHashSet<String>) {
+fn filter_clauses_for_assigned_vars(clauses: &mut Vec<Clause>, assigned: &FxHashSet<VarName>) {
     clauses.retain_mut(|clause| {
-        clause.possibilities.retain(|key, _| match key {
+        std::rc::Rc::make_mut(&mut clause.possibilities).retain(|key, _| match key {
             ClauseKey::Name(var_name) => !matches_assigned_var(var_name, assigned),
             ClauseKey::Range(..) => true,
         });
@@ -2837,13 +3617,13 @@ fn filter_clauses_for_assigned_vars(clauses: &mut Vec<Clause>, assigned: &FxHash
 }
 
 fn filter_assertion_map_for_assigned_vars(
-    assertions: &mut BTreeMap<String, Vec<Assertion>>,
-    assigned: &FxHashSet<String>,
+    assertions: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    assigned: &FxHashSet<VarName>,
 ) {
     assertions.retain(|var_name, _| !matches_assigned_var(var_name, assigned));
 }
 
-fn matches_assigned_var(var_name: &str, assigned: &FxHashSet<String>) -> bool {
+fn matches_assigned_var(var_name: &str, assigned: &FxHashSet<VarName>) -> bool {
     assigned.iter().any(|assigned_var| {
         var_name == assigned_var
             || var_name.starts_with(&format!("{}[", assigned_var))
@@ -2852,11 +3632,11 @@ fn matches_assigned_var(var_name: &str, assigned: &FxHashSet<String>) -> bool {
 }
 
 fn merge_assertion_maps(
-    target: &mut BTreeMap<String, Vec<Assertion>>,
-    source: BTreeMap<String, Vec<Assertion>>,
+    target: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    source: BTreeMap<VarName, Vec<Vec<Assertion>>>,
 ) {
-    for (var_name, assertions) in source {
-        target.entry(var_name).or_default().extend(assertions);
+    for (var_name, groups) in source {
+        target.entry(var_name).or_default().extend(groups);
     }
 }
 
@@ -2865,42 +3645,81 @@ fn merge_assertion_maps(
 /// variable away from a general `string`.
 fn add_positive_only_type_assertion(
     result: &mut AssertionResult,
-    var_name: String,
+    var_name: VarName,
     assertion_type: TAtomic,
     cond_id: (u32, u32),
+    clause_is_generated: bool,
 ) {
-    let is_type_clause = create_single_var_clause(
+    let mut is_type_clause = create_single_var_clause(
         &var_name,
         Assertion::IsType(assertion_type.clone()),
         cond_id,
     );
+    if clause_is_generated {
+        is_type_clause = Clause::new(
+            (*is_type_clause.possibilities).clone(),
+            is_type_clause.creating_conditional_id,
+            is_type_clause.creating_object_id,
+            Some(is_type_clause.wedge),
+            Some(is_type_clause.reconcilable),
+            Some(true),
+        );
+    }
     result.if_true_clauses.push(is_type_clause);
     result
         .if_true
         .entry(var_name)
         .or_default()
-        .push(Assertion::IsType(assertion_type));
+        .push(vec![Assertion::IsType(assertion_type)]);
 }
 
 fn add_type_assertions(
     result: &mut AssertionResult,
-    var_name: String,
+    var_name: VarName,
     assertion_type: TAtomic,
     is_positive: bool,
     cond_id: (u32, u32),
 ) {
+    add_type_assertions_in(result, var_name, assertion_type, is_positive, cond_id, false)
+}
+
+/// [`add_type_assertions`] with the clauses force-marked `generated`. The
+/// typed-value comparison path uses this: Psalm's
+/// `getTypedValueEqualityAssertions` produces `IsIdentical` assertions there,
+/// whose `hasEquality()` makes the clauses generated — exempt from
+/// "has already been asserted" redundancy reporting.
+fn add_generated_type_assertions(
+    result: &mut AssertionResult,
+    var_name: VarName,
+    assertion_type: TAtomic,
+    is_positive: bool,
+    cond_id: (u32, u32),
+) {
+    add_type_assertions_in(result, var_name, assertion_type, is_positive, cond_id, true)
+}
+
+fn add_type_assertions_in(
+    result: &mut AssertionResult,
+    var_name: VarName,
+    assertion_type: TAtomic,
+    is_positive: bool,
+    cond_id: (u32, u32),
+    generated: bool,
+) {
+    let create_clause = |var_name: &VarName, assertion: Assertion| {
+        let clause = create_single_var_clause(var_name, assertion, cond_id);
+        if generated { clause.mark_generated() } else { clause }
+    };
     if is_positive {
-        let is_type_clause = create_single_var_clause(
+        let is_type_clause = create_clause(
             &var_name,
             Assertion::IsType(assertion_type.clone()),
-            cond_id,
         );
         result.if_true_clauses.push(is_type_clause);
 
-        let is_not_type_clause = create_single_var_clause(
+        let is_not_type_clause = create_clause(
             &var_name,
             Assertion::IsNotType(assertion_type.clone()),
-            cond_id,
         );
         result.if_false_clauses.push(is_not_type_clause);
 
@@ -2908,24 +3727,22 @@ fn add_type_assertions(
             .if_true
             .entry(var_name.clone())
             .or_default()
-            .push(Assertion::IsType(assertion_type.clone()));
+            .push(vec![Assertion::IsType(assertion_type.clone())]);
         result
             .if_false
             .entry(var_name)
             .or_default()
-            .push(Assertion::IsNotType(assertion_type));
+            .push(vec![Assertion::IsNotType(assertion_type)]);
     } else {
-        let is_not_type_clause = create_single_var_clause(
+        let is_not_type_clause = create_clause(
             &var_name,
             Assertion::IsNotType(assertion_type.clone()),
-            cond_id,
         );
         result.if_true_clauses.push(is_not_type_clause);
 
-        let is_type_clause = create_single_var_clause(
+        let is_type_clause = create_clause(
             &var_name,
             Assertion::IsType(assertion_type.clone()),
-            cond_id,
         );
         result.if_false_clauses.push(is_type_clause);
 
@@ -2933,12 +3750,12 @@ fn add_type_assertions(
             .if_true
             .entry(var_name.clone())
             .or_default()
-            .push(Assertion::IsNotType(assertion_type.clone()));
+            .push(vec![Assertion::IsNotType(assertion_type.clone())]);
         result
             .if_false
             .entry(var_name)
             .or_default()
-            .push(Assertion::IsType(assertion_type));
+            .push(vec![Assertion::IsType(assertion_type)]);
     }
 }
 
@@ -2946,7 +3763,7 @@ fn add_type_assertions(
 /// (`IsEqual`/`IsNotEqual`), matching Psalm's `IsIdentical`/`IsNotIdentical`.
 fn add_equality_assertions(
     result: &mut AssertionResult,
-    var_name: String,
+    var_name: VarName,
     assertion_type: TAtomic,
     is_positive: bool,
     cond_id: (u32, u32),
@@ -2973,12 +3790,12 @@ fn add_equality_assertions(
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(true_assertion);
+        .push(vec![true_assertion]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(false_assertion);
+        .push(vec![false_assertion]);
 }
 
 /// Detects `get_class($x) === <expr typed class-string<T>>` and returns the
@@ -2989,7 +3806,7 @@ fn get_get_class_template_comparison(
     left_expr: &Expression<'_>,
     right_expr: &Expression<'_>,
     analysis_data: &FunctionAnalysisData,
-) -> Option<(String, TAtomic)> {
+) -> Option<(VarName, TAtomic)> {
     if let Some(var_name) = extract_get_class_origin_var_name(left_expr)
         && let Some(template_atomic) =
             class_string_template_atomic(analyzer, right_expr, analysis_data)
@@ -3014,7 +3831,7 @@ fn class_string_template_atomic(
     expr: &Expression<'_>,
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TAtomic> {
-    let expr_type = analysis_data.get_expr_type(get_expr_id(expr))?;
+    let expr_type = analysis_data.expr_types.get(&get_expr_id(expr)).cloned()?;
 
     for atomic in &expr_type.types {
         match atomic {
@@ -3045,7 +3862,7 @@ fn get_get_class_comparison(
     analyzer: &StatementsAnalyzer<'_>,
     left_expr: &Expression<'_>,
     right_expr: &Expression<'_>,
-) -> Option<(String, StrId)> {
+) -> Option<(VarName, StrId)> {
     if let (Some(var_name), Some(class_id)) = (
         extract_get_class_origin_var_name(left_expr)
             .or_else(|| extract_class_constant_origin_var_name(left_expr)),
@@ -3069,7 +3886,7 @@ fn get_class_string_var_comparison(
     analyzer: &StatementsAnalyzer<'_>,
     left_expr: &Expression<'_>,
     right_expr: &Expression<'_>,
-) -> Option<(String, StrId)> {
+) -> Option<(VarName, StrId)> {
     if let (Some(var_name), Some(class_id)) = (
         get_assertable_var_name(left_expr),
         extract_class_constant_id(analyzer, right_expr),
@@ -3093,7 +3910,7 @@ fn get_class_string_var_comparison(
     None
 }
 
-fn extract_get_class_origin_var_name(expr: &Expression<'_>) -> Option<String> {
+fn extract_get_class_origin_var_name(expr: &Expression<'_>) -> Option<VarName> {
     let Expression::Call(Call::Function(function_call)) = expr.unparenthesized() else {
         return None;
     };
@@ -3110,7 +3927,7 @@ fn extract_get_class_origin_var_name(expr: &Expression<'_>) -> Option<String> {
     expression_identifier::get_expression_var_key(first_arg.value())
 }
 
-fn extract_class_constant_origin_var_name(expr: &Expression<'_>) -> Option<String> {
+fn extract_class_constant_origin_var_name(expr: &Expression<'_>) -> Option<VarName> {
     let Expression::Access(Access::ClassConstant(ClassConstantAccess {
         class,
         constant: ClassLikeConstantSelector::Identifier(constant),
@@ -3129,8 +3946,8 @@ fn extract_class_constant_origin_var_name(expr: &Expression<'_>) -> Option<Strin
     }
 
     match class.unparenthesized() {
-        Expression::Static(_) | Expression::Self_(_) => Some("@static".to_string()),
-        Expression::Parent(_) => Some("@parent".to_string()),
+        Expression::Static(_) | Expression::Self_(_) => Some(VarName::new_static("@static")),
+        Expression::Parent(_) => Some(VarName::new_static("@parent")),
         _ => None,
     }
 }
@@ -3155,11 +3972,12 @@ fn extract_class_constant_id(
     resolve_class_expression(analyzer, class)
 }
 
-fn function_exists_assertion_key(function_name: &str) -> String {
+fn function_exists_assertion_key(function_name: &str) -> VarName {
     format!("@function_exists({})", function_name)
+    .into()
 }
 
-pub(crate) fn method_exists_assertion_key(class_name_or_var: &str, method_name: &str) -> String {
+pub(crate) fn method_exists_assertion_key(class_name_or_var: &str, method_name: &str) -> VarName {
     format!(
         "@method_exists({},{})",
         class_name_or_var
@@ -3167,13 +3985,15 @@ pub(crate) fn method_exists_assertion_key(class_name_or_var: &str, method_name: 
             .to_ascii_lowercase(),
         method_name.to_ascii_lowercase()
     )
+    .into()
 }
 
-fn class_exists_assertion_key(class_name: &str) -> String {
+fn class_exists_assertion_key(class_name: &str) -> VarName {
     format!(
         "@class_exists({})",
         class_name.trim_start_matches('\\').to_ascii_lowercase()
     )
+    .into()
 }
 
 fn extract_literal_string_name(
@@ -3300,17 +4120,10 @@ fn is_empty_array_literal(expr: &Expression<'_>) -> bool {
     }
 }
 
-fn is_numeric_literal(expr: &Expression<'_>) -> bool {
-    matches!(
-        expr.unparenthesized(),
-        Expression::Literal(Literal::Integer(_)) | Expression::Literal(Literal::Float(_))
-    )
-}
-
 fn get_count_literal_comparison(
     left: &Expression<'_>,
     right: &Expression<'_>,
-) -> Option<(String, usize)> {
+) -> Option<(VarName, usize)> {
     if let (Some(count_arg), Some(count)) =
         (get_count_arg_expression(left), get_usize_literal(right))
     {
@@ -3328,7 +4141,7 @@ fn get_count_literal_comparison(
     None
 }
 
-fn get_count_inequality_comparison(binary: &Binary<'_>) -> Option<(String, usize, CountCmpOp)> {
+fn get_count_inequality_comparison(binary: &Binary<'_>) -> Option<(VarName, usize, CountCmpOp)> {
     if let (Some(count_arg), Some(count), Some(operator)) = (
         get_count_arg_expression(binary.lhs),
         get_usize_literal(binary.rhs),
@@ -3350,7 +4163,7 @@ fn get_count_inequality_comparison(binary: &Binary<'_>) -> Option<(String, usize
     None
 }
 
-fn get_int_inequality_comparison(binary: &Binary<'_>) -> Option<(String, i64, CountCmpOp)> {
+fn get_int_inequality_comparison(binary: &Binary<'_>) -> Option<(VarName, i64, CountCmpOp)> {
     if let (Some(var_name), Some(value), Some(operator)) = (
         get_assertable_var_name(binary.lhs),
         get_i64_literal(binary.rhs),
@@ -3461,7 +4274,7 @@ fn get_expression_assertion_type(
         return Some(literal_assertion_type);
     }
 
-    let expr_type = analysis_data.get_expr_type(get_expr_id(expr))?;
+    let expr_type = analysis_data.expr_types.get(&get_expr_id(expr)).cloned()?;
     if !expr_type.is_single() {
         return None;
     }

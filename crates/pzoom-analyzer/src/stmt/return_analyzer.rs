@@ -7,18 +7,19 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::r#return::Return;
 use mago_syntax::ast::ast::variable::Variable;
 
+use pzoom_code_info::VarName;
 use pzoom_code_info::{DataFlowNode, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
 use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
-use crate::expr::call::{callable_validation, function_call_analyzer};
+use crate::expr::call::callable_validation;
 use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
 use crate::type_comparator;
-use crate::template::TemplateMap;
+use std::rc::Rc;
 
 /// Analyze a return statement.
 pub fn analyze(
@@ -29,6 +30,27 @@ pub fn analyze(
 ) -> Result<(), AnalysisError> {
     let yield_count_before = analysis_data.inferred_yield_types.len();
     let mut return_type = TUnion::void();
+
+    // Psalm's ReturnAnalyzer assigns *named* statement-level `@var` comments
+    // into the context before analyzing the returned expression (the unnamed
+    // form overrides the expression type below); narrowing inside the
+    // expression then proceeds from the commented types.
+    if let Some(stmt_start) = analysis_data.current_stmt_start
+        && let Some(annotations) = analyzer.get_inline_var_annotations(stmt_start)
+    {
+        let annotations = annotations.clone();
+        for annotation in &annotations {
+            let Some(var_name) = annotation.var_name else {
+                continue;
+            };
+            let var_id = pzoom_code_info::VarName::new(analyzer.interner.lookup(var_name));
+            let mut annotation_type = annotation.var_type.clone();
+            if let Some(existing) = context.get_var_type(&var_id) {
+                annotation_type.parent_nodes = existing.parent_nodes.clone();
+            }
+            context.set_var_type(var_id, annotation_type);
+        }
+    }
 
     if let Some(value) = ret.value.as_ref() {
         let inserted_expected_callable_offset =
@@ -47,21 +69,71 @@ pub fn analyze(
                 None
             };
 
+        let was_inside_return = context.inside_return;
+        context.inside_return = true;
         let value_pos = expression_analyzer::analyze(analyzer, value, analysis_data, context);
+        context.inside_return = was_inside_return;
         if let Some(closure_offset) = inserted_expected_callable_offset {
             context.expected_callable_arg_types.remove(&closure_offset);
         }
 
         return_type = analysis_data
-            .get_expr_type(value_pos)
+            .expr_types.get(&value_pos).cloned()
             .map(|t| (*t).clone())
             .unwrap_or_else(TUnion::mixed);
 
         if let Some(inline_annotation) =
             get_inline_return_annotation_type(analyzer, value, analysis_data.current_stmt_start)
         {
-            analysis_data.set_expr_type(value_pos, inline_annotation.clone());
+            analysis_data.expr_types.insert(value_pos, Rc::new(inline_annotation.clone()));
             return_type = inline_annotation;
+        }
+
+        // Psalm's ReturnAnalyzer: a `never`-typed return expression means every
+        // possible type for it was invalidated — likely dead code.
+        if !return_type.types.is_empty() && return_type.is_nothing() {
+            let span = value.span();
+            let (line, col) = analyzer.get_line_column(span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::NoValue,
+                "All possible types for this return were invalidated - This may be dead code",
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                line,
+                col,
+            ));
+        }
+
+        // Psalm's ReturnAnalyzer converts a void-typed return expression to
+        // null (`return voidCall();` yields null) instead of reporting a
+        // mismatch against the declared type.
+        if return_type.is_void() {
+            return_type = TUnion::new(pzoom_code_info::TAtomic::TNull);
+        }
+
+        // Psalm's ReturnAnalyzer: a value returned from a constructor reports
+        // InvalidReturnStatement ("No return values are expected").
+        if !analyzer.inside_closure
+            && analyzer
+                .function_info
+                .is_some_and(|function_info| function_info.name == StrId::CONSTRUCT)
+            && let Some(declaring_class) = analyzer.get_declaring_class()
+        {
+            let span = value.span();
+            let (line, col) = analyzer.get_line_column(span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::InvalidReturnStatement,
+                format!(
+                    "No return values are expected for {}::__construct",
+                    analyzer.interner.lookup(declaring_class)
+                ),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                line,
+                col,
+            ));
         }
     }
 
@@ -94,14 +166,40 @@ pub fn analyze(
         // may legitimately return either branch — compare against the union of both
         // (Psalm expands TConditional when used as a concrete type).
         let mut expanded_expected_type = expected_type.clone();
+        let declaring_class = analyzer.get_declaring_class();
+        crate::type_expander::bind_properties_of_self_names(
+            &mut expanded_expected_type,
+            declaring_class,
+            declaring_class
+                .and_then(|class_id| analyzer.codebase.get_class(class_id))
+                .and_then(|class_info| class_info.parent_class),
+        );
         // NB: `self`/`static` are resolved later by the call analyzers
         // (`localize_special_class_type_*`); resolving them here too would
         // double-resolve (see tests/inference/Class/preventDoubleStaticResolution1).
+        // The one exception is a *final* enclosing class: call-site expansion
+        // binds `static` firmly there (Psalm's $final flag), so the declared
+        // type must too or the two sides disagree.
+        let final_declaring_class = analyzer.get_declaring_class().filter(|class_id| {
+            analyzer
+                .codebase
+                .get_class(*class_id)
+                .is_some_and(|class_info| class_info.is_final)
+        });
         crate::type_expander::expand_union(
             analyzer.codebase,
             analyzer.interner,
             &mut expanded_expected_type,
-            &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+            &crate::type_expander::TypeExpansionOptions {
+                evaluate_conditional_types: true,
+                self_class: final_declaring_class,
+                static_class_type: match final_declaring_class {
+                    Some(class_id) => crate::type_expander::StaticClassType::Name(class_id),
+                    None => crate::type_expander::StaticClassType::None,
+                },
+                function_is_final: final_declaring_class.is_some(),
+                ..Default::default()
+            },
         );
         let expected_type = &expanded_expected_type;
         if let Some(return_expr) = ret.value.as_ref() {
@@ -119,6 +217,19 @@ pub fn analyze(
         }
 
         let has_return_value = ret.value.is_some();
+        // Issue positions target the returned expression, not the whole
+        // return statement (Psalm's `new CodeLocation($source, $stmt->expr)`).
+        let value_span: Option<(u32, u32)> = ret.value.as_ref().map(|value| {
+            let span = value.span();
+            (span.start.offset, span.end.offset)
+        });
+        let value_issue_pos = |analysis_data: &FunctionAnalysisData| -> Option<(u32, u32)> {
+            let stmt_start = analysis_data.current_stmt_start?;
+            Some(value_span.unwrap_or((
+                stmt_start,
+                analysis_data.current_stmt_end.unwrap_or(stmt_start),
+            )))
+        };
 
         // Check if we're returning a value from a never function
         if has_return_value && expected_type.is_nothing() {
@@ -153,40 +264,49 @@ pub fn analyze(
                 ));
             }
         }
+        // A possibly-undefined return value never satisfies the declared type
+        // (Psalm's UnionTypeComparator rejects possibly-undefined inputs
+        // outright; pzoom applies the gate at the return site until shape
+        // optional-property comparisons are calibrated for it).
+        else if has_return_value
+            && return_type.possibly_undefined
+            && !expected_type.is_mixed()
+            && !expected_type.is_void()
+        {
+            if let Some(start) = analysis_data.current_stmt_start {
+                let (line, col) = analyzer.get_line_column(start);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::InvalidReturnStatement,
+                    format!(
+                        "The type {} does not match the declared return type {}",
+                        return_type.get_id(Some(analyzer.interner)),
+                        expected_type.get_id(Some(analyzer.interner))
+                    ),
+                    analyzer.file_path,
+                    start,
+                    analysis_data.current_stmt_end.unwrap_or(start),
+                    line,
+                    col,
+                ));
+            }
+        }
         // Check type compatibility for non-void/never functions
         else if has_return_value && !expected_type.is_mixed() && !expected_type.is_void() {
-            // A function's own template parameters are abstract inside its body
-            // and are rigid: only a value derived from the same template parameter
-            // satisfies a `@return T`. Returning a concrete value (even one within
-            // the template's `as` bound) is an InvalidReturnStatement, matching
-            // Psalm's ReturnTypeAnalyzer.
-            if expected_is_rigid_template(analyzer, expected_type)
-                && return_violates_rigid_template(&return_type, expected_type)
-            {
-                if let Some(start) = analysis_data.current_stmt_start {
-                    let (line, col) = analyzer.get_line_column(start);
-                    analysis_data.add_issue(Issue::new(
-                        IssueKind::InvalidReturnStatement,
-                        format!(
-                            "The type {} does not match the declared return type {}",
-                            return_type.get_id(Some(analyzer.interner)),
-                            expected_type.get_id(Some(analyzer.interner))
-                        ),
-                        analyzer.file_path,
-                        start,
-                        analysis_data.current_stmt_end.unwrap_or(start),
-                        line,
-                        col,
-                    ));
-                }
-            } else {
-            let expected_type = resolve_expected_return_type_templates(analyzer, expected_type);
+            // Psalm/Hakana compare against the declared return type as-is:
+            // the function's own template params stay rigid in the
+            // container (they are the *caller's* choice), and a type
+            // variable in the inferred type records the container as an
+            // upper bound for the end-of-function reconcile.
+            let expected_type = expected_type.clone();
             // In a generator function, a `return X` provides the Generator's TReturn
             // (its 4th type parameter), not the Generator type itself. For other
             // generator-like declared types (Iterator/Traversable/iterable) the
             // returned value is discarded, so any type is accepted.
             let is_generator = analysis_data.current_function_is_generator
-                && expected_type_allows_generator_void_return(&expected_type, analyzer.interner);
+                && expected_type_allows_generator_void_return(
+                    &expected_type,
+                    analyzer.interner,
+                );
             let comparison_expected_type = if is_generator {
                 get_generator_return_type(&expected_type, analyzer.interner)
                     .unwrap_or_else(TUnion::mixed)
@@ -209,18 +329,18 @@ pub fn analyze(
                     casted.ignore_falsable_issues,
                 )
             {
-                if let Some(start) = analysis_data.current_stmt_start {
+                if let Some((start, end)) = value_issue_pos(analysis_data) {
                     let (line, col) = analyzer.get_line_column(start);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::ImplicitToStringCast,
                         format!(
                             "Object with a __toString method is implicitly converted to \
-                             the declared return type {}",
+                         the declared return type {}",
                             comparison_expected_type.get_id(Some(analyzer.interner))
                         ),
                         analyzer.file_path,
                         start,
-                        analysis_data.current_stmt_end.unwrap_or(start),
+                        end,
                         line,
                         col,
                     ));
@@ -234,6 +354,57 @@ pub fn analyze(
                     .iter()
                     .any(|t| matches!(t, TAtomic::TNonEmptyMixed))
             {
+                // Psalm: a fully-mixed return against a declared return type
+                // reports MixedReturnStatement with the value's dataflow
+                // origin. Gated on report_unused until pzoom's
+                // mixed-inference parity catches up.
+                if analyzer.config.report_unused
+                    && return_type.is_mixed()
+                    && let Some(value_expr) = ret.value.as_ref()
+                {
+                    let span = value_expr.span();
+                    let (line, col) = analyzer.get_line_column(span.start.offset);
+                    let origin_secondary = crate::data_flow::mixed_origin_secondary(
+                        analyzer,
+                        analysis_data,
+                        &return_type,
+                        span.start.offset,
+                    );
+                    analysis_data.add_issue(
+                        Issue::new(
+                            IssueKind::MixedReturnStatement,
+                            "Could not infer a return type",
+                            analyzer.file_path,
+                            span.start.offset,
+                            span.end.offset,
+                            line,
+                            col,
+                        )
+                        .with_secondary_opt(origin_secondary),
+                    );
+                }
+
+                // Psalm reports "Possibly-mixed return value" for a partly-mixed
+                // return (hasMixed but not isMixed) before the containment
+                // check continues, regardless of the concrete part's fit. A
+                // mixed promoted from a template's defaulted bound is not a
+                // real TMixed in Psalm (hasMixed is false there).
+                if !return_type.from_template_default
+                    && strip_mixed_types(&return_type).is_some()
+                    && let Some((start, end)) = value_issue_pos(analysis_data)
+                {
+                    let (line, col) = analyzer.get_line_column(start);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::MixedReturnStatement,
+                        "Possibly-mixed return value",
+                        analyzer.file_path,
+                        start,
+                        end,
+                        line,
+                        col,
+                    ));
+                }
+
                 if let Some(concrete_return_type) = strip_mixed_types(&return_type)
                     && !is_contained_without_coercion(
                         &concrete_return_type,
@@ -243,10 +414,11 @@ pub fn analyze(
                         concrete_return_type.ignore_falsable_issues,
                     )
                 {
-                    if let Some(start) = analysis_data.current_stmt_start {
+                    if let Some((start, end)) = value_issue_pos(analysis_data) {
                         let (line, col) = analyzer.get_line_column(start);
-                        let issue_kind = if concrete_return_type.is_nullable
-                            && !comparison_expected_type.is_nullable
+                        let issue_kind = if concrete_return_type.is_nullable()
+                            && !comparison_expected_type.is_nullable()
+                            && !union_has_template(&comparison_expected_type)
                             && !concrete_return_type.ignore_nullable_issues
                         {
                             IssueKind::NullableReturnStatement
@@ -277,7 +449,8 @@ pub fn analyze(
                             }
                         };
 
-                        let actual_type_id = concrete_return_type.get_id(Some(analyzer.interner));
+                        let actual_type_id =
+                            concrete_return_type.get_id(Some(analyzer.interner));
                         let expected_type_id =
                             comparison_expected_type.get_id(Some(analyzer.interner));
 
@@ -285,27 +458,36 @@ pub fn analyze(
                             analyzer,
                             analysis_data,
                             start,
-                            analysis_data.current_stmt_end.unwrap_or(start),
+                            end,
                             &concrete_return_type,
                             &comparison_expected_type,
                         );
 
-                        analysis_data.add_issue(Issue::new(
-                            issue_kind,
-                            format!(
-                                "The type {} does not match the declared return type {}",
-                                actual_type_id, expected_type_id
+                        analysis_data.add_issue(
+                            Issue::new(
+                                issue_kind,
+                                format!(
+                                    "The type {} does not match the declared return type {}",
+                                    actual_type_id, expected_type_id
+                                ),
+                                analyzer.file_path,
+                                start,
+                                end,
+                                line,
+                                col,
+                            )
+                            .with_secondary_opt(
+                                return_declaration_secondary(
+                                    analyzer,
+                                    issue_kind,
+                                    &expected_type_id,
+                                ),
                             ),
-                            analyzer.file_path,
-                            start,
-                            analysis_data.current_stmt_end.unwrap_or(start),
-                            line,
-                            col,
-                        ));
+                        );
                     }
                 } else if ret.value.as_ref().is_some_and(|value| {
-                    should_emit_mixed_return_statement(value, context, analyzer)
-                }) && let Some(start) = analysis_data.current_stmt_start
+                    should_emit_mixed_return_statement(value, context)
+                }) && let Some((start, end)) = value_issue_pos(analysis_data)
                 {
                     let (line, col) = analyzer.get_line_column(start);
                     analysis_data.add_issue(Issue::new(
@@ -313,7 +495,7 @@ pub fn analyze(
                         "Could not infer a return type due to mixed return values",
                         analyzer.file_path,
                         start,
-                        analysis_data.current_stmt_end.unwrap_or(start),
+                        end,
                         line,
                         col,
                     ));
@@ -329,27 +511,86 @@ pub fn analyze(
                     &mut comparison_result,
                 );
 
+                if is_contained {
+                    // Hakana's return analyzer: transfer recorded type-variable
+                    // bounds, upgrading plain upper bounds to equality bounds
+                    // ("bit of a hack but this ensures that we add strict
+                    // checks").
+                    let bound_pos = analysis_data
+                        .current_stmt_start
+                        .zip(analysis_data.current_stmt_end)
+                        .map(|(start, end)| {
+                            crate::template::bound_location(analyzer, (start, end))
+                        });
+                    let mut upper_bounds =
+                        std::mem::take(&mut comparison_result.type_variable_upper_bounds);
+                    for (_, bound) in upper_bounds.iter_mut() {
+                        if bound.equality_bound_classlike.is_none() {
+                            bound.equality_bound_classlike = Some(pzoom_str::StrId::EMPTY);
+                        }
+                    }
+                    crate::template::record_type_variable_bounds(
+                        analysis_data,
+                        std::mem::take(&mut comparison_result.type_variable_lower_bounds),
+                        upper_bounds,
+                        bound_pos,
+                    );
+                }
+
+                // Psalm's containment check ignores nullability (the
+                // nullable mismatch is a separate NullableReturnStatement
+                // check, exempt for templated declared types): returning
+                // null against `@return T` reports nothing.
+                let null_against_template = return_type.is_nullable()
+                    && !comparison_expected_type.is_nullable()
+                    && union_has_template(&comparison_expected_type)
+                    && type_comparator::union_type_comparator::is_contained_by(
+                        analyzer.codebase,
+                        &return_type,
+                        &comparison_expected_type,
+                        true,
+                        return_type.ignore_falsable_issues,
+                        &mut type_comparator::TypeComparisonResult::new(),
+                    );
+
                 if !(is_contained && !comparison_result.type_coerced.unwrap_or(false))
-                    && let Some(start) = analysis_data.current_stmt_start
+                    && !null_against_template
+                    && let Some((start, end)) = value_issue_pos(analysis_data)
                 {
                     let (line, col) = analyzer.get_line_column(start);
                     // Determine the specific issue kind
-                    let issue_kind = if return_type.is_nullable
-                        && !comparison_expected_type.is_nullable
+                    let issue_kind = if return_type.is_nullable()
+                        && !comparison_expected_type.is_nullable()
+                        && !union_has_template(&comparison_expected_type)
                         && !return_type.ignore_nullable_issues
                     {
                         IssueKind::NullableReturnStatement
                     } else if should_emit_falsable_return_statement(
                         &return_type,
                         &comparison_expected_type,
+                    ) && type_comparator::union_type_comparator::is_contained_by(
+                        analyzer.codebase,
+                        &return_type,
+                        &comparison_expected_type,
+                        true,
+                        true,
+                        &mut type_comparator::TypeComparisonResult::new(),
                     ) {
+                        // Psalm only reports the falsable variant when the
+                        // false branch is the SOLE mismatch; `B1|false` vs `A1`
+                        // is a plain InvalidReturnStatement.
                         IssueKind::FalsableReturnStatement
                     } else if comparison_result.type_coerced.unwrap_or(false) {
                         // Mirror Psalm's ReturnAnalyzer: a coerced comparison means the
                         // inferred type is a wider/less-specific version of the declared
-                        // type. Coercion from mixed is reported as MixedReturnTypeCoercion;
+                        // type. A coercion from mixed reports MixedReturnTypeCoercion
+                        // (unless the mixed came from a template's as-mixed bound);
                         // any other coercion is a LessSpecificReturnStatement.
-                        if union_contains_mixed_deep(&return_type) {
+                        if comparison_result.type_coerced_from_mixed.unwrap_or(false)
+                            && !comparison_result
+                                .type_coerced_from_as_mixed
+                                .unwrap_or(false)
+                        {
                             IssueKind::MixedReturnTypeCoercion
                         } else {
                             IssueKind::LessSpecificReturnStatement
@@ -359,34 +600,43 @@ pub fn analyze(
                     };
 
                     let actual_type_id = return_type.get_id(Some(analyzer.interner));
-                    let expected_type_id = comparison_expected_type.get_id(Some(analyzer.interner));
+                    let expected_type_id =
+                        comparison_expected_type.get_id(Some(analyzer.interner));
 
                     emit_unknown_class_string_return_literals(
                         analyzer,
                         analysis_data,
                         start,
-                        analysis_data.current_stmt_end.unwrap_or(start),
+                        end,
                         &return_type,
                         &comparison_expected_type,
                     );
 
-                    analysis_data.add_issue(Issue::new(
-                        issue_kind,
-                        format!(
-                            "The type {} does not match the declared return type {}",
-                            actual_type_id, expected_type_id
+                    analysis_data.add_issue(
+                        Issue::new(
+                            issue_kind,
+                            format!(
+                                "The type {} does not match the declared return type {}",
+                                actual_type_id, expected_type_id
+                            ),
+                            analyzer.file_path,
+                            start,
+                            end,
+                            line,
+                            col,
+                        )
+                        .with_secondary_opt(
+                            return_declaration_secondary(
+                                analyzer,
+                                issue_kind,
+                                &expected_type_id,
+                            ),
                         ),
-                        analyzer.file_path,
-                        start,
-                        analysis_data.current_stmt_end.unwrap_or(start),
-                        line,
-                        col,
-                    ));
+                    );
                 }
             }
-            }
         }
-        // Check if we're not returning a value when one is expected
+        // Check if we're not returning a value when one is expected        // Check if we're not returning a value when one is expected
         else if !has_return_value
             && !expected_type.is_void()
             && !expected_type.is_mixed()
@@ -411,20 +661,37 @@ pub fn analyze(
         }
     }
 
-    let return_span = ret.span();
-    let return_node = DataFlowNode::get_for_unlabelled_sink(make_data_flow_node_position(
-        analyzer,
-        (return_span.start.offset, return_span.end.offset),
-    ));
-    analysis_data.data_flow_graph.add_node(return_node.clone());
-    add_default_dataflow_paths(
-        &mut analysis_data.data_flow_graph,
-        &return_type.parent_nodes,
-        &return_node,
-    );
+    // Hakana `return_analyzer::handle_inout_at_return` (Hack inout ≈ PHP
+    // by-ref): by-ref param values flow out of the function at every return.
+    handle_byref_at_return(analyzer, analysis_data, context);
+
+    // Hakana `return_analyzer::handle_dataflow`. Function-body branch: the
+    // returned expression's dataflow terminates in an unlabelled sink at the
+    // returned expression's position. Whole-program (taint) branch: a `Return`
+    // node links to the function's `CallTo` node, plus parent-classlike
+    // return nodes so overridden methods taint their ancestors' call sites.
+    if let Some(value) = ret.value.as_ref() {
+        let value_span = value.span();
+        let value_pos = make_data_flow_node_position(
+            analyzer,
+            (value_span.start.offset, value_span.end.offset),
+        );
+
+        if let pzoom_code_info::GraphKind::WholeProgram(_) = analysis_data.data_flow_graph.kind {
+            handle_whole_program_return_dataflow(analyzer, analysis_data, &return_type, value_pos);
+        } else {
+            let return_node = DataFlowNode::get_for_unlabelled_sink(value_pos);
+            add_default_dataflow_paths(
+                &mut analysis_data.data_flow_graph,
+                &return_type.parent_nodes,
+                &return_node,
+            );
+            analysis_data.data_flow_graph.add_node(return_node);
+        }
+    }
 
     // Record the return type for later comparison
-    analysis_data.add_return_type(return_type);
+    analysis_data.inferred_return_types.push(return_type);
 
     // Mark that control flow has exited
     context.has_returned = true;
@@ -432,126 +699,160 @@ pub fn analyze(
     Ok(())
 }
 
-/// Returns true if the declared return type consists solely of template
-/// parameters defined by the current function or its declaring class. Such a
-/// type is "rigid": only a value of the same template parameter satisfies it.
-fn expected_is_rigid_template(analyzer: &StatementsAnalyzer<'_>, expected_type: &TUnion) -> bool {
-    if expected_type.types.is_empty() {
-        return false;
-    }
-
-    expected_type.types.iter().all(|atomic| {
-        if let TAtomic::TTemplateParam {
-            name,
-            defining_entity,
-            ..
-        } = atomic
-        {
-            template_is_defined_locally(analyzer, *name, *defining_entity)
-        } else {
-            false
-        }
-    })
-}
-
-fn template_is_defined_locally(
+/// Hakana `return_analyzer::handle_dataflow`, whole-program branch: the
+/// return expression's parents flow into a `Return` node, which flows into
+/// the function-like's `CallTo` node (with the storage's added/removed
+/// taints), which flows into every parent classlike's `CallTo` node for the
+/// same method.
+fn handle_whole_program_return_dataflow(
     analyzer: &StatementsAnalyzer<'_>,
-    name: StrId,
-    defining_entity: StrId,
-) -> bool {
-    if let Some(function_info) = analyzer.function_info
-        && function_info.name == defining_entity
-        && function_info.template_types.iter().any(|t| t.name == name)
-    {
-        return true;
+    analysis_data: &mut FunctionAnalysisData,
+    return_type: &TUnion,
+    value_pos: pzoom_code_info::DataFlowNodePosition,
+) {
+    use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
+
+    if !return_type.has_taintable_value() {
+        return;
     }
 
-    if let Some(declaring_class) = analyzer.get_declaring_class()
-        && declaring_class == defining_entity
-        && let Some(class_info) = analyzer.codebase.get_class(declaring_class)
-    {
-        return class_info.template_types.iter().any(|t| t.name == name);
-    }
-
-    false
-}
-
-/// Returns true if `return_type` does not satisfy a rigid template return type:
-/// it carries no matching template parameter and is a fully concrete, non-null
-/// type (so it is not the template value itself).
-fn return_violates_rigid_template(return_type: &TUnion, expected_type: &TUnion) -> bool {
-    if return_type.types.is_empty()
-        || return_type.is_mixed()
-        || return_type.is_nullable
-        || return_type.is_nothing()
-    {
-        return false;
-    }
-
-    let expected_names: Vec<StrId> = expected_type
-        .types
-        .iter()
-        .filter_map(|atomic| match atomic {
-            TAtomic::TTemplateParam { name, .. } => Some(*name),
-            _ => None,
-        })
-        .collect();
-
-    // If the returned type is derived from one of the expected template
-    // parameters (directly, or via an intersection such as `T&object` produced
-    // by `is_object()` narrowing), it is acceptable.
-    let carries_matching_template = return_type
-        .types
-        .iter()
-        .any(|atomic| atomic_carries_template(atomic, &expected_names));
-
-    !carries_matching_template
-}
-
-fn atomic_carries_template(atomic: &TAtomic, expected_names: &[StrId]) -> bool {
-    match atomic {
-        TAtomic::TTemplateParam { name, .. } => expected_names.contains(name),
-        TAtomic::TObjectIntersection { types } => types
-            .iter()
-            .any(|inner| atomic_carries_template(inner, expected_names)),
-        // A `static` (late-static-bound) return inside a `@return T` function can
-        // only originate from a template-typed receiver, so its runtime type is
-        // the template parameter itself — treat it as template-derived rather
-        // than a concrete mismatch.
-        TAtomic::TNamedObject {
-            name, is_static, ..
-        } => *name == StrId::STATIC || *is_static,
-        _ => false,
-    }
-}
-
-fn resolve_expected_return_type_templates(
-    analyzer: &StatementsAnalyzer<'_>,
-    expected_type: &TUnion,
-) -> TUnion {
     let Some(function_info) = analyzer.function_info else {
-        return expected_type.clone();
+        return;
     };
 
-    let mut template_defaults = TemplateMap::new();
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(function_info));
+    let functionlike_id = match function_info.declaring_class {
+        Some(classlike_name) => FunctionLikeIdentifier::Method(classlike_name, function_info.name),
+        None => FunctionLikeIdentifier::Function(function_info.name),
+    };
 
-    if let Some(declaring_class) = function_info.declaring_class
-        && let Some(class_info) = analyzer.codebase.get_class(declaring_class)
-    {
-        template_defaults.extend_overlay(function_call_analyzer::get_class_template_defaults(
-            class_info,
-        ));
+    let data_flow_graph = &mut analysis_data.data_flow_graph;
+
+    let return_node = DataFlowNode::get_for_return_expr(value_pos);
+
+    for parent_node in &return_type.parent_nodes {
+        data_flow_graph.add_path(
+            &parent_node.id,
+            &return_node.id,
+            pzoom_code_info::PathKind::Default,
+            function_info.taints.added_taints.clone(),
+            function_info.taints.removed_taints.clone(),
+        );
     }
 
-    if template_defaults.is_empty() {
-        expected_type.clone()
-    } else {
-        function_call_analyzer::replace_templates_in_union(
-            expected_type,
-            &TemplateMap::new(),
-            &template_defaults,
-        )
+    // Psalm positions the method-return node at the native return-type hint
+    // when present, else at the function-like's declaration.
+    let method_node_pos = function_info
+        .return_type_location
+        .map(|(start, end)| make_data_flow_node_position(analyzer, (start, end)))
+        .unwrap_or_else(|| {
+            make_data_flow_node_position(
+                analyzer,
+                (function_info.start_offset, function_info.start_offset),
+            )
+        });
+    let method_node =
+        DataFlowNode::get_for_method_return(&functionlike_id, Some(method_node_pos), None);
+
+    data_flow_graph.add_path(
+        &return_node.id,
+        &method_node.id,
+        pzoom_code_info::PathKind::Default,
+        vec![],
+        vec![],
+    );
+
+    if let FunctionLikeIdentifier::Method(classlike_name, method_name) = functionlike_id
+        && method_name != pzoom_str::StrId::CONSTRUCT
+        && let Some(classlike_info) = analyzer.codebase.get_class(classlike_name)
+    {
+        let mut all_parents = classlike_info.all_parent_classes.clone();
+        all_parents.extend(classlike_info.all_parent_interfaces.iter().copied());
+        all_parents.sort_unstable();
+        all_parents.dedup();
+
+        for parent_classlike in all_parents {
+            let parent_declares_method = analyzer
+                .codebase
+                .get_class(parent_classlike)
+                .is_some_and(|parent_info| parent_info.methods.contains_key(&method_name));
+            if parent_declares_method {
+                let new_sink = DataFlowNode::get_for_method_return(
+                    &FunctionLikeIdentifier::Method(parent_classlike, method_name),
+                    None,
+                    None,
+                );
+
+                data_flow_graph.add_node(new_sink.clone());
+                data_flow_graph.add_path(
+                    &method_node.id,
+                    &new_sink.id,
+                    pzoom_code_info::PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+        }
+    }
+
+    data_flow_graph.add_node(method_node);
+    data_flow_graph.add_node(return_node);
+}
+
+/// Port of Hakana `return_analyzer::handle_inout_at_return` (Hack inout ≈ PHP
+/// by-ref): at a return point the current value of every by-ref parameter
+/// flows into an unlabelled variable-use sink, marking the value as consumed
+/// by the caller. (Hakana's whole-program branch uses a `FunctionLikeOut` node
+/// instead — taint-graph only, skipped. pzoom's `ParamInfo` stores only the
+/// param's start offset, so that is used for the sink position.)
+pub(crate) fn handle_byref_at_return(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    let Some(functionlike_storage) = analyzer.function_info else {
+        return;
+    };
+
+    for param in &functionlike_storage.params {
+        if !param.by_ref {
+            continue;
+        }
+
+        let Some(parent_nodes) = context
+            .get_var_type(&analyzer.interner.lookup(param.name))
+            .map(|context_type| context_type.parent_nodes.clone())
+        else {
+            continue;
+        };
+
+        // An untouched by-ref param (its only parent is its own Param node)
+        // flows nothing back to the caller — Psalm still reports it as
+        // UnusedParam (unusedPassByReference). Only written params escape.
+        if parent_nodes
+            .iter()
+            .all(|node| matches!(node.id, pzoom_code_info::DataFlowNodeId::Param(..)))
+        {
+            continue;
+        }
+
+        let new_parent_node = DataFlowNode::get_for_unlabelled_sink(make_data_flow_node_position(
+            analyzer,
+            (param.start_offset, param.start_offset),
+        ));
+
+        analysis_data
+            .data_flow_graph
+            .add_node(new_parent_node.clone());
+
+        for parent_node in &parent_nodes {
+            analysis_data.data_flow_graph.add_path(
+                &parent_node.id,
+                &new_parent_node.id,
+                pzoom_code_info::PathKind::Default,
+                vec![],
+                vec![],
+            );
+        }
     }
 }
 
@@ -685,7 +986,7 @@ fn emit_unknown_class_string_return_literals(
     for class_name in unknown_classes {
         analysis_data.add_issue(Issue::new(
             IssueKind::UndefinedClass,
-            format!("Class {} does not exist", class_name),
+            crate::class_casing::undefined_class_message(analyzer, &class_name),
             analyzer.file_path,
             issue_start,
             issue_end,
@@ -755,48 +1056,6 @@ fn collect_unknown_class_string_literals_from_union(
 
 fn union_contains_explicit_false(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_explicit_false)
-}
-
-fn union_contains_mixed_deep(union: &TUnion) -> bool {
-    union.types.iter().any(atomic_contains_mixed_deep)
-}
-
-fn atomic_contains_mixed_deep(atomic: &TAtomic) -> bool {
-    match atomic {
-        TAtomic::TMixed | TAtomic::TNonEmptyMixed => true,
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => union_contains_mixed_deep(key_type) || union_contains_mixed_deep(value_type),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_contains_mixed_deep(value_type)
-        }
-        TAtomic::TIterable {
-            key_type,
-            value_type,
-        } => union_contains_mixed_deep(key_type) || union_contains_mixed_deep(value_type),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            properties.values().any(union_contains_mixed_deep)
-                || fallback_key_type
-                    .as_ref()
-                    .is_some_and(|key_type| union_contains_mixed_deep(key_type))
-                || fallback_value_type
-                    .as_ref()
-                    .is_some_and(|value_type| union_contains_mixed_deep(value_type))
-        }
-        TAtomic::TTemplateParam { as_type, .. } => union_contains_mixed_deep(as_type),
-        TAtomic::TObjectIntersection { types } => types.iter().any(atomic_contains_mixed_deep),
-        _ => false,
-    }
 }
 
 /// If the union contains any object with a `__toString` method (possibly nested in
@@ -901,7 +1160,7 @@ fn atomic_cast_stringable_to_string(
             fallback_value_type,
         } => {
             let mut changed = false;
-            let mut new_properties = properties.clone();
+            let mut new_properties = (**properties).clone();
             for value in new_properties.values_mut() {
                 if let Some(new_value) = union_cast_stringable_to_string(analyzer, value) {
                     *value = new_value;
@@ -920,7 +1179,7 @@ fn atomic_cast_stringable_to_string(
             if changed {
                 (
                     TAtomic::TKeyedArray {
-                        properties: new_properties,
+                        properties: std::sync::Arc::new(new_properties),
                         is_list: *is_list,
                         sealed: *sealed,
                         fallback_key_type: fallback_key_type.clone(),
@@ -1053,7 +1312,7 @@ fn get_closure_like_expression_offset(expr: &Expression<'_>) -> Option<u32> {
     }
 }
 
-fn get_inline_return_annotation_type(
+pub(crate) fn get_inline_return_annotation_type(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     stmt_start: Option<u32>,
@@ -1109,7 +1368,8 @@ fn get_generator_return_type(
         let TAtomic::TNamedObject {
             name,
             type_params: Some(type_params),
-        .. } = atomic
+            ..
+        } = atomic
         else {
             continue;
         };
@@ -1244,7 +1504,9 @@ fn rewrite_declaring_class_atomic_to_special(
     special_name: StrId,
 ) -> TAtomic {
     match atomic {
-        TAtomic::TNamedObject { name, type_params , .. } => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } => {
             let rewritten_name = if *name == declaring_class
                 || matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT)
             {
@@ -1267,7 +1529,9 @@ fn rewrite_declaring_class_atomic_to_special(
                         })
                         .collect()
                 }),
-            is_static: false, remapped_params: false }
+                is_static: false,
+                remapped_params: false,
+            }
         }
         TAtomic::TObjectIntersection { types } => {
             let mut rewritten = Vec::with_capacity(types.len());
@@ -1296,7 +1560,9 @@ fn union_contains_special_class_name(union: &TUnion, special_name: StrId) -> boo
 
 fn atomic_contains_named_class(atomic: &TAtomic, class_name: StrId) -> bool {
     match atomic {
-        TAtomic::TNamedObject { name, type_params , .. } => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } => {
             if *name == class_name {
                 return true;
             }
@@ -1317,10 +1583,9 @@ fn atomic_contains_named_class(atomic: &TAtomic, class_name: StrId) -> bool {
 fn should_emit_mixed_return_statement(
     expr: &Expression<'_>,
     context: &BlockContext,
-    analyzer: &StatementsAnalyzer<'_>,
 ) -> bool {
     if let Expression::Variable(Variable::Direct(direct)) = expr.unparenthesized() {
-        let var_id = analyzer.interner.intern(direct.name);
+        let var_id = VarName::new(direct.name);
         if context.static_var_ids.contains(&var_id) {
             return true;
         }
@@ -1340,4 +1605,49 @@ fn should_emit_mixed_return_statement(
         .eq_ignore_ascii_case("array_pop")
 }
 
+/// The declared return type's location with an explanatory message — shown as
+/// a secondary location under return-statement mismatch issues (e.g.
+/// "Return type declared as non-nullable `string` here").
+fn return_declaration_secondary(
+    analyzer: &StatementsAnalyzer<'_>,
+    issue_kind: IssueKind,
+    expected_type_id: &str,
+) -> Option<pzoom_code_info::SecondaryLocation> {
+    let (start, end) = analyzer.function_info?.return_type_location?;
+    let (line, col) = analyzer.get_line_column(start);
+    let message = match issue_kind {
+        IssueKind::NullableReturnStatement => {
+            format!(
+                "Return type declared as non-nullable {} here",
+                expected_type_id
+            )
+        }
+        IssueKind::FalsableReturnStatement => {
+            format!(
+                "Return type declared as non-falsable {} here",
+                expected_type_id
+            )
+        }
+        _ => return None,
+    };
+    Some(pzoom_code_info::SecondaryLocation::new(
+        pzoom_code_info::code_location::CodeLocation::new(
+            analyzer.file_path,
+            start,
+            end,
+            line,
+            col,
+        ),
+        message,
+    ))
+}
 
+/// Psalm's `Union::hasTemplate()` as used by the NullableReturnStatement
+/// exemption: a declared return type mentioning a template parameter does
+/// not report nullable returns (ReturnAnalyzer's `!hasTemplate()` guard).
+fn union_has_template(union: &pzoom_code_info::TUnion) -> bool {
+    union
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, pzoom_code_info::TAtomic::TTemplateParam { .. }))
+}

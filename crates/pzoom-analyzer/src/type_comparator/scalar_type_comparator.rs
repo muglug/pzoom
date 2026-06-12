@@ -22,7 +22,22 @@ pub fn is_contained_by(
     if matches!(container_type_part, TAtomic::TInt) {
         match input_type_part {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. } => return true,
+            | TAtomic::TNonspecificLiteralInt
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TNonEmptyScalar => return true,
+            _ => {}
+        }
+    }
+
+    // literal-int (Psalm's TNonspecificLiteralInt): literal ints are
+    // contained; plain int is its parent (coercion).
+    if matches!(container_type_part, TAtomic::TNonspecificLiteralInt) {
+        match input_type_part {
+            TAtomic::TNonspecificLiteralInt | TAtomic::TLiteralInt { .. } => return true,
+            TAtomic::TInt | TAtomic::TIntRange { .. } => {
+                atomic_comparison_result.type_coerced = Some(true);
+                return false;
+            }
             _ => {}
         }
     }
@@ -33,7 +48,9 @@ pub fn is_contained_by(
             TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. } => return true,
+            | TAtomic::TNonspecificLiteralInt
+            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TNonEmptyScalar => return true,
             _ => {}
         }
     }
@@ -49,6 +66,7 @@ pub fn is_contained_by(
             | TAtomic::TNonEmptyString
             | TAtomic::TLowercaseString
             | TAtomic::TTruthyString
+            | TAtomic::TCallableString
             | TAtomic::TNonEmptyNumericString
             | TAtomic::TNonEmptyLowercaseString => return true,
             // `scalar` is a less-specific version of `string`, so flag it as a
@@ -68,6 +86,7 @@ pub fn is_contained_by(
         match input_type_part {
             TAtomic::TNonEmptyString
             | TAtomic::TTruthyString
+            | TAtomic::TCallableString
             | TAtomic::TNonEmptyNumericString
             // A numeric-string is always non-empty ("" is not numeric), so it is
             // contained by non-empty-string. Matches Psalm ScalarTypeComparator.
@@ -94,7 +113,19 @@ pub fn is_contained_by(
     // Truthy string comparisons
     if matches!(container_type_part, TAtomic::TTruthyString) {
         match input_type_part {
-            TAtomic::TTruthyString | TAtomic::TNonEmptyNumericString => return true,
+            TAtomic::TTruthyString
+            | TAtomic::TCallableString
+            | TAtomic::TNonEmptyNumericString => return true,
+            // A known literal is contained iff its value is truthy: Psalm's
+            // ScalarTypeComparator rejects '' (non-empty containers) and '0'
+            // (TNonFalsyString) and then accepts any literal string.
+            TAtomic::TLiteralString { value } => {
+                if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+                return !value.is_empty() && value != "0";
+            }
             TAtomic::TNonEmptyString | TAtomic::TNonEmptyLowercaseString => {
                 // Non-empty string could be "0" which is falsy
                 atomic_comparison_result.type_coerced = Some(true);
@@ -190,6 +221,7 @@ pub fn is_contained_by(
         match input_type_part {
             TAtomic::TNumeric
             | TAtomic::TInt
+            | TAtomic::TNonspecificLiteralInt
             | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
@@ -232,6 +264,41 @@ pub fn is_contained_by(
         }
     }
 
+    // callable-string container (Psalm's TCallableString rules): an equal
+    // callable-string matches; a literal string is accepted as a possible
+    // callable name; wider strings coerce like class-string containers.
+    if matches!(container_type_part, TAtomic::TCallableString) {
+        match input_type_part {
+            TAtomic::TCallableString => return true,
+            TAtomic::TLiteralString { value } => {
+                // Psalm resolves the literal to a callable
+                // (CallableTypeComparator::getCallableFromAtomic): a known
+                // function or a real Class::method; otherwise not contained.
+                if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
+                    atomic_comparison_result.type_coerced = Some(true);
+                    return false;
+                }
+                if let Some((class_name, _method_name)) = value.split_once("::") {
+                    // Method existence needs an interner; accept when the
+                    // class resolves (lenient half of Psalm's check).
+                    return codebase.resolve_classlike_name(class_name).is_some();
+                }
+                return codebase.resolve_functionlike_name(value).is_some();
+            }
+            TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString => {
+                atomic_comparison_result.type_coerced = Some(true);
+                return false;
+            }
+            _ => {}
+        }
+    }
+
     // Class-like string comparisons
     if is_class_string_like_scalar(container_type_part)
         && is_class_string_like_scalar(input_type_part)
@@ -250,16 +317,23 @@ pub fn is_contained_by(
         if value != NON_SPECIFIC_LITERAL_STRING_VALUE
             && codebase.resolve_classlike_name(value).is_some()
         {
+            // A plain string literal naming an existing class is a *coercion*
+            // into class-string (Psalm: `return "A"` against `@return
+            // class-string` is LessSpecificReturnStatement; the argument
+            // analyzer separately tolerates such literals as call arguments).
             let literal_class_string = TAtomic::TLiteralClassString {
                 name: value.clone(),
             };
-
-            return super::class_like_string_comparator::is_contained_by(
+            let mut inner_result = TypeComparisonResult::new();
+            if super::class_like_string_comparator::is_contained_by(
                 codebase,
                 &literal_class_string,
                 container_type_part,
-                atomic_comparison_result,
-            );
+                &mut inner_result,
+            ) {
+                atomic_comparison_result.type_coerced = Some(true);
+            }
+            return false;
         }
 
         atomic_comparison_result.type_coerced = Some(true);
@@ -288,6 +362,14 @@ pub fn is_contained_by(
         if let TAtomic::TLiteralInt { value: input_value } = input_type_part {
             return input_value == container_value;
         }
+
+        // Psalm: a plain int against a literal-int container is a coercion
+        // from the wider scalar (ArgumentTypeCoercion), not a plain mismatch.
+        if matches!(input_type_part, TAtomic::TInt) {
+            atomic_comparison_result.type_coerced = Some(true);
+            atomic_comparison_result.type_coerced_from_scalar = Some(true);
+            return false;
+        }
     }
 
     // Literal float comparisons
@@ -314,12 +396,17 @@ pub fn is_contained_by(
             | TAtomic::TLowercaseString
             | TAtomic::TTruthyString
             | TAtomic::TNonEmptyLowercaseString => {
+                // Psalm flags a wider string against a literal container as a
+                // coercion from the scalar (type_coerced_from_scalar), which
+                // keyed-array offset checks treat as a possible match.
                 atomic_comparison_result.type_coerced = Some(true);
+                atomic_comparison_result.type_coerced_from_scalar = Some(true);
                 return false;
             }
             TAtomic::TNumericString | TAtomic::TNonEmptyNumericString => {
                 if container_value.parse::<f64>().is_ok() {
                     atomic_comparison_result.type_coerced = Some(true);
+                    atomic_comparison_result.type_coerced_from_scalar = Some(true);
                 }
                 return false;
             }
@@ -345,6 +432,9 @@ pub fn is_contained_by(
             max: input_max,
         } = input_type_part
         {
+            // Psalm's ScalarTypeComparator delegates range-vs-range purely to
+            // IntegerRangeComparator — a failed (even overlapping) range is a
+            // plain mismatch, never a coercion.
             return super::integer_range_comparator::is_contained_by(
                 *input_min,
                 *input_max,
@@ -354,7 +444,12 @@ pub fn is_contained_by(
         }
 
         if matches!(input_type_part, TAtomic::TInt) {
-            return container_min.is_none() && container_max.is_none();
+            if container_min.is_none() && container_max.is_none() {
+                return true;
+            }
+            // Psalm: `int` is the parent type of any bounded range.
+            atomic_comparison_result.type_coerced = Some(true);
+            return false;
         }
     }
 
@@ -363,6 +458,7 @@ pub fn is_contained_by(
         match input_type_part {
             TAtomic::TNumeric
             | TAtomic::TInt
+            | TAtomic::TNonspecificLiteralInt
             | TAtomic::TFloat
             | TAtomic::TLiteralInt { .. }
             | TAtomic::TLiteralFloat { .. }            | TAtomic::TIntRange { .. } => return true,
@@ -375,6 +471,7 @@ pub fn is_contained_by(
         match input_type_part {
             TAtomic::TScalar
             | TAtomic::TInt
+            | TAtomic::TNonspecificLiteralInt
             | TAtomic::TFloat
             | TAtomic::TString
             | TAtomic::TBool
@@ -392,11 +489,33 @@ pub fn is_contained_by(
         }
     }
 
+    // array-key input narrowed to int/string is a coercion from a
+    // mixed-ish origin (Psalm AtomicTypeComparator's TArrayKey arm).
+    if matches!(input_type_part, TAtomic::TArrayKey)
+        && matches!(
+            container_type_part,
+            TAtomic::TInt
+                | TAtomic::TString
+                | TAtomic::TIntRange { .. }
+                | TAtomic::TLiteralInt { .. }
+                | TAtomic::TLiteralString { .. }
+                | TAtomic::TNonEmptyString
+                | TAtomic::TNumericString
+                | TAtomic::TLowercaseString
+                | TAtomic::TTruthyString
+        )
+    {
+        atomic_comparison_result.type_coerced = Some(true);
+        atomic_comparison_result.type_coerced_from_mixed = Some(true);
+        return false;
+    }
+
     // Array key (int|string) comparisons
     if matches!(container_type_part, TAtomic::TArrayKey) {
         match input_type_part {
             TAtomic::TArrayKey
             | TAtomic::TInt
+            | TAtomic::TNonspecificLiteralInt
             | TAtomic::TIntRange { .. }
             | TAtomic::TString
             | TAtomic::TLiteralInt { .. }
@@ -407,6 +526,7 @@ pub fn is_contained_by(
             | TAtomic::TLowercaseString
             | TAtomic::TNonEmptyLowercaseString
             | TAtomic::TTruthyString
+            | TAtomic::TCallableString
             | TAtomic::TNonEmptyNumericString
             | TAtomic::TNumericString => return true,
             // `scalar`/`numeric` are wider than `array-key` (they include float/bool),

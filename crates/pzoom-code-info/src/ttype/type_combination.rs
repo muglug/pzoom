@@ -63,7 +63,6 @@ pub(crate) struct TypeCombination {
 
     /// Literal strings (when under the limit)
     pub strings: Option<FxHashMap<String, TAtomic>>,
-    pub literal_string_limit_exceeded: bool,
 
     /// Literal ints (when under the limit)
     pub ints: Option<FxHashMap<String, TAtomic>>,
@@ -101,7 +100,6 @@ impl TypeCombination {
             non_empty_mixed: false,
             mixed_from_loop_isset: None,
             strings: Some(FxHashMap::default()),
-            literal_string_limit_exceeded: false,
             ints: Some(FxHashMap::default()),
             floats: Some(FxHashMap::default()),
             class_string_types: FxHashMap::default(),

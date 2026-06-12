@@ -32,6 +32,146 @@ impl FunctionReturnTypeProvider for SprintfReturnTypeProvider {
             event.arg_positions,
             analysis_data,
         );
+
+        // printf returns the byte count; only sprintf's string is refined.
+        if !event.function_id.eq_ignore_ascii_case("sprintf") {
+            return None;
+        }
+
+        infer_sprintf_return_type(event.arg_positions, analysis_data)
+    }
+}
+
+/// Psalm's SprintfReturnTypeProvider return refinement: it runs the real
+/// sprintf with empty-string dummies — a non-empty "initial result" (static
+/// text, or any specifier that formats '' to a non-empty value like %d → "0")
+/// makes the call non-empty-string; a format that is empty with dummy args
+/// still returns non-empty-string when some argument is provably non-empty.
+fn infer_sprintf_return_type(
+    arg_positions: &[Pos],
+    analysis_data: &mut FunctionAnalysisData,
+) -> Option<TUnion> {
+    let first_pos = arg_positions.first().copied()?;
+    let format = match analysis_data.expr_types.get(&first_pos).cloned()?.get_single()? {
+        TAtomic::TLiteralString { value } if value != NON_SPECIFIC_LITERAL_STRING_VALUE => {
+            value.clone()
+        }
+        _ => return None,
+    };
+
+    if format.is_empty() || is_complex_sprintf_format(&format) {
+        return None;
+    }
+
+    match sprintf_format_with_empty_args(&format)? {
+        FormatEmptiness::NonEmpty => Some(TUnion::new(TAtomic::TNonEmptyString)),
+        FormatEmptiness::DependsOnArgs => {
+            for arg_pos in arg_positions.iter().skip(1) {
+                let Some(arg_type) = analysis_data.expr_types.get(&*arg_pos).cloned() else {
+                    continue;
+                };
+                if !arg_type.types.is_empty()
+                    && arg_type.types.iter().all(|atomic| {
+                        matches!(
+                            atomic,
+                            TAtomic::TNonEmptyString
+                                | TAtomic::TTruthyString
+                                | TAtomic::TClassString { .. }
+                                | TAtomic::TInt
+                                | TAtomic::TLiteralInt { .. }
+                                | TAtomic::TIntRange { .. }
+                                | TAtomic::TFloat
+                                | TAtomic::TLiteralFloat { .. }
+                                | TAtomic::TNumeric
+                        ) || matches!(
+                            atomic,
+                            TAtomic::TLiteralString { value } if !value.is_empty()
+                        ) || matches!(
+                            atomic,
+                            TAtomic::TLiteralClassString { .. }
+                        )
+                    })
+                {
+                    return Some(TUnion::new(TAtomic::TNonEmptyString));
+                }
+            }
+            None
+        }
+    }
+}
+
+enum FormatEmptiness {
+    /// Static text or a zero-producing specifier guarantees output.
+    NonEmpty,
+    /// Only bare `%s` placeholders: emptiness depends on the arguments.
+    DependsOnArgs,
+}
+
+/// Walk the format like sprintf would with '' for every argument. Returns
+/// None when the format is malformed (validation reported it already).
+fn sprintf_format_with_empty_args(format: &str) -> Option<FormatEmptiness> {
+    let bytes = format.as_bytes();
+    let mut i = 0;
+    let mut has_static_text = false;
+    let mut has_plain_string_placeholder = false;
+
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            has_static_text = true;
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= bytes.len() {
+            return None;
+        }
+        if bytes[i] == b'%' {
+            // a literal percent sign
+            has_static_text = true;
+            i += 1;
+            continue;
+        }
+
+        // flags / width / precision / argnum
+        let spec_start = i;
+        let mut width: usize = 0;
+        let mut has_precision = false;
+        while i < bytes.len() && !is_sprintf_specifier(bytes[i]) {
+            match bytes[i] {
+                b'.' => has_precision = true,
+                b'0'..=b'9' if !has_precision => {
+                    width = width * 10 + usize::from(bytes[i] - b'0');
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+        let specifier = bytes[i];
+        i += 1;
+
+        if specifier == b's' {
+            if width > 0 && !has_precision {
+                // padding guarantees output ("%5s" with '' is five spaces)
+                has_static_text = true;
+            } else {
+                has_plain_string_placeholder = true;
+            }
+        } else {
+            // numeric/char specifiers format '' to at least one byte
+            // ("%d" → "0", "%f" → "0.000000", …)
+            has_static_text = true;
+        }
+        let _ = spec_start;
+    }
+
+    if has_static_text {
+        Some(FormatEmptiness::NonEmpty)
+    } else if has_plain_string_placeholder {
+        Some(FormatEmptiness::DependsOnArgs)
+    } else {
         None
     }
 }
@@ -40,7 +180,7 @@ impl FunctionReturnTypeProvider for SprintfReturnTypeProvider {
 /// Psalm's SprintfReturnTypeProvider. Emits RedundantFunctionCall / TooFewArguments /
 /// TooManyArguments / InvalidArgument as appropriate. The return type itself is left
 /// to the function stub.
-pub(crate) fn analyze_sprintf_call(
+fn analyze_sprintf_call(
     analyzer: &StatementsAnalyzer<'_>,
     func_name: &str,
     args: &[&Argument<'_>],
@@ -82,7 +222,7 @@ pub(crate) fn analyze_sprintf_call(
     }
 
     // Extract the format string literal, if any.
-    let format = match analysis_data.get_expr_type(first_pos).as_ref() {
+    let format = match analysis_data.expr_types.get(&first_pos).cloned().as_ref() {
         Some(first_type) => match first_type.get_single() {
             Some(TAtomic::TLiteralString { value })
                 if value != NON_SPECIFIC_LITERAL_STRING_VALUE =>

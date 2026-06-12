@@ -9,6 +9,7 @@ use crate::context::BlockContext;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Analyze an isset() expression.
 ///
@@ -32,7 +33,7 @@ pub fn analyze(
     context.inside_isset = was_inside_isset;
 
     // isset() always returns bool
-    analysis_data.set_expr_type(pos, TUnion::bool());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::bool()));
 }
 
 /// Analyze an empty() expression.
@@ -45,27 +46,29 @@ pub fn analyze_empty(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    // Psalm only applies isset-like suppression for fetch expressions.
-    let use_isset_context = matches!(
+    // Psalm's EmptyAnalyzer routes through IssetAnalyzer::analyzeIssetVar,
+    // which sets inside_isset for the whole inner expression — `empty($x)` on
+    // an undefined variable never reports. The boolean-refinement check below
+    // still only applies to non-fetch expressions.
+    let is_fetch_expression = matches!(
         empty.value.unparenthesized(),
         Expression::ArrayAccess(_) | Expression::Access(_)
     );
 
     let was_inside_isset = context.inside_isset;
-    if use_isset_context {
-        context.inside_isset = true;
-    }
+    let was_inside_empty = context.inside_empty;
+    context.inside_isset = true;
+    context.inside_empty = true;
 
     // Analyze the value
     let value_pos = expression_analyzer::analyze(analyzer, empty.value, analysis_data, context);
 
-    if use_isset_context {
-        context.inside_isset = was_inside_isset;
-    }
+    context.inside_isset = was_inside_isset;
+    context.inside_empty = was_inside_empty;
 
-    if !use_isset_context
+    if !is_fetch_expression
         && analysis_data
-        .get_expr_type(value_pos)
+        .expr_types.get(&value_pos).cloned()
         .map(|value_type| {
             !value_type.types.is_empty()
                 && value_type
@@ -87,6 +90,25 @@ pub fn analyze_empty(
         ));
     }
 
-    // empty() always returns bool
-    analysis_data.set_expr_type(pos, TUnion::bool());
+    // Psalm's EmptyAnalyzer result typing: empty(always-truthy) is `false`,
+    // empty(always-falsy) is `true` (docblock provenance preserved so the
+    // surrounding condition reports the docblock-flavoured redundancy),
+    // anything else is `bool`.
+    let result_type = match analysis_data.expr_types.get(&value_pos).cloned() {
+        Some(value_type) => {
+            if value_type.is_always_truthy() && !value_type.possibly_undefined {
+                let mut result = TUnion::new(TAtomic::TFalse);
+                result.from_docblock = value_type.from_docblock;
+                result
+            } else if value_type.is_always_falsy() {
+                let mut result = TUnion::new(TAtomic::TTrue);
+                result.from_docblock = value_type.from_docblock;
+                result
+            } else {
+                TUnion::bool()
+            }
+        }
+        None => TUnion::bool(),
+    };
+    analysis_data.expr_types.insert(pos, Rc::new(result_type));
 }

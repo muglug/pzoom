@@ -5,6 +5,8 @@
 
 use std::hash::{Hash, Hasher};
 
+use pzoom_str::Interner;
+
 use crate::t_atomic::{ArrayKey, TAtomic};
 use crate::t_union::TUnion;
 
@@ -28,6 +30,13 @@ pub enum Assertion {
 
     /// Variable is truthy (not null, false, 0, "", []).
     Truthy,
+    /// The value is empty (Psalm's `Empty_`, from `empty($x)` on non-settled
+    /// expressions); negates to [`Assertion::NonEmpty`].
+    Empty,
+    /// The value is non-empty (negation of `empty($x)`; Psalm's NonEmpty).
+    /// Reconciles like Truthy, but additionally qualifies array-path keys
+    /// for nested base-isset narrowing (Psalm's addNestedAssertions).
+    NonEmpty,
 
     /// Variable is equal to a specific value (e.g., `$x === 5`).
     IsEqual(TAtomic),
@@ -96,15 +105,20 @@ pub enum Assertion {
 
 impl Assertion {
     /// Converts the assertion to a string representation.
-    pub fn to_string(&self) -> String {
+    ///
+    /// Pass an interner to resolve interned names in user-facing messages;
+    /// `None` is fine for internal keys/hashes (matches Hakana's model).
+    pub fn to_string(&self, interner: Option<&Interner>) -> String {
         match self {
             Assertion::Any => "any".to_string(),
             Assertion::Falsy => "falsy".to_string(),
             Assertion::Truthy => "truthy".to_string(),
-            Assertion::IsType(atomic) => atomic.get_id(None),
-            Assertion::IsNotType(atomic) => format!("!{}", atomic.get_id(None)),
-            Assertion::IsEqual(atomic) => format!("={}", atomic.get_id(None)),
-            Assertion::IsNotEqual(atomic) => format!("!={}", atomic.get_id(None)),
+            Assertion::Empty => "empty".to_string(),
+            Assertion::NonEmpty => "non-empty".to_string(),
+            Assertion::IsType(atomic) => atomic.get_id(interner),
+            Assertion::IsNotType(atomic) => format!("!{}", atomic.get_id(interner)),
+            Assertion::IsEqual(atomic) => format!("={}", atomic.get_id(interner)),
+            Assertion::IsNotEqual(atomic) => format!("!={}", atomic.get_id(interner)),
             Assertion::IsEqualIsset => "=isset".to_string(),
             Assertion::IsIsset => "isset".to_string(),
             Assertion::IsNotIsset => "!isset".to_string(),
@@ -120,8 +134,8 @@ impl Assertion {
             Assertion::DoesNotHaveNonnullEntryForKey(key) => {
                 format!("!=has-nonnull-entry-for-{}", key.to_string())
             }
-            Assertion::InArray(union) => format!("=in-array-{}", union.get_id(None)),
-            Assertion::NotInArray(union) => format!("!=in-array-{}", union.get_id(None)),
+            Assertion::InArray(union) => format!("=in-array-{}", union.get_id(interner)),
+            Assertion::NotInArray(union) => format!("!=in-array-{}", union.get_id(interner)),
             Assertion::NonEmptyCountable(negatable) => {
                 if *negatable {
                     "non-empty-countable".to_string()
@@ -140,7 +154,7 @@ impl Assertion {
     /// Computes a hash of the assertion for use in clause lookups.
     pub fn to_hash(&self) -> u64 {
         let mut hasher = rustc_hash::FxHasher::default();
-        self.to_string().hash(&mut hasher);
+        self.to_string(None).hash(&mut hasher);
         hasher.finish()
     }
 
@@ -230,6 +244,8 @@ impl Assertion {
             Assertion::Any => false,
             Assertion::Falsy => matches!(other, Assertion::Truthy),
             Assertion::Truthy => matches!(other, Assertion::Falsy),
+            Assertion::NonEmpty => matches!(other, Assertion::Falsy | Assertion::Empty),
+            Assertion::Empty => matches!(other, Assertion::NonEmpty | Assertion::Truthy),
             Assertion::IsType(atomic) => match other {
                 Assertion::IsNotType(other_atomic) => other_atomic == atomic,
                 _ => false,
@@ -312,6 +328,11 @@ impl Assertion {
             Assertion::IsType(atomic) => Assertion::IsNotType(atomic.clone()),
             Assertion::IsNotType(atomic) => Assertion::IsType(atomic.clone()),
             Assertion::Truthy => Assertion::Falsy,
+            Assertion::Empty => Assertion::NonEmpty,
+            // NB: Psalm negates NonEmpty to Empty_; pzoom keeps Falsy here —
+            // its clause simplification relies on the Falsy pairing (see
+            // countWithNeverValuesInKeyedArray).
+            Assertion::NonEmpty => Assertion::Falsy,
             Assertion::IsEqual(atomic) => Assertion::IsNotEqual(atomic.clone()),
             Assertion::IsNotEqual(atomic) => Assertion::IsEqual(atomic.clone()),
             Assertion::IsIsset => Assertion::IsNotIsset,

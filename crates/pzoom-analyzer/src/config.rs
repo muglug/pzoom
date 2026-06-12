@@ -55,8 +55,21 @@ pub struct Config {
     /// Issue suppressions scoped to file/directory patterns from Psalm issueHandlers.
     pub issue_handler_suppressions: FxHashMap<String, Vec<String>>,
 
+    /// Per-issue `<referencedProperty name="Class::$prop"/>` suppressions from
+    /// psalm.xml issue handlers (Psalm's `PropertyIssueHandlerType`).
+    pub issue_property_suppressions: FxHashMap<String, Vec<String>>,
+
     /// PHP version to target (e.g., "8.2").
     pub php_version: String,
+
+    /// Whether `php_version` was set explicitly (psalm.xml `phpVersion`),
+    /// as opposed to defaulted; when false, composer.json `require.php`
+    /// inference may apply (Psalm's cli > config > composer precedence).
+    pub php_version_explicit: bool,
+
+    /// Require `#[Override]` on methods that override an inherited method
+    /// (Psalm's `ensureOverrideAttribute` config flag; default false).
+    pub ensure_override_attribute: bool,
 
     /// Whether to use strict types by default.
     pub strict_types: bool,
@@ -67,8 +80,18 @@ pub struct Config {
     /// Maximum depth for taint tracking.
     pub taint_max_depth: u32,
 
+    /// Literal strings at or over this length degrade to
+    /// non-empty-/non-falsy-string (Psalm's `maxStringLength`).
+    pub max_string_length: usize,
+
     /// Whether to report unused code.
     pub report_unused: bool,
+
+    /// Whether to report unused declarations (classes, methods, properties,
+    /// params) after analysis — Psalm's `find_unused_code` /
+    /// `Codebase::reportUnusedCode()` (which also turns on unused-variable
+    /// reporting).
+    pub find_unused_code: bool,
 
     /// Number of threads for parallel analysis.
     pub threads: usize,
@@ -88,17 +111,63 @@ pub struct Config {
     /// Stub files for external type definitions.
     pub stubs: Vec<String>,
 
+    /// Stub files registered by well-known Psalm plugins named in
+    /// `<plugins><pluginClass .../></plugins>` (pzoom has no plugin runtime;
+    /// the stubs those plugins would `addStubFile` are loaded directly).
+    pub plugin_stubs: Vec<String>,
+
     /// Functions that are forbidden.
     pub forbidden_functions: FxHashSet<String>,
 
     /// Whether to find unused Psalm suppress annotations.
     pub find_unused_suppress: bool,
 
+    /// Psalm's `allConstantsGlobal`: treat every scanned `define()` as a
+    /// global constant regardless of call flow.
+    pub all_constants_global: bool,
+
     /// Path to a Psalm-style error baseline XML file.
     pub error_baseline: Option<String>,
 
     /// Whether to report unused baseline entries.
     pub find_unused_baseline_entry: bool,
+
+    /// Optional extensions enabled via psalm.xml `<enableExtensions>`.
+    pub enabled_extensions: Vec<String>,
+
+    /// Optional extensions disabled via psalm.xml `<disableExtensions>`
+    /// (wins over every other enablement source).
+    pub disabled_extensions: Vec<String>,
+}
+
+impl Config {
+    /// The configured PHP version as a comparable id (e.g. "7.1" -> 70100),
+    /// mirroring Psalm's `analysis_php_version_id`.
+    pub fn php_version_id(&self) -> u32 {
+        let mut parts = self.php_version.split('.');
+        let major: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(8);
+        let minor: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+        major * 10_000 + minor * 100
+    }
+}
+
+/// Parse a "X.Y.Z" PHP version string into a (major, minor, patch) tuple,
+/// defaulting the major to 8 and missing components to 0.
+pub fn parse_php_version_tuple(version: &str) -> (u32, u32, u32) {
+    let mut parts = version.split('.');
+    let major = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(8);
+    let minor = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    let patch = parts
+        .next()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    (major, minor, patch)
 }
 
 impl Default for Config {
@@ -108,21 +177,30 @@ impl Default for Config {
             exclude_patterns: vec!["vendor/**".to_string(), "tests/**".to_string()],
             suppressed_issues: FxHashSet::default(),
             issue_handler_suppressions: FxHashMap::default(),
+            issue_property_suppressions: FxHashMap::default(),
             php_version: "8.2".to_string(),
+            php_version_explicit: false,
+            ensure_override_attribute: false,
             strict_types: false,
             taint_analysis: false,
             taint_max_depth: 20,
+            max_string_length: pzoom_code_info::t_atomic::DEFAULT_MAX_STRING_LENGTH,
             report_unused: false,
+            find_unused_code: false,
             threads: num_cpus(),
             cache_dir: None,
             error_level: ErrorLevel::default(),
             use_docblock_types: true,
             report_mixed_issues: true,
             stubs: Vec::new(),
+            plugin_stubs: Vec::new(),
             forbidden_functions: FxHashSet::default(),
             find_unused_suppress: false,
+            all_constants_global: false,
             error_baseline: None,
             find_unused_baseline_entry: false,
+            enabled_extensions: Vec::new(),
+            disabled_extensions: Vec::new(),
         }
     }
 }
@@ -162,6 +240,21 @@ impl Config {
                 normalized_path == *pattern || normalized_path.ends_with(&format!("/{}", pattern))
             }
         })
+    }
+
+    /// Check if an issue type is suppressed for a specific property id
+    /// (`Class::$prop`, declaring-class based) via `<referencedProperty>`.
+    pub fn is_issue_suppressed_for_property(&self, issue_type: &str, property_id: &str) -> bool {
+        self.issue_property_suppressions
+            .get(issue_type)
+            .is_some_and(|ids| ids.iter().any(|id| id == property_id))
+    }
+
+    pub fn add_issue_property_suppression(&mut self, issue_type: &str, property_id: String) {
+        self.issue_property_suppressions
+            .entry(issue_type.to_string())
+            .or_default()
+            .push(property_id.trim_start_matches('\\').to_string());
     }
 
     pub fn add_issue_handler_suppression_pattern(&mut self, issue_type: &str, pattern: String) {

@@ -7,17 +7,18 @@
 //! assertions. Mirrors Psalm's `AtomicMethodCallAnalyzer` / `ExistingAtomicMethodCallAnalyzer`.
 
 use crate::type_expander::localize_special_class_type_union;
+use mago_span::HasSpan;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
+use pzoom_code_info::VarName;
 use pzoom_code_info::functionlike_info::AssertionType;
 use pzoom_code_info::{
-    DataFlowNode, FunctionLikeIdentifier, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
+    Issue, IssueKind, TAtomic, TUnion, combine_union_types,
 };
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
-use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
 use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::internal_access::{
@@ -41,7 +42,7 @@ use super::method_visibility_analyzer::*;
 use super::method_call_prohibition_analyzer::*;
 use super::method_call_purity_analyzer::*;
 use super::missing_method_call_handler::*;
-use crate::template::TemplateMap;
+use pzoom_code_info::TemplateResult;
 
 pub(crate) fn get_method_return_type(
     analyzer: &StatementsAnalyzer<'_>,
@@ -49,6 +50,7 @@ pub(crate) fn get_method_return_type(
     obj_type: &TUnion,
     method_name: &str,
     pos: Pos,
+    method_name_pos: Pos,
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
     arg_positions: &[Pos],
     enforce_mutation_free: bool,
@@ -70,12 +72,24 @@ pub(crate) fn get_method_return_type(
     }
 
     let reconciled_receiver_type =
-        get_reconciled_receiver_type_for_expression(analyzer, context, object_expr)
+        get_reconciled_receiver_type_for_expression( context, object_expr)
             .and_then(|tracked_type| {
                 assertion_reconciler::intersect_union_with_union(obj_type, &tracked_type)
             })
+            .map(|mut intersected| {
+                // The intersection rebuilds the union; the receiver's leniency
+                // flags (@psalm-ignore-*-return) must survive for the
+                // PossiblyFalse/NullReference gates below.
+                intersected.ignore_falsable_issues |= obj_type.ignore_falsable_issues;
+                intersected.ignore_nullable_issues |= obj_type.ignore_nullable_issues;
+                intersected
+            })
             .unwrap_or_else(|| obj_type.clone());
-    let expanded_obj_type = expand_template_object_union(&reconciled_receiver_type);
+    let expanded_obj_type =
+        crate::expr::call::method_call_return_type_fetcher::expand_template_object_union_with_type_variables(
+            &reconciled_receiver_type,
+            Some(&analysis_data.type_variable_bounds),
+        );
 
     let mut resolved_method: Option<(
         pzoom_str::StrId,
@@ -83,6 +97,17 @@ pub(crate) fn get_method_return_type(
         Option<Vec<TUnion>>,
         pzoom_code_info::FunctionLikeInfo,
     )> = None;
+    // Other union members' resolutions: Psalm analyzes the call once per
+    // receiver atomic and combines the return types, so `Scalar|TArray`
+    // calling toPhpString() yields ?string even though TArray's override
+    // returns string. The primary drives argument checks and dataflow; the
+    // secondaries only fold their return types in at the end.
+    let mut secondary_methods: Vec<(
+        pzoom_str::StrId,
+        pzoom_str::StrId,
+        Option<Vec<TUnion>>,
+        pzoom_code_info::FunctionLikeInfo,
+    )> = Vec::new();
     let mut has_unsealed_magic_call = false;
     let mut magic_call_return_type: Option<TUnion> = None;
     let mut has_valid_receiver = false;
@@ -90,12 +115,34 @@ pub(crate) fn get_method_return_type(
     let mut has_false_receiver = false;
     let mut has_invalid_receiver = false;
     let mut has_receiver_without_method = false;
+    // Psalm's AtomicMethodCallAnalysisResult::too_many_arguments aggregation:
+    // TooManyArguments only reports when NO union candidate accepts the
+    // provided argument count (maybeNotTooManyArgumentsToInstance).
+    let mut any_candidate_accepts_arg_count = false;
     let mut first_missing_interface: Option<StrId> = None;
     let is_this_call =
         expression_identifier::get_expression_var_key(object_expr).as_deref() == Some("$this");
     let calling_class = analyzer.get_declaring_class();
 
-    for atomic in &expanded_obj_type.types {
+    // An enum case (or bare enum) receiver dispatches as an instance of its
+    // enum class (Psalm expands TEnumCase to the enum's storage for calls).
+    let receiver_atomics: Vec<TAtomic> = expanded_obj_type
+        .types
+        .iter()
+        .map(|atomic| match atomic {
+            TAtomic::TEnumCase { enum_name, .. } | TAtomic::TEnum { name: enum_name } => {
+                TAtomic::TNamedObject {
+                    name: *enum_name,
+                    type_params: None,
+                    is_static: false,
+                    remapped_params: false,
+                }
+            }
+            other => other.clone(),
+        })
+        .collect();
+
+    for atomic in &receiver_atomics {
         match atomic {
             TAtomic::TNamedObject { name, type_params , .. } => {
                 if let Some(class_info) = analyzer.codebase.get_class(*name) {
@@ -105,9 +152,21 @@ pub(crate) fn get_method_return_type(
                             class_info,
                             type_params.as_deref(),
                             method_name,
+                            Some(&analysis_data.type_variable_bounds),
                         )
                     {
                         has_valid_receiver = true;
+                        // Psalm's ExistingAtomicMethodCallAnalyzer clears
+                        // result->too_many_arguments when this candidate has a
+                        // variadic, enough params, or comes from the callmap.
+                        any_candidate_accepts_arg_count = any_candidate_accepts_arg_count
+                            || method_info.params.last().is_some_and(|p| p.is_variadic)
+                            || method_info.params.len() >= args.len()
+                            || analyzer
+                                .codebase
+                                .files
+                                .get(&method_info.file_path)
+                                .is_some_and(|file_info| file_info.is_stub);
                         if let Some(existing) = &mut resolved_method {
                             let existing_is_interface = analyzer
                                 .codebase
@@ -123,6 +182,13 @@ pub(crate) fn get_method_return_type(
                             {
                                 *existing =
                                     (*name, resolved_class, resolved_type_params, method_info);
+                            } else if existing.1 != resolved_class {
+                                secondary_methods.push((
+                                    *name,
+                                    resolved_class,
+                                    resolved_type_params,
+                                    method_info,
+                                ));
                             }
                         } else {
                             resolved_method =
@@ -134,12 +200,12 @@ pub(crate) fn get_method_return_type(
                     {
                         first_missing_interface = Some(*name);
                     } else if !(class_has_magic_call(class_info)
-                        && !class_has_sealed_methods(class_info))
+                        && !class_has_sealed_methods(analyzer, class_info))
                     {
                         has_receiver_without_method = true;
                     }
 
-                    if class_has_magic_call(class_info) && !class_has_sealed_methods(class_info) {
+                    if class_has_magic_call(class_info) && !class_has_sealed_methods(analyzer, class_info) {
                         has_valid_receiver = true;
                         has_unsealed_magic_call = true;
 
@@ -158,7 +224,7 @@ pub(crate) fn get_method_return_type(
                                 context,
                             );
 
-                            let (template_defaults, template_replacements) =
+                            let template_result =
                                 existing_atomic_method_call_analyzer::build_method_template_context(
                                     analyzer,
                                     class_info,
@@ -176,8 +242,8 @@ pub(crate) fn get_method_return_type(
                                 *name,
                                 "__call",
                                 magic_call_info,
-                                &template_defaults,
-                                &template_replacements,
+                                &template_result,
+                                &rustc_hash::FxHashMap::default(),
                                 args.len(),
                             );
 
@@ -196,6 +262,50 @@ pub(crate) fn get_method_return_type(
                                 });
                         }
                     }
+                } else if let Some(anonymous_methods) =
+                    analysis_data.anonymous_class_methods.get(name)
+                {
+                    // Anonymous classes live in a per-file side table rather
+                    // than the codebase (keyed by their synthetic StrId, so no
+                    // interner lookup is needed to recognise one); resolve the
+                    // method from there. Unknown methods stay exempt from
+                    // issues (synthetic receiver).
+                    let method_name_id = analyzer.interner.intern(method_name);
+                    if let Some(method_info) = anonymous_methods.get(&method_name_id) {
+                        has_valid_receiver = true;
+                        let method_info = method_info.clone();
+                        resolved_method = Some((*name, *name, None, method_info));
+                    }
+                } else if !matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT) {
+                    // Unknown receiver class: Psalm reports
+                    // UndefinedDocblockClass when the type came from a
+                    // docblock and UndefinedClass otherwise. Late-bound
+                    // sentinels and anonymous-class synthetics are exempt.
+                    let class_name = analyzer.interner.lookup(*name);
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    let (kind, message) = if expanded_obj_type.from_docblock {
+                        (
+                            IssueKind::UndefinedDocblockClass,
+                            format!(
+                                "Docblock-defined class or interface {} does not exist",
+                                class_name
+                            ),
+                        )
+                    } else {
+                        (
+                            IssueKind::UndefinedClass,
+                            crate::class_casing::undefined_class_message(analyzer, &class_name),
+                        )
+                    };
+                    analysis_data.add_issue(Issue::new(
+                        kind,
+                        message,
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
                 }
             }
             TAtomic::TObjectIntersection { types } => {
@@ -221,6 +331,7 @@ pub(crate) fn get_method_return_type(
                             class_info,
                             type_params.as_deref(),
                             method_name,
+                            Some(&analysis_data.type_variable_bounds),
                         )
                     else {
                         // For intersections (e.g. A&I), missing a method on one component
@@ -253,6 +364,50 @@ pub(crate) fn get_method_return_type(
             TAtomic::TObject | TAtomic::TMixed => {
                 has_valid_receiver = true;
             }
+            // `$closure->__invoke(...)` is the same as calling it directly
+            // (Psalm routes it through the closure's signature).
+            TAtomic::TClosure {
+                params,
+                return_type,
+                is_pure,
+            }
+            | TAtomic::TCallable {
+                params,
+                return_type,
+                is_pure,
+            } if method_name.eq_ignore_ascii_case("__invoke") => {
+                has_valid_receiver = true;
+                let synthesized = pzoom_code_info::FunctionLikeInfo {
+                    name: StrId::INVOKE,
+                    params: params
+                        .as_ref()
+                        .map(|params| {
+                            params
+                                .iter()
+                                .enumerate()
+                                .map(|(index, param)| {
+                                    pzoom_code_info::functionlike_info::ParamInfo {
+                                        name: param.name.unwrap_or_else(|| {
+                                            analyzer.interner.intern(&format!("$arg{}", index))
+                                        }),
+                                        param_type: Some(param.param_type.clone()),
+                                        is_optional: param.is_optional,
+                                        is_variadic: param.is_variadic,
+                                        by_ref: param.by_ref,
+                                        ..Default::default()
+                                    }
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    return_type: return_type.as_deref().cloned(),
+                    is_pure: is_pure.unwrap_or(false),
+                    ..Default::default()
+                };
+                if resolved_method.is_none() {
+                    resolved_method = Some((StrId::CLOSURE, StrId::CLOSURE, None, synthesized));
+                }
+            }
             TAtomic::TNull | TAtomic::TVoid => {
                 has_null_receiver = true;
             }
@@ -266,7 +421,8 @@ pub(crate) fn get_method_return_type(
     }
 
     if resolved_method.is_some() && has_receiver_without_method {
-        let (line, col) = analyzer.get_line_column(pos.0);
+        // Psalm points at the method name node.
+        let (line, col) = analyzer.get_line_column(method_name_pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyUndefinedMethod,
             format!(
@@ -274,8 +430,8 @@ pub(crate) fn get_method_return_type(
                 method_name
             ),
             analyzer.file_path,
-            pos.0,
-            pos.1,
+            method_name_pos.0,
+            method_name_pos.1,
             line,
             col,
         ));
@@ -298,6 +454,7 @@ pub(crate) fn get_method_return_type(
                     calling_class_info,
                     None,
                     method_name,
+                    Some(&analysis_data.type_variable_bounds),
                 )
         {
             resolved_method = Some((
@@ -310,6 +467,33 @@ pub(crate) fn get_method_return_type(
     }
 
     if let Some((receiver_class_id, class_id, object_type_params, method_info)) = resolved_method {
+        // Psalm's Methods::getMethodParams resolves documenting-ancestor
+        // docblock params before argument analysis, so templates the
+        // documenting method declares bind from args during standin
+        // replacement. Apply the same inheritance up front.
+        let method_info = {
+            let mut method_info = method_info;
+            if let Some(inherited_params) = apply_inherited_method_param_types(
+                analyzer,
+                class_id,
+                method_name,
+                &method_info,
+            ) {
+                method_info.params = inherited_params;
+
+                // The documenting ancestor's method-level templates come with
+                // its param types: surfacing them lets the args bind them
+                // during standin replacement (Psalm analyzes the call against
+                // the declaring method's storage, templates included).
+                if method_info.template_types.is_empty()
+                    && let Some(inherited_templates) =
+                        inherited_method_template_types(analyzer, class_id, method_name)
+                {
+                    method_info.template_types = inherited_templates;
+                }
+            }
+            method_info
+        };
         let class_name = analyzer.interner.lookup(class_id);
         let parent_class_id = analyzer
             .codebase
@@ -353,7 +537,7 @@ pub(crate) fn get_method_return_type(
             }
         }
 
-        let (template_defaults, template_replacements) =
+        let template_result =
             if let Some(class_info) = analyzer.codebase.get_class(class_id) {
                 analyze_pending_closure_args_for_method(
                     analyzer,
@@ -381,45 +565,88 @@ pub(crate) fn get_method_return_type(
                     context,
                 )
             } else {
-                let template_defaults = function_call_analyzer::get_template_defaults(&method_info);
-                let template_replacements =
-                    function_call_analyzer::infer_template_replacements_from_args(
-                        analyzer,
-                        args,
-                        arg_positions,
-                        &method_info.params,
-                        &template_defaults,
-                        analysis_data,
-                        context,
-                    );
-                (template_defaults, template_replacements)
+                let mut template_result = function_call_analyzer::get_template_defaults(&method_info);
+                function_call_analyzer::infer_template_replacements_from_args(
+                    analyzer,
+                    args,
+                    arg_positions,
+                    &method_info.params,
+                    &mut template_result,
+                    analysis_data,
+                    context,
+                );
+                template_result
             };
+
+        // Consult the method params providers (Psalm checks
+        // `$codebase->methods->params_provider` at the top of
+        // Methods::getMethodParams) — a provider may rebuild the parameter
+        // list from the call site (e.g. PDOStatement::setFetchMode's mode-
+        // dependent tail).
+        let provider_adjusted_method_info = crate::params_provider::dispatch_method_params(
+            &crate::params_provider::MethodParamsProviderEvent {
+                analyzer,
+                class_id,
+                method_name,
+                args,
+                arg_positions,
+                context,
+            },
+            analysis_data,
+        )
+        .map(|params| {
+            let mut adjusted = method_info.clone();
+            adjusted.params = params;
+            adjusted
+        });
+        let method_info_for_args: &pzoom_code_info::FunctionLikeInfo =
+            provider_adjusted_method_info.as_ref().unwrap_or(&method_info);
 
         verify_method_arguments(
             analyzer,
             args,
             arg_positions,
-            &method_info,
+            method_info_for_args,
             class_name.as_ref(),
             method_name,
             analysis_data,
             context,
             pos,
-            &template_defaults,
-            &template_replacements,
+            &template_result,
             class_id,
             receiver_class_id,
             parent_class_id,
+            any_candidate_accepts_arg_count,
+            obj_type
+                .types
+                .iter()
+                .find(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. })),
+        );
+
+        // By-ref / @param-out write-backs: Psalm applies the same out-type
+        // machinery to method calls as to named functions, so a by-ref array
+        // arg widens to the param's declared type after the call.
+        super::arguments_analyzer::apply_param_out_types(
+            analyzer,
+            method_info.name,
+            &method_info_for_args.template_types,
+            args,
+            arg_positions,
+            &method_info_for_args.params,
+            analysis_data,
+            context,
+            &template_result,
+            pos,
         );
 
         apply_post_call_assertions(
             analyzer,
+            analysis_data,
             object_expr,
             args,
             &method_info,
             context,
-            &template_defaults,
-            &template_replacements,
+            &template_result,
             class_id,
             receiver_class_id,
             parent_class_id,
@@ -430,8 +657,7 @@ pub(crate) fn get_method_return_type(
             &method_info,
             receiver_class_id,
             object_type_params.as_deref(),
-            &template_defaults,
-            &template_replacements,
+            &template_result,
             parent_class_id,
             pos,
             analysis_data,
@@ -474,7 +700,7 @@ pub(crate) fn get_method_return_type(
                             IssueKind::InaccessibleMethod
                         };
                         let message = if issue_kind == IssueKind::UndefinedMethod {
-                            format!("Method {}::{} does not exist", class_name, method_name)
+                            crate::class_casing::undefined_method_message(analyzer, &class_name, method_name)
                         } else {
                             format!(
                                 "Cannot access private method {}::{}",
@@ -550,11 +776,70 @@ pub(crate) fn get_method_return_type(
             &method_info,
             class_name.as_ref(),
             method_name,
-            pos,
+            method_name_pos,
             enforce_mutation_free,
             receiver_is_pure_compatible,
             analysis_data,
         );
+
+        // Psalm MethodCallPurityAnalyzer's unused branch: a mutation-free
+        // method's discarded result reports UnusedMethodCall under
+        // find_unused_variables. The external-mutation-free arm requires the
+        // receiver to be a FRESH expression (Psalm checks the receiver node's
+        // 'external_mutation_free'/'pure' attributes, set on `new`/pure-call
+        // nodes) — mutating an object held in a variable is observable later.
+        if analyzer.config.find_unused_code {
+            record_method_reference(
+                analyzer,
+                class_id,
+                method_info.declaring_class,
+                method_name,
+                context,
+                analysis_data,
+            );
+        }
+
+        let receiver_is_fresh_pure_value = receiver_is_pure_compatible
+            && matches!(
+                object_expr.unparenthesized(),
+                Expression::Instantiation(_) | Expression::Call(_)
+            );
+        if analyzer.config.report_unused
+            && !context.inside_unset
+            && !context.inside_conditional
+            && !context.inside_general_use
+            && !context.inside_throw
+            && !context.inside_assignment
+            && !context.inside_call
+            && !context.inside_return
+            && !context.inside_isset
+            && method_info.assertions.is_empty()
+            && method_info.if_true_assertions.is_empty()
+            && method_info.if_false_assertions.is_empty()
+            && !method_info.has_throws
+            && analyzer.codebase.get_class(class_id).is_some_and(|class_info| {
+                super::method_call_purity_analyzer::method_is_mutation_free(
+                    &method_info,
+                    class_info,
+                ) || (method_info.is_external_mutation_free && receiver_is_fresh_pure_value)
+            })
+        {
+            // Psalm points at the method name node.
+            let (line, col) = analyzer.get_line_column(method_name_pos.0);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::UnusedMethodCall,
+                format!(
+                    "The call to {}::{} is not used",
+                    class_name.as_ref(),
+                    method_name
+                ),
+                analyzer.file_path,
+                method_name_pos.0,
+                method_name_pos.1,
+                line,
+                col,
+            ));
+        }
 
         if let Some(magic_property_return) = analyze_magic_property_method_call(
             analyzer,
@@ -582,13 +867,19 @@ pub(crate) fn get_method_return_type(
                 },
             )
                 .unwrap_or_else(|| {
+                    let param_arg_types =
+                        super::function_call_return_type_fetcher::collect_param_arg_types(
+                            &method_info_for_args.params,
+                            arg_positions,
+                            analysis_data,
+                        );
                     resolve_effective_method_return_type(
                         analyzer,
                         class_id,
                         method_name,
                         &method_info,
-                        &template_defaults,
-                        &template_replacements,
+                        &template_result,
+                        &param_arg_types,
                         args.len(),
                     )
                 });
@@ -596,12 +887,39 @@ pub(crate) fn get_method_return_type(
         let static_class_id =
             find_concrete_receiver_class_id(analyzer, obj_type).unwrap_or(receiver_class_id);
 
-        let mut localized_return_type = localize_special_class_type_union(analyzer.codebase, analyzer.interner,
-            &resolved_return_type,
-            class_id,
-            static_class_id,
-            parent_class_id,
-        );
+
+        // Psalm's MethodCallReturnTypeFetcher: `static` in the return type
+        // binds firmly when the receiver's concrete class is final, and a
+        // template-typed receiver (`T as Model`) late-binds `static` to the
+        // template itself ($static_type carries the lhs type part).
+        let receiver_template_binding = obj_type
+            .get_single()
+            .filter(|receiver_atomic| matches!(receiver_atomic, TAtomic::TTemplateParam { .. }));
+        let receiver_is_final = analyzer
+            .codebase
+            .get_class(static_class_id)
+            .is_some_and(|receiver_info| receiver_info.is_final);
+        let mut localized_return_type =
+            if let Some(receiver_template) = receiver_template_binding {
+                crate::type_expander::localize_special_class_type_union_with_static_object(
+                    analyzer.codebase,
+                    analyzer.interner,
+                    &resolved_return_type,
+                    class_id,
+                    receiver_template.clone(),
+                    parent_class_id,
+                )
+            } else {
+                crate::type_expander::localize_special_class_type_union_final(
+                    analyzer.codebase,
+                    analyzer.interner,
+                    &resolved_return_type,
+                    class_id,
+                    static_class_id,
+                    parent_class_id,
+                    receiver_is_final,
+                )
+            };
 
         if should_strip_false_from_datetime_modify_return(
             analyzer,
@@ -621,19 +939,23 @@ pub(crate) fn get_method_return_type(
                 merge_receiver_intersection_into_return_type(&localized_return_type, obj_type);
         }
 
-        if let Some(tracked_type) = get_cached_no_arg_method_call_type(
-            analyzer,
-            context,
-            object_expr,
-            method_name,
-            args.len(),
-        ) {
-            if let Some(intersection) = assertion_reconciler::intersect_union_with_union(
+        // Psalm keeps the receiver intersection through `@return self` too:
+        // ExpectationInterface::andReturn (`@return self`) called on
+        // `ExpectationInterface&MockInterface` still yields the intersection,
+        // so a chained shouldReceive resolves (Mockery chains). `self`
+        // resolves to the declaring class at scan time, so the declaring
+        // class reappearing in the return type is the closest available
+        // signal here.
+        if obj_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TObjectIntersection { .. }))
+        {
+            localized_return_type = intersect_self_return_with_receiver(
                 &localized_return_type,
-                &tracked_type,
-            ) {
-                localized_return_type = intersection;
-            }
+                obj_type,
+                class_id,
+            );
         }
 
         let method_is_mutation_free = analyzer
@@ -642,8 +964,37 @@ pub(crate) fn get_method_return_type(
             .map(|class_info| method_is_mutation_free(&method_info, class_info))
             .unwrap_or(method_info.is_mutation_free);
 
+        // Mirror Psalm's MethodCallPurityAnalyzer: a mutation-free method's
+        // result is only memoizable when the mutation-free status was
+        // *declared* (not inferred from the body), or the method is final or
+        // private. An inferred-mutation-free, overridable method can't be
+        // memoized — a subclass may override it impurely.
+        let can_memoize = method_is_mutation_free
+            && (!method_info.mutation_free_inferred
+                || method_info.is_final
+                || matches!(method_info.visibility, Visibility::Private));
+
+        // Psalm's MethodCallAnalyzer only consults the tracked `$x->m()` entry
+        // when the call can be memoized — a narrowed entry for an impure (or
+        // overridable inferred-pure) method must not stand in for a fresh call.
+        if can_memoize
+            && let Some(tracked_type) = get_cached_no_arg_method_call_type(
+                context,
+                object_expr,
+                method_name,
+                args.len(),
+            )
+        {
+            if let Some(intersection) = assertion_reconciler::intersect_union_with_union(
+                &localized_return_type,
+                &tracked_type,
+            ) {
+                localized_return_type = intersection;
+            }
+        }
+
         if !method_is_mutation_free {
-            invalidate_property_narrowings_after_mutation(analyzer, context);
+            invalidate_property_narrowings_after_mutation( context);
 
             // Mirror Psalm's MethodCallPurityAnalyzer with the default config
             // (`remember_property_assignments_after_call = true`): a non-mutation-free
@@ -656,17 +1007,15 @@ pub(crate) fn get_method_return_type(
                     // Collect the reference cluster for the receiver variable so a
                     // mutation through one alias (`$ref = &$obj`) also invalidates the
                     // narrowing held under the other alias.
-                    let mut root_names: Vec<String> = vec![object_key.clone()];
-                    if let Some(object_var_id) = analyzer.interner.find(&object_key) {
-                        if let Some(target_id) =
-                            context.references_in_scope.get(&object_var_id)
-                        {
-                            root_names.push(analyzer.interner.lookup(*target_id).to_string());
-                        }
-                        for (ref_id, target_id) in &context.references_in_scope {
-                            if *target_id == object_var_id {
-                                root_names.push(analyzer.interner.lookup(*ref_id).to_string());
-                            }
+                    let mut root_names: Vec<String> = vec![object_key.to_string()];
+                    if let Some(target_id) =
+                        context.references_in_scope.get(object_key.as_str())
+                    {
+                        root_names.push(target_id.to_string());
+                    }
+                    for (ref_id, target_id) in &context.references_in_scope {
+                        if target_id == &object_key {
+                            root_names.push(ref_id.to_string());
                         }
                     }
 
@@ -674,9 +1023,7 @@ pub(crate) fn get_method_return_type(
                         let prop = analyzer.interner.lookup(*prop_name);
                         for root in &root_names {
                             let mutation_var = format!("{}->{}", root, prop);
-                            if let Some(var_id) = analyzer.interner.find(&mutation_var) {
-                                context.locals.remove(&var_id);
-                            }
+                            context.locals.remove(mutation_var.as_str());
                         }
                     }
                 }
@@ -684,24 +1031,20 @@ pub(crate) fn get_method_return_type(
         }
 
         if args.is_empty() {
-            // Mirror Psalm's MethodCallPurityAnalyzer: a mutation-free method's
-            // result is only memoizable when the mutation-free status was
-            // *declared* (not inferred from the body), or the method is final or
-            // private. An inferred-mutation-free, overridable method can't be
-            // memoized — a subclass may override it impurely.
-            let can_memoize = method_is_mutation_free
-                && (!method_info.mutation_free_inferred
-                    || method_info.is_final
-                    || matches!(method_info.visibility, Visibility::Private));
-
             if can_memoize {
                 if let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
                 {
-                    let call_key = format!("{}->{}()", object_key, method_name);
+                    let call_key =
+                        format!("{}->{}()", object_key, method_name.to_ascii_lowercase());
                     let call_id = analyzer.interner.intern(&call_key);
                     context
                         .locals
-                        .insert(call_id, localized_return_type.clone());
+                        .insert(VarName::new(&analyzer.interner.lookup(call_id)), localized_return_type.clone());
+                    // Psalm marks the node `memoizable` so getExtendedVarId
+                    // (and through it the assertion finder) keys on the call.
+                    analysis_data
+                        .memoizable_method_call_offsets
+                        .insert(pos.0);
                 }
             }
         }
@@ -709,7 +1052,7 @@ pub(crate) fn get_method_return_type(
         if has_null_receiver
             && !suppress_possibly_null_reference_issue
             && !expanded_obj_type.ignore_nullable_issues
-            && !issue_suppression::is_issue_suppressed_at(analyzer, pos.0, "PossiblyNullReference")
+            && !issue_suppression::is_issue_suppressed_at(analyzer, analysis_data, pos.0, "PossiblyNullReference")
         {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
@@ -758,10 +1101,10 @@ pub(crate) fn get_method_return_type(
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UndefinedInterfaceMethod,
-                format!(
-                    "Method {}::{} does not exist",
+                crate::class_casing::undefined_method_message(
+                    analyzer,
                     analyzer.interner.lookup(interface_id),
-                    method_name
+                    method_name,
                 ),
                 analyzer.file_path,
                 pos.0,
@@ -771,32 +1114,68 @@ pub(crate) fn get_method_return_type(
             ));
         }
 
-        let call_node = DataFlowNode::get_for_call(
-            FunctionLikeIdentifier::Method(class_id, analyzer.interner.intern(method_name)),
-            make_data_flow_node_position(analyzer, pos),
+        let object_span = object_expr.span();
+        let receiver_var_key =
+            crate::expression_identifier::get_expression_var_key(object_expr);
+        localized_return_type = add_method_call_dataflow_with_receiver(
+            analyzer,
+            localized_return_type,
+            Some((object_span.start.offset, object_span.end.offset)),
+            receiver_var_key.as_deref(),
+            Some(context),
+            // The receiver's class: taints route `Declaring::m → Receiver::m`
+            // inside add_method_call_dataflow (Hakana get_tainted_method_node).
+            receiver_class_id,
+            analyzer.interner.intern(method_name),
+            Some(&method_info),
+            arg_positions,
+            analysis_data,
+            pos,
         );
-        analysis_data.data_flow_graph.add_node(call_node.clone());
 
-        add_default_dataflow_paths(
-            &mut analysis_data.data_flow_graph,
-            &expanded_obj_type.parent_nodes,
-            &call_node,
-        );
-
-        for arg_pos in arg_positions {
-            if let Some(arg_type) = analysis_data.get_expr_type(*arg_pos) {
-                add_default_dataflow_paths(
-                    &mut analysis_data.data_flow_graph,
-                    &arg_type.parent_nodes,
-                    &call_node,
-                );
-            }
+        // Psalm marks the return of a declared external-mutation-free method
+        // reference_free (FunctionLikeAnalyzer), so chained builder calls
+        // like `$x->getBuilder()->setTypes(...)` stay pure-compatible.
+        if (method_info.is_external_mutation_free
+            || method_info.is_mutation_free
+            || method_info.is_pure)
+            && !method_info.mutation_free_inferred
+        {
+            localized_return_type.reference_free = true;
         }
 
-        pzoom_code_info::ttype::extend_dataflow_uniquely(
-            &mut localized_return_type.parent_nodes,
-            vec![call_node],
-        );
+        // Fold the other union members' return types in (Psalm combines per
+        // receiver atomic). Template-dependent returns are skipped — without
+        // per-member standin replacement their localization is unreliable.
+        for (secondary_receiver_id, secondary_class_id, _secondary_type_params, secondary_info) in
+            secondary_methods
+        {
+            let Some(secondary_return) = secondary_info.get_return_type() else {
+                continue;
+            };
+            if secondary_return
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+            {
+                continue;
+            }
+            let secondary_parent = analyzer
+                .codebase
+                .get_class(secondary_class_id)
+                .and_then(|info| info.parent_class);
+            let localized_secondary = crate::type_expander::localize_special_class_type_union_final(
+                analyzer.codebase,
+                analyzer.interner,
+                secondary_return,
+                secondary_class_id,
+                secondary_receiver_id,
+                secondary_parent,
+                false,
+            );
+            localized_return_type =
+                pzoom_code_info::combine_union_types(&localized_return_type, &localized_secondary, false);
+        }
 
         return Some(localized_return_type);
     }
@@ -809,7 +1188,7 @@ pub(crate) fn get_method_return_type(
         // A preceding `method_exists($obj, 'foo')` guard proves the method exists at
         // runtime even though it is absent from the declared class, so treat the call as
         // returning `mixed` rather than reporting UndefinedMethod (matching Psalm).
-        if is_method_guarded_by_method_exists(analyzer, context, object_expr, method_name) {
+        if is_method_guarded_by_method_exists( context, object_expr, method_name) {
             return Some(TUnion::mixed());
         }
 
@@ -868,7 +1247,7 @@ pub(crate) fn get_method_return_type(
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UndefinedInterfaceMethod,
-                format!("Method {}::{} does not exist", interface_name, method_name),
+                crate::class_casing::undefined_method_message(analyzer, &interface_name, method_name),
                 analyzer.file_path,
                 pos.0,
                 pos.1,
@@ -883,7 +1262,7 @@ pub(crate) fn get_method_return_type(
         match atomic {
             TAtomic::TNamedObject { name, .. } => {
                 if let Some(class_info) = analyzer.codebase.get_class(*name) {
-                    if is_datetime_interface_add(analyzer, *name, method_name) {
+                    if is_datetime_interface_add( *name, method_name) {
                         return Some(TUnion::new(TAtomic::TNamedObject {
                             name: *name,
                             type_params: None,
@@ -894,7 +1273,7 @@ pub(crate) fn get_method_return_type(
                     let (line, col) = analyzer.get_line_column(pos.0);
 
                     if class_has_magic_call(class_info) {
-                        if class_has_sealed_methods(class_info) {
+                        if class_has_sealed_methods(analyzer, class_info) {
                             analysis_data.add_issue(Issue::new(
                                 IssueKind::UndefinedMagicMethod,
                                 format!(
@@ -925,7 +1304,7 @@ pub(crate) fn get_method_return_type(
                             };
 
                             let message = if issue_kind == IssueKind::UndefinedMethod {
-                                format!("Method {}::{} does not exist", class_name, method_name)
+                                crate::class_casing::undefined_method_message(analyzer, &class_name, method_name)
                             } else {
                                 format!(
                                     "Cannot access private method {}::{}",
@@ -938,18 +1317,31 @@ pub(crate) fn get_method_return_type(
                                 issue_kind,
                                 message,
                                 analyzer.file_path,
-                                pos.0,
-                                pos.1,
+                                method_name_pos.0,
+                                method_name_pos.1,
                                 line,
                                 col,
                             ));
                         } else {
+                            // A template-bounded receiver (`T as C`) may be a
+                            // subclass that does declare the method: Psalm
+                            // reports PossiblyUndefinedMethod for non-final
+                            // bounds.
+                            let receiver_is_template_bound = !class_info.is_final
+                                && obj_type
+                                    .types
+                                    .iter()
+                                    .any(|original| matches!(original, TAtomic::TTemplateParam { .. }));
                             analysis_data.add_issue(Issue::new(
-                                IssueKind::UndefinedMethod,
-                                format!("Method {}::{} does not exist", class_name, method_name),
+                                if receiver_is_template_bound {
+                                    IssueKind::PossiblyUndefinedMethod
+                                } else {
+                                    IssueKind::UndefinedMethod
+                                },
+                                crate::class_casing::undefined_method_message(analyzer, &class_name, method_name),
                                 analyzer.file_path,
-                                pos.0,
-                                pos.1,
+                                method_name_pos.0,
+                                method_name_pos.1,
                                 line,
                                 col,
                             ));
@@ -966,23 +1358,69 @@ pub(crate) fn get_method_return_type(
                     continue;
                 }
                 if !analyzer.config.is_issue_suppressed("MixedMethodCall") {
-                    let (line, col) = analyzer.get_line_column(pos.0);
-                    analysis_data.add_issue(Issue::new(
-                        IssueKind::MixedMethodCall,
-                        format!("Cannot call method {} on mixed type", method_name),
-                        analyzer.file_path,
-                        pos.0,
-                        pos.1,
-                        line,
-                        col,
-                    ));
+                    // Psalm's location is the method NAME node.
+                    let (name_start, name_end) = method_name_pos;
+                    let (line, col) = analyzer.get_line_column(name_start);
+                    // Psalm names the variable when the receiver is one,
+                    // with the mixed value's dataflow origin as a secondary
+                    // location.
+                    let mut origin_secondary = None;
+                    let message = if let Expression::Variable(
+                        mago_syntax::ast::ast::variable::Variable::Direct(direct),
+                    ) = object_expr.unparenthesized()
+                    {
+                        origin_secondary = analysis_data
+                            .expr_types.get(&(
+                                object_expr.span().start.offset,
+                                object_expr.span().end.offset,
+                            )).cloned()
+                            .and_then(|receiver_type| {
+                                crate::data_flow::mixed_origin_secondary(
+                                    analyzer,
+                                    analysis_data,
+                                    &receiver_type,
+                                    pos.0,
+                                )
+                            });
+                        format!(
+                            "Cannot determine the type of {} when calling method {}",
+                            direct.name, method_name
+                        )
+                    } else {
+                        format!("Cannot call method {} on mixed type", method_name)
+                    };
+                    analysis_data.add_issue(
+                        Issue::new(
+                            IssueKind::MixedMethodCall,
+                            message,
+                            analyzer.file_path,
+                            name_start,
+                            name_end,
+                            line,
+                            col,
+                        )
+                        .with_secondary_opt(origin_secondary),
+                    );
                 }
             }
             TAtomic::TNull | TAtomic::TVoid => {
                 let (line, col) = analyzer.get_line_column(pos.0);
+                // Psalm: a pure-null receiver is NullReference; null alongside
+                // other possibilities is only possibly null.
+                let (kind, message) = if expanded_obj_type.types.len() > 1 {
+                    (
+                        IssueKind::PossiblyNullReference,
+                        format!("Cannot call method {} on possibly null value", method_name),
+                    )
+                } else {
+                    (
+                        IssueKind::NullReference,
+                        format!("Cannot call method {} on null", method_name),
+                    )
+                };
                 analysis_data.add_issue(Issue::new(
-                    IssueKind::NullReference,
-                    format!("Cannot call method {} on null", method_name),
+                    kind,
+                    message,
                     analyzer.file_path,
                     pos.0,
                     pos.1,
@@ -1014,29 +1452,45 @@ pub(crate) fn resolve_named_object_instance_method(
     class_info: &ClassLikeInfo,
     object_type_params: Option<&[TUnion]>,
     method_name: &str,
+    type_variable_bounds: Option<&rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>>,
 ) -> Option<(
     StrId,
     Option<Vec<TUnion>>,
     pzoom_code_info::FunctionLikeInfo,
 )> {
-    if let Some(method_info) = get_method_info_case_insensitive(analyzer, class_info, method_name) {
+    if let Some(method_info) = get_method_info(analyzer, class_info, method_name) {
         let visibility_scope_class_id =
             get_method_visibility_scope_class_id(class_info, method_info);
 
         if method_info.visibility != Visibility::Private
             || visibility_scope_class_id == class_info.name
+            // A parent's private method is callable on a subclass-typed
+            // receiver when the calling context IS the declaring class
+            // (Psalm resolves the method and checks visibility against
+            // $context->self, not the receiver class).
+            || analyzer.get_declaring_class() == Some(visibility_scope_class_id)
         {
+            let mut method_info = method_info.clone();
+            // Psalm's Methods::getMethodReturnType consults the receiver
+            // class's pseudo methods FIRST: an @method annotation overrides
+            // an inherited real method's return type.
+            if let Some(pseudo_info) = get_pseudo_method_info(analyzer, class_info, method_name)
+                && pseudo_info.return_type.is_some()
+            {
+                method_info.return_type = pseudo_info.return_type.clone();
+                method_info.declaring_class = pseudo_info.declaring_class;
+            }
             return Some((
                 class_info.name,
                 object_type_params.map(|p| p.to_vec()),
-                method_info.clone(),
+                method_info,
             ));
         }
     }
 
     if class_info.kind == ClassLikeKind::Interface || class_has_magic_call(class_info) {
         if let Some(method_info) =
-            get_pseudo_method_info_case_insensitive(analyzer, class_info, method_name)
+            get_pseudo_method_info(analyzer, class_info, method_name)
         {
             return Some((
                 class_info.name,
@@ -1046,14 +1500,21 @@ pub(crate) fn resolve_named_object_instance_method(
         }
     }
 
-    resolve_named_mixin_instance_method(analyzer, class_info, object_type_params, method_name)
+    resolve_named_mixin_instance_method(
+        analyzer,
+        class_info,
+        object_type_params,
+        method_name,
+        type_variable_bounds,
+    )
 }
 
-pub(crate) fn resolve_named_mixin_instance_method(
+fn resolve_named_mixin_instance_method(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &ClassLikeInfo,
     object_type_params: Option<&[TUnion]>,
     method_name: &str,
+    type_variable_bounds: Option<&rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>>,
 ) -> Option<(
     StrId,
     Option<Vec<TUnion>>,
@@ -1063,11 +1524,13 @@ pub(crate) fn resolve_named_mixin_instance_method(
         return None;
     }
 
-    let class_template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    let mut class_template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
+    let mut class_template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut class_template_result,
+        class_info,
+    );
     function_call_analyzer::overlay_template_replacements(
-        &mut class_template_replacements,
+        &mut class_template_result,
         function_call_analyzer::infer_class_template_replacements_from_type_params(
             class_info,
             object_type_params,
@@ -1075,11 +1538,19 @@ pub(crate) fn resolve_named_mixin_instance_method(
     );
 
     for mixin_atomic in &class_info.named_mixins {
-        let localized_mixin = function_call_analyzer::replace_templates_in_union(
+        let mut localized_mixin = function_call_analyzer::replace_templates_in_union(
             &TUnion::new(mixin_atomic.clone()),
-            &class_template_replacements,
-            &class_template_defaults,
+            &class_template_result,
         );
+
+        // A `@mixin T` localized through a type-variable receiver param needs
+        // the variable's accumulated lower bounds to name a class.
+        if let Some(type_variable_bounds) = type_variable_bounds {
+            localized_mixin = crate::template::resolve_type_variables_in_union(
+                &localized_mixin,
+                type_variable_bounds,
+            );
+        }
 
         for localized_atomic in localized_mixin.types {
             let TAtomic::TNamedObject {
@@ -1095,13 +1566,13 @@ pub(crate) fn resolve_named_mixin_instance_method(
             };
 
             if let Some(method_info) =
-                get_method_info_case_insensitive(analyzer, mixin_class_info, method_name)
+                get_method_info(analyzer, mixin_class_info, method_name)
             {
                 return Some((mixin_class_id, mixin_type_params, method_info.clone()));
             }
 
             if let Some(method_info) =
-                get_pseudo_method_info_case_insensitive(analyzer, mixin_class_info, method_name)
+                get_pseudo_method_info(analyzer, mixin_class_info, method_name)
             {
                 return Some((mixin_class_id, mixin_type_params, method_info.clone()));
             }
@@ -1116,7 +1587,7 @@ pub(crate) fn get_literal_string_argument(
     arg_pos: Option<&Pos>,
 ) -> Option<String> {
     let arg_pos = *arg_pos?;
-    let arg_type = analysis_data.get_expr_type(arg_pos)?;
+    let arg_type = analysis_data.expr_types.get(&arg_pos).cloned()?;
     let atomic = arg_type.get_single()?;
 
     if let TAtomic::TLiteralString { value } = atomic {
@@ -1126,7 +1597,7 @@ pub(crate) fn get_literal_string_argument(
     None
 }
 
-pub(crate) fn find_concrete_receiver_class_id(
+fn find_concrete_receiver_class_id(
     analyzer: &StatementsAnalyzer<'_>,
     object_type: &TUnion,
 ) -> Option<StrId> {
@@ -1139,7 +1610,7 @@ pub(crate) fn find_concrete_receiver_class_id(
     None
 }
 
-pub(crate) fn find_concrete_receiver_class_id_in_atomic(
+fn find_concrete_receiver_class_id_in_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     atomic: &TAtomic,
 ) -> Option<StrId> {
@@ -1168,7 +1639,55 @@ pub(crate) fn union_contains_static_reference(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_static_reference)
 }
 
-pub(crate) fn atomic_contains_static_reference(atomic: &TAtomic) -> bool {
+/// Replace the self-localized class in a return type with the receiver's
+/// full intersection (Psalm keeps `A&B` through an `@return self` member).
+fn intersect_self_return_with_receiver(
+    localized_return_type: &TUnion,
+    receiver_type: &TUnion,
+    self_class_id: StrId,
+) -> TUnion {
+    let receiver_named_types: Vec<TAtomic> = collect_receiver_named_types(receiver_type)
+        .into_iter()
+        .filter(|atomic| {
+            !matches!(atomic, TAtomic::TNamedObject { name, .. } if *name == StrId::STATIC || *name == StrId::SELF)
+        })
+        .collect();
+    if receiver_named_types.is_empty() {
+        return localized_return_type.clone();
+    }
+
+    let mut changed = false;
+    let mut merged = Vec::with_capacity(localized_return_type.types.len());
+    for atomic in &localized_return_type.types {
+        match atomic {
+            TAtomic::TNamedObject { name, .. } if *name == self_class_id => {
+                let mut intersection_types = vec![atomic.clone()];
+                for receiver_named in &receiver_named_types {
+                    if !intersection_types.contains(receiver_named) {
+                        intersection_types.push(receiver_named.clone());
+                    }
+                }
+                if intersection_types.len() > 1 {
+                    merged.push(TAtomic::TObjectIntersection {
+                        types: intersection_types,
+                    });
+                    changed = true;
+                } else {
+                    merged.push(atomic.clone());
+                }
+            }
+            _ => merged.push(atomic.clone()),
+        }
+    }
+
+    if changed {
+        TUnion::from_types(merged)
+    } else {
+        localized_return_type.clone()
+    }
+}
+
+fn atomic_contains_static_reference(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TNamedObject { name, type_params , .. } => {
             if *name == StrId::STATIC {
@@ -1198,7 +1717,7 @@ pub(crate) fn collect_receiver_named_types(receiver_type: &TUnion) -> Vec<TAtomi
     named_types
 }
 
-pub(crate) fn collect_receiver_named_types_in_atomic(atomic: &TAtomic, target: &mut Vec<TAtomic>) {
+fn collect_receiver_named_types_in_atomic(atomic: &TAtomic, target: &mut Vec<TAtomic>) {
     match atomic {
         TAtomic::TNamedObject { .. } => {
             if !target.contains(atomic) {
@@ -1229,11 +1748,17 @@ pub(crate) fn verify_method_arguments(
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
     call_pos: Pos,
-    template_defaults: &TemplateMap,
-    template_replacements: &TemplateMap,
+    template_result: &TemplateResult,
     self_class_id: StrId,
     static_class_id: StrId,
     parent_class_id: Option<StrId>,
+    // Psalm's AtomicMethodCallAnalysisResult::too_many_arguments: when some
+    // other union candidate accepts the provided argument count, the call is
+    // not reported as TooManyArguments.
+    union_candidate_accepts_arg_count: bool,
+    // A templated receiver (`T as Id`): `static` params resolve to the
+    // template itself (Psalm's $static_class_type carries the lhs type).
+    receiver_template_atomic: Option<&TAtomic>,
 ) {
     let callable_name = format!("{}::{}", class_name, method_name);
     let arg_param_indices = arguments_analyzer::check_arguments_match(
@@ -1244,8 +1769,7 @@ pub(crate) fn verify_method_arguments(
         &callable_name,
         analysis_data,
         context,
-        Some(template_defaults),
-        Some(template_replacements),
+        Some(template_result),
         call_pos,
         false,
         false,
@@ -1278,7 +1802,11 @@ pub(crate) fn verify_method_arguments(
     }
 
     let accepts_unbounded = method_info.params.last().is_some_and(|p| p.is_variadic);
-    if !has_spread && !accepts_unbounded && args.len() > method_info.params.len() {
+    if !has_spread
+        && !accepts_unbounded
+        && !union_candidate_accepts_arg_count
+        && args.len() > method_info.params.len()
+    {
         let issue_pos = arg_positions
             .get(method_info.params.len())
             .copied()
@@ -1356,22 +1884,42 @@ pub(crate) fn verify_method_arguments(
 
             if let Some(param_type) = effective_param.get_type() {
                 let replaced_param_type =
-                    if template_defaults.is_empty() && template_replacements.is_empty() {
+                    if crate::template::template_result_is_empty(template_result) {
                         param_type.clone()
                     } else {
                         function_call_analyzer::replace_templates_in_union(
                             param_type,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                         )
                     };
 
-                effective_param.param_type = Some(localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+                effective_param.param_type = Some(localize_special_class_type_union(analyzer.codebase, analyzer.interner,
                     &replaced_param_type,
                     self_class_id,
                     static_class_id,
                     parent_class_id,
                 ));
+            }
+
+
+            // A `static` param on a templated receiver is the receiver's own
+            // template type.
+            if let Some(receiver_atomic) = receiver_template_atomic
+                && let Some(param_type) = &effective_param.param_type
+                && param_type
+                    .types
+                    .iter()
+                    .any(|atomic| matches!(atomic, TAtomic::TNamedObject { is_static: true, .. }))
+            {
+                let replaced: Vec<TAtomic> = param_type
+                    .types
+                    .iter()
+                    .map(|atomic| match atomic {
+                        TAtomic::TNamedObject { is_static: true, .. } => receiver_atomic.clone(),
+                        other => other.clone(),
+                    })
+                    .collect();
+                effective_param.param_type = Some(TUnion::from_types(replaced));
             }
 
             argument_analyzer::verify_type(
@@ -1384,6 +1932,11 @@ pub(crate) fn verify_method_arguments(
                 &callable_name,
                 analysis_data,
                 context,
+                Some(arguments_analyzer::call_dataflow_for_method_call(
+                    static_class_id,
+                    method_info,
+                    call_pos,
+                )),
             );
         }
     }
@@ -1391,12 +1944,12 @@ pub(crate) fn verify_method_arguments(
 
 pub(crate) fn apply_post_call_assertions(
     analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
     object_expr: &Expression<'_>,
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
     method_info: &pzoom_code_info::FunctionLikeInfo,
     context: &mut BlockContext,
-    template_defaults: &TemplateMap,
-    template_replacements: &TemplateMap,
+    template_result: &TemplateResult,
     self_class_id: StrId,
     static_class_id: StrId,
     parent_class_id: Option<StrId>,
@@ -1406,12 +1959,11 @@ pub(crate) fn apply_post_call_assertions(
     }
 
     for assertion in &method_info.assertions {
-        let resolved_assertion_type = replace_and_localize_assertion_type(
+        let resolved_assertion_type = crate::assertion_finder::get_untemplated_copy(
             analyzer.codebase,
             analyzer.interner,
             &assertion.assertion_type,
-            template_replacements,
-            template_defaults,
+            template_result,
             self_class_id,
             static_class_id,
             parent_class_id,
@@ -1419,7 +1971,7 @@ pub(crate) fn apply_post_call_assertions(
 
         let assertion_name = analyzer.interner.lookup(assertion.var_id);
         if assertion_name.as_ref() == "$this" {
-            apply_assertion_to_expression(analyzer, object_expr, &resolved_assertion_type, context);
+            apply_assertion_to_expression(analyzer, analysis_data, object_expr, &resolved_assertion_type, context);
             continue;
         }
 
@@ -1433,7 +1985,7 @@ pub(crate) fn apply_post_call_assertions(
                 expression_identifier::get_expression_var_key(object_expr)
             {
                 let full_key = format!("{}->{}", receiver_key, prop_suffix);
-                let var_id = analyzer.interner.intern(&full_key);
+                let var_id = VarName::new(&full_key);
                 let existing_type = context
                     .locals
                     .get(&var_id)
@@ -1460,6 +2012,7 @@ pub(crate) fn apply_post_call_assertions(
 
         apply_assertion_to_expression(
             analyzer,
+            analysis_data,
             argument.value(),
             &resolved_assertion_type,
             context,
@@ -1467,107 +2020,137 @@ pub(crate) fn apply_post_call_assertions(
     }
 }
 
-pub(crate) fn replace_and_localize_assertion_type(
-    codebase: &pzoom_code_info::CodebaseInfo,
-    interner: &pzoom_str::Interner,
-    assertion_type: &AssertionType,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+/// Post-call `@psalm-assert` application for static calls: only
+/// param-indexed assertion targets apply (there is no receiver for
+/// `\$this`-rooted ones). Psalm's CallAnalyzer::applyAssertionsToContext runs
+/// for static calls the same as instance calls.
+pub(crate) fn apply_post_static_call_assertions(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    method_info: &pzoom_code_info::FunctionLikeInfo,
+    context: &mut BlockContext,
+    template_result: &TemplateResult,
     self_class_id: StrId,
     static_class_id: StrId,
     parent_class_id: Option<StrId>,
-) -> AssertionType {
-    match assertion_type {
-        AssertionType::IsType(asserted_type) => {
-            AssertionType::IsType(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
+) {
+    if method_info.assertions.is_empty() {
+        return;
+    }
+
+    for assertion in &method_info.assertions {
+        let resolved_assertion_type = crate::assertion_finder::get_untemplated_copy(
+            analyzer.codebase,
+            analyzer.interner,
+            &assertion.assertion_type,
+            template_result,
+            self_class_id,
+            static_class_id,
+            parent_class_id,
+        );
+
+        // A static-property target (`self::$q`, `A::$q`) narrows the scope
+        // entry of the same spelling directly.
+        let assertion_name = analyzer.interner.lookup(assertion.var_id);
+        if assertion_name.contains("::$") {
+            apply_assertion_to_scope_key(
+                analyzer,
+                &assertion_name,
+                &resolved_assertion_type,
+                context,
+            );
+            continue;
         }
-        AssertionType::IsEqual(asserted_type) => {
-            AssertionType::IsEqual(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
-        }
-        AssertionType::IsLooselyEqual(asserted_type) => {
-            AssertionType::IsLooselyEqual(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
-        }
-        AssertionType::IsNotType(asserted_type) => {
-            AssertionType::IsNotType(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
-        }
-        AssertionType::IsNotEqual(asserted_type) => {
-            AssertionType::IsNotEqual(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
-        }
-        AssertionType::IsNotLooselyEqual(asserted_type) => {
-            AssertionType::IsNotLooselyEqual(localize_special_class_type_union(codebase, interner, 
-                &function_call_analyzer::replace_templates_in_union(
-                    asserted_type,
-                    template_replacements,
-                    template_defaults,
-                ),
-                self_class_id,
-                static_class_id,
-                parent_class_id,
-            ))
-        }
-        AssertionType::Truthy => AssertionType::Truthy,
-        AssertionType::Falsy => AssertionType::Falsy,
-        AssertionType::NotNull => AssertionType::NotNull,
-        AssertionType::NotEmpty => AssertionType::NotEmpty,
+
+        let Some(param_idx) =
+            find_assertion_param_index(analyzer, &method_info.params, assertion.var_id)
+        else {
+            continue;
+        };
+        let Some(argument) = args.get(param_idx) else {
+            continue;
+        };
+
+        apply_assertion_to_expression(analyzer, analysis_data, argument.value(), &resolved_assertion_type, context);
     }
 }
 
-pub(crate) fn apply_assertion_to_expression(
+/// Apply an `IsType`-style assertion to a known scope key (a static property
+/// spelling like `self::$q`): the asserted type replaces/narrows the entry.
+fn apply_assertion_to_scope_key(
     analyzer: &StatementsAnalyzer<'_>,
+    scope_key: &str,
+    assertion_type: &AssertionType,
+    context: &mut BlockContext,
+) {
+    let var_id = pzoom_code_info::VarName::from(scope_key.to_string());
+    match assertion_type {
+        AssertionType::IsType(asserted) => {
+            let narrowed = match context.locals.get(&var_id) {
+                Some(existing) => {
+                    crate::reconciler::assertion_reconciler::intersect_union_with_union_with_codebase(
+                        existing,
+                        asserted,
+                        Some(analyzer.codebase),
+                    )
+                    .unwrap_or_else(|| asserted.clone())
+                }
+                None => asserted.clone(),
+            };
+            context.locals.insert(var_id, narrowed);
+        }
+        _ => {}
+    }
+}
+
+fn apply_assertion_to_expression(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
     expr: &Expression<'_>,
     assertion_type: &AssertionType,
     context: &mut BlockContext,
 ) {
     let Some(var_key) = expression_identifier::get_expression_var_key(expr) else {
+        // Psalm's CallAnalyzer no-var-id fallback: a single Truthy / Falsy /
+        // IsType(true) assertion on an argument expression (e.g.
+        // `assertTrue(isset($x->y[0]['k']))`) applies the expression's OWN
+        // truths through the formula (FormulaGenerator::getFormula on the
+        // arg value).
+        let truthy = matches!(assertion_type, AssertionType::Truthy)
+            || matches!(
+                assertion_type,
+                AssertionType::IsType(union)
+                    if matches!(union.get_single(), Some(TAtomic::TTrue))
+            );
+        let falsy = matches!(assertion_type, AssertionType::Falsy);
+        if truthy || falsy {
+            let assertions = crate::assertion_finder::get_assertions(analyzer, expr, analysis_data);
+            let truths = if truthy {
+                &assertions.if_true
+            } else {
+                &assertions.if_false
+            };
+            if !truths.is_empty() {
+                let mut changed = rustc_hash::FxHashSet::default();
+                let inside_loop = context.inside_loop;
+                crate::reconciler::reconcile_keyed_types(
+                    truths,
+                    context,
+                    &mut changed,
+                    analyzer,
+                    analysis_data,
+                    inside_loop,
+                    false,
+                    crate::reconciler::EmissionMode::Silent,
+                    None,
+                );
+            }
+        }
         return;
     };
 
-    let var_id = analyzer.interner.intern(&var_key);
+    let var_id = VarName::new(&var_key);
     let existing_type = context
         .locals
         .get(&var_id)
@@ -1598,7 +2181,7 @@ pub(crate) fn find_assertion_param_index(
     })
 }
 
-pub(crate) fn apply_functionlike_assertion_to_union(
+fn apply_functionlike_assertion_to_union(
     existing_type: &TUnion,
     assertion_type: &AssertionType,
 ) -> TUnion {
@@ -1615,13 +2198,19 @@ pub(crate) fn apply_functionlike_assertion_to_union(
         AssertionType::IsNotType(asserted_type) => subtract_union(existing_type, asserted_type),
         AssertionType::IsNotEqual(asserted_type) => subtract_union(existing_type, asserted_type),
         AssertionType::IsNotLooselyEqual(_) => existing_type.clone(),
-        AssertionType::Truthy | AssertionType::NotEmpty => existing_type.clone(),
+        // Psalm's '@psalm-assert truthy/!empty' narrows through the truthy
+        // reconciler (removes null/false/empty values).
+        AssertionType::Truthy | AssertionType::NotEmpty => {
+            crate::expr::call::function_call_assertion_analyzer::narrow_union_to_truthy(
+                existing_type,
+            )
+        }
         AssertionType::Falsy => existing_type.clone(),
         AssertionType::NotNull => subtract_union(existing_type, &TUnion::new(TAtomic::TNull)),
     }
 }
 
-pub(crate) fn subtract_union(existing_type: &TUnion, type_to_remove: &TUnion) -> TUnion {
+fn subtract_union(existing_type: &TUnion, type_to_remove: &TUnion) -> TUnion {
     let filtered_types: Vec<_> = existing_type
         .types
         .iter()
@@ -1633,5 +2222,66 @@ pub(crate) fn subtract_union(existing_type: &TUnion, type_to_remove: &TUnion) ->
         existing_type.clone()
     } else {
         TUnion::from_types(filtered_types)
+    }
+}
+
+
+/// Record a resolved method call for find_unused_code (Psalm's
+/// addMethodReferenceToClassMember + isMethodReturnReferenced recording).
+/// Self-recursion does not mark a method referenced.
+pub(crate) fn record_method_reference(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_id: StrId,
+    declaring_class: Option<StrId>,
+    method_name: &str,
+    context: &BlockContext,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let method_lc = analyzer.interner.intern(&method_name.to_lowercase());
+    let is_recursion = analyzer.function_info.is_some_and(|caller| {
+        analyzer
+            .interner
+            .lookup(caller.name)
+            .eq_ignore_ascii_case(method_name)
+            && (caller.declaring_class == Some(class_id)
+                || caller.declaring_class == declaring_class)
+            && caller.declaring_class.is_some()
+    });
+    if !is_recursion {
+        analysis_data
+            .referenced_class_members
+            .insert((class_id, method_lc));
+        if let Some(declaring_class) = declaring_class {
+            analysis_data
+                .referenced_class_members
+                .insert((declaring_class, method_lc));
+        }
+        // Psalm also records the overridden parent/interface methods as
+        // referenced — calling an implementation uses its declaration.
+        if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+            for (overridden_name, parents) in &class_info.overridden_method_ids {
+                if analyzer
+                    .interner
+                    .lookup(*overridden_name)
+                    .eq_ignore_ascii_case(method_name)
+                {
+                    for parent_id in parents {
+                        analysis_data
+                            .referenced_class_members
+                            .insert((*parent_id, method_lc));
+                    }
+                }
+            }
+        }
+    }
+    if context.inside_use() {
+        analysis_data
+            .method_returns_used
+            .insert((class_id, method_lc));
+        if let Some(declaring_class) = declaring_class {
+            analysis_data
+                .method_returns_used
+                .insert((declaring_class, method_lc));
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! Handles positive assertions like `truthy`, `isset`, and basic type checks.
 
 use pzoom_code_info::{ArrayKey, Assertion, TAtomic, TUnion, combine_union_types};
-use rustc_hash::FxHashMap;
+use pzoom_str::StrId;
 
 use super::{assertion_reconciler, get_acceptable_type};
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -16,7 +16,7 @@ pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: &TUnion,
     possibly_undefined: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -55,22 +55,265 @@ pub fn reconcile(
             return float_type;
         }
 
-        // Try to intersect with the assertion type
+        // `$x === <literal>` when $x is exactly that literal — Psalm's
+        // handleLiteralEquality reports this as redundant. Template params are
+        // exempt (an identity binding is not a runtime guarantee).
+        if assertion.has_equality()
+            && let Some(key) = key
+            && existing_var_type.types.len() == 1
+            && existing_var_type.types[0] == *assertion_atomic
+            && matches!(
+                assertion_atomic,
+                TAtomic::TLiteralInt { .. }
+                    | TAtomic::TLiteralFloat { .. }
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TTrue
+                    | TAtomic::TFalse
+                    | TAtomic::TEnumCase { .. }
+            )
+        {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key,
+                assertion,
+                true,
+                negated,
+            );
+        }
+
+        // Simple-type assertions follow Hakana's `intersect_simple!` model:
+        // keep subtypes, short-circuit on supertypes, and report
+        // redundancy/impossibility inside (where `did_remove_type` is known).
+        match assertion_atomic {
+            TAtomic::TScalar => {
+                return intersect_simple!(
+                    TAtomic::TScalar
+                        | TAtomic::TNonEmptyScalar
+                        | TAtomic::TInt
+                        | TAtomic::TLiteralInt { .. }
+                        | TAtomic::TIntRange { .. }
+                        | TAtomic::TFloat
+                        | TAtomic::TLiteralFloat { .. }
+                        | TAtomic::TString
+                        | TAtomic::TLiteralString { .. }
+                        | TAtomic::TNonEmptyString
+                        | TAtomic::TNumericString
+                        | TAtomic::TNonEmptyNumericString
+                        | TAtomic::TLowercaseString
+                        | TAtomic::TNonEmptyLowercaseString
+                        | TAtomic::TTruthyString
+                        | TAtomic::TClassString { .. }
+                        | TAtomic::TLiteralClassString { .. }
+                        | TAtomic::TTemplateParamClass { .. }
+                        | TAtomic::TDependentGetClass { .. }
+                        | TAtomic::TDependentGetType { .. }
+                        | TAtomic::TBool
+                        | TAtomic::TTrue
+                        | TAtomic::TFalse
+                        | TAtomic::TArrayKey
+                        | TAtomic::TNumeric,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed,
+                    TUnion::new(TAtomic::TScalar),
+                    assertion,
+                    existing_var_type,
+                    key,
+                    negated,
+                    analysis_data,
+                    analyzer,
+                    assertion.has_equality(),
+                );
+            }
+            TAtomic::TBool => {
+                let mut result = intersect_simple!(
+                    TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TScalar,
+                    TUnion::bool(),
+                    assertion,
+                    existing_var_type,
+                    key,
+                    negated,
+                    analysis_data,
+                    analyzer,
+                    assertion.has_equality(),
+                );
+                // Psalm's reconcileBool calls `setFromDocblock(false)` on every
+                // kept bool atomic — an `is_bool` check verifies the value at
+                // runtime, so a later assertion on it reports the plain
+                // (non-docblock) issue kind.
+                if result.types.len() <= 32 {
+                    for index in 0..result.types.len() {
+                        if matches!(
+                            result.types[index],
+                            TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse
+                        ) {
+                            result.set_atomic_from_docblock(index, false);
+                        }
+                    }
+                    result.from_docblock =
+                        result.docblock_bits_valid() && result.from_docblock_bits != 0;
+                }
+                return result;
+            }
+            TAtomic::TTrue => {
+                return intersect_simple!(
+                    TAtomic::TTrue,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TScalar | TAtomic::TBool,
+                    TUnion::new(TAtomic::TTrue),
+                    assertion,
+                    existing_var_type,
+                    if inside_loop { None } else { key },
+                    negated,
+                    analysis_data,
+                    analyzer,
+                    assertion.has_equality(),
+                );
+            }
+            TAtomic::TFalse => {
+                return intersect_simple!(
+                    TAtomic::TFalse,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TScalar | TAtomic::TBool,
+                    TUnion::new(TAtomic::TFalse),
+                    assertion,
+                    existing_var_type,
+                    if inside_loop { None } else { key },
+                    negated,
+                    analysis_data,
+                    analyzer,
+                    assertion.has_equality(),
+                );
+            }
+            TAtomic::TFloat => {
+                return intersect_simple!(
+                    TAtomic::TFloat | TAtomic::TLiteralFloat { .. },
+                    TAtomic::TMixed
+                        | TAtomic::TNonEmptyMixed
+                        | TAtomic::TScalar
+                        | TAtomic::TNumeric,
+                    TUnion::float(),
+                    assertion,
+                    existing_var_type,
+                    key,
+                    negated,
+                    analysis_data,
+                    analyzer,
+                    assertion.has_equality(),
+                );
+            }
+            _ => {}
+        }
+
+        // Complex assertion types keep the intersection machinery, with the
+        // same inner emission: redundant when the intersection removed
+        // nothing (structurally), impossible when it is empty.
         if let Some(result) = assertion_reconciler::intersect_union_with_atomic(
             existing_var_type,
             assertion_atomic,
             analyzer,
         ) {
-            return with_docblock_from(result, existing_var_type);
+            // Redundant when the intersection removed nothing — for the
+            // assertion kinds where that equivalence is reliable in pzoom:
+            // is_resource / is_numeric and instanceof on a concrete class.
+            // Skipped for `static` (never certain in an open hierarchy),
+            // interfaces (Psalm's `$new_type_has_interface` skip), strings /
+            // class-strings / literals (Psalm's per-type reconcilers apply
+            // extra conditions pzoom does not model yet).
+            let report_redundancy = match assertion_atomic {
+                TAtomic::TResource | TAtomic::TNumeric => true,
+                // A range assertion that removes nothing is redundant
+                // (Psalm's range reconcile: `assert($a < 10)` on int<min, 5>).
+                TAtomic::TIntRange { .. } => true,
+                // Scalar checks report only on runtime-derived types: Psalm's
+                // per-type reconcilers stay quiet for docblock-sourced values
+                // (a docblock can lie about a scalar).
+                TAtomic::TInt | TAtomic::TString | TAtomic::TFloat | TAtomic::TBool => {
+                    !existing_var_type.from_docblock && !inside_loop
+                }
+                TAtomic::TNamedObject {
+                    name: StrId::STATIC,
+                    ..
+                }
+                | TAtomic::TNamedObject { is_static: true, .. } => false,
+                TAtomic::TNamedObject { name, .. } => analyzer
+                    .codebase
+                    .get_class(*name)
+                    .is_some_and(|info| {
+                        info.kind != pzoom_code_info::class_like_info::ClassLikeKind::Interface
+                    }),
+                // A repeated `$x === Enum::Case` check is always redundant
+                // (enum cases are singletons).
+                TAtomic::TEnumCase { .. } => true,
+                _ => false,
+            };
+            if let Some(key) = key
+                && !assertion.has_equality()
+                && report_redundancy
+                && result.types == existing_var_type.types
+                && super::should_emit_redundant_issue_for_unchanged_assertion(
+                    assertion,
+                    existing_var_type,
+                    analyzer,
+                )
+            {
+                super::trigger_issue_for_impossible(
+                    analysis_data,
+                    analyzer,
+                    existing_var_type,
+                    key,
+                    assertion,
+                    true,
+                    negated,
+                );
+            }
+            let mut result = with_docblock_from(result, existing_var_type);
+            // A runtime type check that narrows to exactly the asserted type
+            // verifies the value: Psalm's filterTypeWithAnother substitutes
+            // the assertion-derived (non-docblock) atomic, so a second
+            // identical check reports plain RedundantCondition. A wider check
+            // (e.g. is_object on A|B) keeps the existing atomics and their
+            // docblock provenance. Value-equality narrowing (`$x === 2`,
+            // enum cases) is exempt: Psalm's handleLiteralEquality keeps the
+            // existing atomic and its docblock provenance.
+            if matches!(assertion, Assertion::IsType(_))
+                && result.types.len() == 1
+                && result.types[0] == *assertion_atomic
+                && !matches!(
+                    assertion_atomic,
+                    TAtomic::TLiteralInt { .. }
+                        | TAtomic::TLiteralFloat { .. }
+                        | TAtomic::TLiteralString { .. }
+                        | TAtomic::TTrue
+                        | TAtomic::TFalse
+                        | TAtomic::TEnumCase { .. }
+                )
+            {
+                result.from_docblock = false;
+                result.sync_docblock_bits_from_union_flag();
+            }
+            return result;
         }
 
         // If intersection is empty, the assertion branch is impossible.
+        if let Some(key) = key
+            && !existing_var_type.is_nothing()
+        {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key,
+                assertion,
+                false,
+                negated,
+            );
+        }
         return with_docblock_from(TUnion::nothing(), existing_var_type);
     }
 
     // Handle specific assertions
     match assertion {
-        Assertion::Truthy => reconcile_truthy(
+        Assertion::Truthy | Assertion::NonEmpty => reconcile_truthy(
             assertion,
             existing_var_type,
             key,
@@ -124,10 +367,28 @@ pub fn reconcile(
             analyzer,
             *count,
         ),
-        Assertion::InArray(array_type) => with_docblock_from(
-            reconcile_in_array(existing_var_type, array_type),
-            existing_var_type,
-        ),
+        Assertion::InArray(array_type) => {
+            let result = reconcile_in_array(existing_var_type, array_type, analyzer);
+            if let Some(key) = key
+                && result.is_nothing()
+                && !existing_var_type.is_nothing()
+                // `in_array($x, [], true)`: never intersects everything
+                // (Psalm's intersectUnionTypes returns never, not null), so
+                // an empty haystack narrows silently with no contradiction.
+                && !array_type.is_nothing()
+            {
+                super::trigger_issue_for_impossible(
+                    analysis_data,
+                    analyzer,
+                    existing_var_type,
+                    key,
+                    assertion,
+                    false,
+                    negated,
+                );
+            }
+            with_docblock_from(result, existing_var_type)
+        }
         Assertion::HasArrayKey(array_key) => reconcile_has_array_key(
             assertion,
             existing_var_type,
@@ -173,7 +434,27 @@ pub fn reconcile(
                 atomic,
                 analyzer,
             ) {
-                return with_docblock_from(result, existing_var_type);
+                let mut result = with_docblock_from(result, existing_var_type);
+                // Runtime-verified when narrowed to exactly the asserted type
+                // (see above).
+                if result.types.len() == 1 && result.types[0] == *atomic {
+                    result.from_docblock = false;
+                    result.sync_docblock_bits_from_union_flag();
+                }
+                return result;
+            }
+            // An empty intersection is an impossible assertion (Psalm:
+            // "string does not contain null" → TypeDoesNotContainNull/Type).
+            if key.is_some() && !existing_var_type.is_mixed() {
+                super::trigger_issue_for_impossible(
+                    analysis_data,
+                    analyzer,
+                    existing_var_type,
+                    key.unwrap_or_default(),
+                    assertion,
+                    false,
+                    negated,
+                );
             }
             with_docblock_from(TUnion::nothing(), existing_var_type)
         }
@@ -215,6 +496,9 @@ fn with_docblock_from(mut new_var_type: TUnion, existing_var_type: &TUnion) -> T
     new_var_type.from_calculation = existing_var_type.from_calculation;
     new_var_type.ignore_nullable_issues = existing_var_type.ignore_nullable_issues;
     new_var_type.ignore_falsable_issues = existing_var_type.ignore_falsable_issues;
+    // Keep the per-atomic provenance consistent with the copied union flag —
+    // stale bits from before the narrowing would misreport issue kinds.
+    new_var_type.sync_docblock_bits_from_union_flag();
     new_var_type
 }
 
@@ -223,15 +507,27 @@ fn finalize_reconciliation(
     did_remove_type: bool,
     existing_var_type: &TUnion,
     assertion: &Assertion,
+    key: Option<&str>,
+    negated: bool,
+    report_redundant: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
 ) -> TUnion {
+    // Suppress the redundant branch where pzoom's `did_remove_type`
+    // bookkeeping is not yet Psalm-faithful (isset/array-access paths seed it
+    // approximately); impossibility (empty result) always reports.
+    let key = if report_redundant || acceptable_types.is_empty() {
+        key
+    } else {
+        None
+    };
+
     get_acceptable_type(
         acceptable_types,
         did_remove_type,
         existing_var_type,
-        None,
-        false,
+        key,
+        negated,
         assertion,
         analyzer,
         analysis_data,
@@ -244,13 +540,17 @@ fn finalize_reconciliation(
 fn reconcile_truthy(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
 ) -> TUnion {
     let mut acceptable_types = Vec::new();
-    let mut did_remove_type = false;
+    // Psalm's reconcileTruthyOrVerifyTrue: a possibly-undefined type (incl.
+    // from a try block whose assignment may not have run) is never a
+    // redundant truthy check.
+    let mut did_remove_type =
+        existing_var_type.possibly_undefined || existing_var_type.possibly_undefined_from_try;
 
     for atomic in &existing_var_type.types {
         // Skip always-falsy types
@@ -274,19 +574,54 @@ fn reconcile_truthy(
                 did_remove_type = true;
                 acceptable_types.push(TAtomic::TTruthyString);
             }
-            TAtomic::TNonEmptyString | TAtomic::TNumericString => {
+            TAtomic::TNonEmptyString => {
                 // non-empty-string still admits "0" (falsy); narrow to truthy-string.
                 did_remove_type = true;
                 acceptable_types.push(TAtomic::TTruthyString);
+            }
+            TAtomic::TNumericString => {
+                // Psalm's truthy narrowing only rewrites the exact TString /
+                // TNonEmptyString / TLowercaseString classes; numeric-string
+                // passes through unchanged (still nominally admits "0").
+                did_remove_type = true;
+                acceptable_types.push(atomic.clone());
             }
             TAtomic::TLowercaseString => {
                 // Removes "" (pzoom has no truthy-lowercase variant; "0" is kept).
                 did_remove_type = true;
                 acceptable_types.push(TAtomic::TNonEmptyLowercaseString);
             }
+            TAtomic::TScalar => {
+                // Psalm narrows truthy scalar to non-empty-scalar.
+                did_remove_type = true;
+                acceptable_types.push(TAtomic::TNonEmptyScalar);
+            }
             TAtomic::TInt => {
                 // Keep int but note that 0 could be removed in strict mode
                 acceptable_types.push(atomic.clone());
+            }
+            TAtomic::TIntRange { min, max } => {
+                // Psalm splits a range containing 0 into its negative and
+                // positive halves (int<0, max> truthy → int<1, max>).
+                let contains_zero =
+                    min.is_none_or(|low| low <= 0) && max.is_none_or(|high| high >= 0);
+                if contains_zero {
+                    did_remove_type = true;
+                    if min.is_none_or(|low| low <= -1) {
+                        acceptable_types.push(TAtomic::TIntRange {
+                            min: *min,
+                            max: Some(-1),
+                        });
+                    }
+                    if max.is_none_or(|high| high >= 1) {
+                        acceptable_types.push(TAtomic::TIntRange {
+                            min: Some(1),
+                            max: *max,
+                        });
+                    }
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
             }
             TAtomic::TFloat => {
                 // Keep float but note that 0.0 could be removed in strict mode
@@ -296,6 +631,11 @@ fn reconcile_truthy(
                 key_type,
                 value_type,
             } => {
+                // A definitely-empty array is never truthy — drop it (Psalm).
+                if value_type.is_nothing() {
+                    did_remove_type = true;
+                    continue;
+                }
                 // Narrow to non-empty array
                 acceptable_types.push(TAtomic::TNonEmptyArray {
                     key_type: key_type.clone(),
@@ -303,32 +643,52 @@ fn reconcile_truthy(
                 });
             }
             TAtomic::TList { value_type } => {
+                if value_type.is_nothing() {
+                    did_remove_type = true;
+                    continue;
+                }
                 acceptable_types.push(TAtomic::TNonEmptyList {
                     value_type: value_type.clone(),
                 });
             }
             TAtomic::TKeyedArray {
                 properties,
+                is_list,
                 sealed,
                 fallback_key_type,
                 fallback_value_type,
-                ..
             } => {
                 if properties.is_empty() && *sealed && fallback_value_type.is_none() {
                     did_remove_type = true;
                     continue;
                 }
 
-                // If all shape keys are optional, the keyed array can still be empty.
-                // On a truthy assertion, model this as a non-empty generic array.
                 if atomic.is_truthy() {
                     acceptable_types.push(atomic.clone());
-                } else if let Some(narrowed) = keyed_array_to_non_empty_array(
-                    properties,
-                    fallback_key_type.as_deref(),
-                    fallback_value_type.as_deref(),
-                ) {
-                    acceptable_types.push(narrowed);
+                } else if *is_list
+                    && properties
+                        .get(&ArrayKey::Int(0))
+                        .is_some_and(|first| first.possibly_undefined)
+                {
+                    // Psalm's `reconcileTruthyOrNonEmpty`: a possibly-empty list
+                    // becomes non-empty by making its first element definite.
+                    let mut narrowed_properties = (**properties).clone();
+                    if let Some(first) = narrowed_properties.get_mut(&ArrayKey::Int(0)) {
+                        first.possibly_undefined = false;
+                    }
+                    acceptable_types.push(TAtomic::TKeyedArray {
+                        properties: std::sync::Arc::new(narrowed_properties),
+                        is_list: *is_list,
+                        sealed: *sealed,
+                        fallback_key_type: fallback_key_type.clone(),
+                        fallback_value_type: fallback_value_type.clone(),
+                    });
+                } else {
+                    // Psalm keeps a non-list shape unchanged on a truthy
+                    // assertion (its all-optional keys stay optional); the
+                    // check simply isn't redundant. Degrading to a generic
+                    // non-empty-array would lose the shape's keys.
+                    acceptable_types.push(atomic.clone());
                 }
             }
             TAtomic::TMixed => {
@@ -376,12 +736,18 @@ fn reconcile_truthy(
         }
     }
 
-    let _ = (key, negated);
+    // Psalm's reconcileTruthyOrNonEmpty: an empty()-derived NonEmpty assertion
+    // never reports redundancy/impossibility ("empty is used a lot to check
+    // for array offset existence, so we have to silent errors a lot").
+    let report_redundant = !matches!(assertion, Assertion::NonEmpty);
     finalize_reconciliation(
         acceptable_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        report_redundant,
         analysis_data,
         analyzer,
     )
@@ -394,7 +760,7 @@ fn reconcile_isset(
     assertion: &Assertion,
     existing_var_type: &TUnion,
     possibly_undefined: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -433,12 +799,14 @@ fn reconcile_isset(
         }
     }
 
-    let _ = (key, negated);
     let result = finalize_reconciliation(
         acceptable_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     );
@@ -448,8 +816,7 @@ fn reconcile_isset(
         return TUnion::mixed();
     }
 
-    let mut result = result;
-    result.is_nullable = false;
+    let result = result;
     result
 }
 
@@ -459,7 +826,7 @@ fn reconcile_isset(
 fn reconcile_non_empty_countable(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -492,9 +859,36 @@ fn reconcile_non_empty_countable(
             TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
                 acceptable_types.push(atomic.clone());
             }
-            TAtomic::TKeyedArray { properties, .. } => {
+            TAtomic::TKeyedArray {
+                properties,
+                is_list,
+                sealed,
+                fallback_key_type,
+                fallback_value_type,
+            } => {
                 if !properties.is_empty() {
-                    acceptable_types.push(atomic.clone());
+                    // A non-empty LIST shape has its first element defined
+                    // (Psalm's reconcileNonEmptyCountable list branch).
+                    if *is_list
+                        && properties
+                            .get(&ArrayKey::Int(0))
+                            .is_some_and(|first| first.possibly_undefined)
+                    {
+                        did_remove_type = true;
+                        let mut narrowed_properties = (**properties).clone();
+                        if let Some(first) = narrowed_properties.get_mut(&ArrayKey::Int(0)) {
+                            first.possibly_undefined = false;
+                        }
+                        acceptable_types.push(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(narrowed_properties),
+                            is_list: *is_list,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        });
+                    } else {
+                        acceptable_types.push(atomic.clone());
+                    }
                 } else {
                     did_remove_type = true;
                 }
@@ -527,12 +921,14 @@ fn reconcile_non_empty_countable(
         }
     }
 
-    let _ = (key, negated);
     finalize_reconciliation(
         acceptable_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
@@ -544,7 +940,7 @@ fn reconcile_non_empty_countable(
 fn reconcile_exact_count(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -555,11 +951,87 @@ fn reconcile_exact_count(
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray { properties, .. } => {
+            TAtomic::TKeyedArray {
+                properties,
+                is_list,
+                sealed,
+                fallback_key_type,
+                fallback_value_type,
+            } => {
                 if properties.len() == count {
-                    acceptable_types.push(atomic.clone());
+                    // Psalm's reconcileExactlyCountable: the first `count`
+                    // entries of a list are now definitely present.
+                    let needs_defining = *is_list
+                        && properties.values().any(|property| property.possibly_undefined);
+                    if needs_defining {
+                        did_remove_type = true;
+                        let mut defined_properties = (**properties).clone();
+                        for property in defined_properties.values_mut() {
+                            property.possibly_undefined = false;
+                        }
+                        acceptable_types.push(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(defined_properties),
+                            is_list: *is_list,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        });
+                    } else {
+                        acceptable_types.push(atomic.clone());
+                    }
+                } else if *is_list
+                    && properties.len() > count
+                    && properties
+                        .values()
+                        .filter(|property| !property.possibly_undefined)
+                        .count()
+                        <= count
+                {
+                    // A sized shape with optional tail entries (list{0: T, 1?: T})
+                    // under count === N keeps the first N defined and drops the
+                    // rest (Psalm reshapes through min/max count bounds).
+                    did_remove_type = true;
+                    let mut defined_properties: rustc_hash::FxHashMap<
+                        pzoom_code_info::ArrayKey,
+                        TUnion,
+                    > = rustc_hash::FxHashMap::default();
+                    for index in 0..count {
+                        if let Some(property) =
+                            properties.get(&pzoom_code_info::ArrayKey::Int(index as i64))
+                        {
+                            let mut property = property.clone();
+                            property.possibly_undefined = false;
+                            defined_properties
+                                .insert(pzoom_code_info::ArrayKey::Int(index as i64), property);
+                        }
+                    }
+                    if defined_properties.len() == count {
+                        acceptable_types.push(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(defined_properties),
+                            is_list: true,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        });
+                    }
                 } else {
                     did_remove_type = true;
+                    // A shape can still have exactly `count` entries when its
+                    // required keys fit within the count and either an open
+                    // fallback or optional keys can make up (or absent
+                    // themselves down to) the difference.
+                    let required_count = properties
+                        .values()
+                        .filter(|property| !property.possibly_undefined)
+                        .count();
+                    let max_count = if fallback_value_type.is_some() {
+                        usize::MAX
+                    } else {
+                        properties.len()
+                    };
+                    if required_count <= count && count <= max_count {
+                        acceptable_types.push(atomic.clone());
+                    }
                 }
             }
             TAtomic::TArray {
@@ -601,7 +1073,7 @@ fn reconcile_exact_count(
                         properties.insert(ArrayKey::Int(i as i64), (**value_type).clone());
                     }
                     acceptable_types.push(TAtomic::TKeyedArray {
-                        properties,
+                        properties: std::sync::Arc::new(properties),
                         is_list: true,
                         sealed: true,
                         fallback_key_type: None,
@@ -619,12 +1091,14 @@ fn reconcile_exact_count(
         }
     }
 
-    let _ = (key, negated);
     finalize_reconciliation(
         acceptable_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
@@ -639,7 +1113,7 @@ fn reconcile_exact_count(
 fn reconcile_has_at_least_count(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -662,6 +1136,46 @@ fn reconcile_has_at_least_count(
                 } else if prop_min_count >= count {
                     // Already guaranteed: redundant, keep the type unchanged.
                     acceptable_types.push(atomic.clone());
+                } else if let TAtomic::TKeyedArray {
+                    properties,
+                    is_list: true,
+                    sealed,
+                    fallback_key_type,
+                    fallback_value_type,
+                } = atomic
+                {
+                    // Psalm's reconcileNonEmptyCountable list branch: entries
+                    // 0..count become definite (materialized from the
+                    // fallback when absent).
+                    did_remove_type = true;
+                    let mut new_properties = (**properties).clone();
+                    let mut complete = true;
+                    for index in 0..count {
+                        let key = pzoom_code_info::t_atomic::ArrayKey::Int(index as i64);
+                        match new_properties.get_mut(&key) {
+                            Some(entry) => entry.possibly_undefined = false,
+                            None => match fallback_value_type {
+                                Some(fallback) => {
+                                    new_properties.insert(key, (**fallback).clone());
+                                }
+                                None => {
+                                    complete = false;
+                                    break;
+                                }
+                            },
+                        }
+                    }
+                    if complete {
+                        acceptable_types.push(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(new_properties),
+                            is_list: true,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        });
+                    } else {
+                        acceptable_types.push(atomic.clone());
+                    }
                 } else {
                     // Possible: keep the shape (conservatively unchanged).
                     did_remove_type = true;
@@ -719,11 +1233,29 @@ fn reconcile_has_at_least_count(
         }
     }
 
-    let _ = (key, negated);
-    // When nothing was narrowed the assertion is redundant; return the type
-    // verbatim (preserving data-flow nodes) so the centralized redundant-issue
-    // path detects the no-op via equality.
+    // When nothing was narrowed the assertion is redundant; report it here
+    // (Psalm's reconcileNonEmptyCountable `$prop_min_count >= $count` branch)
+    // and return the type verbatim, preserving data-flow nodes.
     if !did_remove_type {
+        // Report only when provably redundant (Psalm's reconcileNonEmptyCountable
+        // `$prop_min_count >= $count`), not merely un-narrowed.
+        if let Some(key) = key
+            && super::should_emit_redundant_issue_for_unchanged_assertion(
+                assertion,
+                existing_var_type,
+                analyzer,
+            )
+        {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key,
+                assertion,
+                true,
+                negated,
+            );
+        }
         return existing_var_type.clone();
     }
     finalize_reconciliation(
@@ -731,6 +1263,9 @@ fn reconcile_has_at_least_count(
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
@@ -739,14 +1274,20 @@ fn reconcile_has_at_least_count(
 /// Reconciles an in_array assertion.
 ///
 /// Narrows the type to values that could be in the array.
-fn reconcile_in_array(existing_var_type: &TUnion, assertion_type: &TUnion) -> TUnion {
+fn reconcile_in_array(
+    existing_var_type: &TUnion,
+    assertion_type: &TUnion,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
     let Some(possible_union) = normalize_in_array_assertion_union(assertion_type) else {
         return existing_var_type.clone();
     };
 
-    if let Some(intersection) =
-        assertion_reconciler::intersect_union_with_union(existing_var_type, &possible_union)
-    {
+    if let Some(intersection) = assertion_reconciler::intersect_union_with_union_with_codebase(
+        existing_var_type,
+        &possible_union,
+        Some(analyzer.codebase),
+    ) {
         return intersection;
     }
 
@@ -830,7 +1371,7 @@ fn reconcile_has_array_key(
     existing_var_type: &TUnion,
     array_key: &ArrayKey,
     possibly_undefined: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -854,10 +1395,10 @@ fn reconcile_has_array_key(
                 } else if let Some(fallback) = fallback_value_type {
                     // Add the key with the fallback type
                     did_remove_type = true;
-                    let mut new_properties = properties.clone();
+                    let mut new_properties = (**properties).clone();
                     new_properties.insert(array_key.clone(), (**fallback).clone());
                     result_types.push(TAtomic::TKeyedArray {
-                        properties: new_properties,
+                        properties: std::sync::Arc::new(new_properties),
                         is_list: *is_list,
                         sealed: *sealed,
                         fallback_key_type: fallback_key_type.clone(),
@@ -890,7 +1431,7 @@ fn reconcile_has_array_key(
                 let mut properties = rustc_hash::FxHashMap::default();
                 properties.insert(array_key.clone(), (**value_type).clone());
                 result_types.push(TAtomic::TKeyedArray {
-                    properties,
+                    properties: std::sync::Arc::new(properties),
                     is_list: matches!(array_key, ArrayKey::Int(0)),
                     sealed: false,
                     fallback_key_type: Some(key_type.clone()),
@@ -907,7 +1448,7 @@ fn reconcile_has_array_key(
                 let mut properties = rustc_hash::FxHashMap::default();
                 properties.insert(array_key.clone(), (**value_type).clone());
                 result_types.push(TAtomic::TKeyedArray {
-                    properties,
+                    properties: std::sync::Arc::new(properties),
                     is_list: matches!(array_key, ArrayKey::Int(0)),
                     sealed: false,
                     fallback_key_type: Some(Box::new(TUnion::int())),
@@ -924,7 +1465,7 @@ fn reconcile_has_array_key(
                 );
 
                 result_types.push(TAtomic::TKeyedArray {
-                    properties,
+                    properties: std::sync::Arc::new(properties),
                     is_list: matches!(array_key, ArrayKey::Int(0)),
                     sealed: false,
                     fallback_key_type: Some(Box::new(TUnion::array_key())),
@@ -955,12 +1496,14 @@ fn reconcile_has_array_key(
         }
     }
 
-    let _ = (key, negated);
     finalize_reconciliation(
         result_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
@@ -1008,7 +1551,7 @@ fn reconcile_has_nonnull_entry_for_key(
     existing_var_type: &TUnion,
     array_key: &ArrayKey,
     possibly_undefined: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -1032,10 +1575,10 @@ fn reconcile_has_nonnull_entry_for_key(
                     if narrowed != prop_type {
                         did_remove_type = true;
                     }
-                    let mut new_properties = properties.clone();
+                    let mut new_properties = (**properties).clone();
                     new_properties.insert(array_key.clone(), narrowed);
                     result_types.push(TAtomic::TKeyedArray {
-                        properties: new_properties,
+                        properties: std::sync::Arc::new(new_properties),
                         is_list: *is_list,
                         sealed: *sealed,
                         fallback_key_type: fallback_key_type.clone(),
@@ -1046,10 +1589,10 @@ fn reconcile_has_nonnull_entry_for_key(
                     did_remove_type = true;
                     let narrowed =
                         super::simple_negated_assertion_reconciler::subtract_null(fallback);
-                    let mut new_properties = properties.clone();
+                    let mut new_properties = (**properties).clone();
                     new_properties.insert(array_key.clone(), narrowed);
                     result_types.push(TAtomic::TKeyedArray {
-                        properties: new_properties,
+                        properties: std::sync::Arc::new(new_properties),
                         is_list: *is_list,
                         sealed: *sealed,
                         fallback_key_type: fallback_key_type.clone(),
@@ -1076,7 +1619,7 @@ fn reconcile_has_nonnull_entry_for_key(
                     super::simple_negated_assertion_reconciler::subtract_null(value_type);
                 properties.insert(array_key.clone(), narrowed_value);
                 result_types.push(TAtomic::TKeyedArray {
-                    properties,
+                    properties: std::sync::Arc::new(properties),
                     is_list: matches!(array_key, ArrayKey::Int(0)),
                     sealed: false,
                     fallback_key_type: Some(key_type.clone()),
@@ -1090,7 +1633,7 @@ fn reconcile_has_nonnull_entry_for_key(
                     super::simple_negated_assertion_reconciler::subtract_null(value_type);
                 properties.insert(array_key.clone(), narrowed_value);
                 result_types.push(TAtomic::TKeyedArray {
-                    properties,
+                    properties: std::sync::Arc::new(properties),
                     is_list: matches!(array_key, ArrayKey::Int(0)),
                     sealed: false,
                     fallback_key_type: Some(Box::new(TUnion::int())),
@@ -1150,12 +1693,14 @@ fn reconcile_has_nonnull_entry_for_key(
         }
     }
 
-    let _ = (key, negated);
     finalize_reconciliation(
         result_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
@@ -1168,7 +1713,7 @@ fn reconcile_array_access(
     assertion: &Assertion,
     existing_var_type: &TUnion,
     allow_int_key: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
@@ -1192,7 +1737,7 @@ fn reconcile_array_access(
                 value_type: Box::new(TUnion::mixed()),
             },
             TAtomic::TNamedObject {
-                name: analyzer.interner.intern("ArrayAccess"),
+                name: StrId::ARRAY_ACCESS,
                 type_params: None,
             is_static: false, remapped_params: false },
         ]);
@@ -1232,66 +1777,17 @@ fn reconcile_array_access(
     let did_remove_type =
         narrowed_to_non_empty || acceptable_types.len() != existing_var_type.types.len();
 
-    let _ = (key, negated);
     finalize_reconciliation(
         acceptable_types,
         did_remove_type,
         existing_var_type,
         assertion,
+        key,
+        negated,
+        false,
         analysis_data,
         analyzer,
     )
-}
-
-fn keyed_array_to_non_empty_array(
-    properties: &FxHashMap<ArrayKey, TUnion>,
-    fallback_key_type: Option<&TUnion>,
-    fallback_value_type: Option<&TUnion>,
-) -> Option<TAtomic> {
-    let mut key_union: Option<TUnion> = None;
-    let mut value_union: Option<TUnion> = None;
-
-    for (key, value_type) in properties {
-        let key_atomic = match key {
-            ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
-            ArrayKey::String(value) => TAtomic::TLiteralString {
-                value: value.clone(),
-            },
-        };
-
-        let key_type = TUnion::new(key_atomic);
-        key_union = Some(match key_union.take() {
-            Some(existing) => combine_union_types(&existing, &key_type, false),
-            None => key_type,
-        });
-
-        value_union = Some(match value_union.take() {
-            Some(existing) => combine_union_types(&existing, value_type, false),
-            None => value_type.clone(),
-        });
-    }
-
-    if let Some(extra_key_type) = fallback_key_type {
-        key_union = Some(match key_union.take() {
-            Some(existing) => combine_union_types(&existing, extra_key_type, false),
-            None => extra_key_type.clone(),
-        });
-    }
-
-    if let Some(extra_value_type) = fallback_value_type {
-        value_union = Some(match value_union.take() {
-            Some(existing) => combine_union_types(&existing, extra_value_type, false),
-            None => extra_value_type.clone(),
-        });
-    }
-
-    let key_type = key_union.unwrap_or_else(TUnion::array_key);
-    let value_type = value_union?;
-
-    Some(TAtomic::TNonEmptyArray {
-        key_type: Box::new(key_type),
-        value_type: Box::new(value_type),
-    })
 }
 
 /// Checks if two types might match (for in_array checks).

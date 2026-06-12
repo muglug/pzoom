@@ -49,10 +49,18 @@ namespace {
     ): bool {
     }
 
+    /**
+     * @param string $value
+     * @return string
+     */
     function ldap_8859_to_t61(string $value): string
     {
     }
 
+    /**
+     * @param string $value
+     * @return string
+     */
     function ldap_t61_to_8859(string $value): string
     {
     }
@@ -189,12 +197,18 @@ namespace {
     }
 
     /**
-     * @return array{count: int}|false
+     * @param string $dn
+     * @param int $with_attrib
+     * @return array<array-key, mixed>|false
      */
     function ldap_explode_dn(string $dn, int $with_attrib): array|false
     {
     }
 
+    /**
+     * @param string $dn
+     * @return false|string
+     */
     function ldap_dn2ufn(string $dn): string|false
     {
     }
@@ -263,6 +277,10 @@ namespace {
     {
     }
 
+    /**
+     * @param int $errno
+     * @return string
+     */
     function ldap_err2str(int $errno): string
     {
     }
@@ -349,6 +367,12 @@ namespace {
     {
     }
 
+    /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape ldap
+     * @psalm-flow ($value) -> return
+     */
     function ldap_escape(string $value, string $ignore = '', int $flags = 0): string
     {
     }

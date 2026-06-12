@@ -3,7 +3,7 @@ function fooFunction (): string {
     try{
         $foo = "foo";
     } finally {
-        /** @psalm-suppress UndefinedVariable */
+        /** @psalm-suppress PossiblyUndefinedVariable */
         echo $foo;
     }
 

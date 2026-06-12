@@ -1,6 +1,7 @@
 //! Type operations module - combining, comparing, and manipulating types.
 
 pub mod key_value_of;
+pub mod template;
 mod type_combination;
 pub mod type_combiner;
 

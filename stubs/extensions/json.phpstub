@@ -9,16 +9,37 @@ class JsonException extends Exception
 {
 }
 
+/**
+ * The conditional return type below relies on the fact that JSON_THROW_ON_ERROR is
+ * the highest-valued of JSON constants
+ *
+ * @psalm-pure
+ *
+ * @param int<1, 2147483647> $depth
+ * @return ($flags is int<4194304, 8388607> ? non-empty-string : non-empty-string|false)
+ *
+ * @psalm-flow ($value) -> return
+ * @psalm-ignore-falsable-return
+ */
 function json_encode(mixed $value, int $flags = 0, int $depth = 512): string|false
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @param int<1, 2147483647> $depth
+ * @return mixed
+ * @psalm-flow ($json) -> return
+ */
 function json_decode(string $json, null|bool $associative = null, int $depth = 512, int $flags = 0): mixed
 {
 }
 
 /**
  * @pure
+ *
+ * @return int
  */
 function json_last_error(): int
 {
@@ -26,6 +47,8 @@ function json_last_error(): int
 
 /**
  * @pure
+ *
+ * @return string
  */
 function json_last_error_msg(): string
 {

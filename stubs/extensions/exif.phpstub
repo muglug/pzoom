@@ -11,20 +11,29 @@ function exif_read_data(
 ): array|false {
 }
 
+/**
+ * @param int $index
+ * @return false|string
+ */
 function exif_tagname(int $index): string|false
 {
 }
 
 /**
- * @param string|resource $file
+ * @param string $file
  * @param int $width
  * @param int $height
  * @param int $image_type
+ * @return false|string
  */
 function exif_thumbnail($file, &$width, &$height, &$image_type): string|false
 {
 }
 
+/**
+ * @param string $filename
+ * @return false|int
+ */
 function exif_imagetype(string $filename): int|false
 {
 }

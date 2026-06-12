@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 pzoom-str.workspace = true
 rustc-hash.workspace = true
+compact_str.workspace = true
 serde.workspace = true
 indexmap.workspace = true
 itertools.workspace = true

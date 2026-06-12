@@ -411,6 +411,8 @@ namespace {
 
         /**
          * @throws PDOException
+         *
+         * @psalm-taint-sink sql $query
          */
         public function prepare(string $query, array $options = []): PDOStatement|false
         {
@@ -452,6 +454,8 @@ namespace {
 
         /**
          * @throws PDOException
+         *
+         * @psalm-taint-sink sql $statement
          */
         public function exec(string $statement): int|false
         {
@@ -461,6 +465,8 @@ namespace {
          * @return PDOStatement|false
          *
          * @throws PDOException
+         *
+         * @psalm-taint-sink sql $query
          */
         public function query(string $query, int|null $fetchMode = null, mixed ...$fetchModeArgs)
         {
@@ -747,6 +753,8 @@ namespace {
          * @return T|null|false
          *
          * @throws PDOException
+         *
+         * @psalm-taint-sink callable $class
          */
         #[TentativeType]
         public function fetchObject(string|null $class = 'stdClass', array $constructorArgs = []): object|false
@@ -857,12 +865,15 @@ namespace {
     }
 
     /**
-     * @return array
+     * @return array<array-key, mixed>
      */
     function pdo_drivers(): array
     {
     }
 
+    /**
+     * @return mixed
+     */
     function confirm_pdo_ibm_compiled()
     {
     }

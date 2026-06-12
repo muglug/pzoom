@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::TUnion;
+use crate::ttype::template::GenericParent;
 
 /// Marker used to represent Psalm/Hakana's non-specific `literal-string`.
 pub const NON_SPECIFIC_LITERAL_STRING_VALUE: &str = "@@pzoom_literal_string@@";
@@ -19,6 +20,9 @@ pub const NON_SPECIFIC_LITERAL_STRING_VALUE: &str = "@@pzoom_literal_string@@";
 pub enum TAtomic {
     // Scalar types
     TInt,
+    /// `literal-int` — an int known to come from a literal in the codebase
+    /// (Psalm's TNonspecificLiteralInt).
+    TNonspecificLiteralInt,
     TFloat,
     TString,
     TBool,
@@ -47,14 +51,14 @@ pub enum TAtomic {
     /// `$x`'s type at the call (`object` when mixed). Lets a later
     /// `get_class($x) === Foo::class` / `switch (get_class($x))` narrow `$x`.
     TDependentGetClass {
-        var_id: StrId,
+        var_id: crate::var_name::VarName,
         as_type: Box<TUnion>,
     },
     /// The result type of `gettype($x)` where `$x` is a variable. Mirrors Psalm's
     /// `Type\Atomic\TDependentGetType`. `var_id` is the interned id of `$x`; a
     /// later `gettype($x) === "string"` / `switch (gettype($x))` narrows `$x`.
     TDependentGetType {
-        var_id: StrId,
+        var_id: crate::var_name::VarName,
     },
 
     // String subtypes
@@ -64,6 +68,9 @@ pub enum TAtomic {
     TLowercaseString,
     TNonEmptyLowercaseString,
     TTruthyString,
+    /// Psalm's `TCallableString` (extends TNonFalsyString): a callable-string
+    /// docblock type — a non-falsy string naming a callable.
+    TCallableString,
     TClassString {
         as_type: Option<Box<TAtomic>>,
     },
@@ -97,9 +104,23 @@ pub enum TAtomic {
     TNonEmptyList {
         value_type: Box<TUnion>,
     },
+    /// `class-string-map<T as Foo, T>` — an array whose value type is a
+    /// function of its `class-string` key (Psalm's `Type\Atomic\TClassStringMap`).
+    /// `param_name` is the placeholder template name introduced by the first
+    /// param, `as_type` its optional named-object upper bound, and
+    /// `value_param` the value type (typically referencing the placeholder as a
+    /// `TTemplateParam` whose defining entity is `class-string-map`).
+    TClassStringMap {
+        param_name: StrId,
+        as_type: Option<Box<TAtomic>>,
+        value_param: Box<TUnion>,
+    },
     /// Keyed array / shape type - array with known keys and value types
     TKeyedArray {
-        properties: FxHashMap<ArrayKey, TUnion>,
+        /// Shape fields. Behind `Arc` so cloning a shape is a refcount bump;
+        /// mutation sites use `Arc::make_mut` (copy-on-write). Ported from
+        /// Hakana's dict known_items (slackhq/hakana@8f9f1a4).
+        properties: std::sync::Arc<FxHashMap<ArrayKey, TUnion>>,
         /// If true, this is a list (sequential integer keys starting from 0)
         is_list: bool,
         /// Whether the shape is sealed (no additional keys allowed)
@@ -133,6 +154,16 @@ pub enum TAtomic {
     /// only coercible from a bare `object`.
     TObjectWithProperties {
         properties: FxHashMap<ArrayKey, TUnion>,
+        /// `stringable-object`: an object guaranteed to have `__toString`
+        /// (Psalm models this as a methods-only TObjectWithProperties with
+        /// `is_stringable_object_only`).
+        #[serde(default)]
+        is_stringable: bool,
+        /// `callable-object`: an object known to be invokable (Psalm's
+        /// TCallableObject) — the object half left when `is_array` is
+        /// subtracted from a `callable`.
+        #[serde(default)]
+        is_invokable: bool,
     },
     TObject,
     TClosedResource,
@@ -153,6 +184,12 @@ pub enum TAtomic {
     // Special types
     TMixed,
     TNonEmptyMixed,
+    /// A mixed created by reconciling `isset($arr[$key])` on an unknown slot
+    /// inside a loop (Psalm's `TMixed::$from_loop_isset`, Hakana's
+    /// `TMixedFromLoopIsset`). Behaves as mixed everywhere, except the type
+    /// combiner drops it when any concrete type is present — so loop-fixpoint
+    /// placeholder mixeds don't pollute the converged type.
+    TMixedFromLoopIsset,
     TNothing, // Never/bottom type
     TVoid,
     TIterable {
@@ -163,12 +200,12 @@ pub enum TAtomic {
     // Template/generic types
     TTemplateParam {
         name: StrId,
-        defining_entity: StrId,
+        defining_entity: GenericParent,
         as_type: Box<TUnion>,
     },
     TTemplateParamClass {
         name: StrId,
-        defining_entity: StrId,
+        defining_entity: GenericParent,
         as_type: Box<TAtomic>,
     },
 
@@ -186,6 +223,10 @@ pub enum TAtomic {
 
     // Scalar type (int|float|string|bool)
     TScalar,
+    /// Psalm's `TNonEmptyScalar`: any scalar except the empty/falsy ones
+    /// ('', '0', 0, 0.0, false). Produced by truthy/`!empty` narrowing of
+    /// `scalar`; always truthy.
+    TNonEmptyScalar,
 
     // Numeric type (int|float)
     TNumeric,
@@ -200,15 +241,23 @@ pub enum TAtomic {
     /// it; resolved to the keys of the bound replacement during template substitution.
     TTemplateKeyOf {
         param_name: StrId,
-        defining_entity: StrId,
+        defining_entity: GenericParent,
         as_type: Box<TUnion>,
     },
     /// `value-of<T>` where `T` is an unresolved template parameter (Psalm's
     /// `Type\Atomic\TTemplateValueOf`).
     TTemplateValueOf {
         param_name: StrId,
-        defining_entity: StrId,
+        defining_entity: GenericParent,
         as_type: Box<TUnion>,
+    },
+
+    /// A type variable (Hakana's `TTypeVariable`, mirroring the Hack
+    /// typechecker): a placeholder (``_N`) whose constraints accumulate in
+    /// `FunctionAnalysisData::type_variable_bounds` while the function body is
+    /// checked and are reconciled at the end of the function.
+    TTypeVariable {
+        name: String,
     },
 
     /// `properties-of<C>` for a concrete class `C` (Psalm's `Type\Atomic\TPropertiesOf`).
@@ -222,7 +271,7 @@ pub enum TAtomic {
     /// `Type\Atomic\TTemplatePropertiesOf`).
     TTemplatePropertiesOf {
         param_name: StrId,
-        defining_entity: StrId,
+        defining_entity: GenericParent,
         visibility_filter: PropertiesOfVisibility,
     },
 }
@@ -248,30 +297,22 @@ impl PropertiesOfVisibility {
     }
 }
 
-/// A conditional return type `(<condition> ? if_true : if_false)`.
+/// A conditional type `(<template> is <conditional_type> ? if_true : if_false)`
+/// — Psalm's `Type\Atomic\TConditional`. The subject is always a template:
+/// a declared one (`TFlags`), one generated from a `$param` reference (kept
+/// under its `$name`), or a synthetic (`TFunctionArgCount`,
+/// `PHP_MAJOR_VERSION`, `PHP_VERSION_ID`). Template replacement resolves it
+/// (Psalm's TemplateInferredTypeReplacer::replaceConditional).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConditionalReturnType {
-    pub condition: ConditionalReturnCondition,
+    pub param_name: StrId,
+    pub defining_entity: GenericParent,
+    /// The subject template's declared bound.
+    pub as_type: TUnion,
+    /// The type the subject is tested against.
+    pub conditional_type: TUnion,
     pub if_true_type: TUnion,
     pub if_false_type: TUnion,
-}
-
-/// The condition controlling a conditional return type branch.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum ConditionalReturnCondition {
-    /// Template condition, e.g. `TType is 'array'`.
-    TemplateIs {
-        template_name: StrId,
-        asserted_type: TUnion,
-    },
-    /// Parameter condition, e.g. `$name is class-string`, evaluated against the
-    /// argument's type at the call site.
-    ParamIs {
-        param_id: StrId,
-        asserted_type: TUnion,
-    },
-    /// Argument-count condition, e.g. `func_num_args() is 1`.
-    FuncNumArgsIs { count: usize },
 }
 
 /// Key type for keyed arrays (shapes).
@@ -291,7 +332,50 @@ pub struct FunctionLikeParameter {
     pub by_ref: bool,
 }
 
+/// PHP `addcslashes($value, "\0..\37\\\"")`, as Psalm escapes literal string
+/// values for display: C-style escapes for the common control characters,
+/// three-digit octal for the rest, and escaped backslash/double-quote.
+fn addcslashes_control(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\x0b' => out.push_str("\\v"),
+            '\x0c' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\{:03o}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Psalm's `Config::$max_string_length` default: literal strings at or above
+/// this length degrade to non-empty-/non-falsy-string (configurable in
+/// psalm.xml via `maxStringLength`).
+pub const DEFAULT_MAX_STRING_LENGTH: usize = 1000;
+
 impl TAtomic {
+    /// Psalm's `Type::getAtomicStringFromLiteral`: a literal string type, unless
+    /// the value is at or over the configured length limit, in which case it
+    /// degrades to `non-empty-string` (`'0'`) or `non-falsy-string`.
+    pub fn string_from_literal(value: String, max_string_length: usize) -> TAtomic {
+        if value.is_empty() || value.len() < max_string_length {
+            TAtomic::TLiteralString { value }
+        } else if value == "0" {
+            TAtomic::TNonEmptyString
+        } else {
+            TAtomic::TTruthyString
+        }
+    }
+
     /// The guaranteed minimum number of entries for a keyed array, mirroring
     /// Psalm's `TKeyedArray::getMinCount()`. Returns `None` for atomics that are
     /// not keyed arrays.
@@ -382,6 +466,46 @@ impl TAtomic {
         matches!(self, TAtomic::TNull)
     }
 
+    /// For a `class-string-map`, the `class-string` key type used when the map
+    /// is treated as a plain array — Psalm's `TClassStringMap::getStandinKeyParam()`:
+    /// `class<param_name:class-string-map>` bounded by `as_type` (or `object`).
+    /// Returns `None` for every other atomic.
+    pub fn get_class_string_map_standin_key_param(&self) -> Option<TAtomic> {
+        let TAtomic::TClassStringMap {
+            param_name,
+            as_type,
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        Some(TAtomic::TTemplateParamClass {
+            name: *param_name,
+            // Psalm's synthetic `class-string-map` defining class — a
+            // type-level definition, not a real class-like or function-like.
+            defining_entity: GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
+            as_type: Box::new(as_type.as_deref().cloned().unwrap_or(TAtomic::TObject)),
+        })
+    }
+
+    /// For a `class-string-map`, the equivalent generic `array` atomic Psalm's
+    /// comparators substitute before comparing
+    /// (`new TArray([getStandinKeyParam(), value_param])`).
+    pub fn get_class_string_map_as_array(&self) -> Option<TAtomic> {
+        let TAtomic::TClassStringMap { value_param, .. } = self else {
+            return None;
+        };
+
+        Some(TAtomic::TArray {
+            key_type: Box::new(TUnion::new(
+                self.get_class_string_map_standin_key_param()
+                    .expect("checked TClassStringMap above"),
+            )),
+            value_type: value_param.clone(),
+        })
+    }
+
     /// For the dependent `get_class`/`gettype` atomics (Psalm's `TDependentGetClass`
     /// / `TDependentGetType`, both `TString` subtypes), the plain string-ish type
     /// they stand in for. Lets type operations that have not been taught about the
@@ -424,7 +548,7 @@ impl TAtomic {
     pub fn is_falsable(&self) -> bool {
         match self {
             TAtomic::TFalse => true,
-            TAtomic::TTemplateParam { as_type, .. } => as_type.is_falsable,
+            TAtomic::TTemplateParam { as_type, .. } => as_type.is_falsable(),
             TAtomic::TTemplateParamClass { as_type, .. } => as_type.is_falsable(),
             _ => false,
         }
@@ -445,7 +569,9 @@ impl TAtomic {
     pub fn is_truthy(&self) -> bool {
         match self {
             TAtomic::TTrue => true,
+            TAtomic::TNonEmptyScalar => true,
             TAtomic::TTruthyString
+            | TAtomic::TCallableString
             | TAtomic::TClassString { .. }
             | TAtomic::TLiteralClassString { .. }
             | TAtomic::TDependentGetClass { .. }
@@ -490,8 +616,20 @@ impl TAtomic {
                 .unwrap_or_else(|| format!("@{}", id.0))
         }
 
+        // pzoom renders the defining entity bare (Psalm's plain
+        // `$defining_class` strings, no Hakana `fn-` prefix) so template ids
+        // in issue text stay stable.
+        fn generic_parent_to_string(parent: &GenericParent, interner: Option<&Interner>) -> String {
+            match parent {
+                GenericParent::ClassLike(id)
+                | GenericParent::FunctionLike(id)
+                | GenericParent::TypeDefinition(id) => strid_to_string(*id, interner),
+            }
+        }
+
         match self {
             TAtomic::TInt => "int".to_string(),
+            TAtomic::TNonspecificLiteralInt => "literal-int".to_string(),
             TAtomic::TFloat => "float".to_string(),
             TAtomic::TString => "string".to_string(),
             TAtomic::TBool => "bool".to_string(),
@@ -504,10 +642,17 @@ impl TAtomic {
                 if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
                     "literal-string".to_string()
                 } else {
-                    format!("string({})", value)
+                    // Psalm `TLiteralString::getId`: quote control characters,
+                    // backslashes and double quotes; truncate long values.
+                    let escaped = addcslashes_control(value);
+                    if value.chars().count() > 80 {
+                        format!("'{}...'", escaped.chars().take(80).collect::<String>())
+                    } else {
+                        format!("'{}'", escaped)
+                    }
                 }
             }
-            TAtomic::TMixed => "mixed".to_string(),
+            TAtomic::TMixed | TAtomic::TMixedFromLoopIsset => "mixed".to_string(),
             TAtomic::TNothing => "never".to_string(),
             TAtomic::TVoid => "void".to_string(),
             TAtomic::TArray {
@@ -533,7 +678,7 @@ impl TAtomic {
 
                 let mut int_entries: Vec<(i64, &TUnion)> = Vec::new();
                 let mut string_entries: Vec<(&str, &TUnion)> = Vec::new();
-                for (key, value) in properties {
+                for (key, value) in properties.iter() {
                     match key {
                         ArrayKey::Int(i) => int_entries.push((*i, value)),
                         ArrayKey::String(s) => string_entries.push((s.as_str(), value)),
@@ -628,15 +773,30 @@ impl TAtomic {
                 id
             }
             TAtomic::TObjectIntersection { types } => {
-                let mut type_ids = types
-                    .iter()
-                    .map(|atomic| atomic.get_id(interner))
-                    .collect::<Vec<_>>();
-                type_ids.sort();
-                type_ids.dedup();
+                // Psalm renders intersections in declaration order, which is
+                // stable for it (single-process array order). pzoom's member
+                // order depends on process-nondeterministic StrId assignment,
+                // so the rendered ids are sorted for deterministic output —
+                // mirroring what Union::getId does for union members.
+                let mut type_ids: Vec<String> = Vec::with_capacity(types.len());
+                for atomic in types {
+                    let type_id = atomic.get_id(interner);
+                    if !type_ids.contains(&type_id) {
+                        type_ids.push(type_id);
+                    }
+                }
+                type_ids.sort_unstable();
                 type_ids.join("&")
             }
-            TAtomic::TObjectWithProperties { properties } => {
+            TAtomic::TObjectWithProperties {
+                is_stringable: true,
+                ..
+            } => "stringable-object".to_string(),
+            TAtomic::TObjectWithProperties {
+                is_invokable: true,
+                ..
+            } => "callable-object".to_string(),
+            TAtomic::TObjectWithProperties { properties, .. } => {
                 let mut entries = properties
                     .iter()
                     .map(|(key, value_type)| {
@@ -774,6 +934,23 @@ impl TAtomic {
                 key_type.get_id(interner),
                 value_type.get_id(interner)
             ),
+            TAtomic::TClassStringMap {
+                param_name,
+                as_type,
+                value_param,
+            } => {
+                // Psalm's TClassStringMap::getId:
+                // `class-string-map<T as Foo, T>` (the bound defaults to `object`).
+                format!(
+                    "class-string-map<{} as {}, {}>",
+                    strid_to_string(*param_name, interner),
+                    as_type
+                        .as_ref()
+                        .map(|a| a.get_id(interner))
+                        .unwrap_or_else(|| "object".to_string()),
+                    value_param.get_id(interner)
+                )
+            }
             TAtomic::TList { value_type } => {
                 format!("list<{}>", value_type.get_id(interner))
             }
@@ -789,7 +966,7 @@ impl TAtomic {
                 format!(
                     "{}:{} as {}",
                     strid_to_string(*name, interner),
-                    strid_to_string(*defining_entity, interner),
+                    generic_parent_to_string(defining_entity, interner),
                     as_type.get_id(interner)
                 )
             }
@@ -801,37 +978,19 @@ impl TAtomic {
                 format!(
                     "class<{}:{}>",
                     strid_to_string(*name, interner),
-                    strid_to_string(*defining_entity, interner)
+                    generic_parent_to_string(defining_entity, interner)
                 )
             }
             TAtomic::TArrayKey => "array-key".to_string(),
             TAtomic::TScalar => "scalar".to_string(),
+            TAtomic::TNonEmptyScalar => "non-empty-scalar".to_string(),
             TAtomic::TNumeric => "numeric".to_string(),
             TAtomic::TConditional(conditional) => {
                 // Psalm: `(subject is conditional_type ? if_true : if_false)`.
-                let (subject, asserted) = match &conditional.condition {
-                    ConditionalReturnCondition::TemplateIs {
-                        template_name,
-                        asserted_type,
-                    } => (
-                        strid_to_string(*template_name, interner),
-                        asserted_type.get_id(interner),
-                    ),
-                    ConditionalReturnCondition::ParamIs {
-                        param_id,
-                        asserted_type,
-                    } => (
-                        strid_to_string(*param_id, interner),
-                        asserted_type.get_id(interner),
-                    ),
-                    ConditionalReturnCondition::FuncNumArgsIs { count } => {
-                        ("func_num_args()".to_string(), count.to_string())
-                    }
-                };
                 format!(
                     "({} is {} ? {} : {})",
-                    subject,
-                    asserted,
+                    strid_to_string(conditional.param_name, interner),
+                    conditional.conditional_type.get_id(interner),
                     conditional.if_true_type.get_id(interner),
                     conditional.if_false_type.get_id(interner)
                 )
@@ -842,6 +1001,7 @@ impl TAtomic {
             TAtomic::TTemplateValueOf { param_name, .. } => {
                 format!("value-of<{}>", strid_to_string(*param_name, interner))
             }
+            TAtomic::TTypeVariable { name } => name.clone(),
             TAtomic::TPropertiesOf {
                 classlike_name,
                 visibility_filter,
@@ -867,8 +1027,9 @@ impl TAtomic {
             TAtomic::TNumericString => "numeric-string".to_string(),
             TAtomic::TNonEmptyNumericString => "non-empty-numeric-string".to_string(),
             TAtomic::TLowercaseString => "lowercase-string".to_string(),
+            TAtomic::TCallableString => "callable-string".to_string(),
             TAtomic::TNonEmptyLowercaseString => "non-empty-lowercase-string".to_string(),
-            TAtomic::TTruthyString => "truthy-string".to_string(),
+            TAtomic::TTruthyString => "non-falsy-string".to_string(),
             TAtomic::TClassString { as_type } => {
                 if let Some(as_type) = as_type {
                     format!("class-string<{}>", as_type.get_id(interner))

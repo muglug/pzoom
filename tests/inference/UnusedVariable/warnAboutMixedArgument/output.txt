@@ -1,0 +1,2 @@
+MixedArgument - input.php:10:10 - Argument 1 of echo cannot be mixed, expecting string
+    input.php:2:24 - Consider improving the type here

@@ -1,0 +1,55 @@
+<?php
+
+// Start of wddx v.
+
+/**
+ * @removed 7.4
+ *
+ * @param mixed $var
+ * @param string $comment
+ * @return false|string
+ */
+function wddx_serialize_value($var, $comment = null) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param mixed $var_names
+ * @return false|string
+ */
+function wddx_serialize_vars(...$var_names) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param string $comment
+ * @return false|resource
+ */
+function wddx_packet_start($comment = null) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param resource $packet_id
+ * @return string
+ */
+function wddx_packet_end($packet_id) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param resource $packet_id
+ * @param mixed $var_names
+ * @return bool
+ */
+function wddx_add_vars($packet_id, ...$var_names) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param string $packet
+ * @return mixed
+ */
+function wddx_deserialize($packet) {}
+
+// End of wddx v.

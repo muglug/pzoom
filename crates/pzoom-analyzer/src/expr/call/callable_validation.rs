@@ -15,6 +15,7 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
 
 use pzoom_code_info::class_like_info::Visibility;
+use pzoom_code_info::VarName;
 use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::{
@@ -29,7 +30,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::callable_type_comparator;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
-use crate::template::TemplateMap;
+use pzoom_code_info::TemplateResult;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallableValidationOutcome {
@@ -42,7 +43,7 @@ pub fn union_has_callable(union: &TUnion) -> bool {
     union.types.iter().any(atomic_has_callable)
 }
 
-pub(crate) fn atomic_has_callable(atomic: &TAtomic) -> bool {
+fn atomic_has_callable(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TCallable { .. } | TAtomic::TClosure { .. } => true,
         TAtomic::TNamedObject { name, .. } => *name == StrId::CLOSURE,
@@ -85,7 +86,7 @@ pub(crate) fn union_has_untyped_mixed_callable(union: &TUnion) -> bool {
         .any(|atomic| atomic_is_untyped_mixed_callable(atomic))
 }
 
-pub(crate) fn atomic_is_untyped_mixed_callable(atomic: &TAtomic) -> bool {
+fn atomic_is_untyped_mixed_callable(atomic: &TAtomic) -> bool {
     let (params, return_type) = match atomic {
         TAtomic::TCallable {
             params,
@@ -117,19 +118,8 @@ pub(crate) fn atomic_is_untyped_mixed_callable(atomic: &TAtomic) -> bool {
 }
 
 pub(crate) fn file_uses_strict_types(analyzer: &StatementsAnalyzer<'_>) -> bool {
-    analyzer
-        .codebase
-        .files
-        .get(&analyzer.file_path)
-        .is_some_and(|file_info| {
-            file_info
-                .contents
-                .chars()
-                .take(512)
-                .collect::<String>()
-                .replace(char::is_whitespace, "")
-                .contains("declare(strict_types=1)")
-        })
+    // Computed once per file in StatementsAnalyzer::new.
+    analyzer.file_uses_strict_types
 }
 
 pub(crate) fn is_runtime_alias_union_contained(
@@ -149,7 +139,7 @@ pub(crate) fn is_runtime_alias_union_contained(
     })
 }
 
-pub(crate) fn runtime_alias_atomic_is_contained_by(
+fn runtime_alias_atomic_is_contained_by(
     analyzer: &StatementsAnalyzer<'_>,
     input_atomic: &TAtomic,
     container_atomic: &TAtomic,
@@ -187,7 +177,7 @@ pub(crate) fn runtime_alias_atomic_is_contained_by(
     is_class_subtype_with_runtime_aliases(analyzer, *input_name, *container_name, context)
 }
 
-pub(crate) fn is_class_subtype_with_runtime_aliases(
+fn is_class_subtype_with_runtime_aliases(
     analyzer: &StatementsAnalyzer<'_>,
     input_class: StrId,
     container_class: StrId,
@@ -222,7 +212,7 @@ pub(crate) fn is_class_subtype_with_runtime_aliases(
     false
 }
 
-pub(crate) fn resolve_runtime_alias_class(class_id: StrId, context: &BlockContext) -> StrId {
+fn resolve_runtime_alias_class(class_id: StrId, context: &BlockContext) -> StrId {
     context
         .class_aliases
         .get(&class_id)
@@ -238,6 +228,7 @@ pub(crate) fn param_allows_string_like(param_type: &TUnion) -> bool {
                 | TAtomic::TLiteralString { .. }
                 | TAtomic::TNonEmptyString
                 | TAtomic::TTruthyString
+                | TAtomic::TCallableString
                 | TAtomic::TLowercaseString
                 | TAtomic::TNonEmptyLowercaseString
                 | TAtomic::TNumericString
@@ -274,6 +265,12 @@ pub(crate) fn get_unpacked_iterable_key_type(
         | TAtomic::TNonEmptyArray { key_type, .. }
         | TAtomic::TIterable { key_type, .. } => Some((**key_type).clone()),
         TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => Some(TUnion::int()),
+        // class-string-map iterates with class-string keys (Psalm's standin key param).
+        TAtomic::TClassStringMap { .. } => Some(TUnion::new(
+            atomic
+                .get_class_string_map_standin_key_param()
+                .expect("checked TClassStringMap above"),
+        )),
         TAtomic::TKeyedArray {
             properties,
             fallback_key_type,
@@ -395,25 +392,6 @@ pub(crate) fn named_object_is_traversable(analyzer: &StatementsAnalyzer<'_>, nam
     })
 }
 
-pub(crate) fn subtract_null_atomic(union: &TUnion) -> TUnion {
-    let mut filtered_types = union
-        .types
-        .iter()
-        .filter(|atomic| !matches!(atomic, TAtomic::TNull))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    if filtered_types.is_empty() {
-        filtered_types.push(TAtomic::TNull);
-    }
-
-    let mut result = union.clone();
-    result.types = filtered_types;
-    result.is_nullable = result.types.iter().any(|t| t.is_nullable());
-    result.is_falsable = result.types.iter().any(|t| t.is_falsable());
-    result
-}
-
 pub(crate) fn looks_like_unresolved_conditional_docblock_type(type_id: &str) -> bool {
     if type_id.contains("array{") {
         return false;
@@ -422,86 +400,16 @@ pub(crate) fn looks_like_unresolved_conditional_docblock_type(type_id: &str) -> 
     type_id.contains("|:") || type_id.contains(" : ")
 }
 
-pub(crate) fn normalize_class_string_argument(
-    analyzer: &StatementsAnalyzer<'_>,
-    arg_type: &TUnion,
-    param_type: &TUnion,
-) -> TUnion {
-    let expects_class_string = expects_class_string_union(param_type);
-
-    if !expects_class_string {
-        return arg_type.clone();
-    }
-
-    let mut changed = false;
-    let mut normalized_types = Vec::with_capacity(arg_type.types.len());
-
-    for atomic in &arg_type.types {
-        if let TAtomic::TLiteralClassString { name } = atomic {
-            if let Some(class_id) = resolve_known_class_id_for_literal(analyzer, name) {
-                normalized_types.push(TAtomic::TClassString {
-                    as_type: Some(Box::new(TAtomic::TNamedObject {
-                        name: class_id,
-                        type_params: None,
-                    is_static: false, remapped_params: false })),
-                });
-                changed = true;
-                continue;
-            }
-        }
-
-        if let TAtomic::TLiteralString { value } = atomic {
-            if let Some(class_id) = resolve_known_class_id_for_literal(analyzer, value) {
-                normalized_types.push(TAtomic::TClassString {
-                    as_type: Some(Box::new(TAtomic::TNamedObject {
-                        name: class_id,
-                        type_params: None,
-                    is_static: false, remapped_params: false })),
-                });
-                changed = true;
-                continue;
-            }
-        }
-
-        normalized_types.push(atomic.clone());
-    }
-
-    if !changed {
-        return arg_type.clone();
-    }
-
-    let mut normalized = TUnion::from_types(normalized_types);
-    normalized.from_docblock = arg_type.from_docblock;
-    normalized.is_resolved = arg_type.is_resolved;
-    normalized.parent_nodes = arg_type.parent_nodes.clone();
-    normalized.ignore_nullable_issues = arg_type.ignore_nullable_issues;
-    normalized.ignore_falsable_issues = arg_type.ignore_falsable_issues;
-    normalized
-}
-
-pub(crate) fn resolve_known_class_id_for_literal(
-    analyzer: &StatementsAnalyzer<'_>,
-    literal: &str,
-) -> Option<StrId> {
-    let class_id = analyzer.interner.intern(literal);
-    if analyzer.codebase.get_class(class_id).is_some() {
-        return Some(class_id);
-    }
-
-    let fq_candidate = format!("\\{}", literal.trim_start_matches('\\'));
-    let fq_id = analyzer.interner.intern(&fq_candidate);
-    analyzer.codebase.get_class(fq_id).map(|_| fq_id)
-}
 
 pub(crate) fn expects_class_string_union(param_type: &TUnion) -> bool {
     union_contains_class_string(param_type)
 }
 
-pub(crate) fn union_contains_class_string(union: &TUnion) -> bool {
+fn union_contains_class_string(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_class_string)
 }
 
-pub(crate) fn atomic_contains_class_string(atomic: &TAtomic) -> bool {
+fn atomic_contains_class_string(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TClassString { .. }
         | TAtomic::TLiteralClassString { .. }
@@ -535,6 +443,7 @@ pub(crate) fn has_plain_string_like_atomic(arg_type: &TUnion) -> bool {
                 | TAtomic::TLowercaseString
                 | TAtomic::TNonEmptyLowercaseString
                 | TAtomic::TTruthyString
+                | TAtomic::TCallableString
                 | TAtomic::TNumericString
                 | TAtomic::TNonEmptyNumericString
                 | TAtomic::TLiteralString { .. }
@@ -549,7 +458,7 @@ pub(crate) fn union_has_template_class_string_argument(union: &TUnion) -> bool {
         .any(atomic_has_template_class_string_argument)
 }
 
-pub(crate) fn atomic_has_template_class_string_argument(atomic: &TAtomic) -> bool {
+fn atomic_has_template_class_string_argument(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TClassString {
             as_type: Some(inner),
@@ -603,7 +512,7 @@ pub(crate) fn accepts_unconstrained_class_string(param_type: &TUnion) -> bool {
     saw_class_string
 }
 
-pub(crate) fn atomic_is_unconstrained_class_bound(atomic: &TAtomic) -> bool {
+fn atomic_is_unconstrained_class_bound(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TObject => true,
         TAtomic::TTemplateParam { as_type, .. } => union_is_unconstrained_class_bound(as_type),
@@ -611,7 +520,7 @@ pub(crate) fn atomic_is_unconstrained_class_bound(atomic: &TAtomic) -> bool {
     }
 }
 
-pub(crate) fn union_is_unconstrained_class_bound(union: &TUnion) -> bool {
+fn union_is_unconstrained_class_bound(union: &TUnion) -> bool {
     !union.types.is_empty() && union.types.iter().all(atomic_is_unconstrained_class_bound)
 }
 
@@ -648,7 +557,7 @@ pub(crate) fn is_likely_unresolved_template_named_object_union(
         })
 }
 
-pub(crate) fn is_template_identifier_like(name: &str) -> bool {
+fn is_template_identifier_like(name: &str) -> bool {
     let mut chars = name.chars();
     let Some(first) = chars.next() else {
         return false;
@@ -696,7 +605,7 @@ pub(crate) fn normalize_class_constant_param_type(
     normalized
 }
 
-pub(crate) fn resolve_class_constant_like_atomic(
+fn resolve_class_constant_like_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     atomic: &TAtomic,
     callable_name: &str,
@@ -739,7 +648,7 @@ pub(crate) fn resolve_class_constant_like_atomic(
         .map(|constant_info| constant_info.constant_type.clone())
 }
 
-pub(crate) fn resolve_class_reference_for_constant(
+fn resolve_class_reference_for_constant(
     analyzer: &StatementsAnalyzer<'_>,
     class_part: &str,
     callable_name: &str,
@@ -768,7 +677,7 @@ pub(crate) fn resolve_class_reference_for_constant(
     analyzer.codebase.get_class(fq_id).map(|_| fq_id)
 }
 
-pub(crate) fn resolve_self_class_for_callable(
+fn resolve_self_class_for_callable(
     analyzer: &StatementsAnalyzer<'_>,
     callable_name: &str,
 ) -> Option<StrId> {
@@ -788,6 +697,209 @@ pub(crate) fn resolve_self_class_for_callable(
     analyzer.get_declaring_class()
 }
 
+/// Collect the function-level template params (`GenericParent::FunctionLike`
+/// defining entities) a callable's signature mentions — the callable's *own*
+/// templates, as opposed to the callee's standins.
+fn collect_own_callable_templates(
+    union: &TUnion,
+    template_result: &mut pzoom_code_info::TemplateResult,
+) {
+    for atomic in &union.types {
+        match atomic {
+            TAtomic::TTemplateParam {
+                name,
+                defining_entity: defining_entity @ pzoom_code_info::GenericParent::FunctionLike(_),
+                as_type,
+            } => {
+                crate::template::template_types_insert(
+                    template_result,
+                    *name,
+                    *defining_entity,
+                    (**as_type).clone(),
+                );
+            }
+            TAtomic::TNamedObject {
+                type_params: Some(type_params),
+                ..
+            } => {
+                for type_param in type_params {
+                    collect_own_callable_templates(type_param, template_result);
+                }
+            }
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TIterable {
+                key_type,
+                value_type,
+            } => {
+                collect_own_callable_templates(key_type, template_result);
+                collect_own_callable_templates(value_type, template_result);
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                collect_own_callable_templates(value_type, template_result);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Psalm's `HighOrderFunctionArgHandler::remapLowerBounds` +
+/// `enhanceCallableArgType`: a callable argument that carries its *own*
+/// function-level templates (a named function/method reference like
+/// `"from_other"` or `[$class, "method"]`) has those templates solved against
+/// the expected callable's parameter types — params only, the contravariant
+/// positions — and substituted throughout, so `from_other(ThingType): ThingType|Bar`
+/// checked against `callable(FooChild)` becomes
+/// `callable(FooChild): FooChild|Bar`. Returns `None` when the candidate has
+/// no templates of its own (e.g. closures) or nothing bound.
+pub(crate) fn enhance_high_order_callable_atomic(
+    analyzer: &StatementsAnalyzer<'_>,
+    candidate: &TAtomic,
+    expected_callables: &[&TAtomic],
+) -> Option<TAtomic> {
+    let candidate_params = get_callable_params(candidate)?;
+
+    let mut input_templates = pzoom_code_info::TemplateResult::default();
+    for candidate_param in candidate_params {
+        collect_own_callable_templates(&candidate_param.param_type, &mut input_templates);
+    }
+    if let TAtomic::TCallable {
+        return_type: Some(return_type),
+        ..
+    }
+    | TAtomic::TClosure {
+        return_type: Some(return_type),
+        ..
+    } = candidate
+    {
+        collect_own_callable_templates(return_type, &mut input_templates);
+    }
+
+    if input_templates.template_types.is_empty() {
+        return None;
+    }
+
+    for expected_callable in expected_callables {
+        let Some(expected_params) = get_callable_params(expected_callable) else {
+            continue;
+        };
+
+        for (offset, candidate_param) in candidate_params.iter().enumerate() {
+            let Some(expected_param) = expected_params.get(offset) else {
+                break;
+            };
+
+            crate::template::standin_type_replacer::infer_template_replacements_from_union(
+                analyzer,
+                &candidate_param.param_type,
+                &expected_param.param_type,
+                &mut input_templates,
+            );
+        }
+    }
+
+    if input_templates.lower_bounds.is_empty() {
+        return None;
+    }
+
+    let replace =
+        |union: &TUnion| function_call_analyzer::replace_templates_in_union(union, &input_templates);
+
+    Some(match candidate {
+        TAtomic::TCallable {
+            params: Some(params),
+            return_type,
+            is_pure,
+        } => TAtomic::TCallable {
+            params: Some(
+                params
+                    .iter()
+                    .map(|param| FunctionLikeParameter {
+                        param_type: replace(&param.param_type),
+                        ..param.clone()
+                    })
+                    .collect(),
+            ),
+            return_type: return_type
+                .as_ref()
+                .map(|return_type| Box::new(replace(return_type))),
+            is_pure: *is_pure,
+        },
+        TAtomic::TClosure {
+            params: Some(params),
+            return_type,
+            is_pure,
+        } => TAtomic::TClosure {
+            params: Some(
+                params
+                    .iter()
+                    .map(|param| FunctionLikeParameter {
+                        param_type: replace(&param.param_type),
+                        ..param.clone()
+                    })
+                    .collect(),
+            ),
+            return_type: return_type
+                .as_ref()
+                .map(|return_type| Box::new(replace(return_type))),
+            is_pure: *is_pure,
+        },
+        _ => return None,
+    })
+}
+
+/// The function receiving a callable argument, for Psalm's
+/// verifyCallableInContext scoping: its class (a method callee) and whether
+/// it is one of PHP's native callback-taking functions (call_user_func,
+/// usort, ...), which accept in-class non-public callables.
+#[derive(Clone, Copy)]
+pub(crate) struct CalleeContext {
+    pub class: Option<StrId>,
+    pub is_native_callback: bool,
+}
+
+const PHP_NATIVE_NON_PUBLIC_CB: &[&str] = &[
+    "array_filter",
+    "array_diff_uassoc",
+    "array_diff_ukey",
+    "array_intersect_uassoc",
+    "array_intersect_ukey",
+    "array_map",
+    "array_reduce",
+    "array_udiff",
+    "array_udiff_assoc",
+    "array_udiff_uassoc",
+    "array_uintersect",
+    "array_uintersect_assoc",
+    "array_uintersect_uassoc",
+    "array_walk",
+    "array_walk_recursive",
+    "preg_replace_callback",
+    "preg_replace_callback_array",
+    "call_user_func",
+    "call_user_func_array",
+    "forward_static_call",
+    "forward_static_call_array",
+    "is_callable",
+    "ob_start",
+    "register_shutdown_function",
+    "register_tick_function",
+    "session_set_save_handler",
+    "set_error_handler",
+    "set_exception_handler",
+    "spl_autoload_register",
+    "spl_autoload_unregister",
+    "uasort",
+    "uksort",
+    "usort",
+];
+
 pub(crate) fn validate_callable_argument(
     analyzer: &StatementsAnalyzer<'_>,
     arg: &Argument<'_>,
@@ -805,12 +917,105 @@ pub(crate) fn validate_callable_argument(
         return CallableValidationOutcome::NotApplicable;
     }
 
-    let candidate = if let Some(candidate) = resolve_callable_from_concat_expr(
+    // `string|callable` accepts any string: a string argument satisfies the
+    // plain-string side, so it is not validated as a callable reference
+    // (Psalm only resolves string callables for callable-only params).
+    let expected_accepts_plain_string = expected_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TString
+                | TAtomic::TNonEmptyString
+                | TAtomic::TLowercaseString
+                | TAtomic::TNonEmptyLowercaseString
+                | TAtomic::TTruthyString
+        )
+    });
+    let arg_is_all_strings = !arg_type.types.is_empty()
+        && arg_type.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TString
+                    | TAtomic::TNonEmptyString
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TLowercaseString
+                    | TAtomic::TNonEmptyLowercaseString
+                    | TAtomic::TTruthyString
+                    | TAtomic::TNumericString
+                    | TAtomic::TNonEmptyNumericString
+            )
+        });
+    if expected_accepts_plain_string && arg_is_all_strings {
+        return CallableValidationOutcome::NotApplicable;
+    }
+
+    // More generally: when the param union's NON-callable side already
+    // accepts the argument (e.g. `array{class-string, string}|callable`
+    // given a tuple), the arg is not forced through callable validation.
+    let non_callable_members: Vec<TAtomic> = expected_type
+        .types
+        .iter()
+        .filter(|atomic| {
+            !matches!(
+                atomic,
+                TAtomic::TCallable { .. } | TAtomic::TClosure { .. } | TAtomic::TCallableString
+            )
+        })
+        .cloned()
+        .collect();
+    if !non_callable_members.is_empty() {
+        let non_callable_union = TUnion::from_types(non_callable_members);
+        let mut comparison_result = TypeComparisonResult::new();
+        if crate::type_comparator::union_type_comparator::is_contained_by(
+            analyzer.codebase,
+            arg_type,
+            &non_callable_union,
+            false,
+            false,
+            &mut comparison_result,
+        ) {
+            return CallableValidationOutcome::NotApplicable;
+        }
+    }
+
+    // The function receiving the callable (Psalm's verifyCallableInContext
+    // compares its class to $context->self; PHP's native callback-takers
+    // accept in-class non-public callables).
+    let callee_class = callable_name
+        .split_once("::")
+        .map(|(class_part, _)| analyzer.interner.intern(class_part.trim_start_matches('\\')));
+    let callee_context = CalleeContext {
+        class: callee_class,
+        is_native_callback: callee_class.is_none()
+            && PHP_NATIVE_NON_PUBLIC_CB
+                .contains(&callable_name.to_ascii_lowercase().as_str()),
+    };
+
+    // `map($xs, id())`: the recorded arg type collapsed the callee's unbound
+    // templates; validate against the STORAGE return type instead, whose
+    // templates the enhancement below can solve (Psalm's
+    // HighOrderFunctionArgHandler TYPE_CALLABLE path).
+    let raw_high_order = function_call_analyzer::high_order_call_arg_raw_callable(
+        analyzer,
+        arg.value(),
+        context,
+    )
+    .and_then(|raw_union| {
+        raw_union
+            .types
+            .iter()
+            .find(|atomic| matches!(atomic, TAtomic::TCallable { .. } | TAtomic::TClosure { .. }))
+            .cloned()
+    });
+
+    let candidate = if let Some(candidate) = raw_high_order {
+        candidate
+    } else if let Some(candidate) = resolve_callable_from_concat_expr(
         analyzer,
         arg.value(),
         arg_pos,
         analysis_data,
         prefer_invalid_argument_for_undefined,
+        callee_context,
     ) {
         candidate
     } else if let Some(candidate) = resolve_candidate_from_union(
@@ -821,11 +1026,17 @@ pub(crate) fn validate_callable_argument(
         analysis_data,
         prefer_invalid_argument_for_undefined,
         context,
+        callee_context,
     ) {
         candidate
     } else {
         return CallableValidationOutcome::NotApplicable;
     };
+
+    // Psalm solves a named callable's own templates against the expected
+    // callable before comparing (HighOrderFunctionArgHandler).
+    let candidate = enhance_high_order_callable_atomic(analyzer, &candidate, &expected_callables)
+        .unwrap_or(candidate);
 
     let mut selected_issue_kind: Option<IssueKind> = None;
     let candidate_from_resolved_reference = !arg_type
@@ -855,9 +1066,19 @@ pub(crate) fn validate_callable_argument(
         );
 
         if is_match {
+            let arg_is_literal_reference = matches!(
+                arg.value().unparenthesized(),
+                Expression::Literal(_) | Expression::Array(_) | Expression::LegacyArray(_)
+            );
             if candidate_from_resolved_reference
-                && is_optional_param_gap_mismatch(&candidate, expected_callable)
+                && (is_optional_param_gap_mismatch(&candidate, expected_callable)
+                    || has_required_param_for_optional_expected(&candidate, expected_callable)
+                    || (arg_is_literal_reference
+                        && callback_accepts_fewer_than_expected(&candidate, expected_callable)))
             {
+                // A string-resolved callback whose signature accepts fewer
+                // params than the container passes may behave differently at
+                // runtime — Psalm grades it possibly invalid.
                 selected_issue_kind = Some(select_preferred_callable_issue_kind(
                     selected_issue_kind,
                     IssueKind::PossiblyInvalidArgument,
@@ -900,12 +1121,13 @@ pub(crate) fn validate_callable_argument(
     CallableValidationOutcome::IssueEmitted
 }
 
-pub(crate) fn resolve_callable_from_concat_expr(
+fn resolve_callable_from_concat_expr(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     arg_pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     prefer_invalid_argument_for_undefined: bool,
+    callee_context: CalleeContext,
 ) -> Option<TAtomic> {
     let Expression::Binary(binary) = expr else {
         return None;
@@ -928,10 +1150,12 @@ pub(crate) fn resolve_callable_from_concat_expr(
         arg_pos,
         analysis_data,
         prefer_invalid_argument_for_undefined,
+        callee_context,
     )
 }
 
-pub(crate) fn resolve_candidate_from_union(
+#[allow(clippy::too_many_arguments)]
+fn resolve_candidate_from_union(
     analyzer: &StatementsAnalyzer<'_>,
     arg_type: &TUnion,
     expected_callables: &[&TAtomic],
@@ -939,12 +1163,17 @@ pub(crate) fn resolve_candidate_from_union(
     analysis_data: &mut FunctionAnalysisData,
     prefer_invalid_argument_for_undefined: bool,
     context: &BlockContext,
+    callee_context: CalleeContext,
 ) -> Option<TAtomic> {
     for atomic in &arg_type.types {
         match atomic {
             TAtomic::TCallable { .. } | TAtomic::TClosure { .. } => return Some(atomic.clone()),
-            TAtomic::TNamedObject { name, .. } => {
-                if let Some(candidate) = resolve_named_object_callable(analyzer, *name) {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
+                if let Some(candidate) =
+                    resolve_invokable_object_callable(analyzer, *name, type_params.as_deref())
+                {
                     return Some(candidate);
                 }
             }
@@ -957,6 +1186,7 @@ pub(crate) fn resolve_candidate_from_union(
                     analysis_data,
                     prefer_invalid_argument_for_undefined,
                     context,
+                    callee_context,
                 ) {
                     return Some(candidate);
                 }
@@ -971,6 +1201,7 @@ pub(crate) fn resolve_candidate_from_union(
                         analysis_data,
                         prefer_invalid_argument_for_undefined,
                         context,
+                        callee_context,
                     ) {
                         return Some(candidate);
                     }
@@ -985,14 +1216,20 @@ pub(crate) fn resolve_candidate_from_union(
                     analysis_data,
                     prefer_invalid_argument_for_undefined,
                     context,
+                    callee_context,
                 ) {
                     return Some(candidate);
                 }
             }
             TAtomic::TKeyedArray { properties, .. } => {
-                if let Some(candidate) =
-                    resolve_array_callable(analyzer, properties, arg_pos, analysis_data, context)
-                {
+                if let Some(candidate) = resolve_array_callable(
+                    analyzer,
+                    properties,
+                    arg_pos,
+                    analysis_data,
+                    context,
+                    callee_context,
+                ) {
                     return Some(candidate);
                 }
             }
@@ -1003,12 +1240,13 @@ pub(crate) fn resolve_candidate_from_union(
     None
 }
 
-pub(crate) fn resolve_array_callable(
+fn resolve_array_callable(
     analyzer: &StatementsAnalyzer<'_>,
     properties: &rustc_hash::FxHashMap<ArrayKey, TUnion>,
     arg_pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
+    callee_context: CalleeContext,
 ) -> Option<TAtomic> {
     if properties.len() != 2 {
         add_issue(
@@ -1043,14 +1281,42 @@ pub(crate) fn resolve_array_callable(
         return None;
     };
 
+    // PHP 8.2 deprecated ["self"/"parent"/"static", "method"] callables.
+    if let Some(TAtomic::TLiteralString { value }) = first.get_single() {
+        emit_deprecated_callable_magic_class(analyzer, value, arg_pos, analysis_data);
+    }
+
+    // A non-literal STRING method name can't be resolved but may well be
+    // callable — Psalm records a potential dynamic reference and stays
+    // silent. A non-string element is never a valid method name.
     let Some(method_name) = get_literal_string_from_union(second) else {
-        add_issue(
-            analyzer,
-            analysis_data,
-            arg_pos,
-            IssueKind::InvalidArgument,
-            "Array callable method name must be a literal string",
-        );
+        let second_is_stringish = second.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TString
+                    | TAtomic::TNonEmptyString
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TLowercaseString
+                    | TAtomic::TNonEmptyLowercaseString
+                    | TAtomic::TTruthyString
+                    | TAtomic::TCallableString
+                    | TAtomic::TNumericString
+                    | TAtomic::TNonEmptyNumericString
+                    | TAtomic::TClassString { .. }
+                    | TAtomic::TLiteralClassString { .. }
+                    | TAtomic::TMixed
+                    | TAtomic::TNonEmptyMixed
+            )
+        });
+        if !second_is_stringish {
+            add_issue(
+                analyzer,
+                analysis_data,
+                arg_pos,
+                IssueKind::InvalidArgument,
+                "Array callable method name must be a literal string",
+            );
+        }
         return None;
     };
 
@@ -1065,8 +1331,23 @@ pub(crate) fn resolve_array_callable(
         return None;
     }
 
+    // ["parent", "m"] in a parentless class (Psalm's ParentNotFound).
+    if let Some(TAtomic::TLiteralString { value }) = first.get_single()
+        && value.eq_ignore_ascii_case("parent")
+        && get_class_id_from_union(analyzer, first, context).is_none()
+    {
+        add_issue(
+            analyzer,
+            analysis_data,
+            arg_pos,
+            IssueKind::ParentNotFound,
+            "Cannot resolve parent reference in a class without a parent",
+        );
+        return None;
+    }
+
     if let Some(class_id) = get_class_id_from_union(analyzer, first, context) {
-        return resolve_method_callable(
+        let resolved = resolve_method_callable(
             analyzer,
             class_id,
             method_name,
@@ -1074,11 +1355,43 @@ pub(crate) fn resolve_array_callable(
             arg_pos,
             analysis_data,
             true,
+            callee_context,
         );
+
+        // A `[$class, "method"]` callable through a templated class
+        // reference (`class-string<T1>` / `T1`) late-binds `static` returns
+        // to the template — `[$class, "fromString"]` with
+        // `class-string<T1 of Id>` yields `callable(...): T1`, so
+        // `array_map` infers `list<T1>` (Psalm's $static_type carries the
+        // template).
+        if let Some(mut callable) = resolved {
+            if let Some(static_binding) = template_static_binding_from_union(first)
+                && let TAtomic::TCallable {
+                    return_type: Some(return_type),
+                    ..
+                } = &mut callable
+            {
+                let parent_class_id = analyzer
+                    .codebase
+                    .get_class(class_id)
+                    .and_then(|class_info| class_info.parent_class);
+                **return_type =
+                    crate::type_expander::localize_special_class_type_union_with_static_object(
+                        analyzer.codebase,
+                        analyzer.interner,
+                        return_type,
+                        class_id,
+                        static_binding,
+                        parent_class_id,
+                    );
+            }
+            return Some(callable);
+        }
+        return None;
     }
 
     if let Some(object_class_id) = get_object_class_id_from_union(first) {
-        return resolve_method_callable(
+        let resolved = resolve_method_callable(
             analyzer,
             object_class_id,
             method_name,
@@ -1086,7 +1399,55 @@ pub(crate) fn resolve_array_callable(
             arg_pos,
             analysis_data,
             true,
+            callee_context,
         );
+
+        // `[$obj, "method"]` on a `T1`-typed receiver late-binds `static`
+        // returns to the template, mirroring the class-string branch above.
+        if let Some(mut callable) = resolved {
+            if let Some(static_binding) = template_static_binding_from_union(first)
+                && let TAtomic::TCallable {
+                    return_type: Some(return_type),
+                    ..
+                } = &mut callable
+            {
+                let parent_class_id = analyzer
+                    .codebase
+                    .get_class(object_class_id)
+                    .and_then(|class_info| class_info.parent_class);
+                **return_type =
+                    crate::type_expander::localize_special_class_type_union_with_static_object(
+                        analyzer.codebase,
+                        analyzer.interner,
+                        return_type,
+                        object_class_id,
+                        static_binding,
+                        parent_class_id,
+                    );
+            }
+            return Some(callable);
+        }
+        return None;
+    }
+
+    // A generic class-string / plain object first element can't be resolved
+    // to a concrete method but IS a valid callable shape (Psalm's
+    // getCallableFromAtomic returns a signatureless callable).
+    if first.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TClassString { .. }
+                | TAtomic::TObject
+                | TAtomic::TString
+                | TAtomic::TNonEmptyString
+                | TAtomic::TTemplateParam { .. }
+        )
+    }) {
+        return Some(TAtomic::TCallable {
+            params: None,
+            return_type: None,
+            is_pure: None,
+        });
     }
 
     add_issue(
@@ -1100,20 +1461,64 @@ pub(crate) fn resolve_array_callable(
     None
 }
 
-pub(crate) fn resolve_named_object_callable(
+/// An invokable object's `__invoke` as a callable atomic, with the declaring
+/// class's templates localized through the instance's type params (Psalm's
+/// `CallableTypeComparator::getCallableFromAtomic`). The method's own
+/// templates stay intact for the high-order solve against the expected
+/// callable.
+fn resolve_invokable_object_callable(
     analyzer: &StatementsAnalyzer<'_>,
     class_id: StrId,
+    type_params: Option<&[TUnion]>,
 ) -> Option<TAtomic> {
     let class_info = analyzer.codebase.get_class(class_id)?;
     let invoke_method = class_info.methods.get(&StrId::INVOKE)?;
     if invoke_method.visibility != Visibility::Public {
         return None;
     }
+    let callable = functionlike_to_callable_atomic(invoke_method);
 
-    Some(functionlike_to_callable(invoke_method))
+    let mut template_result =
+        function_call_analyzer::infer_class_template_replacements_from_type_params(
+            class_info,
+            type_params,
+        );
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
+    );
+    let localized =
+        crate::template::inferred_type_replacer::replace(&TUnion::new(callable), &template_result);
+    localized.get_single().cloned()
 }
 
-pub(crate) fn resolve_string_callable(
+/// PHP 8.2 deprecated "self"/"parent"/"static" in callable strings and
+/// callable-array class elements (Psalm: DeprecatedConstant).
+fn emit_deprecated_callable_magic_class(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_name: &str,
+    arg_pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let normalized = class_name.trim_start_matches('\\');
+    if analyzer.config.php_version_id() >= 80200
+        && matches!(
+            normalized.to_ascii_lowercase().as_str(),
+            "self" | "parent" | "static"
+        )
+    {
+        add_issue(
+            analyzer,
+            analysis_data,
+            arg_pos,
+            IssueKind::DeprecatedConstant,
+            format!("Use of \"{}\" in callables is deprecated", normalized),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_string_callable(
     analyzer: &StatementsAnalyzer<'_>,
     raw: &str,
     expected_callables: &[&TAtomic],
@@ -1121,6 +1526,7 @@ pub(crate) fn resolve_string_callable(
     analysis_data: &mut FunctionAnalysisData,
     emit_invalid_argument: bool,
     context: &BlockContext,
+    callee_context: CalleeContext,
 ) -> Option<TAtomic> {
     let cleaned = raw.strip_prefix('\\').unwrap_or(raw);
 
@@ -1138,8 +1544,19 @@ pub(crate) fn resolve_string_callable(
     }
 
     if let Some((class_name, method_name)) = cleaned.split_once("::") {
+        emit_deprecated_callable_magic_class(analyzer, class_name, arg_pos, analysis_data);
         let Some(class_id) = resolve_class_id(analyzer, class_name, context) else {
-            if emit_invalid_argument {
+            if class_name.eq_ignore_ascii_case("parent") {
+                // Psalm's ParentNotFound for "parent::m" callables in
+                // parentless classes.
+                add_issue(
+                    analyzer,
+                    analysis_data,
+                    arg_pos,
+                    IssueKind::ParentNotFound,
+                    "Cannot resolve parent reference in a class without a parent",
+                );
+            } else if emit_invalid_argument {
                 add_issue(
                     analyzer,
                     analysis_data,
@@ -1153,7 +1570,7 @@ pub(crate) fn resolve_string_callable(
                     analysis_data,
                     arg_pos,
                     IssueKind::UndefinedClass,
-                    format!("Class {} does not exist", class_name),
+                    crate::class_casing::undefined_class_message(analyzer, &class_name),
                 );
             }
             return None;
@@ -1167,6 +1584,7 @@ pub(crate) fn resolve_string_callable(
             arg_pos,
             analysis_data,
             emit_invalid_argument,
+            callee_context,
         );
     }
 
@@ -1186,6 +1604,26 @@ pub(crate) fn resolve_string_callable(
         });
     }
 
+    // A function_exists() guard vouches for the callable (Psalm's phantom
+    // functions): treat it as a signatureless callable.
+    {
+        let guard_key = pzoom_code_info::VarName::new(&format!(
+            "@function_exists({})",
+            cleaned.trim_start_matches('\\').to_ascii_lowercase()
+        ));
+        if context
+            .locals
+            .get(&guard_key)
+            .is_some_and(|guard_type| !guard_type.is_nothing() && !guard_type.is_always_falsy())
+        {
+            return Some(TAtomic::TCallable {
+                params: None,
+                return_type: None,
+                is_pure: None,
+            });
+        }
+    }
+
     if emit_invalid_argument {
         add_issue(
             analyzer,
@@ -1200,13 +1638,14 @@ pub(crate) fn resolve_string_callable(
             analysis_data,
             arg_pos,
             IssueKind::UndefinedFunction,
-            format!("Function {} is not defined", cleaned),
+            crate::class_casing::undefined_function_message(analyzer, &cleaned, None),
         );
     }
     None
 }
 
-pub(crate) fn resolve_method_callable(
+#[allow(clippy::too_many_arguments)]
+fn resolve_method_callable(
     analyzer: &StatementsAnalyzer<'_>,
     class_id: pzoom_str::StrId,
     method_name: &str,
@@ -1214,6 +1653,7 @@ pub(crate) fn resolve_method_callable(
     arg_pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     emit_invalid_argument: bool,
+    callee_context: CalleeContext,
 ) -> Option<TAtomic> {
     let Some(class_info) = analyzer.codebase.get_class(class_id) else {
         let class_name = analyzer.interner.lookup(class_id);
@@ -1231,13 +1671,44 @@ pub(crate) fn resolve_method_callable(
                 analysis_data,
                 arg_pos,
                 IssueKind::UndefinedClass,
-                format!("Class {} does not exist", class_name),
+                crate::class_casing::undefined_class_message(analyzer, &class_name),
             );
         }
         return None;
     };
 
-    let Some(method_info) = get_method_info_case_insensitive(analyzer, class_info, method_name)
+    if analyzer.config.find_unused_code
+        && let Some(method_info) = get_method_info(analyzer, class_info, method_name)
+    {
+        // A callable referencing a method counts as a call for
+        // find_unused_code (Psalm's methodExists records the reference).
+        let method_lc = analyzer.interner.intern(&method_name.to_lowercase());
+        analysis_data
+            .referenced_class_members
+            .insert((class_id, method_lc));
+        if let Some(declaring) = method_info.declaring_class {
+            analysis_data
+                .referenced_class_members
+                .insert((declaring, method_lc));
+        }
+        analysis_data.referenced_classes.insert(class_id);
+        analysis_data.method_returns_used.insert((class_id, method_lc));
+        if let Some(declaring) = method_info.declaring_class {
+            analysis_data.method_returns_used.insert((declaring, method_lc));
+        }
+    }
+
+    // PHP method names are case-insensitive: "A::BARBAR" references barBar.
+    let resolved_method_info = get_method_info(analyzer, class_info, method_name).or_else(|| {
+        class_info.methods.iter().find_map(|(existing_id, method)| {
+            analyzer
+                .interner
+                .lookup(*existing_id)
+                .eq_ignore_ascii_case(method_name)
+                .then(|| &**method)
+        })
+    });
+    let Some(method_info) = resolved_method_info
     else {
         let class_name = analyzer.interner.lookup(class_id);
         if emit_invalid_argument {
@@ -1254,13 +1725,51 @@ pub(crate) fn resolve_method_callable(
                 analysis_data,
                 arg_pos,
                 IssueKind::UndefinedMethod,
-                format!("Method {}::{} does not exist", class_name, method_name),
+                crate::class_casing::undefined_method_message(analyzer, &class_name, method_name),
             );
         }
         return None;
     };
 
-    if class_style {
+    // Psalm's verifyCallableInContext: a callable referencing the CURRENT
+    // class ($context->self) skips the checks entirely when the receiving
+    // function is a method of the same class or one of PHP's native
+    // callback-takers (call_user_func, usort, ...). Anything else requires a
+    // public (and, for class-style references, static) method.
+    // Visibility scoping: a private method is in scope only in its declaring
+    // class; a protected one anywhere in the hierarchy ([$this, "m"]).
+    let references_own_class = match method_info.visibility {
+        Visibility::Private => {
+            analyzer.get_declaring_class().is_some()
+                && analyzer.get_declaring_class() == method_info.declaring_class
+        }
+        _ => {
+            analyzer.get_declaring_class() == Some(class_id)
+                || analyzer.get_declaring_class().is_some_and(|declaring| {
+                    crate::type_comparator::object_type_comparator::is_class_subtype_of(
+                        declaring,
+                        class_id,
+                        analyzer.codebase,
+                    ) || crate::type_comparator::object_type_comparator::is_class_subtype_of(
+                        class_id,
+                        declaring,
+                        analyzer.codebase,
+                    )
+                })
+        }
+    };
+    let callee_exempt = references_own_class
+        && (callee_context.class == Some(class_id)
+            || callee_context.is_native_callback
+            // Closure::fromCallable binds the calling scope like the native
+            // callback-takers (Psalm's verifyCallableInContext).
+            || callee_context
+                .class
+                .is_some_and(|callee_class| callee_class == pzoom_str::StrId::CLOSURE));
+
+    if callee_exempt {
+        // no visibility/staticness checks
+    } else if class_style {
         if !method_info.is_static || method_info.visibility != Visibility::Public {
             add_issue(
                 analyzer,
@@ -1293,7 +1802,36 @@ pub(crate) fn resolve_method_callable(
     Some(functionlike_to_callable(method_info))
 }
 
-pub(crate) fn functionlike_to_callable(function_info: &FunctionLikeInfo) -> TAtomic {
+/// The template param a callable's class element names, if any —
+/// `class-string<T1>` or a `T1`-typed object reference. Used to late-bind
+/// `static` in the resolved callable's return type.
+fn template_static_binding_from_union(class_union: &TUnion) -> Option<TAtomic> {
+    let atomic = class_union.get_single()?;
+    match atomic {
+        template @ TAtomic::TTemplateParam { .. } => Some(template.clone()),
+        TAtomic::TTemplateParamClass {
+            name,
+            defining_entity,
+            as_type,
+        } => Some(match as_type.as_ref() {
+            template @ TAtomic::TTemplateParam { .. } => template.clone(),
+            bound => TAtomic::TTemplateParam {
+                name: *name,
+                defining_entity: *defining_entity,
+                as_type: Box::new(TUnion::new(bound.clone())),
+            },
+        }),
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => match as_type.as_ref() {
+            template @ TAtomic::TTemplateParam { .. } => Some(template.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn functionlike_to_callable(function_info: &FunctionLikeInfo) -> TAtomic {
     let params = function_info
         .params
         .iter()
@@ -1313,7 +1851,7 @@ pub(crate) fn functionlike_to_callable(function_info: &FunctionLikeInfo) -> TAto
     }
 }
 
-pub(crate) fn is_optional_param_gap_mismatch(candidate: &TAtomic, expected: &TAtomic) -> bool {
+fn is_optional_param_gap_mismatch(candidate: &TAtomic, expected: &TAtomic) -> bool {
     let (Some(candidate_params), Some(expected_params)) = (
         get_callable_params(candidate),
         get_callable_params(expected),
@@ -1330,6 +1868,28 @@ pub(crate) fn is_optional_param_gap_mismatch(candidate: &TAtomic, expected: &TAt
         .all(|p| p.is_optional || p.is_variadic)
 }
 
+/// Whether the candidate requires a parameter at a position the expected
+/// callable marks optional (the callable contract allows omitting it).
+fn has_required_param_for_optional_expected(
+    candidate: &TAtomic,
+    expected: &TAtomic,
+) -> bool {
+    let (Some(candidate_params), Some(expected_params)) = (
+        get_callable_params(candidate),
+        get_callable_params(expected),
+    ) else {
+        return false;
+    };
+
+    candidate_params.iter().enumerate().any(|(i, candidate_param)| {
+        !candidate_param.is_optional
+            && !candidate_param.is_variadic
+            && expected_params
+                .get(i)
+                .is_some_and(|expected_param| expected_param.is_optional)
+    })
+}
+
 pub(crate) fn get_callable_params(atomic: &TAtomic) -> Option<&Vec<FunctionLikeParameter>> {
     match atomic {
         TAtomic::TCallable { params, .. } | TAtomic::TClosure { params, .. } => params.as_ref(),
@@ -1337,7 +1897,7 @@ pub(crate) fn get_callable_params(atomic: &TAtomic) -> Option<&Vec<FunctionLikeP
     }
 }
 
-pub(crate) fn has_scalar_callable_mismatch(
+fn has_scalar_callable_mismatch(
     codebase: &pzoom_code_info::CodebaseInfo,
     candidate: &TAtomic,
     expected: &TAtomic,
@@ -1396,28 +1956,7 @@ pub(crate) fn has_scalar_callable_mismatch(
     false
 }
 
-pub(crate) fn is_scalar_union(union: &TUnion) -> bool {
-    if !union.is_single() {
-        return false;
-    }
-
-    matches!(
-        union.get_single(),
-        Some(
-            TAtomic::TInt
-                | TAtomic::TFloat
-                | TAtomic::TString
-                | TAtomic::TBool
-                | TAtomic::TTrue
-                | TAtomic::TFalse
-                | TAtomic::TLiteralInt { .. }
-                | TAtomic::TLiteralFloat { .. }
-                | TAtomic::TLiteralString { .. }
-        )
-    )
-}
-
-pub(crate) fn is_scalar_only_union(union: &TUnion) -> bool {
+fn is_scalar_only_union(union: &TUnion) -> bool {
     !union.types.is_empty() && union.types.iter().all(is_scalar_atomic)
 }
 
@@ -1532,7 +2071,7 @@ pub(crate) fn get_expected_callable_atomics(union: &TUnion) -> Vec<&TAtomic> {
         .collect()
 }
 
-pub(crate) fn determine_callable_mismatch_issue_kind(
+fn determine_callable_mismatch_issue_kind(
     analyzer: &StatementsAnalyzer<'_>,
     candidate: &TAtomic,
     expected_callable: &TAtomic,
@@ -1551,7 +2090,7 @@ pub(crate) fn determine_callable_mismatch_issue_kind(
     }
 
     if comparison_result
-        .type_coerced_from_nested_mixed
+        .type_coerced_from_mixed
         .unwrap_or(false)
     {
         return IssueKind::MixedArgumentTypeCoercion;
@@ -1579,7 +2118,7 @@ pub(crate) fn determine_callable_mismatch_issue_kind(
     }
 }
 
-pub(crate) fn has_non_overlapping_callable_arity(candidate: &TAtomic, expected: &TAtomic) -> bool {
+fn has_non_overlapping_callable_arity(candidate: &TAtomic, expected: &TAtomic) -> bool {
     let (Some(candidate_params), Some(expected_params)) = (
         get_callable_params(candidate),
         get_callable_params(expected),
@@ -1628,7 +2167,7 @@ pub(crate) fn has_non_overlapping_callable_arity(candidate: &TAtomic, expected: 
     false
 }
 
-pub(crate) fn select_preferred_callable_issue_kind(
+fn select_preferred_callable_issue_kind(
     current: Option<IssueKind>,
     incoming: IssueKind,
 ) -> IssueKind {
@@ -1646,7 +2185,7 @@ pub(crate) fn select_preferred_callable_issue_kind(
     }
 }
 
-pub(crate) fn callable_issue_priority(kind: IssueKind) -> u8 {
+fn callable_issue_priority(kind: IssueKind) -> u8 {
     match kind {
         IssueKind::PossiblyInvalidArgument => 0,
         IssueKind::MixedArgumentTypeCoercion => 1,
@@ -1656,14 +2195,14 @@ pub(crate) fn callable_issue_priority(kind: IssueKind) -> u8 {
     }
 }
 
-pub(crate) fn get_literal_string<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
+fn get_literal_string<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
     match expr {
         Expression::Literal(Literal::String(s)) => s.value,
         _ => None,
     }
 }
 
-pub(crate) fn get_literal_string_from_union(union: &TUnion) -> Option<&str> {
+fn get_literal_string_from_union(union: &TUnion) -> Option<&str> {
     if !union.is_single() {
         return None;
     }
@@ -1674,7 +2213,7 @@ pub(crate) fn get_literal_string_from_union(union: &TUnion) -> Option<&str> {
     }
 }
 
-pub(crate) fn get_class_from_class_const_expr(
+fn get_class_from_class_const_expr(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
 ) -> Option<pzoom_str::StrId> {
@@ -1699,7 +2238,7 @@ pub(crate) fn get_class_from_class_const_expr(
     resolve_class_id_from_expr(analyzer, const_access.class)
 }
 
-pub(crate) fn resolve_class_id_from_expr(
+fn resolve_class_id_from_expr(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
 ) -> Option<pzoom_str::StrId> {
@@ -1765,7 +2304,7 @@ pub(crate) fn resolve_class_id(
     }
 }
 
-pub(crate) fn get_class_id_from_union(
+fn get_class_id_from_union(
     analyzer: &StatementsAnalyzer<'_>,
     union: &TUnion,
     context: &BlockContext,
@@ -1787,7 +2326,7 @@ pub(crate) fn get_class_id_from_union(
     class_id
 }
 
-pub(crate) fn get_object_class_id_from_union(union: &TUnion) -> Option<pzoom_str::StrId> {
+fn get_object_class_id_from_union(union: &TUnion) -> Option<pzoom_str::StrId> {
     let mut class_id = None;
 
     for atomic in &union.types {
@@ -1805,7 +2344,7 @@ pub(crate) fn get_object_class_id_from_union(union: &TUnion) -> Option<pzoom_str
     class_id
 }
 
-pub(crate) fn get_class_id_from_atomic(
+fn get_class_id_from_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     atomic: &TAtomic,
     context: &BlockContext,
@@ -1815,7 +2354,19 @@ pub(crate) fn get_class_id_from_atomic(
         TAtomic::TLiteralString { value } => resolve_class_id(analyzer, value, context),
         TAtomic::TClassString {
             as_type: Some(as_type),
-        } => get_named_class_id_from_atomic(as_type),
+        } => get_named_class_id_from_atomic(as_type).map(|class_id| {
+            // `static::class` / `self::class` produce class-string<static>;
+            // resolve the placeholder to the enclosing class (Psalm's
+            // getFunctionIdsFromCallableArg resolves $this_class_name).
+            if class_id == StrId::STATIC || class_id == StrId::SELF {
+                analyzer
+                    .get_declaring_class()
+                    .or(context.self_class)
+                    .unwrap_or(class_id)
+            } else {
+                class_id
+            }
+        }),
         TAtomic::TTemplateParam { as_type, .. } => {
             get_class_id_from_union(analyzer, as_type, context)
         }
@@ -1824,7 +2375,7 @@ pub(crate) fn get_class_id_from_atomic(
     }
 }
 
-pub(crate) fn get_object_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
+fn get_object_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
     match atomic {
         TAtomic::TNamedObject { name, .. } => Some(*name),
         TAtomic::TTemplateParam { as_type, .. } => {
@@ -1849,7 +2400,7 @@ pub(crate) fn get_object_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_
     }
 }
 
-pub(crate) fn get_named_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
+fn get_named_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
     match atomic {
         TAtomic::TNamedObject { name, .. } => Some(*name),
         TAtomic::TTemplateParam { as_type, .. } => {
@@ -1864,46 +2415,29 @@ pub(crate) fn get_named_class_id_from_atomic(atomic: &TAtomic) -> Option<pzoom_s
     }
 }
 
-pub(crate) fn resolve_callable_function<'a>(
+fn resolve_callable_function<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
     name: &str,
     _context: &BlockContext,
 ) -> Option<&'a FunctionLikeInfo> {
-    if let Some(stripped) = name.strip_prefix('\\') {
-        let function_id = analyzer.interner.intern(stripped);
-        if let Some(function_info) = analyzer.codebase.get_function(function_id) {
-            return Some(function_info);
-        }
-
-        return find_function_case_insensitive(analyzer, stripped);
+    let name = name.strip_prefix('\\').unwrap_or(name);
+    let function_id = analyzer.interner.intern(name);
+    if let Some(function_info) = analyzer.codebase.get_function(function_id) {
+        return Some(function_info);
     }
 
-    let function_id = analyzer.interner.intern(name);
-    analyzer
+    // PHP function names are case-insensitive: "fooBar" references foobar.
+    if let Some(cased_id) = analyzer
         .codebase
-        .get_function(function_id)
-        .or_else(|| find_function_case_insensitive(analyzer, name))
+        .cased_functionlike_for(analyzer.interner, function_id)
+        && let Some(function_info) = analyzer.codebase.get_function(cased_id)
+    {
+        return Some(function_info);
+    }
+    None
 }
 
-pub(crate) fn find_function_case_insensitive<'a>(
-    analyzer: &'a StatementsAnalyzer<'_>,
-    target_name: &str,
-) -> Option<&'a FunctionLikeInfo> {
-    analyzer
-        .codebase
-        .functionlike_infos
-        .iter()
-        .find_map(|(function_id, function_info)| {
-            analyzer
-                .interner
-                .lookup(*function_id)
-                .as_ref()
-                .eq_ignore_ascii_case(target_name)
-                .then_some(function_info)
-        })
-}
-
-pub(crate) fn has_local_function_declaration(analyzer: &StatementsAnalyzer<'_>, target_name: &str) -> bool {
+fn has_local_function_declaration(analyzer: &StatementsAnalyzer<'_>, target_name: &str) -> bool {
     let Some(function_info) = analyzer.function_info else {
         return false;
     };
@@ -1918,7 +2452,7 @@ pub(crate) fn has_local_function_declaration(analyzer: &StatementsAnalyzer<'_>, 
     has_function_declaration_in_source(source_window, target_name)
 }
 
-pub(crate) fn has_function_declaration_in_source(source: &str, target_name: &str) -> bool {
+fn has_function_declaration_in_source(source: &str, target_name: &str) -> bool {
     let bytes = source.as_bytes();
     let mut i = 0;
 
@@ -1957,6 +2491,7 @@ pub(crate) fn has_function_declaration_in_source(source: &str, target_name: &str
             }
 
             let declared_name = &source[name_start..cursor];
+            // PHP function names are case-insensitive.
             if declared_name.eq_ignore_ascii_case(target_name) {
                 let mut after_name = cursor;
                 while after_name < bytes.len() && bytes[after_name].is_ascii_whitespace() {
@@ -1975,138 +2510,19 @@ pub(crate) fn has_function_declaration_in_source(source: &str, target_name: &str
     false
 }
 
-pub(crate) fn is_ident_byte(byte: u8) -> bool {
+fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-pub(crate) fn get_method_info_case_insensitive<'a>(
+pub(crate) fn get_method_info<'a>(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &'a pzoom_code_info::ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-    if let Some(method_info) = class_info.methods.get(&method_id) {
-        return Some(method_info);
-    }
 
-    class_info
-        .methods
-        .iter()
-        .find_map(|(stored_id, method_info)| {
-            analyzer
-                .interner
-                .lookup(*stored_id)
-                .as_ref()
-                .eq_ignore_ascii_case(method_name)
-                .then_some(method_info)
-        })
-}
-
-pub(crate) fn find_undefined_named_object_in_union(
-    analyzer: &StatementsAnalyzer<'_>,
-    union: &TUnion,
-) -> Option<String> {
-    for atomic in &union.types {
-        if let Some(name) = find_undefined_named_object_in_atomic(analyzer, atomic) {
-            return Some(name);
-        }
-    }
-
-    None
-}
-
-pub(crate) fn find_undefined_named_object_in_atomic(
-    analyzer: &StatementsAnalyzer<'_>,
-    atomic: &TAtomic,
-) -> Option<String> {
-    match atomic {
-        TAtomic::TNamedObject { name, type_params , .. } => {
-            if matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT) {
-                return None;
-            }
-
-            let requested = analyzer.interner.lookup(*name);
-            if looks_like_unresolved_conditional_docblock_type(requested.as_ref())
-                || (requested.contains(':') && !requested.contains("::"))
-            {
-                return None;
-            }
-            if let Some((class_part, _)) = requested.rsplit_once("::") {
-                let class_part = class_part.trim();
-                let class_part = class_part.strip_prefix('\\').unwrap_or(class_part);
-
-                if class_part.eq_ignore_ascii_case("self")
-                    || class_part.eq_ignore_ascii_case("static")
-                    || class_part.eq_ignore_ascii_case("parent")
-                {
-                    return None;
-                }
-
-                let class_part_id = analyzer.interner.intern(class_part);
-                if analyzer.codebase.get_class(class_part_id).is_some() {
-                    return None;
-                }
-
-                let exists_case_insensitive =
-                    analyzer.codebase.classlike_infos.keys().any(|existing_id| {
-                        analyzer
-                            .interner
-                            .lookup(*existing_id)
-                            .as_ref()
-                            .eq_ignore_ascii_case(class_part)
-                    });
-
-                if !exists_case_insensitive {
-                    return Some(class_part.to_string());
-                }
-
-                return None;
-            }
-
-            if analyzer.codebase.get_class(*name).is_none() {
-                let exists_case_insensitive =
-                    analyzer.codebase.classlike_infos.keys().any(|existing_id| {
-                        analyzer
-                            .interner
-                            .lookup(*existing_id)
-                            .as_ref()
-                            .eq_ignore_ascii_case(requested.as_ref())
-                    });
-
-                if !exists_case_insensitive {
-                    return Some(requested.to_string());
-                }
-            }
-
-            if let Some(type_params) = type_params {
-                for param_type in type_params {
-                    if let Some(name) = find_undefined_named_object_in_union(analyzer, param_type) {
-                        return Some(name);
-                    }
-                }
-            }
-
-            None
-        }
-        TAtomic::TTemplateParam { as_type, .. } => {
-            find_undefined_named_object_in_union(analyzer, as_type)
-        }
-        TAtomic::TTemplateParamClass { as_type, .. } => {
-            find_undefined_named_object_in_atomic(analyzer, as_type)
-        }
-        TAtomic::TObjectIntersection { types } => {
-            for intersection_atomic in types {
-                if let Some(name) =
-                    find_undefined_named_object_in_atomic(analyzer, intersection_atomic)
-                {
-                    return Some(name);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
+    class_info.methods.get(&method_id).map(|method| &**method)
 }
 
 pub(crate) fn find_undefined_class_string_literal_in_argument(
@@ -2138,7 +2554,7 @@ pub(crate) fn find_undefined_class_string_literal_in_argument(
     None
 }
 
-pub(crate) fn find_undefined_class_string_literal_in_argument_for_atomic(
+fn find_undefined_class_string_literal_in_argument_for_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     param_atomic: &TAtomic,
@@ -2207,7 +2623,7 @@ pub(crate) fn find_undefined_class_string_literal_in_argument_for_atomic(
     }
 }
 
-pub(crate) fn find_undefined_class_string_literal_in_array_argument(
+fn find_undefined_class_string_literal_in_array_argument(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     value_param_type: &TUnion,
@@ -2264,7 +2680,7 @@ pub(crate) fn find_undefined_class_string_literal_in_array_argument(
     }
 }
 
-pub(crate) fn get_literal_string_value(expr: &Expression<'_>) -> Option<String> {
+fn get_literal_string_value(expr: &Expression<'_>) -> Option<String> {
     match expr.unparenthesized() {
         Expression::Literal(Literal::String(string_literal)) => {
             string_literal.value.map(ToString::to_string)
@@ -2280,7 +2696,7 @@ pub(crate) fn get_literal_string_value(expr: &Expression<'_>) -> Option<String> 
     }
 }
 
-pub(crate) fn classlike_exists_case_insensitive(
+fn classlike_exists_case_insensitive(
     analyzer: &StatementsAnalyzer<'_>,
     class_name: &str,
     context: &BlockContext,
@@ -2299,33 +2715,13 @@ pub(crate) fn classlike_exists_case_insensitive(
         return true;
     }
 
-    let has_case_insensitive_match = analyzer.codebase.classlike_infos.keys().any(|existing_id| {
-        analyzer
-            .interner
-            .lookup(*existing_id)
-            .as_ref()
-            .trim_start_matches('\\')
-            .eq_ignore_ascii_case(normalized)
-    });
-
-    if has_case_insensitive_match {
-        return true;
-    }
-
     if !normalized.contains('\\')
         && let Some(namespace_id) = context.namespace
     {
         let namespace = analyzer.interner.lookup(namespace_id);
         let namespaced_candidate = format!("{}\\{}", namespace, normalized);
-
-        return analyzer.codebase.classlike_infos.keys().any(|existing_id| {
-            analyzer
-                .interner
-                .lookup(*existing_id)
-                .as_ref()
-                .trim_start_matches('\\')
-                .eq_ignore_ascii_case(namespaced_candidate.trim_start_matches('\\'))
-        });
+        let namespaced_id = analyzer.interner.intern(&namespaced_candidate);
+        return analyzer.codebase.get_class(namespaced_id).is_some();
     }
 
     false
@@ -2354,7 +2750,7 @@ pub(crate) fn is_valid_by_ref_arg(
     call_returns_by_ref(analyzer, call, context)
 }
 
-pub(crate) fn call_returns_by_ref(
+fn call_returns_by_ref(
     analyzer: &StatementsAnalyzer<'_>,
     call: &Call<'_>,
     context: &BlockContext,
@@ -2387,8 +2783,8 @@ pub(crate) fn call_returns_by_ref(
                 return false;
             };
 
-            let var_id = analyzer.interner.intern(direct.name);
-            let Some(object_type) = context.get_var_type(var_id) else {
+            let var_id = VarName::new(direct.name);
+            let Some(object_type) = context.get_var_type(&var_id) else {
                 return false;
             };
 
@@ -2422,9 +2818,27 @@ pub(crate) fn check_by_ref_property_mutability(
         return;
     };
 
+    // Psalm only reaches the readonly check for by-ref property args when the
+    // receiver is `\$this` or the caller is a free function (verified against
+    // the reference checkout: array_shift(\$other->readonly_array) inside any
+    // class method reports nothing; the same call in a free function — or on
+    // \$this — reports InaccessibleProperty).
+    let receiver_is_this = matches!(
+        property_access.object.unparenthesized(),
+        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct))
+            if direct.name == "$this"
+    );
+    if !receiver_is_this
+        && analyzer
+            .function_info
+            .is_some_and(|info| info.declaring_class.is_some())
+    {
+        return;
+    }
+
     let object_span = property_access.object.span();
     let Some(object_type) =
-        analysis_data.get_expr_type((object_span.start.offset, object_span.end.offset))
+        analysis_data.expr_types.get(&(object_span.start.offset, object_span.end.offset)).cloned()
     else {
         return;
     };
@@ -2445,6 +2859,19 @@ pub(crate) fn check_by_ref_property_mutability(
         };
 
         if prop_info.is_readonly || class_info.is_immutable {
+            // Psalm routes by-ref property args through the property
+            // ASSIGNMENT checks, which permit writes in the declaring
+            // class's constructor / unserialize / __clone (`ksort($this->
+            // properties)` in an immutable constructor is fine).
+            let receiver_is_declaring_class = analyzer
+                .get_declaring_class()
+                .is_some_and(|calling_class| calling_class == *name);
+            if receiver_is_this
+                && receiver_is_declaring_class
+                && crate::expr::assignment::instance_property_assignment_analyzer::is_special_write_method(analyzer)
+            {
+                break;
+            }
             let class_name = analyzer.interner.lookup(*name);
             add_issue(
                 analyzer,
@@ -2482,30 +2909,66 @@ pub(crate) fn add_issue(
 
 pub(crate) fn analyze_arguments_with_callable_context(
     analyzer: &StatementsAnalyzer<'_>,
+    function_id: Option<pzoom_str::StrId>,
     args: &[&Argument<'_>],
     arg_positions: &[Pos],
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
-    template_defaults: &TemplateMap,
+    template_defaults: &TemplateResult,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
+    let mut next_positional = 0usize;
     for arg in args {
         if is_closure_like_argument(arg) {
+            if matches!(arg, Argument::Positional(_)) {
+                next_positional += 1;
+            }
             continue;
         }
 
+        // Psalm's handleByRefFunctionArg skips read-analysis of a by-ref
+        // argument whose var path isn't in scope; flag it so the array fetch
+        // doesn't report an empty-array read the call is about to write.
+        let param_is_by_ref = params
+            .get(next_positional)
+            .or_else(|| params.last().filter(|param| param.is_variadic))
+            .is_some_and(|param| param.by_ref);
+        if matches!(arg, Argument::Positional(_)) {
+            next_positional += 1;
+        }
+
+        let was_inside_by_ref_argument = context.inside_by_ref_argument;
+        if param_is_by_ref {
+            context.inside_by_ref_argument = true;
+        }
         argument_analyzer::analyze(analyzer, arg, analysis_data, context);
+        context.inside_by_ref_argument = was_inside_by_ref_argument;
     }
 
-    let template_replacements = function_call_analyzer::infer_template_replacements_from_args(
+    let mut template_result = template_defaults.clone();
+    function_call_analyzer::infer_template_replacements_from_args(
         analyzer,
         args,
         arg_positions,
         params,
-        template_defaults,
+        &mut template_result,
         analysis_data,
         context,
     );
+
+    // Psalm's ARRAY_FILTERLIKE handling (handleArrayMapFilterArrayArg +
+    // handleClosureArg): the filter family's callback params are typed from
+    // the already-analyzed array argument, even when the resolved signature
+    // (e.g. a vendor polyfill's plain `callable`) carries no param types.
+    let filter_callback_type = function_id.and_then(|function_id| {
+        crate::expr::call::arguments_analyzer::infer_array_filter_callback_param_type_for_closure_inference(
+            analyzer,
+            function_id,
+            args,
+            arg_positions,
+            analysis_data,
+        )
+    });
 
     for (idx, arg) in args.iter().enumerate() {
         let Some(closure_offset) = get_closure_like_argument_offset(arg) else {
@@ -2518,24 +2981,37 @@ pub(crate) fn analyze_arguments_with_callable_context(
             params.last().filter(|p| p.is_variadic)
         };
 
-        let expected_param_type = param.and_then(|param| param.get_type()).map(|param_type| {
-            if template_defaults.is_empty() && template_replacements.is_empty() {
-                param_type.clone()
-            } else {
-                function_call_analyzer::replace_templates_in_union(param_type, &template_replacements, template_defaults)
-            }
-        });
+        let expected_param_type = if idx == 1 && filter_callback_type.is_some() {
+            filter_callback_type.clone()
+        } else {
+            param.and_then(|param| param.get_type()).map(|param_type| {
+                if crate::template::template_result_is_empty(&template_result) {
+                    param_type.clone()
+                } else {
+                    function_call_analyzer::replace_templates_in_union(param_type, &template_result)
+                }
+            })
+        };
 
+        // An entry seeded by an OUTER high-order pass (the enclosing call
+        // solved this callee's templates against its own expectation) is
+        // more informed than the local unsolved param type — keep it.
+        let mut inserted = false;
         if let Some(expected_param_type) = expected_param_type {
-            if union_has_callable(&expected_param_type) {
+            if union_has_callable(&expected_param_type)
+                && !context.expected_callable_arg_types.contains_key(&closure_offset)
+            {
                 context
                     .expected_callable_arg_types
                     .insert(closure_offset, expected_param_type);
+                inserted = true;
             }
         }
 
         argument_analyzer::analyze(analyzer, arg, analysis_data, context);
-        context.expected_callable_arg_types.remove(&closure_offset);
+        if inserted {
+            context.expected_callable_arg_types.remove(&closure_offset);
+        }
     }
 }
 
@@ -2560,6 +3036,8 @@ pub(crate) fn validate_direct_callable_invocation(
     context: &BlockContext,
     pos: Pos,
 ) {
+    check_callable_union_invocability(analyzer, callee_type, analysis_data, pos);
+
     let Some(callable_signature) = get_first_callable_signature(callee_type) else {
         return;
     };
@@ -2636,7 +3114,6 @@ pub(crate) fn validate_direct_callable_invocation(
         analysis_data,
         context,
         None,
-        None,
         pos,
         false,
         true,
@@ -2651,7 +3128,7 @@ pub(crate) struct DirectCallableSignature {
     from_callable_docblock: bool,
 }
 
-pub(crate) fn get_first_callable_signature(callee_type: &TUnion) -> Option<DirectCallableSignature> {
+fn get_first_callable_signature(callee_type: &TUnion) -> Option<DirectCallableSignature> {
     for atomic in &callee_type.types {
         match atomic {
             TAtomic::TCallable {
@@ -2691,20 +3168,6 @@ pub(crate) fn get_first_callable_signature(callee_type: &TUnion) -> Option<Direc
     }
 
     None
-}
-
-pub(crate) fn has_known_literal_function_target(
-    analyzer: &StatementsAnalyzer<'_>,
-    callee_type: &TUnion,
-    context: &BlockContext,
-) -> bool {
-    callee_type.types.iter().any(|atomic| match atomic {
-        TAtomic::TLiteralString { value } => {
-            function_call_analyzer::resolve_function(analyzer, value, false, None, context).is_some()
-                || function_call_analyzer::resolve_function(analyzer, value, true, None, context).is_some()
-        }
-        _ => false,
-    })
 }
 
 pub(crate) fn widen_literal_scalar_union_for_callable(union: &TUnion) -> TUnion {
@@ -2748,6 +3211,98 @@ pub(crate) fn infer_array_map_callable_return_type(
             TAtomic::TKeyedArray { properties, .. } => {
                 resolve_array_callable_method(analyzer, properties, context)
                     .and_then(|m| resolve_callable_return_type(analyzer, m, callback_input_types))
+                    .map(|callable_return| {
+                        // `static` through a templated class element resolves
+                        // to the template, not the concrete class (same
+                        // late-binding as resolve_array_callable).
+                        if let Some(class_union) =
+                            properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                            && let Some(class_id) =
+                                get_callable_class_from_union(analyzer, class_union, context)
+                        {
+                            let parent_class_id = analyzer
+                                .codebase
+                                .get_class(class_id)
+                                .and_then(|class_info| class_info.parent_class);
+                            // The raw declared return still carries `static`;
+                            // re-localize from the method storage. A template
+                            // element late-binds to the template; a literally
+                            // named class binds firmly
+                            // ([CriterionId::class, 'fromString'] returns
+                            // CriterionId even when declared on Id).
+                            if let Some(method_info) = resolve_array_callable_method(
+                                    analyzer, properties, context,
+                                )
+                                && method_info
+                                    .get_return_type()
+                                    .is_some_and(|return_type| {
+                                        super::atomic_method_call_analyzer::
+                                            union_contains_static_reference(return_type)
+                                    })
+                                && let Some(raw_return) = method_info.get_return_type()
+                            {
+                                if let Some(static_binding) =
+                                    template_static_binding_from_union(class_union)
+                                {
+                                    return crate::type_expander::
+                                        localize_special_class_type_union_with_static_object(
+                                            analyzer.codebase,
+                                            analyzer.interner,
+                                            raw_return,
+                                            class_id,
+                                            static_binding,
+                                            parent_class_id,
+                                        );
+                                }
+                                return crate::type_expander::
+                                    localize_special_class_type_union_final(
+                                        analyzer.codebase,
+                                        analyzer.interner,
+                                        raw_return,
+                                        class_id,
+                                        class_id,
+                                        parent_class_id,
+                                        true,
+                                    );
+                            }
+                        }
+                        // An OBJECT element ([\$container, 'get']) localizes
+                        // the declaring class's templates through the
+                        // instance's type params (Container<stdClass>::get
+                        // returns stdClass).
+                        if let Some(class_union) =
+                            properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                            && let Some(TAtomic::TNamedObject {
+                                name,
+                                type_params: Some(object_params),
+                                ..
+                            }) = class_union.get_single()
+                            && let Some(class_info) = analyzer.codebase.get_class(*name)
+                        {
+                            let mut template_result = function_call_analyzer::
+                                infer_class_template_replacements_from_type_params(
+                                    class_info,
+                                    Some(object_params),
+                                );
+                            function_call_analyzer::
+                                infer_class_template_replacements_from_extended_params(
+                                    &mut template_result,
+                                    class_info,
+                                );
+                            if !crate::template::template_result_is_empty(&template_result)
+                                && let Some(method_info) = resolve_array_callable_method(
+                                    analyzer, properties, context,
+                                )
+                                && let Some(raw_return) = method_info.get_return_type()
+                            {
+                                return crate::template::inferred_type_replacer::replace(
+                                    raw_return,
+                                    &template_result,
+                                );
+                            }
+                        }
+                        callable_return
+                    })
             }
             _ => None,
         };
@@ -2834,7 +3389,7 @@ pub(crate) fn infer_invokable_object_return_type(
     combined_return_type
 }
 
-pub(crate) fn infer_invokable_named_object_return_type(
+fn infer_invokable_named_object_return_type(
     analyzer: &StatementsAnalyzer<'_>,
     class_id: StrId,
     object_type_params: Option<&[TUnion]>,
@@ -2847,27 +3402,38 @@ pub(crate) fn infer_invokable_named_object_return_type(
     let invoke_method = class_info.methods.get(&StrId::INVOKE)?;
     invoke_method.get_return_type()?;
 
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(invoke_method));
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    for template_type in &invoke_method.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
 
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
+    );
     function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
+        &mut template_result,
         function_call_analyzer::infer_class_template_replacements_from_type_params(class_info, object_type_params),
     );
-    function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
-        function_call_analyzer::infer_template_replacements_from_args(
-            analyzer,
-            args,
-            arg_positions,
-            &invoke_method.params,
-            &template_defaults,
-            analysis_data,
-            context,
-        ),
+    let mut arg_template_result = TemplateResult {
+        template_types: template_result.template_types.clone(),
+        ..Default::default()
+    };
+    function_call_analyzer::infer_template_replacements_from_args(
+        analyzer,
+        args,
+        arg_positions,
+        &invoke_method.params,
+        &mut arg_template_result,
+        analysis_data,
+        context,
     );
+    function_call_analyzer::overlay_template_replacements(&mut template_result, arg_template_result);
 
     let callable_name = format!("{}::__invoke", analyzer.interner.lookup(class_id));
     for (idx, arg) in args.iter().enumerate() {
@@ -2888,7 +3454,7 @@ pub(crate) fn infer_invokable_named_object_return_type(
         };
 
         let arg_pos = arg_positions.get(idx).copied().unwrap_or((0, 0));
-        let Some(arg_type) = analysis_data.get_expr_type(arg_pos) else {
+        let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned() else {
             continue;
         };
 
@@ -2896,8 +3462,7 @@ pub(crate) fn infer_invokable_named_object_return_type(
         if let Some(param_type) = param.get_type() {
             effective_param.param_type = Some(function_call_analyzer::replace_templates_in_union(
                 param_type,
-                &template_replacements,
-                &template_defaults,
+                &template_result,
             ));
         }
 
@@ -2911,14 +3476,16 @@ pub(crate) fn infer_invokable_named_object_return_type(
             &callable_name,
             analysis_data,
             context,
+            // Synthetic re-verification against the callable's signature; the
+            // real call's argument dataflow is attached by the outer call.
+            None,
         );
     }
 
     let resolved_return_type = function_call_analyzer::resolve_functionlike_return_type(
         analyzer,
         invoke_method,
-        &template_defaults,
-        &template_replacements,
+        &template_result,
         &FxHashMap::default(),
         args.len(),
     )
@@ -2935,7 +3502,7 @@ pub(crate) fn infer_invokable_named_object_return_type(
 /// class. Unlike a method call, a callable reference captures the class at
 /// definition, so `static` is *not* late-bound — equivalent to expanding with
 /// `function_is_final: true`. Thin wrapper over the single [`type_expander`] mechanism.
-pub(crate) fn localize_special_class_type_union_for_callable(
+fn localize_special_class_type_union_for_callable(
     codebase: &pzoom_code_info::CodebaseInfo,
     interner: &pzoom_str::Interner,
     union: &TUnion,
@@ -2958,20 +3525,26 @@ pub(crate) fn localize_special_class_type_union_for_callable(
     localized
 }
 
-pub(crate) fn resolve_callable_return_type(
+fn resolve_callable_return_type(
     analyzer: &StatementsAnalyzer<'_>,
     function_info: &pzoom_code_info::FunctionLikeInfo,
     arg_types: &[TUnion],
 ) -> Option<TUnion> {
     function_info.get_return_type()?;
-    let template_defaults = function_call_analyzer::get_template_defaults(function_info);
+    let mut template_result = function_call_analyzer::get_template_defaults(function_info);
 
-    let mut template_replacements = TemplateMap::new();
+    // Conditional returns name their subject param (`$string is class-string
+    // ? ...`); bind each param to the corresponding element type so the
+    // branch resolves against the real input rather than an injected
+    // `nothing` (which is contained in everything and picks the if branch).
+    let mut param_arg_types: FxHashMap<pzoom_str::StrId, TUnion> = FxHashMap::default();
     for (idx, param) in function_info.params.iter().enumerate() {
-        let Some(param_type) = param.get_type() else {
+        let Some(arg_type) = arg_types.get(idx) else {
             continue;
         };
-        let Some(arg_type) = arg_types.get(idx) else {
+        param_arg_types.insert(param.name, arg_type.clone());
+
+        let Some(param_type) = param.get_type() else {
             continue;
         };
 
@@ -2979,17 +3552,15 @@ pub(crate) fn resolve_callable_return_type(
             analyzer,
             param_type,
             arg_type,
-            &template_defaults,
-            &mut template_replacements,
+            &mut template_result,
         );
     }
 
     let resolved_return_type = function_call_analyzer::resolve_functionlike_return_type(
         analyzer,
         function_info,
-        &template_defaults,
-        &template_replacements,
-        &FxHashMap::default(),
+        &template_result,
+        &param_arg_types,
         arg_types.len(),
     )?;
 
@@ -3009,7 +3580,7 @@ pub(crate) fn resolve_callable_return_type(
     Some(resolved_return_type)
 }
 
-pub(crate) fn resolve_array_callable_method<'a>(
+fn resolve_array_callable_method<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
     properties: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion>,
     context: &BlockContext,
@@ -3021,10 +3592,10 @@ pub(crate) fn resolve_array_callable_method<'a>(
     let class_id = get_callable_class_from_union(analyzer, first, context)?;
 
     let class_info = analyzer.codebase.get_class(class_id)?;
-    get_method_info_case_insensitive(analyzer, class_info, method_name)
+    get_method_info(analyzer, class_info, method_name)
 }
 
-pub(crate) fn get_callable_class_from_union(
+fn get_callable_class_from_union(
     analyzer: &StatementsAnalyzer<'_>,
     class_union: &TUnion,
     context: &BlockContext,
@@ -3064,7 +3635,7 @@ pub(crate) fn get_callable_class_from_union(
     class_id
 }
 
-pub(crate) fn get_named_class_from_atomic(atomic: &TAtomic) -> Option<StrId> {
+fn get_named_class_from_atomic(atomic: &TAtomic) -> Option<StrId> {
     match atomic {
         TAtomic::TNamedObject { name, .. } => Some(*name),
         TAtomic::TTemplateParam { as_type, .. } => {
@@ -3079,7 +3650,7 @@ pub(crate) fn get_named_class_from_atomic(atomic: &TAtomic) -> Option<StrId> {
     }
 }
 
-pub(crate) fn resolve_class_name_for_callable(
+fn resolve_class_name_for_callable(
     analyzer: &StatementsAnalyzer<'_>,
     class_name: &str,
     context: &BlockContext,
@@ -3127,16 +3698,48 @@ pub(crate) fn resolve_callable_union_for_template_inference(
                     class_info
                         .methods
                         .get(&method_id)
-                        .map(functionlike_to_callable_atomic)
+                        .map(|method| functionlike_to_callable_atomic(method))
                 } else {
                     let is_fq = value.starts_with('\\');
                     function_call_analyzer::resolve_function(analyzer, value, is_fq, None, context)
                         .map(functionlike_to_callable_atomic)
                 }
             }
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => resolve_invokable_object_callable(analyzer, *name, type_params.as_deref()),
             TAtomic::TKeyedArray { properties, .. } => {
-                resolve_array_callable_method(analyzer, properties, context)
-                    .map(functionlike_to_callable_atomic)
+                resolve_array_callable_method(analyzer, properties, context).map(|method_info| {
+                    let mut callable = functionlike_to_callable_atomic(method_info);
+                    // Late-bind `static` returns to the template a
+                    // `class-string<T1>` element names (same as
+                    // resolve_array_callable).
+                    if let Some(class_union) = properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                        && let Some(static_binding) =
+                            template_static_binding_from_union(class_union)
+                        && let Some(class_id) =
+                            get_callable_class_from_union(analyzer, class_union, context)
+                        && let TAtomic::TCallable {
+                            return_type: Some(return_type),
+                            ..
+                        } = &mut callable
+                    {
+                        let parent_class_id = analyzer
+                            .codebase
+                            .get_class(class_id)
+                            .and_then(|class_info| class_info.parent_class);
+                        **return_type = crate::type_expander::
+                            localize_special_class_type_union_with_static_object(
+                                analyzer.codebase,
+                                analyzer.interner,
+                                return_type,
+                                class_id,
+                                static_binding,
+                                parent_class_id,
+                            );
+                    }
+                    callable
+                })
             }
             _ => None,
         };
@@ -3153,7 +3756,7 @@ pub(crate) fn resolve_callable_union_for_template_inference(
     callable_union
 }
 
-pub(crate) fn functionlike_to_callable_atomic(function_info: &pzoom_code_info::FunctionLikeInfo) -> TAtomic {
+fn functionlike_to_callable_atomic(function_info: &pzoom_code_info::FunctionLikeInfo) -> TAtomic {
     let params = function_info
         .params
         .iter()
@@ -3177,7 +3780,7 @@ pub(crate) fn union_contains_non_pure_callable(union: &TUnion) -> bool {
     union.types.iter().any(atomic_is_non_pure_callable)
 }
 
-pub(crate) fn atomic_is_non_pure_callable(atomic: &TAtomic) -> bool {
+fn atomic_is_non_pure_callable(atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TCallable { is_pure, .. } | TAtomic::TClosure { is_pure, .. } => {
             !matches!(is_pure, Some(true))
@@ -3210,7 +3813,7 @@ pub(crate) fn maybe_check_builtin_callable_arity(
         return;
     };
 
-    let Some(callback_type) = analysis_data.get_expr_type(callback_pos) else {
+    let Some(callback_type) = analysis_data.expr_types.get(&callback_pos).cloned() else {
         return;
     };
 
@@ -3250,7 +3853,7 @@ pub(crate) fn maybe_check_builtin_callable_arity(
     }
 }
 
-pub(crate) fn callable_arity_status(
+fn callable_arity_status(
     analyzer: &StatementsAnalyzer<'_>,
     callback_type: &TUnion,
     arity: usize,
@@ -3352,7 +3955,7 @@ pub(crate) fn callable_arity_status(
     }
 }
 
-pub(crate) fn params_accept_arity(
+fn params_accept_arity(
     required_count: usize,
     param_count: usize,
     variadic: bool,
@@ -3383,7 +3986,6 @@ pub(crate) fn callable_union_is_pure(union: &TUnion) -> bool {
                 saw_callable_candidate = true;
             }
             _ => {
-                saw_non_null_candidate = true;
                 return false;
             }
         }
@@ -3397,4 +3999,176 @@ pub(crate) enum CallableArityStatus {
     TooFew { required: usize },
     TooMany { max: usize },
     Unknown,
+}
+
+/// Psalm's variable-call invocability checks (FunctionCallAnalyzer when the
+/// callee is an expression): a mixed callee is a MixedFunctionCall, a null
+/// possibility among others is a PossiblyNullFunctionCall, and a non-callable
+/// possibility is a PossiblyInvalidFunctionCall (InvalidFunctionCall when
+/// nothing in the union is callable).
+fn check_callable_union_invocability(
+    analyzer: &StatementsAnalyzer<'_>,
+    callee_type: &TUnion,
+    analysis_data: &mut FunctionAnalysisData,
+    pos: Pos,
+) {
+    // By-ref placeholders (undefined vars captured by reference) are
+    // typeless in Psalm and skip these checks entirely.
+    if callee_type.from_undefined_by_ref {
+        return;
+    }
+
+    let mut has_callable = false;
+    let mut has_null = false;
+    let mut has_mixed = false;
+    let mut has_invalid = false;
+
+    fn atomic_is_callable_like(
+        analyzer: &StatementsAnalyzer<'_>,
+        atomic: &TAtomic,
+    ) -> Option<bool> {
+        match atomic {
+            TAtomic::TClosure { .. }
+            | TAtomic::TCallable { .. }
+            | TAtomic::TCallableString
+            | TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TClassString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TArray { .. }
+            | TAtomic::TNonEmptyArray { .. }
+            | TAtomic::TList { .. }
+            | TAtomic::TNonEmptyList { .. }
+            | TAtomic::TKeyedArray { .. }
+            | TAtomic::TObject
+            | TAtomic::TTemplateParam { .. }
+            | TAtomic::TTemplateParamClass { .. } => Some(true),
+            // An intersection is callable when any part is.
+            TAtomic::TObjectIntersection { types } => Some(types.iter().any(|part| {
+                atomic_is_callable_like(analyzer, part) == Some(true)
+            })),
+            // An unknown class is not callable (Psalm reports
+            // InvalidFunctionCall alongside the UndefinedClass).
+            TAtomic::TNamedObject { name, .. } => Some(
+                analyzer
+                    .codebase
+                    .get_class(*name)
+                    .is_some_and(|class_info| class_info.methods.contains_key(&StrId::INVOKE)),
+            ),
+            _ => None,
+        }
+    }
+
+    for atomic in &callee_type.types {
+        match atomic {
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset => {
+                has_mixed = true
+            }
+            TAtomic::TNull | TAtomic::TVoid => has_null = true,
+            other => match atomic_is_callable_like(analyzer, other) {
+                Some(true) => has_callable = true,
+                _ => has_invalid = true,
+            },
+        }
+    }
+
+
+    let (line, col) = analyzer.get_line_column(pos.0);
+
+    if has_mixed {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::MixedFunctionCall,
+            "Cannot call function on mixed",
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
+    if has_null {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyNullFunctionCall,
+            "Cannot call function on possibly null value",
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
+    if has_invalid {
+        analysis_data.add_issue(Issue::new(
+            if has_callable || has_mixed || has_null {
+                IssueKind::PossiblyInvalidFunctionCall
+            } else {
+                IssueKind::InvalidFunctionCall
+            },
+            format!(
+                "Cannot treat type {} as callable",
+                callee_type.get_id(Some(analyzer.interner))
+            ),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+}
+
+/// Whether the candidate callable's maximum arity is below the expected
+/// callable's required arity (the only-fewer-params direction of an arity
+/// mismatch).
+fn callback_accepts_fewer_than_expected(
+    candidate: &TAtomic,
+    expected: &TAtomic,
+) -> bool {
+    let (Some(candidate_params), Some(expected_params)) = (
+        get_callable_params(candidate),
+        get_callable_params(expected),
+    ) else {
+        return false;
+    };
+
+    let candidate_required = candidate_params
+        .iter()
+        .filter(|param| !param.is_optional && !param.is_variadic)
+        .count();
+    let expected_max = if expected_params
+        .last()
+        .is_some_and(|param| param.is_variadic)
+    {
+        None
+    } else {
+        Some(expected_params.len())
+    };
+    // Requiring more than the container provides is the fatal direction.
+    if let Some(expected_max) = expected_max
+        && candidate_required > expected_max
+    {
+        return false;
+    }
+
+    let candidate_max = if candidate_params
+        .last()
+        .is_some_and(|param| param.is_variadic)
+    {
+        None
+    } else {
+        Some(candidate_params.len())
+    };
+    let expected_required = expected_params
+        .iter()
+        .filter(|param| !param.is_optional && !param.is_variadic)
+        .count();
+    candidate_max.is_some_and(|candidate_max| candidate_max < expected_required)
 }

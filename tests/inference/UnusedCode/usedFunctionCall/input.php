@@ -1,0 +1,3 @@
+<?php
+$a = strlen("goodbye");
+echo $a;

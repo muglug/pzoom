@@ -812,14 +812,11 @@ const PASSWORD_ARGON2_DEFAULT_THREADS = 1;
 const PASSWORD_ARGON2_PROVIDER = 'standard';
 
 /**
- * @return array{
- *   'algo': non-empty-string,
- *   'algoName': non-empty-string,
- *   'options': array{'salt'?: int, 'cost'?: int, 'memory_cost'?: int, 'time_cost'?: int, 'threads'?: int, ...},
- * }
- *
  * @no-named-arguments
  * @pure
+ *
+ * @param string $hash
+ * @return array<array-key, mixed>
  */
 function password_get_info(string $hash): array
 {
@@ -850,6 +847,10 @@ function password_needs_rehash(string $hash, string|int|null $algo, array $optio
 /**
  * @no-named-arguments
  * @pure
+ *
+ * @param string $password
+ * @param string $hash
+ * @return bool
  */
 function password_verify(string $password, string $hash): bool
 {
@@ -865,16 +866,26 @@ function password_algos(): array
 {
 }
 
+/**
+ * @param string $extension_filename
+ * @return bool
+ */
 function dl(string $extension_filename): bool
 {
 }
 
+/**
+ * @param string $title
+ * @return bool
+ */
 function cli_set_process_title(string $title): bool
 {
 }
 
 /**
  * @pure
+ *
+ * @return null|string
  */
 function cli_get_process_title(): null|string
 {
@@ -896,6 +907,9 @@ function utf8_decode(string $string): string
 {
 }
 
+/**
+ * @return void
+ */
 function error_clear_last(): void
 {
 }
@@ -908,6 +922,13 @@ function sapi_windows_cp_set(int $codepage): bool
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @param string|int $in_codepage
+ * @param string|int $out_codepage
+ * @psalm-flow ($subject) -> return
+ */
 function sapi_windows_cp_conv(int|string $in_codepage, int|string $out_codepage, string $subject): null|string
 {
 }
@@ -932,7 +953,7 @@ function sapi_windows_generate_ctrl_event(int $event, int $pid = 0): bool
 }
 
 /**
- * @template TKey
+ * @template-covariant TKey
  * @template-covariant TValue
  * @template TSend
  * @template-covariant TReturn
@@ -942,44 +963,43 @@ function sapi_windows_generate_ctrl_event(int $event, int $pid = 0): bool
 class Generator implements Traversable
 {
     /**
-     * @return ?TValue
-     *
      * @psalm-ignore-nullable-return
+     * @return ?TValue Can return any type.
      */
     public function current()
     {
     }
 
     /**
-     * @return void
+     * @return void Any returned value is ignored.
      */
     public function next()
     {
     }
 
     /**
-     * @return TKey
+     * @return TKey scalar on success, or null on failure.
      */
     public function key()
     {
     }
 
     /**
-     * @return bool
+     * @return bool The return value will be casted to boolean and then evaluated.
      */
     public function valid()
     {
     }
 
     /**
-     * @return void
+     * @return void Any returned value is ignored.
      */
     public function rewind()
     {
     }
 
     /**
-     * @return TReturn
+     * @return TReturn Can return any type.
      */
     public function getReturn()
     {
@@ -987,19 +1007,16 @@ class Generator implements Traversable
 
     /**
      * @param TSend $value
-     *
-     * @return ?TValue
-     *
      * @psalm-ignore-nullable-return
+     * @return ?TValue Can return any type.
      */
     public function send($value)
     {
     }
 
     /**
-     * @return ?TValue
-     *
      * @psalm-ignore-nullable-return
+     * @return ?TValue Can return any type.
      */
     public function throw(Throwable $exception)
     {
@@ -1010,6 +1027,10 @@ function hex2bin(string $string): string|false
 {
 }
 
+/**
+ * @param int $response_code
+ * @return bool|int
+ */
 function http_response_code(int $response_code = 0): int|bool
 {
 }
@@ -1086,13 +1107,20 @@ function constant(string $name): mixed
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @template T as string
+ * @param T $string
+ * @return (T is non-empty-string ? non-empty-string : string)
  */
 function bin2hex(string $string): string
 {
 }
 
 /**
+ * @psalm-taint-specialize
+ * @psalm-taint-sink sleep $seconds
+ *
  * @param int<0, max> $seconds
  */
 function sleep(int $seconds): int
@@ -1100,6 +1128,8 @@ function sleep(int $seconds): int
 }
 
 /**
+ * @psalm-taint-sink sleep $microseconds
+ *
  * @param int<0, max> $microseconds
  */
 function usleep(int $microseconds): void
@@ -1107,6 +1137,9 @@ function usleep(int $microseconds): void
 }
 
 /**
+ * @psalm-taint-sink sleep $seconds
+ * @psalm-taint-sink sleep $nanoseconds
+ *
  * @param positive-int $seconds
  * @param positive-int $nanoseconds
  *
@@ -1116,30 +1149,50 @@ function time_nanosleep(int $seconds, int $nanoseconds): array|bool
 {
 }
 
+/**
+ * @psalm-taint-sink sleep $timestamp
+ */
 function time_sleep_until(float $timestamp): bool
 {
 }
 
 /**
- * @return false|array{tm_sec: int, tm_min: int, tm_hour: int, tm_mday: int, tm_mon: int, tm_year: int, tm_wday: int, tm_yday: int, unparsed: string}
+ * @param string $timestamp
+ * @param string $format
+ * @return array<array-key, mixed>|false
  */
 function strptime(string $timestamp, string $format): array|false
 {
 }
 
+/**
+ * @return void
+ */
 function flush(): void
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string
+ *
+ * @psalm-flow ($string) -> return
  */
 function wordwrap(string $string, int $width = 75, string $break = "\n", bool $cut_long_words = false): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * Tainting is handled in a plugin
+ *
+ * @psalm-flow ($string) -> return
+ * @psalm-return (
+ *     $string is non-empty-string
+ *     ? non-empty-string
+ *     : string
+ * )
  */
 function htmlspecialchars(
     string $string,
@@ -1150,7 +1203,11 @@ function htmlspecialchars(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * Tainting is handled in a plugin
+ *
+ * @psalm-flow ($string) -> return
  */
 function htmlentities(
     string $string,
@@ -1161,7 +1218,11 @@ function htmlentities(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * Tainting is handled in a plugin
+ *
+ * @psalm-flow ($string) -> return
  */
 function html_entity_decode(
     string $string,
@@ -1171,7 +1232,11 @@ function html_entity_decode(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * Tainting is handled in a plugin
+ *
+ * @psalm-flow ($string) -> return
  */
 function htmlspecialchars_decode(string $string, int $flags = ENT_QUOTES | ENT_SUBSTITUTE): string
 {
@@ -1266,8 +1331,9 @@ function phpcredits(int $flags = CREDITS_ALL): bool
 }
 
 /**
- * @return 'cli'|'phpdbg'|'embed'|'apache'|'apache2handler'|'cgi-fcgi'|'cli-server'|'fpm-fcgi'|'litespeed'|false
  * @pure
+ *
+ * @return string
  */
 function php_sapi_name(): string|false
 {
@@ -1275,6 +1341,9 @@ function php_sapi_name(): string|false
 
 /**
  * @pure
+ *
+ * @param string $mode
+ * @return string
  */
 function php_uname(string $mode = 'a'): string
 {
@@ -1282,6 +1351,8 @@ function php_uname(string $mode = 'a'): string
 
 /**
  * @pure
+ *
+ * @return false|string
  */
 function php_ini_scanned_files(): string|false
 {
@@ -1289,6 +1360,8 @@ function php_ini_scanned_files(): string|false
 
 /**
  * @pure
+ *
+ * @return false|string
  */
 function php_ini_loaded_file(): string|false
 {
@@ -1339,34 +1412,52 @@ function strtok(string $string, null|string $token = null): string|false
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return (
+ *     $string is non-falsy-string
+ *     ? non-falsy-string
+ *     : ($string is non-empty-string ? non-empty-string : string)
+ * )
+ *
+ * @psalm-flow ($string) -> return
  */
 function strtoupper(string $string): string
 {
 }
 
 /**
- * @return lowercase-string
+ * @psalm-pure
  *
- * @pure
+ * @return (
+ *     $string is non-empty-string ? non-empty-lowercase-string : lowercase-string
+ * )
+ *
+ * @psalm-flow ($string) -> return
  */
 function strtolower(string $string): string
 {
 }
 
 /**
- * @return non-negative-int|false
- *
- * @pure
+ * @psalm-pure
+ * @param string $haystack
+ * @param string $needle
+ * @param int $offset
+ * @psalm-assert-if-true =non-empty-string $haystack
+ * @psalm-return positive-int|0|false
  */
 function strpos(string $haystack, string $needle, int $offset = 0): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
- *
- * @pure
+ * @psalm-pure
+ * @param string $haystack
+ * @param string $needle
+ * @param int $offset
+ * @psalm-assert-if-true =non-empty-string $haystack
+ * @psalm-return positive-int|0|false
  */
 function stripos(string $haystack, string $needle, int $offset = 0): int|false
 {
@@ -1391,9 +1482,11 @@ function strripos(string $haystack, string $needle, int $offset = 0): int|false
 }
 
 /**
- * @return ($string is non-empty-string ? non-empty-string : string)
+ * @psalm-pure
  *
- * @pure
+ * @psalm-flow ($string) -> return
+ *
+ * @return ($string is non-empty-string ? non-empty-string : string)
  */
 function strrev(string $string): string
 {
@@ -1407,7 +1500,9 @@ function hebrev(string $string, int $max_chars_per_line = 0): string
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function nl2br(string $string, bool $use_xhtml = true): string
 {
@@ -1432,94 +1527,123 @@ function dirname(string $path, int $levels = 1): string
 }
 
 /**
- * @param 1|2|4|8|15 $flags
+ * @psalm-pure
  *
- * @return ($flags is 15 ? array{dirname?: string, basename: string, extension?: string, filename: string} : string)
+ * @return (
+ *     func_num_args() is 1
+ *     ? array{dirname: string, basename: string, extension?: string, filename: string}
+ *     : string
+ * )
+ *
+ * @param 1|2|4|8|15 $flags
  */
 function pathinfo(string $path, int $flags = PATHINFO_ALL): array|string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function stripslashes(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function stripcslashes(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($haystack) -> return
  */
 function strstr(string $haystack, string $needle, bool $before_needle = false): string|false
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($haystack) -> return
  */
 function stristr(string $haystack, string $needle, bool $before_needle = false): string|false
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($haystack) -> return
  */
 function strrchr(string $haystack, string $needle, bool $before_needle = false): string|false
 {
 }
 
 /**
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
+ *
  * @template T as string
  *
  * @param T $string
  *
  * @return (T is non-empty-string ? non-empty-string : string)
- *
- * @pure
  */
 function str_shuffle(string $string): string
 {
 }
 
 /**
- * @template T as 0|1|2
+ * @psalm-pure
  *
- * @param T $format
- *
- * @return (T is 0 ? int<0, max> : (
- *   T is 1 ? list<non-empty-string> : (
- *     T is 2 ? array<int<0, max>, non-empty-string> : (
- *       int<0, max>|list<non-empty-string>|array<int<0, max>, non-empty-string>
+ * @param 0|1|2 $format
+ * @return (
+ *     $format is 0 ?
+ *     int :
+ *     (
+ *         $format is 1 ?
+ *         list<string> :
+ *         array<int, string>
  *     )
- *   )
- * ))
+ * )
  *
- * @pure
+ * @template T as 0|1|2
  */
 function str_word_count(string $string, int $format = 0, null|string $characters = null): array|int
 {
 }
 
 /**
- * @param int<1, max> $length
+ * @psalm-pure
+ * @param positive-int $length
+ * @return list<non-empty-string>
  *
- * @return list<string>
- *
- * @pure
+ * @psalm-flow ($string) -> return
  */
 function str_split(string $string, int $length = 1): array
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($string) -> return
  */
 function strpbrk(string $string, string $characters): string|false
 {
@@ -1545,23 +1669,30 @@ function strcoll(string $string1, string $string2): int
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return (PHP_MAJOR_VERSION is 5|7 ? string|false : string)
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($string) -> return
  */
 function substr(string $string, int $offset, null|int $length = null): string
 {
 }
 
 /**
- * @template K as array-key
+ * @psalm-pure
  *
- * @param string|array<K, string> $string
+ * @param string|array<string> $string
  * @param string|array<string> $replace
  * @param int|array<int> $offset
- * @param null|int<0, max>|array<int<0, max>> $length
+ * @param null|int|array<int> $length
  *
- * @return ($string is string ? string : array<K, string>)
+ * @return ($string is array ? array<string> : string)
  *
- * @pure
+ * @psalm-flow ($string, $replace) -> return
+ *
+ * @template K as array-key
  */
 function substr_replace(
     array|string $string,
@@ -1572,35 +1703,46 @@ function substr_replace(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function quotemeta(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function ucfirst(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function lcfirst(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string, $separators) -> return
  */
 function ucwords(string $string, string $separators = " \t\r\n\f\v"): string
 {
 }
 
 /**
- * @param string|array<string, string> $from
+ * Psalm types the replace-pairs through the callmap as a plain array
+ * (values are stringified at runtime).
+ *
+ * @param string|array<string, mixed> $from
  *
  * @pure
  */
@@ -1609,36 +1751,46 @@ function strtr(string $string, string|array $from, string $to = ''): string
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function addslashes(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function addcslashes(string $string, string $characters): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return ($string is lowercase-string ? lowercase-string : string)
+ *
+ * @psalm-flow ($string) -> return
  */
 function rtrim(string $string, string $characters = " \n\r\t\v\0"): string
 {
 }
 
 /**
- * @param string|array<string> $search
- * @param string|array<string> $replace
- * @param string|array<string> $subject
+ * @psalm-pure
  *
- * @return ($subject is string ? string : (
- *   $subject is array<string> ? array<string> : string|array<string>
- * ))
+ * @template TKey of array-key
  *
- * @pure
+ * @param string|array<string|int|float> $search
+ * @param string|array<string|int|float> $replace
+ * @param string|array<TKey, string|int|float> $subject
+ * @param int<0, max> $count
+ * @return ($subject is array ? array<TKey, string> : string)
+ *
+ * @psalm-flow ($replace, $subject) -> return
  */
 function str_replace(
     array|string $search,
@@ -1649,15 +1801,17 @@ function str_replace(
 }
 
 /**
- * @param string|array<string> $search
- * @param string|array<string> $replace
- * @param string|array<string> $subject
+ * @psalm-pure
  *
- * @return ($subject is string ? string : (
- *   $subject is array<string> ? array<string> : string|array<string>
- * ))
+ * @template TKey of array-key
  *
- * @pure
+ * @param string|array<string|int|float> $search
+ * @param string|array<string|int|float> $replace
+ * @param string|array<TKey, string|int|float> $subject
+ * @param int<0, max> $count
+ * @return ($subject is array ? array<TKey, string> : string)
+ *
+ * @psalm-flow ($replace, $subject) -> return
  */
 function str_ireplace(
     array|string $search,
@@ -1668,7 +1822,20 @@ function str_ireplace(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @todo update $times to be `0|positive-int`
+ * @return (
+ *      $string is non-empty-string
+ *      ? (
+ *          $times is positive-int
+ *          ? non-empty-string
+ *          : ($times is 0 ? '' : string)
+ *      )
+ *      : ($times is 0 ? '' : string)
+ * )
+ *
+ * @psalm-flow ($string) -> return
  */
 function str_repeat(string $string, int $times): string
 {
@@ -1676,36 +1843,58 @@ function str_repeat(string $string, int $times): string
 
 /**
  * @pure
+ *
+ * @param 0|1|2|3|4 $mode
  */
 function count_chars(string $string, int $mode = 0): array|string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @psalm-flow ($string, $separator) -> return
  */
 function chunk_split(string $string, int $length = 76, string $separator = "\r\n"): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return (
+ *      $string is class-string
+ *          ? ($characters is '\\' ? class-string : string)
+ *          : ($string is lowercase-string ? lowercase-string : string)
+ * )
+ *
+ * @psalm-flow ($string) -> return
  */
 function trim(string $string, string $characters = " \n\r\t\v\0"): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return (
+ *      $string is class-string
+ *          ? ($characters is '\\' ? class-string : string)
+ *          : ($string is lowercase-string ? lowercase-string : string)
+ * )
+ *
+ * @psalm-flow ($string) -> return
  */
 function ltrim(string $string, string $characters = " \n\r\t\v\0"): string
 {
 }
 
 /**
- * @param array<string>|string|null $allowed_tags
+ * @psalm-pure
  *
- * @pure
+ * @psalm-taint-escape html
+ * @psalm-flow ($string) -> return
+ *
+ * @param null|string|array<array-key,string> $allowed_tags
  */
 function strip_tags(string $string, string|array|null $allowed_tags = null): string
 {
@@ -1719,29 +1908,107 @@ function similar_text(string $string1, string $string2, &$percent = null): int
 }
 
 /**
- * @return list<non-empty-string>
+ * @psalm-pure
  *
- * @pure
+ * @param non-empty-string $separator
+ *
+ * @return (
+ *     $string is lowercase-string
+ *         ? (
+ *             $limit is int<min, -2>
+ *                 ? list<empty>
+ *                 : (
+ *                     $limit is int<0, 1>
+ *                         ? list{lowercase-string}
+ *                         : (
+ *                             $limit is 2
+ *                                 ? list{0: lowercase-string, 1?: lowercase-string}
+ *                                 : (
+ *                                     $limit is 3
+ *                                         ? list{0: lowercase-string, 1?: lowercase-string, 2?: lowercase-string}
+ *                                         : non-empty-list<lowercase-string>
+ *                                 )
+ *                         )
+ *                 )
+ *         )
+ *         : (
+ *             $limit is int<min, -2>
+ *                 ? list<empty>
+ *                 : (
+ *                     $limit is int<0, 1>
+ *                         ? list{string}
+ *                         : (
+ *                             $limit is 2
+ *                                 ? list{0: string, 1?: string}
+ *                                 : (
+ *                                     $limit is 3
+ *                                         ? list{0: string, 1?: string, 2?: string}
+ *                                         : non-empty-list<string>
+ *                                 )
+ *                         )
+ *                 )
+ *         )
+ * )
+ *
+ * @psalm-flow ($string) -(array-assignment)-> return
  */
-function explode(string $separator, string $string, int $limit = PHP_INT_MAX): array
+function explode(string $separator, string $string, int $limit = -1): array
 {
 }
 
 /**
- * @param array<string>|string $separator
- * @param array<int|string|float|bool|null|Stringable>|null $array
+ * @psalm-pure
  *
- * @pure
+ * @param string|array $separator
+ * @param array<string|float|int|stringable-object|null|bool> $array
+ *
+ * @return (
+ *     $separator is non-empty-string
+ *     ? ($array is non-empty-array
+ *         ? ($array is array<literal-string|literal-int>
+ *             ? ($separator is literal-string ? non-empty-literal-string : non-empty-string)
+ *             : non-empty-string
+ *         )
+ *         : string)
+ *     : ($array is non-empty-array
+ *         ? ($array is array<non-empty-literal-string|non-empty-string>
+ *             ? ($array is array<non-empty-literal-string> ? non-empty-literal-string : non-empty-string)
+ *             : string
+ *         )
+ *         : string)
+ * )
+ *
+ * @psalm-flow ($separator) -> return
+ * @psalm-flow ($array) -(array-fetch)-> return
  */
 function implode(array|string $separator = '', null|array $array = null): string
 {
 }
 
 /**
- * @param array<string>|string $separator
- * @param array<int|string|float|bool|null|Stringable>|null $array
+ * @psalm-pure
  *
- * @pure
+ * @param string|array $separator
+ * @param array<string|float|int|stringable-object|null|bool> $array
+ *
+ * @return (
+ *     $separator is non-empty-string
+ *     ? ($array is non-empty-array
+ *         ? ($array is array<literal-string|literal-int>
+ *             ? ($separator is literal-string ? non-empty-literal-string : non-empty-string)
+ *             : non-empty-string
+ *         )
+ *         : string)
+ *     : ($array is non-empty-array
+ *         ? ($array is array<non-empty-literal-string|non-empty-string>
+ *             ? ($array is array<non-empty-literal-string> ? non-empty-literal-string : non-empty-string)
+ *             : string
+ *         )
+ *         : string)
+ * )
+ *
+ * @psalm-flow ($separator) -> return
+ * @psalm-flow ($array) -(array-fetch)-> return
  */
 function join(array|string $separator = '', null|array $array = null): string
 {
@@ -1756,28 +2023,9 @@ function setlocale(int $category, string|int|array $locales, string|array ...$re
 }
 
 /**
- * @return array{
- *   decimal_point: string,
- *   thousands_sep: string,
- *   grouping: array<int, int>,
- *   int_curr_symbol: string,
- *   currency_symbol: string,
- *   mon_decimal_point: string,
- *   mon_thousands_sep: string,
- *   mon_grouping: string,
- *   positive_sign: string,
- *   negative_sign: string,
- *   int_frac_digits: string,
- *   frac_digits: string,
- *   p_cs_precedes: bool,
- *   p_sep_by_space: bool,
- *   n_cs_precedes: bool,
- *   n_sep_by_space: bool,
- *   p_sign_posn: int,
- *   n_sign_posn: int
- * }
- *
  * @pure
+ *
+ * @return array<array-key, mixed>
  */
 function localeconv(): array
 {
@@ -1882,6 +2130,9 @@ enum RoundingMode implements UnitEnum
 
 /**
  * @pure
+ *
+ * @param int $item
+ * @return false|string
  */
 function nl_langinfo(int $item): string|false
 {
@@ -1905,16 +2156,19 @@ function levenshtein(
 
 /**
  * @pure
+ *
+ * @param int $codepoint
+ * @return non-empty-string
  */
 function chr(int $codepoint): string
 {
 }
 
 /**
+ * @pure
+ *
  * @param string $character
  * @return int<0, 255>
- *
- * @pure
  */
 function ord(string $character): int
 {
@@ -1930,64 +2184,96 @@ function parse_str(string $string, &$result): void
 }
 
 /**
- * @pure
+ * @return ($string is non-empty-string ? non-empty-list<string> : non-empty-list<string>|array{null})
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function str_getcsv(string $string, string $separator = ',', string $enclosure = '"', string $escape = "\\"): array
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @return ($string is non-empty-string ? non-empty-string : ($length is positive-int ? non-empty-string: string))
+ *
+ * @psalm-flow ($string, $pad_string) -> return
  */
 function str_pad(string $string, int $length, string $pad_string = ' ', int $pad_type = STR_PAD_RIGHT): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function chop(string $string, string $characters = " \n\r\t\v\0"): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($haystack) -> return
  */
 function strchr(string $haystack, string $needle, bool $before_needle = false): string|false
 {
 }
 
 /**
- * @param string|int|float|Stringable ...$values
+ * @psalm-pure
  *
- * @pure
+ * @param string|stringable-object|int|float $values
+ * @return (PHP_MAJOR_VERSION is 8 ? string : string|false)
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($format, $values) -> return
  */
 function sprintf(string $format, mixed ...$values): string
 {
 }
 
 /**
- * @param string|int|float|Stringable ...$values
+ * @psalm-pure
  *
- * @return int<0, max>
+ * @param string|int|float $values
+ * @return (PHP_MAJOR_VERSION is 8 ? int<0, max> : int<0, max>|false)
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-taint-specialize
+ * @psalm-flow ($format, $values) -> return
+ * @psalm-taint-sink html $format
+ * @psalm-taint-sink html $values
  */
 function printf(string $format, mixed ...$values): int
 {
 }
 
 /**
- * @param array<string|int|float|Stringable> $values
+ * @param array<string|int|float> $values
+ * @return (PHP_MAJOR_VERSION is 8 ? int<0, max> : int<0, max>|false)
+ * @psalm-ignore-falsable-return
  *
- * @pure
+ * @psalm-pure
+ * @psalm-taint-specialize
+ * @psalm-taint-sink html $format
+ * @psalm-taint-sink html $values
  */
 function vprintf(string $format, array $values): int
 {
 }
 
 /**
- * @param array<string|int|float|Stringable> $values
+ * @psalm-pure
+ * @param array<string|int|float> $values
+ * @return (PHP_MAJOR_VERSION is 8 ? string : string|false)
+ * @psalm-ignore-falsable-return
  *
- * @pure
+ * @psalm-flow ($format, $values) -> return
  */
 function vsprintf(string $format, array $values): string
 {
@@ -2013,6 +2299,14 @@ function vfprintf($stream, string $format, array $values): int
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @param mixed $vars
+ * @param-out string|int|float|null $vars
+ * @psalm-flow ($string, $format) -> return
+ * @return (func_num_args() is 2 ? (null|list<float|int|string|null>) : int)
+ */
 function sscanf(string $string, string $format, mixed &...$vars): array|int|null
 {
 }
@@ -2032,7 +2326,11 @@ function parse_url(string $url, int $component = -1): array|string|int|false|nul
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-taint-escape html
+ * @psalm-taint-escape has_quotes
+ * @psalm-flow ($string) -> return
  */
 function urlencode(string $string): string
 {
@@ -2078,24 +2376,42 @@ function linkinfo(string $path): int|false
 {
 }
 
+/**
+ * @param string $target
+ * @param string $link
+ * @return bool
+ */
 function symlink(string $target, string $link): bool
 {
 }
 
+/**
+ * @param string $target
+ * @param string $link
+ * @return bool
+ */
 function link(string $target, string $link): bool
 {
 }
 
 /**
- * @param null|resource $context
+ * @param string $filename
+ * @param resource $context
+ * @return bool
  */
 function unlink(string $filename, mixed $context = null): bool
 {
 }
 
 /**
- * @param-out list<string> $output
+ * @psalm-template TOutput of array|null
+ *
+ * @param TOutput $output
+ * @param-out (TOutput is null ? list<string> : array) $output
  * @param-out int $result_code
+ *
+ * @psalm-taint-specialize
+ * @psalm-taint-sink shell $command
  */
 function exec(string $command, array|null &$output = null, int|int &$result_code = null): string|false
 {
@@ -2110,6 +2426,9 @@ function system(string $command, null|int &$result_code = null): string|false
 
 /**
  * @pure
+ *
+ * @param string $command
+ * @return string
  */
 function escapeshellcmd(string $command): string
 {
@@ -2117,6 +2436,9 @@ function escapeshellcmd(string $command): string
 
 /**
  * @pure
+ *
+ * @param string $arg
+ * @return string
  */
 function escapeshellarg(string $arg): string
 {
@@ -2170,6 +2492,7 @@ function proc_open(
 
 /**
  * @param resource $process
+ * @return int
  */
 function proc_close($process): int
 {
@@ -2177,6 +2500,8 @@ function proc_close($process): int
 
 /**
  * @param resource $process
+ * @param int $signal
+ * @return bool
  */
 function proc_terminate($process, int $signal = 15): bool
 {
@@ -2200,16 +2525,29 @@ function proc_get_status($process): array
 {
 }
 
+/**
+ * @param int $priority
+ * @return bool
+ */
 function proc_nice(int $priority): bool
 {
 }
 
+/**
+ * @param string $service
+ * @param string $protocol
+ * @return false|int
+ */
 function getservbyname(string $service, string $protocol): int|false
 {
 }
 
 /**
  * @pure
+ *
+ * @param int $port
+ * @param string $protocol
+ * @return false|string
  */
 function getservbyport(int $port, string $protocol): string|false
 {
@@ -2231,6 +2569,8 @@ function getprotobynumber(int $protocol): string|false
 
 /**
  * @pure
+ *
+ * @return false|int
  */
 function getmyuid(): int|false
 {
@@ -2238,6 +2578,8 @@ function getmyuid(): int|false
 
 /**
  * @pure
+ *
+ * @return false|int
  */
 function getmygid(): int|false
 {
@@ -2245,6 +2587,8 @@ function getmygid(): int|false
 
 /**
  * @pure
+ *
+ * @return false|int
  */
 function getmypid(): int|false
 {
@@ -2252,47 +2596,70 @@ function getmypid(): int|false
 
 /**
  * @pure
+ *
+ * @return false|int
  */
 function getmyinode(): int|false
 {
 }
 
+/**
+ * @return false|int
+ */
 function getlastmod(): int|false
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @template T of bool
+ * @param T $strict
+ * @return string|false
+ * @psalm-return (T is false ? string : string|false)
+ *
+ * @psalm-flow ($string) -> return
+ * @psalm-ignore-falsable-return
  */
 function base64_decode(string $string, bool $strict = false): string|false
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
+ * @template T as string
+ * @param T $string
+ * @return (T is non-empty-string ? non-empty-string : string)
  */
 function base64_encode(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function convert_uuencode(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function convert_uudecode(string $string): string|false
 {
 }
 
 /**
- * @return ($num is int ? int : float)
+ * @psalm-pure
  *
- * @pure
+ * @param numeric $num
+ * @return ($num is int ? positive-int|0 : ($num is float ? float : positive-int|0|float))
  */
 function abs(int|float $num): int|float
 {
@@ -2370,6 +2737,10 @@ function atanh(float $num): float
 
 /**
  * @pure
+ *
+ * @param float $y
+ * @param float $x
+ * @return float
  */
 function atan2(float $y, float $x): float
 {
@@ -2426,6 +2797,8 @@ function log1p(float $num): float
 
 /**
  * @pure
+ *
+ * @return float
  */
 function pi(): float
 {
@@ -2621,7 +2994,9 @@ function long2ip(int $ip): string
 }
 
 /**
- * @return ($name is null ? array<string, string> : string|false)
+ * @psalm-pure
+ *
+ * @return (func_num_args() is 0 ? array<string, string> : string|false)
  */
 function getenv(null|string $name = null, bool $local_only = false): array|string|false
 {
@@ -2635,27 +3010,32 @@ function putenv(string $assignment): bool
  * @param string $short_options
  * @param list<string> $long_options
  *
- * @return array<string, string>|false
+ * @return array<string, false|list<false|string>|string>|false
  */
 function getopt(string $short_options, array $long_options = [], null|int &$rest_index = null): array|false
 {
 }
 
+/**
+ * @return array<array-key, mixed>|false
+ */
 function sys_getloadavg(): array|false
 {
 }
 
 /**
- * @return ($as_float is true ? float : ($as_float is false ? string : string|float))
+ * @psalm-pure
+ *
+ * @return ($as_float is true ? float : string)
  */
 function microtime(bool $as_float = false): string|float
 {
 }
 
 /**
- * @return ($as_float is true ? float : (
- *   $ast_float is false ? array{sec: int, usec: int, minuteswest: int, dsttime: int} : array{sec: int, usec: int, minuteswest: int, dsttime: int}|float
- * ))
+ * @psalm-pure
+ *
+ * @return ($as_float is true ? float : array<string, int>)
  */
 function gettimeofday(bool $as_float = false): array|float
 {
@@ -2669,30 +3049,45 @@ function getrusage(int $mode = 0): array|false
 }
 
 /**
+ * @psalm-pure
+ *
  * @return non-empty-string
+ *
+ * @psalm-flow ($prefix) -> return
  */
 function uniqid(string $prefix = '', bool $more_entropy = false): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function quoted_printable_decode(string $string): string
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function quoted_printable_encode(string $string): string
 {
 }
 
+/**
+ * @return string
+ */
 function get_current_user(): string
 {
 }
 
+/**
+ * @param int $seconds
+ * @return bool
+ */
 function set_time_limit(int $seconds): bool
 {
 }
@@ -2747,6 +3142,14 @@ function doubleval(mixed $value): float
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @param scalar|null|object $value
+ * @return string The string value of var.
+ *
+ * @psalm-flow ($value) -> return
+ */
 function strval(mixed $value): string
 {
 }
@@ -2761,7 +3164,9 @@ function gettype(mixed $value): string
 }
 
 /**
- * @param 'bool'|'boolean'|'int'|'integer'|'float'|'double'|'string'|'array'|'object'|'null' $type
+ * @param mixed $var
+ * @param string $type
+ * @return bool
  */
 function settype(mixed &$var, string $type): bool
 {
@@ -2870,9 +3275,10 @@ function is_real(mixed $var): bool
 /**
  * @assert-if-true numeric $value
  *
- * @return ($value is numeric ? true : false)
- *
  * @pure
+ *
+ * @param mixed $value
+ * @return bool
  */
 function is_numeric(mixed $value): bool
 {
@@ -2940,9 +3346,10 @@ function is_object(mixed $value): bool
 /**
  * @assert-if-true scalar $value
  *
- * @return ($value is scalar ? true : false)
- *
  * @pure
+ *
+ * @param mixed $value
+ * @return bool
  */
 function is_scalar(mixed $value): bool
 {
@@ -2963,6 +3370,11 @@ function is_callable(mixed $value, bool $syntax_only = false, &$callable_name = 
 }
 
 /**
+ * Psalm models this through its IsCountable assertion; the union mirrors
+ * its reconciliation (array or a Countable object).
+ *
+ * @psalm-assert-if-true array|\Countable $value
+ *
  * @pure
  */
 function is_countable(mixed $value): bool
@@ -2979,7 +3391,9 @@ function pclose($handle): int
 }
 
 /**
- * @return open-resource|false
+ * @param string $command
+ * @param string $mode
+ * @return false|resource
  */
 function popen(string $command, string $mode)
 {
@@ -3012,8 +3426,9 @@ function umask(null|int $mask = null): int
 
 /**
  * @param resource $stream
+ * @param-out closed-resource $stream
  */
-function fclose($stream): bool
+function fclose(&$stream): bool
 {
 }
 
@@ -3046,11 +3461,13 @@ function fread($stream, int $length): string|false
 }
 
 /**
- * @param resource|null $context
- *
- * @return open-resource|false
- *
  * @ignore-falsable-return
+ *
+ * @param string $filename
+ * @param string $mode
+ * @param bool $use_include_path
+ * @param null|resource $context
+ * @return false|resource
  */
 function fopen(string $filename, string $mode, bool $use_include_path = false, $context = null)
 {
@@ -3174,16 +3591,17 @@ function tempnam(string $directory, string $prefix): string|false
 }
 
 /**
- * @return resource|false
+ * @return false|resource
  */
 function tmpfile()
 {
 }
 
 /**
- * @param null|resource $context
- *
- * @return array<int, string>|false
+ * @param string $filename
+ * @param int $flags
+ * @param resource $context
+ * @return false|list<string>
  */
 function file(string $filename, int $flags = 0, $context = null): array|false
 {
@@ -3202,31 +3620,30 @@ function file_get_contents(
 }
 
 /**
- * @param null|resource $context
- *
- * @return int<0, max>|false
+ * @param string $filename
+ * @param array<array-key, string>|resource|string $data
+ * @param int $flags
+ * @param resource $context
+ * @return false|int<0, max>
  */
 function file_put_contents(string $filename, mixed $data, int $flags = 0, $context = null): int|false
 {
 }
 
 /**
- * @return array{type: int, message: string, file: string, line: int}|null
- *
  * @pure
+ *
+ * @return array{file: string, line: int, message: string, type: int}|null
  */
 function error_get_last(): null|array
 {
 }
 
 /**
- * @template I
- * @template R
+ * Psalm types this through the callmap (mixed) and gets precision by
+ * rewriting `call_user_func($f, ...)` into a virtual `$f(...)` call.
  *
- * @param callable(I...): R|callable-string|string $callback
- * @param I ...$args
- *
- * @return R
+ * @param callable|string $callback
  */
 function call_user_func(callable|string $callback, mixed ...$args): mixed
 {
@@ -3246,6 +3663,8 @@ function call_user_func_array(callable|string $callback, array $args): mixed
 }
 
 /**
+ * @psalm-taint-sink callable $callback
+ *
  * @template I
  * @template R
  *
@@ -3259,6 +3678,8 @@ function forward_static_call(callable|string $callback, mixed ...$args): mixed
 }
 
 /**
+ * @psalm-taint-sink callable $callback
+ *
  * @template I
  * @template R
  *
@@ -3282,32 +3703,67 @@ function unserialize(string $data, array $options = []): mixed
 {
 }
 
+/**
+ * @param mixed $value
+ * @param list<mixed> $values
+ * @return string
+ *
+ * @psalm-taint-specialize
+ * @psalm-flow ($value, $values) -> return
+ * @psalm-taint-sink html $value
+ * @psalm-taint-sink html $values
+ */
 function var_dump(mixed $value, mixed ...$values): void
 {
 }
 
 /**
- * @return ($return is true ? non-empty-string : null)
+ * @param mixed $value
+ * @param bool $return
+ * @return ($return is true ? string : void)
+ *
+ * @psalm-taint-specialize
+ * @psalm-flow ($value) -> return
+ * @psalm-taint-sink html $value
  */
 function var_export(mixed $value, bool $return = false): null|string
 {
 }
 
+/**
+ * @param mixed $value
+ * @param mixed $values
+ * @return void
+ */
 function debug_zval_dump(mixed $value, mixed ...$values): void
 {
 }
 
 /**
- * @return ($return is true ? non-empty-string : bool)
+ * @param mixed $value
+ * @param bool $return
+ * @return ($return is true ? string : true)
+ *
+ * @psalm-taint-specialize
+ * @psalm-flow ($value) -> return
+ * @psalm-taint-sink html $value
  */
 function print_r(mixed $value, bool $return = false): string|bool
 {
 }
 
+/**
+ * @param bool $real_usage
+ * @return int
+ */
 function memory_get_usage(bool $real_usage = false): int
 {
 }
 
+/**
+ * @param bool $real_usage
+ * @return int
+ */
 function memory_get_peak_usage(bool $real_usage = false): int
 {
 }
@@ -3317,6 +3773,8 @@ function memory_reset_peak_usage(): void
 }
 
 /**
+ * @psalm-taint-sink callable $callback
+ *
  * @template I
  *
  * @param (callable(I...)) $callback
@@ -3329,6 +3787,8 @@ function register_shutdown_function(callable $callback, mixed ...$args): void
 }
 
 /**
+ * @psalm-taint-sink callable $callback
+ *
  * @template I
  *
  * @param (callable(I...)) $callback
@@ -3343,21 +3803,34 @@ function unregister_tick_function(callable $callback): void
 }
 
 /**
- * @return ($return is true ? string|false : bool)
+ * @psalm-pure
+ *
+ * @psalm-taint-sink file $filename
+ * @param mixed $filename
+ * @return ($return is true ? string : bool)
  */
 function highlight_file(string $filename, bool $return = false): string|bool
 {
 }
 
 /**
- * @return ($return is true ? string|false : bool)
+ * @psalm-pure
+ *
+ * @psalm-taint-sink file $filename
+ * @param mixed $filename
+ * @return ($return is true ? string : bool)
  */
 function show_source(string $filename, bool $return = false): string|bool
 {
 }
 
 /**
- * @return ($return is true ? string|false : bool)
+ * @psalm-pure
+ *
+ * @param mixed $string
+ * @return ($return is true ? string : bool)
+ *
+ * @psalm-flow ($string) -> return
  */
 function highlight_string(string $string, bool $return = false): string|bool
 {
@@ -3372,6 +3845,11 @@ function hrtime(bool $as_number = false): array|int|float|false
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @psalm-taint-sink file $filename
+ */
 function php_strip_whitespace(string $filename): string
 {
 }
@@ -3381,7 +3859,9 @@ function ini_get(string $option): string|false
 }
 
 /**
- * @return array{'global_value': string, 'local_value': string, 'access': int}|false
+ * @param null|string $extension
+ * @param bool $details
+ * @return array<array-key, mixed>|false
  */
 function ini_get_all(null|string $extension, bool $details = true): array|false
 {
@@ -3403,6 +3883,9 @@ function ini_parse_quantity(string $shorthand): int
 {
 }
 
+/**
+ * @return string
+ */
 function get_include_path(): string|false
 {
 }
@@ -3476,26 +3959,29 @@ function headers_list(): array
 }
 
 /**
- * @return array<string, string>|false
+ * @return array<array-key, mixed>|false
  */
 function apache_request_headers(): false|array
 {
 }
 
 /**
- * @return array<string, string>|false
+ * @return array<array-key, mixed>|false
  */
 function getallheaders(): false|array
 {
 }
 
 /**
- * @return 0|1
+ * @return int
  */
 function connection_aborted(): int
 {
 }
 
+/**
+ * @return int
+ */
 function connection_status(): int
 {
 }
@@ -3504,6 +3990,12 @@ function ignore_user_abort(null|bool $enable = null): int
 {
 }
 
+/**
+ * @param string $filename
+ * @param bool $process_sections
+ * @param int $scanner_mode
+ * @return array<array-key, mixed>|false
+ */
 function parse_ini_file(
     string $filename,
     bool $process_sections = false,
@@ -3511,6 +4003,12 @@ function parse_ini_file(
 ): array|false {
 }
 
+/**
+ * @param string $ini_string
+ * @param bool $process_sections
+ * @param int $scanner_mode
+ * @return array<array-key, mixed>|false
+ */
 function parse_ini_string(
     string $ini_string,
     bool $process_sections = false,
@@ -3543,19 +4041,24 @@ function gethostbyaddr(string $ip): string|false
 {
 }
 
+/**
+ * @param string $hostname
+ * @return string
+ */
 function gethostbyname(string $hostname): string
 {
 }
 
 /**
- * @return list<non-empty-string>|false
+ * @param string $hostname
+ * @return false|list<string>
  */
 function gethostbynamel(string $hostname): array|false
 {
 }
 
 /**
- * @return non-empty-string|false
+ * @return false|string
  */
 function gethostname(): string|false
 {
@@ -3599,19 +4102,17 @@ function dns_get_record(
 }
 
 /**
- * @template R of null|array<array-key, resource>
- * @template W of null|array<array-key, resource>
- * @template E of null|array<array-key, resource>
- *
- * @param R $read
- * @param W $write
- * @param E $except
- *
- * @param-out (R is null ? null : array<array-key, resource>) $read
- * @param-out (W is null ? null : array<array-key, resource>) $write
- * @param-out (E is null ? null : array<array-key, resource>) $except
- *
+ * @template TRead of null|array<array-key, resource>
+ * @template TWrite of null|array<array-key, resource>
+ * @template TExcept of null|array<array-key, resource>
+ * @param TRead $read
+ * @param TWrite $write
+ * @param TExcept $except
  * @return false|int<0, max>
+ * @param-out (TRead is null ? null : array<array-key, resource>) $read
+ * @param-out (TWrite is null ? null : array<array-key, resource>) $write
+ * @param-out (TExcept is null ? null : array<array-key, resource>) $except
+ * @psalm-suppress ReferenceConstraintViolation
  */
 function stream_select(
     null|array &$read,
@@ -3668,6 +4169,7 @@ function stream_context_set_options($context, array $options): bool
 
 /**
  * @param resource $stream_or_context
+ * @return array<array-key, mixed>
  */
 function stream_context_get_options($stream_or_context): array
 {
@@ -3681,6 +4183,7 @@ function stream_context_get_default(null|array $options)
 }
 
 /**
+ * @param array<array-key, mixed> $options
  * @return resource
  */
 function stream_context_set_default(array $options)
@@ -3707,6 +4210,7 @@ function stream_filter_append($stream, string $filter_name, int $mode = 0, mixed
 
 /**
  * @param resource $stream_filter
+ * @return bool
  */
 function stream_filter_remove($stream_filter): bool
 {
@@ -3801,7 +4305,10 @@ function stream_socket_shutdown($stream, int $mode): bool
 }
 
 /**
- * @return list{resource, resource}|false
+ * @param int $domain
+ * @param int $type
+ * @param int $protocol
+ * @return array<array-key, resource>|false
  */
 function stream_socket_pair(int $domain, int $type, int $protocol): array|false
 {
@@ -3824,13 +4331,21 @@ function stream_get_contents($stream, null|int $length = null, int $offset = -1)
 
 /**
  * @param resource $stream
+ * @return bool
  */
 function stream_supports_lock($stream): bool
 {
 }
 
 /**
+ * Psalm special-cases this return in FunctionCallReturnTypeFetcher:
+ * non-empty-list<null|string>|false|null with both falsable and nullable
+ * uses ignored.
+ *
  * @param resource $stream
+ * @return non-empty-list<null|string>|false|null
+ * @psalm-ignore-falsable-return
+ * @psalm-ignore-nullable-return
  */
 function fgetcsv(
     $stream,
@@ -3838,7 +4353,7 @@ function fgetcsv(
     string $separator = ',',
     string $enclosure = '"',
     string $escape = '\\',
-): array|false {
+) {
 }
 
 /**
@@ -3865,7 +4380,11 @@ function flock($stream, int $operation, &$would_block = null): bool
 }
 
 /**
- * @return array<string, string>|false
+ * @psalm-pure
+ *
+ * @return array<lowercase-string, string>|false
+ *
+ * @psalm-taint-sink ssrf $filename
  */
 function get_meta_tags(string $filename, bool $use_include_path = false): array|false
 {
@@ -3943,14 +4462,26 @@ function stream_register_wrapper(string $protocol, string $class, int $flags = 0
 {
 }
 
+/**
+ * @param string $filename
+ * @return false|string
+ */
 function stream_resolve_include_path(string $filename): string|false
 {
 }
 
+/**
+ * @param string $protocol
+ * @return bool
+ */
 function stream_wrapper_unregister(string $protocol): bool
 {
 }
 
+/**
+ * @param string $protocol
+ * @return bool
+ */
 function stream_wrapper_restore(string $protocol): bool
 {
 }
@@ -3970,21 +4501,31 @@ function stream_get_transports(): array
 }
 
 /**
- * @param string|resource $stream
+ * @param resource|string $stream
+ * @return bool
  */
 function stream_is_local($stream): bool
 {
 }
 
 /**
- * @param null|resource $context
+ * @psalm-pure
+ *
+ * @param resource|null $context
+ *
+ * @return ($associative is false|0 ? list<string> : array<string, string|list<string>>)|false
+ *
+ * @psalm-taint-sink ssrf $url
  */
-function get_headers(string $url, bool $associative = false, $context = null): array|false
+function get_headers(string $url, int|bool $associative = false, $context = null): array|false
 {
 }
 
 /**
  * @param resource $stream
+ * @param int $seconds
+ * @param int $microseconds
+ * @return bool
  */
 function stream_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 {
@@ -3992,6 +4533,9 @@ function stream_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 
 /**
  * @param resource $stream
+ * @param int $seconds
+ * @param int $microseconds
+ * @return bool
  */
 function socket_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 {
@@ -4004,10 +4548,24 @@ function socket_get_status($stream): array
 {
 }
 
+/**
+ * @psalm-pure
+ *
+ * @return string|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($path) -> return
+ */
 function realpath(string $path): string|false
 {
 }
 
+/**
+ * @param string $pattern
+ * @param string $filename
+ * @param int $flags
+ * @return bool
+ */
 function fnmatch(string $pattern, string $filename, int $flags = 0): bool
 {
 }
@@ -4052,39 +4610,34 @@ function pfsockopen(
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($values) -> return
+ *
+ * @return string|false
+ *
+ * @psalm-ignore-falsable-return
  */
 function pack(string $format, mixed ...$values): string
 {
 }
 
 /**
- * @return ($format is 'a'|'A'|'h'|'H' ? array{1: string}|false : (
- *   $format is 'c' ? array{1: int<-128, 127>}|false : (
- *     $format is 'C' ? array{1: int<0, 255>}|false : (
- *       $format is 's' ? array{1: int<-32768, 32767>}|false : (
- *         $format is 'S'|'n'|'v' ? array{1: int<0, 65535>}|false : (
- *           $format is 'l' ? array{1: int<-2147483648, 2147483647>}|false : (
- *             $format is 'L'|'N'|'V' ? array{1: int<0, 4294967295>}|false : (
- *               $format is 'q'|'Q'|'J'|'P' ? array{1: int}|false : (
- *                 $format is 'f'|'g'|'G'|'d'|'e'|'E' ? array{1: float}|false : (
- *                   array<int>|false
- *                 )
- *               )
- *             )
- *           )
- *         )
- *       )
- *     )
- *   )
- * ))
+ * @psalm-pure
  *
- * @pure
+ * @return array|false
+ * @psalm-ignore-falsable-return
+ *
+ * @psalm-flow ($string) -> return
  */
 function unpack(string $format, string $string, int $offset = 0): array|false
 {
 }
 
+/**
+ * @return ($return_array is true ? array|false : object|false)
+ * @psalm-ignore-falsable-return
+ */
 function get_browser(null|string $user_agent, bool $return_array = false): object|array|false
 {
 }
@@ -4106,12 +4659,17 @@ function opendir(string $directory, $context = null)
 }
 
 /**
- * @param null|resource $dir_handle
+ * @param resource $dir_handle
+ * @return void
  */
 function closedir($dir_handle = null): void
 {
 }
 
+/**
+ * @param string $directory
+ * @return bool
+ */
 function chdir(string $directory): bool
 {
 }
@@ -4121,7 +4679,7 @@ function chroot(string $directory): bool
 }
 
 /**
- * @return non-empty-string|false
+ * @return false|non-falsy-string
  */
 function getcwd(): string|false
 {
@@ -4129,6 +4687,7 @@ function getcwd(): string|false
 
 /**
  * @param resource $dir_handle
+ * @return void
  */
 function rewinddir($dir_handle): void
 {
@@ -4136,15 +4695,16 @@ function rewinddir($dir_handle): void
 
 /**
  * @param resource $dir_handle
- *
- * @return non-empty-string|false
+ * @return false|string
  */
 function readdir($dir_handle): string|false
 {
 }
 
 /**
+ * @param string $directory
  * @param resource $context
+ * @return Directory|false
  */
 function dir(string $directory, $context): Directory|false
 {
@@ -4167,161 +4727,200 @@ function scandir(string $directory, int $sorting_order = 0, $context = null): ar
 }
 
 /**
- * @return list<non-empty-string>|false
+ * @psalm-ignore-falsable-return
+ *
+ * @param string $pattern
+ * @param int<0, max> $flags
+ * @return false|list<non-empty-string>
  */
 function glob(string $pattern, int $flags = 0): array|false
 {
 }
 
 /**
- * @return int<1750595956, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function fileatime(string $filename): int|false
 {
 }
 
 /**
- * @return int<1750595956, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function filectime(string $filename): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function filegroup(string $filename): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function fileinode(string $filename): int|false
 {
 }
 
 /**
- * @return int<1750595956, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function filemtime(string $filename): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function fileowner(string $filename): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function fileperms(string $filename): int|false
 {
 }
 
 /**
- * @return int<0, max>|false
+ * @param string $filename
+ * @return false|int
  */
 function filesize(string $filename): int|false
 {
 }
 
 /**
- * @return 'fifo'|'char'|'dir'|'block'|'link'|'file'|'socket'|'unknown'|false
+ * @param string $filename
+ * @return false|string
  */
 function filetype(string $filename): string|false
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function file_exists(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_writable(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_writeable(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_readable(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_executable(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_file(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_dir(string $filename): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @return bool
+ */
 function is_link(string $filename): bool
 {
 }
 
 /**
- * @return array{
- *   'dev': int,
- *   'ino': int,
- *   'mode': int,
- *   'nlink': int,
- *   'uid': int,
- *   'gid': int,
- *   'rdev': int,
- *   'size': int,
- *   'atime': int,
- *   'mtime': int,
- *   'ctime': int,
- *   'blksize': int,
- *   'blocks': int,
- * }|false
+ * @param string $filename
+ * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
  */
 function stat(string $filename): array|false
 {
 }
 
 /**
- * @return array{
- *   'dev': int,
- *   'ino': int,
- *   'mode': int,
- *   'nlink': int,
- *   'uid': int,
- *   'gid': int,
- *   'rdev': int,
- *   'size': int,
- *   'atime': int,
- *   'mtime': int,
- *   'ctime': int,
- *   'blksize': int,
- *   'blocks': int,
- * }|false
+ * @param string $filename
+ * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
  */
 function lstat(string $filename): array|false
 {
 }
 
+/**
+ * @param string $filename
+ * @param int|string $user
+ * @return bool
+ */
 function chown(string $filename, string|int $user): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @param int|string $group
+ * @return bool
+ */
 function chgrp(string $filename, string|int $group): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @param int|string $user
+ * @return bool
+ */
 function lchown(string $filename, string|int $user): bool
 {
 }
 
+/**
+ * @param string $filename
+ * @param int|string $group
+ * @return bool
+ */
 function lchgrp(string $filename, string|int $group): bool
 {
 }
@@ -4334,6 +4933,11 @@ function touch(string $filename, null|int $mtime = null, null|int $atime = null)
 {
 }
 
+/**
+ * @param bool $clear_realpath_cache
+ * @param string $filename
+ * @return void
+ */
 function clearstatcache(bool $clear_realpath_cache = false, string $filename = ''): void
 {
 }
@@ -4371,15 +4975,16 @@ const ARRAY_FILTER_USE_BOTH = 1;
 const ARRAY_FILTER_USE_KEY = 2;
 
 /**
- * @template K as array-key
- * @template V
- *
- * @param array<K, V> ...$arrays
- *
- * @return array<K, V>
+ * @psalm-pure
  *
  * @no-named-arguments
- * @pure
+ *
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
+ *
+ * @param array<TKey, TValue> ...$arrays
+ *
+ * @return array<TKey, TValue>
  */
 function array_merge_recursive(array ...$arrays)
 {
@@ -4412,47 +5017,46 @@ function array_replace_recursive(array $array, array ...$replacements): array
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TArray as array
  *
- * @param array<K, V> $array
- * @param V $filter_value
- * @param bool $strict
+ * @param TArray $array
+ * @param mixed $filter_value
+ * @param bool  $strict
  *
- * @return ($array is non-empty-array|non-empty-list ? non-empty-list<K> : list<K>)
+ * @return (TArray is non-empty-array ? non-empty-list<key-of<TArray>> : list<key-of<TArray>>)
+ * @psalm-pure
  *
  * @no-named-arguments
- * @pure
  */
 function array_keys(array $array, mixed $filter_value = null, bool $strict = false): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TArray as array
  *
- * @param array<K, V> $array
+ * @param TArray $array
  *
- * @return ($array is non-empty-array|non-empty-list ? non-empty-list<V> : list<V>)
+ * @return (TArray is non-empty-array ? non-empty-list<value-of<TArray>> : list<value-of<TArray>>)
+ * @psalm-pure
  *
  * @no-named-arguments
- * @pure
  */
 function array_values(array $array): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V as array-key
+ * @template TKey as array-key
+ * @template TArray as array<TKey>
  *
- * @param array<K, V> $array
+ * @param TArray $array
  *
- * @return array<V, int>
+ * @return (TArray is non-empty-array ? non-empty-array<TKey, int<1, max>> : array<TKey, int<1, max>>)
+ *
+ * @psalm-pure
  *
  * @no-named-arguments
- * @pure
  */
 function array_count_values(array $array): array
 {
@@ -4520,29 +5124,29 @@ function array_pad(array $array, int $length, mixed $value): array
 }
 
 /**
- * @template K as array-key
- * @template V as array-key
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  *
- * @return ($array is non-empty-array|non-empty-list ? non-empty-array<V, K> : array<V, K>)
- *
- * @pure
+ * @return ($array is non-empty-array ? non-empty-array<TValue, TKey> : array<TValue, TKey>)
+ * @psalm-pure
  */
 function array_flip(array $array): array
 {
 }
 
 /**
+ * @psalm-pure
  *
- * @template V
+ * @psalm-template K of array-key
+ * @psalm-template T
  *
- * @param array<string, V> $array
+ * @param array<K,T> $array
+ *
+ * @return array<K,T>
+ *
  * @param int $case
- *
- * @return ($array is non-empty-array|non-empty-list ? non-empty-array<string, V> : array<string, V>)
- *
- * @pure
  */
 function array_change_key_case(array $array, int $case = CASE_LOWER): array
 {
@@ -4563,110 +5167,116 @@ function array_rand(array $array, int $num = 1): array|string|int
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
+ * @psalm-template TArray as array<TKey, TValue>
  *
- * @param array<K, V> $array
+ * @param TArray $array
+ *
+ * @return (TArray is non-empty-array ? non-empty-array<TKey, TValue> : array<TKey, TValue>)
+ * @psalm-pure
+ *
  * @param int<0, 5> $flags
- *
- * @return ($array is non-empty-array|non-empty-list ? non-empty-array<K, V> : array<K, V>)
- *
- * @pure
  */
 function array_unique(array $array, int $flags = SORT_STRING): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_intersect(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- *
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_intersect_key(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_intersect_assoc(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_diff(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_diff_key(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K, V> $array
+ * @param array<TKey, TValue> $array
  * @param array ...$arrays
  *
- * @return array<K, V>
- *
- * @pure
+ * @return array<TKey, TValue>
+ * @psalm-pure
  */
 function array_diff_assoc(array $array, array ...$arrays): array
 {
 }
 
 /**
- * @param array<int|float> $array
+ * @param array $array
  *
- * @return ($array is array<int> ? int : float)
+ * @return (
+ *     $array is array<int>
+ *     ? int
+ *     : ($array is array<float>
+ *         ? float
+ *         : float|int
+ *     )
+ * )
  *
  * @pure
  */
@@ -4675,7 +5285,16 @@ function array_sum(array $array): int|float
 }
 
 /**
- * @param array<int|float> $array
+ * @param array $array
+ *
+ * @return (
+ *     $array is array<int>
+ *     ? int
+ *     : ($array is array<float>
+ *         ? float
+ *         : float|int
+ *     )
+ * )
  *
  * @pure
  */
@@ -4729,35 +5348,46 @@ function array_chunk(array $array, int $length, bool $preserve_keys = false): ar
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @param array<K> $keys
- * @param array<V> $values
+ * @param array<mixed, TKey> $keys
+ * @param array<mixed, TValue> $values
  *
- * @return ($keys is non-empty-array|non-empty-list ? non-empty-array<K, V> : array<K, V>)
- *
- * @pure
+ * @return (
+ *     PHP_MAJOR_VERSION is 8 ?
+ *         ($keys is non-empty-array ? non-empty-array<TKey, TValue> : array<TKey, TValue>) :
+ *         ($keys is non-empty-array ? non-empty-array<TKey, TValue>|false : array<TKey, TValue>|false)
+ * )
+ * @psalm-ignore-falsable-return
+ * @psalm-pure
  */
 function array_combine(array $keys, array $values): array
 {
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-template TKey as array-key
+ *
+ * @param TKey $key
+ * @param array<TKey, mixed> $array
+ *
+ * @return bool
  */
 function array_key_exists(string|int|float|bool|null $key, array $array): bool
 {
 }
 
 /**
- * @template K as array-key
+ * @psalm-template TKey as array-key
+ * @psalm-template TArray as array<TKey, mixed>
  *
- * @param array<K, mixed> $array
+ * @param TArray $array
  *
- * @return ($array is non-empty-array|non-empty-list ? K : null)
- *
- * @pure
+ * @return (TArray is array<never, never> ? null : (TArray is non-empty-array ? key-of<TArray> : key-of<TArray>|null))
+ * @psalm-pure
  */
 function array_key_first(array $array): string|int|null
 {
@@ -4777,13 +5407,12 @@ function array_first(array $array): mixed
 }
 
 /**
- * @template K as array-key
+ * @psalm-template TArray as array
  *
- * @param array<K, mixed> $array
+ * @param TArray $array
  *
- * @return ($array is non-empty-array|non-empty-list ? K : null)
- *
- * @pure
+ * @return (TArray is array<never, never> ? null : (TArray is non-empty-array ? key-of<TArray> : key-of<TArray>|null))
+ * @psalm-pure
  */
 function array_key_last(array $array): string|int|null
 {
@@ -4831,6 +5460,10 @@ function key_exists($key, array $array): bool
 
 /**
  * @assert truthy $assertion
+ *
+ * @param bool|int|string $assertion
+ * @param Throwable|null|string $description
+ * @return bool
  */
 function assert(mixed $assertion, Throwable|string|null $description = null): bool
 {
@@ -4863,14 +5496,16 @@ function ftok(string $filename, string $project_id): int
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * @psalm-flow ($string) -> return
  */
 function str_rot13(string $string): string
 {
 }
 
 /**
- * @return list<string>
+ * @return array<array-key, mixed>
  */
 function stream_get_filters(): array
 {
@@ -4918,25 +5553,39 @@ function stream_bucket_new($stream, string $buffer): StreamBucket
 {
 }
 
+/**
+ * @param string $name
+ * @param string $value
+ * @return bool
+ */
 function output_add_rewrite_var(string $name, string $value): bool
 {
 }
 
+/**
+ * @return bool
+ */
 function output_reset_rewrite_vars(): bool
 {
 }
 
 /**
- * @return non-empty-string
+ * @return string
  */
 function sys_get_temp_dir(): string
 {
 }
 
+/**
+ * @return array<array-key, mixed>
+ */
 function realpath_cache_get(): array
 {
 }
 
+/**
+ * @return int
+ */
 function realpath_cache_size(): int
 {
 }
@@ -5106,71 +5755,71 @@ function arsort(array &$array, int $flags = SORT_REGULAR): true
 }
 
 /**
- * @template T
+ * @psalm-template T
+ * @psalm-template TArray as array<T>
  *
- * @param array<T> $array
- *
- * @param-out list<T> $array
+ * @param TArray $array
+ * @param-out (TArray is non-empty-array ? non-empty-list<T> : list<T>) $array
  */
 function sort(array &$array, int $flags = SORT_REGULAR): true
 {
 }
 
 /**
- * @template T
+ * @psalm-template T
+ * @psalm-template TArray as array<T>
  *
- * @param array<T> $array
- *
- * @param-out list<T> $array
+ * @param TArray $array
+ * @param-out (TArray is non-empty-array ? non-empty-list<T> : list<T>) $array
  */
 function rsort(array &$array, int $flags = SORT_REGULAR): true
 {
 }
 
 /**
- * @template T
+ * @psalm-template T
+ * @psalm-template TArray as array<T>
  *
- * @param array<T> $array
- * @param (callable(T, T): int) $callback
- *
- * @param-out list<T> $array
+ * @param TArray $array
+ * @param callable(T,T):int $callback
+ * @param-out (TArray is non-empty-array ? non-empty-list<T> : list<T>) $array
  */
 function usort(array &$array, callable $callback): true
 {
 }
 
 /**
- * @template K
- * @template V
+ * @psalm-template TKey
+ * @psalm-template T
+ * @psalm-template TArray as array<TKey,T>
  *
- * @param array<K, V> $array
- * @param (callable(V, V): int) $callback
- *
- * @param-out array<K, V> $array
+ * @param TArray $array
+ * @param callable(T,T):int $callback
+ * @param-out (TArray is non-empty-array ? non-empty-array<TKey,T> : array<TKey,T>) $array
  */
 function uasort(array &$array, callable $callback): true
 {
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-template TKey
+ * @psalm-template T
+ * @psalm-template TArray as array<TKey,T>
  *
- * @param array<K, V> $array
- * @param (callable(K, K): int) $callback
- *
- * @param-out array<K, V> $array
+ * @param TArray $array
+ * @param callable(TKey,TKey):int $callback
+ * @param-out (TArray is non-empty-array ? non-empty-array<TKey,T> : array<TKey,T>) $array
  */
 function uksort(array &$array, callable $callback): true
 {
 }
 
 /**
- * @template T
+ * @psalm-template T
+ * @psalm-template TArray as array<T>
  *
- * @param array<T> $array
- *
- * @param-out list<T> $array
+ * @param TArray $array
+ * @param-out (TArray is non-empty-array ? non-empty-list<T> : list<T>) $array
  */
 function shuffle(array &$array): true
 {
@@ -5186,11 +5835,13 @@ function count(Countable|array $value, int $mode = COUNT_NORMAL): int
 }
 
 /**
- * @template T
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
+ * @psalm-template TArray as array<TKey, TValue>
  *
- * @param object|array<T> $array
+ * @param TArray $array
  *
- * @return ($array is non-empty-array|non-empty-list ? T : false)
+ * @return (TArray is array<never, never> ? false : (TArray is non-empty-array ? TValue : TValue|false))
  */
 function end(object|array &$array): mixed
 {
@@ -5219,41 +5870,41 @@ function next(object|array &$array): mixed
 }
 
 /**
- * @template T
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
+ * @psalm-template TArray as array<TKey, TValue>
  *
- * @param object|array<T> $array
+ * @param TArray $array
  *
- * @return T|false
+ * @return (TArray is array<never, never> ? false : (TArray is non-empty-array ? TValue : TValue|false))
  */
 function reset(object|array &$array): mixed
 {
 }
 
 /**
- * @template T
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
+ * @psalm-template TArray as array<TKey, TValue>
  *
- * @param object|array<T> $array
+ * @param TArray $array
  *
- * @return (
- *   $array is object ? mixed : (
- *     $array is non-empty-array|non-empty-list ? T : T|false
- *   )
- * )
- *
- * @pure
+ * @return (TArray is array<never, never> ? false : (TArray is non-empty-array ? TValue : TValue|false))
+ * @psalm-pure
  */
 function current(object|array $array): mixed
 {
 }
 
 /**
- * @template K of array-key
+ * @psalm-template TKey as array-key
+ * @psalm-template TArray as array<TKey, mixed>
  *
- * @param object|array<K, mixed> $array
+ * @param TArray $array
  *
- * @return K|null
- *
- * @pure
+ * @return (TArray is array<never, never> ? null : (TArray is non-empty-list ? int<0,max> : (TArray is non-empty-array ? TKey : TKey|null)))
+ * @psalm-pure
+ * @psalm-ignore-nullable-return
  */
 function key(object|array $array): string|int|null
 {
@@ -5288,11 +5939,6 @@ function max(mixed $value, mixed ...$values): mixed
 }
 
 /**
- * @template V
- *
- * @param V $needle
- * @param array<V> $haystack
- *
  * @pure
  */
 function in_array(mixed $needle, array $haystack, bool $strict = false): bool
@@ -5300,15 +5946,14 @@ function in_array(mixed $needle, array $haystack, bool $strict = false): bool
 }
 
 /**
- * @template K of array-key
- * @template V
+ * @psalm-template T
  *
- * @param V $needle
- * @param array<K, V> $haystack
+ * @param mixed           $needle
+ * @param array<T, mixed> $haystack
+ * @param bool            $strict
  *
- * @return K|false
- *
- * @pure
+ * @return T|false
+ * @psalm-pure
  */
 function array_search(mixed $needle, array $haystack, bool $strict = false): string|int|false
 {
@@ -5332,15 +5977,15 @@ function array_fill(int $start_index, int $count, mixed $value): array
 }
 
 /**
- * @template K of array-key
- * @template V
+ * @psalm-pure
  *
- * @param array<K> $keys
- * @param V $value
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @return ($keys is non-empty-array<K> ? non-empty-array<K, V> : array<K, V>)
+ * @param array<TKey> $keys
+ * @param TValue $value
  *
- * @pure
+ * @return array<TKey, TValue>
  */
 function array_fill_keys(array $keys, mixed $value): array
 {
@@ -5398,7 +6043,7 @@ function array_shift(array &$array): mixed
  *
  * @param array<K, V> $array
  *
- * @return ($preserve_keys is true ? array<K, V> : list<V>) $array
+ * @return ($preserve_keys is true ? array<K, V> : (K is int ? list<V> : array<K, V>)) $array
  *
  * @pure
  */
@@ -5407,14 +6052,16 @@ function array_slice(array $array, int $offset, null|int $length = null, bool $p
 }
 
 /**
- * @template K as array-key
- * @template V
+ * @psalm-pure
  *
- * @param array<K, V> ...$arrays
+ * @no-named-arguments
  *
- * @return array<K, V>
+ * @psalm-template TKey as array-key
+ * @psalm-template TValue
  *
- * @pure
+ * @param array<TKey, TValue> ...$arrays
+ *
+ * @return array<TKey, TValue>
  */
 function array_merge(array ...$arrays): array
 {
@@ -5427,54 +6074,73 @@ function ob_start(callable|null $callback = null, int $chunk_size = 0, int $flag
 {
 }
 
+/**
+ * @return bool
+ */
 function ob_flush(): bool
 {
 }
 
+/**
+ * @return bool
+ */
 function ob_clean(): bool
 {
 }
 
+/**
+ * @return bool
+ */
 function ob_end_flush(): bool
 {
 }
 
+/**
+ * @return bool
+ */
 function ob_end_clean(): bool
 {
 }
 
+/**
+ * @return false|string
+ */
 function ob_get_flush(): string|false
 {
 }
 
+/**
+ * @return false|string
+ */
 function ob_get_clean(): string|false
 {
 }
 
+/**
+ * @return false|int
+ */
 function ob_get_length(): int|false
 {
 }
 
+/**
+ * @return int
+ */
 function ob_get_level(): int
 {
 }
 
 /**
- * @return array{
- *   level: int,
- *   type: int,
- *   flags: int,
- *   name: string,
- *   del: int,
- *   chunk_size: int,
- *   buffer_size: int,
- *   buffer_used: int
- * }
+ * @param bool $full_status
+ * @return array<array-key, mixed>
  */
 function ob_get_status(bool $full_status = false): array
 {
 }
 
+/**
+ * @return false|string
+ */
 function ob_get_contents(): string|false
 {
 }
@@ -5484,22 +6150,31 @@ function ob_implicit_flush(bool $enable = true): void
 }
 
 /**
- * @return list<non-empty-string>
+ * @return list<string>
  */
 function ob_list_handlers(): array
 {
 }
 
+/**
+ * @param int $priority
+ * @param string $message
+ * @return true
+ */
 function syslog(int $priority, string $message): true
 {
 }
 
+/**
+ * @return true
+ */
 function closelog(): true
 {
 }
 
 /**
- * @param (callable(): void) $callback
+ * @param callable():void $callback
+ * @return bool
  */
 function header_register_callback(callable $callback): bool
 {
@@ -5534,15 +6209,30 @@ function metaphone(string $string, int $max_phonemes = 0): string
 {
 }
 
+/**
+ * Psalm's callmap marks the array `&rw_` (read-write): the by-ref arg keeps
+ * its own type rather than demoting to the signature union.
+ *
+ * @template TWalk of object|array
+ * @param TWalk $array
+ * @param-out TWalk $array
+ */
 function array_walk(object|array &$array, callable $callback, mixed $arg = null): true
 {
 }
 
+/**
+ * @template TWalk of object|array
+ * @param TWalk $array
+ * @param-out TWalk $array
+ */
 function array_walk_recursive(object|array &$array, callable $callback, mixed $arg = null): true
 {
 }
 
 /**
+ * @psalm-taint-sink extract $array
+ *
  * @param array<string, mixed> $array
  *
  * @return int<0, max>
@@ -5564,23 +6254,30 @@ function compact($var_name, ...$var_names): array
 }
 
 /**
- * @param positive-int|float $step
+ * @psalm-pure
  *
+ * @template T as string|int|float
+ * @template TStep as int|float
+ * @param T $start
+ * @param T $end
+ * @param TStep $step
  * @return (
- *   $start is string
- *   ? (
- *     $end is string
- *     ? ($step is int ? list<string> : list{float})
- *     : ($end is float ? list<float> : ($step is float ? list<float> : list<int>))
- *   )
- *   : (
- *     $start is float
- *     ? list<float>
- *     : ($end is float ? list<float> : ($step is float ? list<float> : list<int>))
- *   )
+ *     T is int
+ *     ? (TStep is int ? non-empty-list<int> : non-empty-list<float>)
+ *     : (
+ *         T is float
+ *         ? non-empty-list<float>
+ *         : (
+ *              T is string
+ *              ? non-empty-list<string>
+ *              : (
+ *                   T is int|float
+ *                   ? non-empty-list<int|float>
+ *                   : non-empty-list<int|float|string>
+ *              )
+ *         )
+ *     )
  * )
- *
- * @pure
  */
 function range(string|int|float $start, string|int|float $end, int|float $step = 1): array
 {
@@ -5617,3 +6314,10 @@ function array_unshift(array &$array, mixed ...$values): int
 function array_splice(array &$array, int $offset, null|int $length = null, mixed $replacement = []): array
 {
 }
+
+/**
+ * @psalm-taint-sink eval $code
+ *
+ * @psalm-taint-specialize
+ */
+function create_function(string $args, string $code): string {}

@@ -65,8 +65,19 @@ impl<'a> Analyzer<'a> {
 
         // Match Hakana's strategy: distribute files across N groups and spawn one worker per group.
         let mut group_size = self.config.threads.max(1);
-        if (files_to_analyze.len() / group_size) < 4 {
+        if (files_to_analyze.len() / group_size) < 4 || cfg!(target_arch = "wasm32") {
             group_size = 1;
+        }
+
+        // Single group: analyze inline. Avoids spawn overhead, and threads are
+        // unavailable on wasm32.
+        if group_size == 1 {
+            let file_analyzer = FileAnalyzer::new(self.codebase, self.interner, self.config);
+            let mut issues = Vec::new();
+            for file_path in files_to_analyze {
+                issues.extend(file_analyzer.analyze(*file_path));
+            }
+            return issues;
         }
 
         let mut file_groups = FxHashMap::default();
@@ -79,6 +90,12 @@ impl<'a> Analyzer<'a> {
         }
 
         let mut issues = Vec::new();
+
+        // NOTE: FileInfo records mago's parser diagnostics (parse_errors), but
+        // they are not surfaced as ParseError issues yet: mago recovers from
+        // several constructs it mis-flags (multiline double-quoted strings,
+        // `as final` trait aliases), so blanket surfacing produces false
+        // positives. Revisit when mago's parser matures.
 
         std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(file_groups.len());

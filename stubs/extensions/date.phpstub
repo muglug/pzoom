@@ -120,6 +120,12 @@ function gmmktime(
 ): int|false {
 }
 
+/**
+ * @param int $month
+ * @param int $day
+ * @param int $year
+ * @return bool
+ */
 function checkdate(int $month, int $day, int $year): bool
 {
 }
@@ -138,6 +144,9 @@ function gmstrftime(string $format, null|int $timestamp = null): string|false
 {
 }
 
+/**
+ * @return int<1, max>
+ */
 function time(): int
 {
 }
@@ -202,7 +211,7 @@ function date_parse_from_format(string $format, string $datetime): array
 }
 
 /**
- * @return array<string, int|array>|false
+ * @return array{error_count: int, errors: array<int, string>, warning_count: int, warnings: array<int, string>}|false
  */
 function date_get_last_errors(): array|false
 {
@@ -224,6 +233,10 @@ function date_sub(DateTime $object, DateInterval $interval): DateTime
 {
 }
 
+/**
+ * @param DateTimeInterface $object
+ * @return DateTimeZone|false
+ */
 function date_timezone_get(DateTimeInterface $object): DateTimeZone|false
 {
 }
@@ -256,14 +269,26 @@ function date_timestamp_set(DateTime $object, int $timestamp): DateTime
 {
 }
 
+/**
+ * @param DateTimeInterface $object
+ * @return int
+ */
 function date_timestamp_get(DateTimeInterface $object): int
 {
 }
 
+/**
+ * @param string $timezone
+ * @return DateTimeZone|false
+ */
 function timezone_open(string $timezone): DateTimeZone|false
 {
 }
 
+/**
+ * @param DateTimeZone $object
+ * @return string
+ */
 function timezone_name_get(DateTimeZone $object): string
 {
 }
@@ -287,7 +312,8 @@ function timezone_transitions_get(
 }
 
 /**
- * @return array<string, float|string>|false
+ * @param DateTimeZone $object
+ * @return array<array-key, mixed>|false
  */
 function timezone_location_get(DateTimeZone $object): array|false
 {
@@ -301,12 +327,15 @@ function timezone_identifiers_list(int $timezoneGroup = DateTimeZone::ALL, null|
 }
 
 /**
- * @return array<string, array>
+ * @return array<string, list<array{dst: bool, offset: int, timezone_id: null|string}>>
  */
 function timezone_abbreviations_list(): array
 {
 }
 
+/**
+ * @return string
+ */
 function timezone_version_get(): string
 {
 }
@@ -315,6 +344,11 @@ function date_interval_create_from_date_string(string $datetime): DateInterval|f
 {
 }
 
+/**
+ * @param DateInterval $object
+ * @param string $format
+ * @return string
+ */
 function date_interval_format(DateInterval $object, string $format): string
 {
 }
@@ -323,6 +357,9 @@ function date_default_timezone_set(string $timezoneId): bool
 {
 }
 
+/**
+ * @return non-empty-string
+ */
 function date_default_timezone_get(): string
 {
 }
@@ -400,7 +437,15 @@ interface DateTimeInterface
 
     public const string W3C = DATE_W3C;
 
-    public function format(string $format): string;
+    /**
+     * Returned string|false before PHP 8.0 (CallMap_74); the
+     * stubs/_php_versions/Php80.phpstub overlay restores plain string.
+     * Psalm's falsable CallMap returns don't error on use.
+     *
+     * @return string|false
+     * @psalm-ignore-falsable-return
+     */
+    public function format(string $format);
 
     public function getTimezone(): DateTimeZone|false;
 
@@ -470,10 +515,17 @@ class DateTime implements DateTimeInterface
     {
     }
 
-    public function format(string $format): string
+    /**
+     * @return string|false
+     * @psalm-ignore-falsable-return
+     */
+    public function format(string $format)
     {
     }
 
+    /**
+     * @return static|false
+     */
     public function modify(string $modifier): DateTime
     {
     }
@@ -551,6 +603,10 @@ class DateTimeImmutable implements DateTimeInterface
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static|false
+     */
     public static function createFromFormat(
         string $format,
         string $datetime,
@@ -569,18 +625,38 @@ class DateTimeImmutable implements DateTimeInterface
     {
     }
 
-    public function format(string $format): string
+    /**
+     * @psalm-mutation-free
+     *
+     * @param string $format
+     *
+     * @return string|false
+     * @psalm-ignore-falsable-return
+     */
+    public function format(string $format)
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return DateTimeZone
+     */
     public function getTimezone(): DateTimeZone|false
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return int
+     */
     public function getOffset(): int
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return int
+     */
     public function getTimestamp(): int
     {
     }
@@ -589,45 +665,82 @@ class DateTimeImmutable implements DateTimeInterface
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @param bool $absolute
+     * @return DateInterval
+     */
     public function diff(DateTimeInterface $targetObject, bool $absolute = false): DateInterval
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static|false
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::modify() does not modify the object itself')]
     public function modify(string $modifier): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::add() does not modify the object itself')]
     public function add(DateInterval $interval): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::sub() does not modify the object itself')]
     public function sub(DateInterval $interval): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::setTimezone() does not modify the object itself')]
     public function setTimezone(DateTimeZone $timezone): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::setTime() does not modify the object itself')]
     public function setTime(int $hour, int $minute, int $second = 0, int $microsecond = 0): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::setDate() does not modify the object itself')]
     public function setDate(int $year, int $month, int $day): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::setISODate() does not modify the object itself')]
     public function setISODate(int $year, int $week, int $dayOfWeek = 1): DateTimeImmutable
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     #[NoDiscard(message: 'as DateTimeImmutable::setTimestamp() does not modify the object itself')]
     public function setTimestamp(int $timestamp): DateTimeImmutable
     {
@@ -638,6 +751,10 @@ class DateTimeImmutable implements DateTimeInterface
     {
     }
 
+    /**
+     * @psalm-mutation-free
+     * @return static
+     */
     public static function createFromMutable(DateTime $object): static
     {
     }
@@ -650,6 +767,9 @@ class DateTimeImmutable implements DateTimeInterface
     }
 }
 
+/**
+ * @psalm-immutable
+ */
 class DateTimeZone
 {
     public const int AFRICA = UNKNOWN;
@@ -667,6 +787,9 @@ class DateTimeZone
     public const int ALL_WITH_BC = UNKNOWN;
     public const int PER_COUNTRY = UNKNOWN;
 
+    /**
+     *  @param non-empty-string $timezone
+     */
     public function __construct(string $timezone) {}
 
     public function getName(): string
@@ -726,25 +849,97 @@ class DateTimeZone
 
 class DateInterval
 {
+    /**
+     * Number of years
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $y;
+    /**
+     * Number of months
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $m;
+    /**
+     * Number of days
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $d;
+    /**
+     * Number of hours
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $h;
+    /**
+     * Number of minutes
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $i;
+    /**
+     * Number of seconds
+     *
+     * @var int
+     * @readonly
+     */
     public readonly int $s;
+    /**
+     * Number of microseconds
+     *
+     * @since 7.1.0
+     * @var float
+     * @readonly
+     */
     public readonly float $f;
-    /** @var int<0, 1> */
+    /**
+     * Is 1 if the interval is inverted and 0 otherwise
+     *
+     * @var int
+     */
     public readonly int $invert;
+    /**
+     * Total number of days the interval spans. If this is unknown, days will be FALSE.
+     *
+     * @var int|false
+     * @readonly
+     */
     public readonly int|false $days;
     public readonly bool $from_string;
     public readonly string $date_string;
 
+    /**
+     * @throws Exception when the $duration cannot be parsed as an interval.
+     * @link https://php.net/manual/en/dateinterval.construct.php
+     */
     public function __construct(string $duration) {}
 
+    /**
+     * Sets up a DateInterval from the relative parts of the string
+     *
+     * @return DateInterval|false Returns a new {@link https://www.php.net/manual/en/class.dateinterval.php DateInterval}
+     * instance on success, or <b>FALSE</b> on failure.
+     * @link https://php.net/manual/en/dateinterval.createfromdatestring.php
+     * @psalm-ignore-falsable-return
+     */
     public static function createFromDateString(string $datetime): DateInterval
     {
     }
 
+    /**
+     * Formats the interval
+     *
+     * @return string
+     * @link https://php.net/manual/en/dateinterval.format.php
+     * @psalm-pure
+     */
     public function format(string $format): string
     {
     }
@@ -763,6 +958,9 @@ class DateInterval
 }
 
 /**
+ * @psalm-immutable
+ *
+ * @template-covariant Start of string|DateTimeInterface
  * @implements IteratorAggregate<int, DateTimeInterface>
  */
 class DatePeriod implements IteratorAggregate
@@ -810,10 +1008,10 @@ class DatePeriod implements IteratorAggregate
     }
 
     /**
-     * @param DateTimeInterface|string $start
-     * @param DateInterval|int $interval
-     * @param DateTimeInterface|int $end
-     * @param int $options
+     * @param Start $start
+     * @param (Start is string ? int-mask<self::EXCLUDE_START_DATE, self::INCLUDE_END_DATE> : DateInterval) $interval
+     * @param (Start is string ? never : (DateTimeInterface|positive-int)) $end
+     * @param (Start is string ? never : int-mask<self::EXCLUDE_START_DATE, self::INCLUDE_END_DATE>) $options
      */
     public function __construct($start, $interval = UNKNOWN, $end = UNKNOWN, $options = UNKNOWN) {}
 
@@ -845,6 +1043,9 @@ class DatePeriod implements IteratorAggregate
     {
     }
 
+    /**
+     *  @psalm-return (Start is string ? Iterator<int, DateTime> : Iterator<int, Start>)
+     */
     public function getIterator(): Iterator
     {
     }

@@ -30,7 +30,7 @@ pub struct InferredPurity {
 /// Returns true when an issue kind denotes an impure operation in a body that
 /// is being purity-inferred (i.e. one that would make the enclosing closure
 /// impure). Mirrors the impurity issues Psalm raises while `track_mutations`.
-pub(crate) fn is_impure_issue_kind(kind: IssueKind) -> bool {
+fn is_impure_issue_kind(kind: IssueKind) -> bool {
     matches!(
         kind,
         IssueKind::ImpureFunctionCall
@@ -55,29 +55,38 @@ pub(crate) fn is_impure_issue_kind(kind: IssueKind) -> bool {
 /// operation was observed.
 pub(crate) fn strip_inferred_impure_issues(
     analysis_data: &mut FunctionAnalysisData,
-    issue_count_before: usize,
+    issue_marks: (usize, usize),
     retain_impure_issues: bool,
 ) -> bool {
-    if analysis_data.issues.len() == issue_count_before {
-        return false;
-    }
-
-    let new_issues = analysis_data.issues.split_off(issue_count_before);
-    let mut filtered = Vec::with_capacity(new_issues.len());
+    let (issue_count_before, recorded_count_before) = issue_marks;
     let mut saw_impure_issue = false;
 
-    for issue in new_issues {
-        if is_impure_issue_kind(issue.kind) {
-            saw_impure_issue = true;
-            if retain_impure_issues {
-                filtered.push(issue);
-            }
-        } else {
-            filtered.push(issue);
+    let mut sweep = |issues: &mut Vec<pzoom_code_info::Issue>, mark: usize| {
+        if issues.len() <= mark {
+            return;
         }
+        let new_issues = issues.split_off(mark);
+        for issue in new_issues {
+            if is_impure_issue_kind(issue.kind) {
+                saw_impure_issue = true;
+                if retain_impure_issues {
+                    issues.push(issue);
+                }
+            } else {
+                issues.push(issue);
+            }
+        }
+    };
+
+    sweep(&mut analysis_data.issues, issue_count_before);
+    // A closure analyzed inside a loop fixpoint pass emits into the active
+    // recording frame, which replays after the closure's own strip — sweep
+    // it too so inferred-purity probes never escape (the LanguageServer
+    // array_map-in-foreach ImpurePropertyFetch shape).
+    if let Some(frame) = analysis_data.recorded_issues.last_mut() {
+        sweep(frame, recorded_count_before);
     }
 
-    analysis_data.issues.extend(filtered);
     saw_impure_issue
 }
 

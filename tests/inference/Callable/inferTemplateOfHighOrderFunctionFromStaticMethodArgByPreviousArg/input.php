@@ -1,0 +1,29 @@
+<?php
+final class StaticOps
+{
+    /**
+     * @template T
+     * @return Closure(list<T>): T
+     */
+    public static function flatten() { throw new RuntimeException("???"); }
+}
+/**
+ * @return list<list<int>>
+ */
+function getList() { throw new RuntimeException("???"); }
+/**
+ * @template T
+ * @return Closure(list<T>): T
+ */
+function flatten() { throw new RuntimeException("???"); }
+/**
+ * @template A
+ * @template B
+ *
+ * @param list<A> $_a
+ * @param callable(A): B $_ab
+ * @return list<B>
+ */
+function map(array $_a, callable $_ab) { throw new RuntimeException("???"); }
+
+$result = map(getList(), StaticOps::flatten());

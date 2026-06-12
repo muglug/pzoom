@@ -4,20 +4,23 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::array::{Array, ArrayElement, List};
 use mago_syntax::ast::ast::expression::Expression;
 
+use pzoom_code_info::data_flow::path::ArrayDataKind;
 use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::ttype::type_combiner;
-use pzoom_code_info::{TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{DataFlowNode, PathKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::context::BlockContext;
+use crate::data_flow::make_data_flow_node_position;
 use crate::expr::call::function_call_analyzer;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
+use std::rc::Rc;
 
 #[derive(Default)]
 struct ArrayCreationInfo {
@@ -29,6 +32,7 @@ struct ArrayCreationInfo {
     can_be_empty: bool,
     all_list: bool,
     int_offset: i64,
+    parent_nodes: Vec<DataFlowNode>,
 }
 
 impl ArrayCreationInfo {
@@ -42,8 +46,115 @@ impl ArrayCreationInfo {
             can_be_empty: true,
             all_list: true,
             int_offset: -1,
+            parent_nodes: Vec::new(),
         }
     }
+}
+
+/// Hakana `collection_analyzer::add_array_value_dataflow`: connect an element
+/// value's parents to a per-item node, labelled with the literal key if known.
+fn add_array_value_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    value_type: &TUnion,
+    analysis_data: &mut FunctionAnalysisData,
+    key_item_type: &TUnion,
+    value_pos: Pos,
+    info: &mut ArrayCreationInfo,
+) {
+    if value_type.parent_nodes.is_empty() {
+        return;
+    }
+
+    let mut key_name = "".to_string();
+
+    let key_item_single = if key_item_type.types.len() == 1 {
+        key_item_type.types.first()
+    } else {
+        None
+    };
+
+    if let Some(key_item_single) = key_item_single {
+        if let TAtomic::TLiteralString { value } = key_item_single {
+            key_name.clone_from(value);
+        } else if let TAtomic::TLiteralInt { value } = key_item_single {
+            key_name = value.to_string();
+        }
+    }
+
+    let new_parent_node = DataFlowNode::get_for_array_item(
+        key_name,
+        make_data_flow_node_position(analyzer, value_pos),
+    );
+    analysis_data
+        .data_flow_graph
+        .add_node(new_parent_node.clone());
+
+    for parent_node in value_type.parent_nodes.iter() {
+        analysis_data.data_flow_graph.add_path(
+            &parent_node.id,
+            &new_parent_node.id,
+            match key_item_single {
+                Some(TAtomic::TLiteralInt { value }) => {
+                    PathKind::ArrayAssignment(ArrayDataKind::ArrayValue, value.to_string())
+                }
+                Some(TAtomic::TLiteralString { value }) => {
+                    PathKind::ArrayAssignment(ArrayDataKind::ArrayValue, value.clone())
+                }
+                _ => PathKind::UnknownArrayAssignment(ArrayDataKind::ArrayValue),
+            },
+            vec![],
+            vec![],
+        );
+    }
+
+    info.parent_nodes.push(new_parent_node);
+}
+
+/// Hakana `collection_analyzer::add_array_key_dataflow`.
+fn add_array_key_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    key_item_type: &TUnion,
+    analysis_data: &mut FunctionAnalysisData,
+    item_key_pos: Pos,
+    info: &mut ArrayCreationInfo,
+) {
+    if key_item_type.parent_nodes.is_empty() {
+        return;
+    }
+
+    let new_parent_node = DataFlowNode::get_for_array_item(
+        "array".to_string(),
+        make_data_flow_node_position(analyzer, item_key_pos),
+    );
+    analysis_data
+        .data_flow_graph
+        .add_node(new_parent_node.clone());
+
+    let key_item_single = if key_item_type.types.len() == 1 {
+        key_item_type.types.first()
+    } else {
+        None
+    };
+
+    for parent_node in key_item_type.parent_nodes.iter() {
+        analysis_data.data_flow_graph.add_path(
+            &parent_node.id,
+            &new_parent_node.id,
+            match key_item_single {
+                Some(TAtomic::TLiteralInt { value }) => {
+                    PathKind::ArrayAssignment(ArrayDataKind::ArrayKey, value.to_string())
+                }
+                Some(TAtomic::TLiteralString { value }) => {
+                    PathKind::ArrayAssignment(ArrayDataKind::ArrayKey, value.clone())
+                }
+                _ => PathKind::UnknownArrayAssignment(ArrayDataKind::ArrayKey),
+            },
+            vec![],
+            vec![],
+        );
+    }
+
+    info.parent_nodes.push(new_parent_node);
 }
 
 /// Analyze an array creation expression.
@@ -56,13 +167,10 @@ pub fn analyze_array(
 ) {
     if array.elements.is_empty() {
         // Empty array
-        analysis_data.set_expr_type(
-            pos,
-            TUnion::new(TAtomic::TArray {
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TArray {
                 key_type: Box::new(TUnion::nothing()),
                 value_type: Box::new(TUnion::nothing()),
-            }),
-        );
+            })));
         return;
     }
 
@@ -87,7 +195,9 @@ pub fn analyze_array(
         Some(combine_types(info.item_value_types))
     };
 
-    let expr_type = if !info.property_types.is_empty() {
+    let parent_nodes = std::mem::take(&mut info.parent_nodes);
+
+    let mut expr_type = if !info.property_types.is_empty() {
         let fallback = if info.can_create_objectlike {
             (None, None, true)
         } else {
@@ -103,7 +213,7 @@ pub fn analyze_array(
         };
 
         TUnion::new(TAtomic::TKeyedArray {
-            properties: info.property_types,
+            properties: std::sync::Arc::new(info.property_types),
             is_list: info.all_list,
             sealed: fallback.2,
             fallback_key_type: fallback.0,
@@ -137,7 +247,27 @@ pub fn analyze_array(
         }
     };
 
-    analysis_data.set_expr_type(pos, expr_type);
+    // Hakana funnels every item node into a composition node for the literal.
+    if !parent_nodes.is_empty() {
+        let array_node =
+            DataFlowNode::get_for_composition(make_data_flow_node_position(analyzer, pos));
+
+        for child_node in parent_nodes {
+            analysis_data.data_flow_graph.add_path(
+                &child_node.id,
+                &array_node.id,
+                PathKind::Default,
+                vec![],
+                vec![],
+            );
+        }
+
+        analysis_data.data_flow_graph.add_node(array_node.clone());
+
+        expr_type.parent_nodes = vec![array_node];
+    }
+
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
 }
 
 fn analyze_array_element(
@@ -153,17 +283,38 @@ fn analyze_array_element(
             let spread_pos =
                 expression_analyzer::analyze(analyzer, variadic.value, analysis_data, context);
             let spread_type = analysis_data
-                .get_expr_type(spread_pos)
+                .expr_types.get(&spread_pos).cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
+            // Spread values flow into the new array like any other element
+            // (Hakana's add_array_value_dataflow for the unpacked entry).
+            if !spread_type.parent_nodes.is_empty() {
+                let new_parent_node = DataFlowNode::get_for_array_item(
+                    "".to_string(),
+                    make_data_flow_node_position(analyzer, spread_pos),
+                );
+                analysis_data
+                    .data_flow_graph
+                    .add_node(new_parent_node.clone());
+                for parent_node in spread_type.parent_nodes.iter() {
+                    analysis_data.data_flow_graph.add_path(
+                        &parent_node.id,
+                        &new_parent_node.id,
+                        PathKind::UnknownArrayAssignment(ArrayDataKind::ArrayValue),
+                        vec![],
+                        vec![],
+                    );
+                }
+                info.parent_nodes.push(new_parent_node);
+            }
             handle_unpacked_array(analyzer, analysis_data, info, variadic.value, &spread_type);
         }
         ArrayElement::Value(value_element) => {
             let value_pos =
                 expression_analyzer::analyze(analyzer, value_element.value, analysis_data, context);
             let value_type = analysis_data
-                .get_expr_type(value_pos)
+                .expr_types.get(&value_pos).cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
@@ -183,6 +334,21 @@ fn analyze_array_element(
 
             info.int_offset += 1;
             let key = ArrayKey::Int(info.int_offset);
+
+            // Hakana `analyze_vals_item`: connect the value's parents to a per-item
+            // node keyed by the implicit list offset.
+            let key_item_type = TUnion::new(TAtomic::TLiteralInt {
+                value: info.int_offset,
+            });
+            add_array_value_dataflow(
+                analyzer,
+                &value_type,
+                analysis_data,
+                &key_item_type,
+                value_pos,
+                info,
+            );
+
             record_literal_key(
                 analyzer,
                 analysis_data,
@@ -203,13 +369,24 @@ fn analyze_array_element(
                 expression_analyzer::analyze(analyzer, key_value.value, analysis_data, context);
 
             let raw_key_type = analysis_data
-                .get_expr_type(key_pos)
+                .expr_types.get(&key_pos).cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::array_key);
             let value_type = analysis_data
-                .get_expr_type(value_pos)
+                .expr_types.get(&value_pos).cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
+
+            // Hakana `analyze_keyvals_item`: key and value dataflow per item.
+            add_array_key_dataflow(analyzer, &raw_key_type, analysis_data, key_pos, info);
+            add_array_value_dataflow(
+                analyzer,
+                &value_type,
+                analysis_data,
+                &raw_key_type,
+                value_pos,
+                info,
+            );
 
             info.can_be_empty = false;
 
@@ -318,7 +495,7 @@ fn handle_unpacked_array(
         {
             let mut had_optional = false;
 
-            for (key, property_value) in properties {
+            for (key, property_value) in properties.iter() {
                 if property_value.possibly_undefined {
                     had_optional = true;
                     continue;
@@ -403,7 +580,14 @@ fn handle_unpacked_array(
 
         info.can_create_objectlike = false;
 
-        if iter_key_type.has_string() {
+        let key_can_be_string = iter_key_type.has_string()
+            || iter_key_type.types.iter().any(|atomic| {
+                matches!(
+                    atomic,
+                    TAtomic::TTemplateParam { as_type, .. } if as_type.has_string()
+                )
+            });
+        if key_can_be_string {
             info.all_list = false;
         }
 
@@ -421,8 +605,6 @@ fn handle_unpacked_array(
 
     if all_non_empty {
         info.can_be_empty = false;
-    } else {
-        info.all_list = false;
     }
 }
 
@@ -472,14 +654,14 @@ fn extract_unpacked_iterable_params(
             }
 
             if let Some(class_info) = analyzer.codebase.get_class(*name) {
-                let template_defaults =
+                let mut template_result =
                     function_call_analyzer::get_class_template_defaults(class_info);
-                let mut template_replacements =
-                    function_call_analyzer::infer_class_template_replacements_from_extended_params(
-                        class_info,
-                    );
+                function_call_analyzer::infer_class_template_replacements_from_extended_params(
+                    &mut template_result,
+                    class_info,
+                );
                 function_call_analyzer::overlay_template_replacements(
-                    &mut template_replacements,
+                    &mut template_result,
                     function_call_analyzer::infer_class_template_replacements_from_type_params(
                         class_info,
                         type_params.as_deref(),
@@ -498,8 +680,7 @@ fn extract_unpacked_iterable_params(
                             {
                                 ordered.push(function_call_analyzer::replace_templates_in_union(
                                     resolved_union,
-                                    &template_replacements,
-                                    &template_defaults,
+                                    &template_result,
                                 ));
                             }
                         }
@@ -521,13 +702,11 @@ fn extract_unpacked_iterable_params(
                     if extended_traversable_params.len() >= 2 {
                         let key_type = function_call_analyzer::replace_templates_in_union(
                             &extended_traversable_params[0],
-                            &template_replacements,
-                            &template_defaults,
+                            &template_result,
                         );
                         let value_type = function_call_analyzer::replace_templates_in_union(
                             &extended_traversable_params[1],
-                            &template_replacements,
-                            &template_defaults,
+                            &template_result,
                         );
                         return Some((key_type, value_type));
                     }
@@ -535,8 +714,7 @@ fn extract_unpacked_iterable_params(
                     if let Some(single_value_type) = extended_traversable_params.first() {
                         let value_type = function_call_analyzer::replace_templates_in_union(
                             single_value_type,
-                            &template_replacements,
-                            &template_defaults,
+                            &template_result,
                         );
                         return Some((TUnion::mixed(), value_type));
                     }
@@ -623,7 +801,7 @@ fn extract_unpacked_iterable_params(
     }
 }
 
-fn get_keyed_array_generic_params(
+pub(crate) fn get_keyed_array_generic_params(
     properties: &FxHashMap<ArrayKey, TUnion>,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
@@ -631,7 +809,7 @@ fn get_keyed_array_generic_params(
     let mut key_type = fallback_key_type.cloned().unwrap_or_else(TUnion::nothing);
     let mut value_type = fallback_value_type.cloned().unwrap_or_else(TUnion::nothing);
 
-    for (key, property_type) in properties {
+    for (key, property_type) in properties.iter() {
         let literal_key_type = match key {
             ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
             ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
@@ -778,6 +956,8 @@ fn normalize_array_creation_key_union(
             | TAtomic::TArrayKey
             | TAtomic::TClassString { .. }
             | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TDependentGetClass { .. }
+            | TAtomic::TDependentGetType { .. }
             | TAtomic::TTemplateParam { .. }
             | TAtomic::TTemplateParamClass { .. } => {
                 good_types.push(atomic.clone());
@@ -920,7 +1100,7 @@ pub fn analyze_list(
                 let elem_pos: Pos = (elem_span.start.offset, elem_span.end.offset);
                 let _inner_pos =
                     expression_analyzer::analyze(analyzer, val.value, analysis_data, context);
-                analysis_data.set_expr_type(elem_pos, TUnion::mixed());
+                analysis_data.expr_types.insert(elem_pos, Rc::new(TUnion::mixed()));
             }
             ArrayElement::KeyValue(kv) => {
                 // Keyed destructuring: list('key' => $var)
@@ -930,7 +1110,7 @@ pub fn analyze_list(
                 let elem_pos: Pos = (elem_span.start.offset, elem_span.end.offset);
                 let _inner_pos =
                     expression_analyzer::analyze(analyzer, kv.value, analysis_data, context);
-                analysis_data.set_expr_type(elem_pos, TUnion::mixed());
+                analysis_data.expr_types.insert(elem_pos, Rc::new(TUnion::mixed()));
             }
             ArrayElement::Missing(_) => {
                 // Skipped element
@@ -942,7 +1122,7 @@ pub fn analyze_list(
     }
 
     // The list expression itself has an array type
-    analysis_data.set_expr_type(pos, TUnion::mixed());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// Combine multiple types into a union.

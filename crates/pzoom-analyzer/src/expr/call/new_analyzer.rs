@@ -5,21 +5,26 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::instantiation::Instantiation;
 use mago_syntax::ast::ast::variable::Variable;
 
+use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
-use pzoom_code_info::{DataFlowNode, FunctionLikeIdentifier, Issue, IssueKind, TAtomic, TUnion};
+use pzoom_code_info::{
+    DataFlowNode, FunctionLikeIdentifier, Issue, IssueKind, TAtomic, TUnion, TemplateBound,
+    TypeVariableBounds,
+};
 use pzoom_str::StrId;
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
-use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
+use crate::data_flow::make_data_flow_node_position;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
 use crate::statements_analyzer::StatementsAnalyzer;
-use crate::template::TemplateMap;
 use crate::type_comparator::object_type_comparator;
+use pzoom_code_info::TemplateResult;
 
 use super::{argument_analyzer, arguments_analyzer, callable_validation, function_call_analyzer};
+use std::rc::Rc;
 
 /// Analyze a new expression (object instantiation).
 pub fn analyze(
@@ -29,10 +34,39 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
+    // `new stdClass(...)` parses as `new (stdClass(...))` — PHP rejects
+    // first-class callable syntax in new expressions at compile time
+    // ("Cannot create Closure for new expression"); Psalm reports ParseError.
+    if let mago_syntax::ast::ast::expression::Expression::PartialApplication(partial) =
+        instantiation.class.unparenthesized()
+        && partial.is_first_class_callable()
+    {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::ParseError,
+            "Cannot create Closure for new expression",
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        return;
+    }
+
     // Analyze the class expression
-    let class_pos =
-        expression_analyzer::analyze(analyzer, instantiation.class, analysis_data, context);
-    let mut class_expr_type = analysis_data.get_expr_type(class_pos).map(|t| (*t).clone());
+    let class_pos = {
+        // Dynamic class expressions (`new $type`) consume their variable
+        // (Hakana's new_analyzer general-use gate).
+        let was_inside_general_use = context.inside_general_use;
+        context.inside_general_use = true;
+        let pos =
+            expression_analyzer::analyze(analyzer, instantiation.class, analysis_data, context);
+        context.inside_general_use = was_inside_general_use;
+        pos
+    };
+    let mut class_expr_type = analysis_data.expr_types.get(&class_pos).cloned().map(|t| (*t).clone());
 
     // Try to get the resolved class ID
     let requested_class_id = get_resolved_class_id(analyzer, instantiation.class).map(|class_id| {
@@ -45,21 +79,12 @@ pub fn analyze(
     let is_static_class_reference =
         matches!(instantiation.class.unparenthesized(), Expression::Static(_));
     let mut concrete_class_id = requested_class_id;
-    let mut class_case_mismatch = false;
-    if let Some(class_id) = concrete_class_id
-        && analyzer.codebase.get_class(class_id).is_none()
-        && let Some(actual_class_id) =
-            find_class_case_insensitive(analyzer, analyzer.interner.lookup(class_id).as_ref())
-    {
-        class_case_mismatch = actual_class_id != class_id;
-        concrete_class_id = Some(actual_class_id);
-    }
 
     // Dynamic class expressions may bypass normal variable-fetch typing. Prefer the
     // scoped variable type when available.
     if class_expr_type.as_ref().map_or(true, |t| t.is_mixed()) {
         if let Some(var_id) = get_dynamic_class_var_id(analyzer, instantiation.class) {
-            if let Some(var_type) = context.get_var_type(var_id) {
+            if let Some(var_type) = context.get_var_type(&var_id) {
                 class_expr_type = Some(var_type.clone());
             }
         }
@@ -73,14 +98,63 @@ pub fn analyze(
         );
     }
 
+    // `new $class(...)` resolved through a class-string/template bound (not a
+    // literal class name) instantiates some unknown subclass whose constructor
+    // may differ — Psalm doesn't verify constructor arguments there (only
+    // UnsafeInstantiation without @psalm-consistent-constructor).
+    let class_resolved_from_bound = requested_class_id.is_none()
+        && concrete_class_id.is_some()
+        && !matches!(
+            class_expr_type.as_ref().and_then(|t| t.get_single()),
+            Some(TAtomic::TLiteralClassString { .. } | TAtomic::TLiteralString { .. })
+        );
+
     let classlike_name = concrete_class_id.map(|id| analyzer.interner.lookup(id));
     let class_is_known =
         concrete_class_id.is_some_and(|class_id| analyzer.codebase.get_class(class_id).is_some());
     let suppress_arg_undefined_checks = !class_is_known;
 
+    // Psalm's NewAnalyzer: a non-literal class expression (`new $a(...)`) is
+    // a `variable-call` taint sink — user input choosing the class to
+    // instantiate is a tainted callable.
+    if analyzer.config.taint_analysis
+        && !class_is_known
+        && let Some(class_expr_type) = class_expr_type.as_ref()
+        && !class_expr_type.parent_nodes.is_empty()
+    {
+        let class_span = instantiation.class.span();
+        let sink_pos = make_data_flow_node_position(
+            analyzer,
+            (class_span.start.offset, class_span.end.offset),
+        );
+        let custom_call_sink = DataFlowNode {
+            id: pzoom_code_info::data_flow::node::DataFlowNodeId::SpecializedFunctionLikeArg(
+                FunctionLikeIdentifier::Function(analyzer.interner.intern("variable-call")),
+                0,
+                sink_pos.file_path,
+                sink_pos.start_offset,
+            ),
+            kind: pzoom_code_info::data_flow::node::DataFlowNodeKind::TaintSink {
+                pos: Some(sink_pos),
+                types: vec![pzoom_code_info::data_flow::node::SinkType::Callable],
+            },
+        };
+
+        for parent_node in &class_expr_type.parent_nodes {
+            analysis_data.data_flow_graph.add_path(
+                &parent_node.id,
+                &custom_call_sink.id,
+                pzoom_code_info::PathKind::Default,
+                vec![],
+                vec![],
+            );
+        }
+        analysis_data.data_flow_graph.add_node(custom_call_sink);
+    }
+
     if let Some(var_id) = get_dynamic_class_var_id(analyzer, instantiation.class) {
-        if let Some(var_type) = context.get_var_type(var_id) {
-            if !is_dynamic_instantiable_union(var_type) && !var_type.is_mixed() {
+        if let Some(var_type) = context.get_var_type(&var_id) {
+            if !is_dynamic_instantiable_union(analyzer, var_type) && !var_type.is_mixed() {
                 let issue_kind = if var_type.has_object() {
                     IssueKind::MixedMethodCall
                 } else {
@@ -99,12 +173,12 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.set_expr_type(pos, TUnion::new(TAtomic::TObject));
+                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
                 return;
             }
 
             if analyzer.function_info.is_none()
-                && context.is_assigned(var_id)
+                && context.is_assigned(&var_id)
                 && var_type.is_mixed()
             {
                 let (line, col) = analyzer.get_line_column(pos.0);
@@ -117,7 +191,7 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.set_expr_type(pos, TUnion::new(TAtomic::TObject));
+                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
                 return;
             }
         }
@@ -147,42 +221,74 @@ pub fn analyze(
 
     // Create the result type
     if let (Some(concrete_class_id), Some(class_name)) = (concrete_class_id, classlike_name) {
+        // Psalm records `new` as a class + constructor reference for
+        // find_unused_code; instantiating yourself doesn't count.
+        if analyzer.config.find_unused_code {
+            if context.self_class != Some(concrete_class_id) {
+                analysis_data.referenced_classes.insert(concrete_class_id);
+            }
+            let construct_lc = analyzer.interner.intern("__construct");
+            analysis_data
+                .referenced_class_members
+                .insert((concrete_class_id, construct_lc));
+        }
         let mut inferred_type_params = None;
 
         // Check if the class exists
         if let Some(class_info) = analyzer.codebase.get_class(concrete_class_id) {
-            if class_case_mismatch {
-                if let Some(requested_class_id) = requested_class_id {
-                    let requested = analyzer.interner.lookup(requested_class_id);
-                    let actual = analyzer.interner.lookup(concrete_class_id);
-                    let (line, col) = analyzer.get_line_column(pos.0);
-                    analysis_data.add_issue(Issue::new(
-                        IssueKind::InvalidClass,
-                        format!(
-                            "Class {} has incorrect casing, expected {}",
-                            requested, actual
-                        ),
-                        analyzer.file_path,
-                        pos.0,
-                        pos.1,
-                        line,
-                        col,
-                    ));
+            // Psalm's checkFullyQualifiedClassLikeName: instantiating a class
+            // whose parent/interface never resolved reports MissingDependency
+            // at the use site.
+            for dependency in &class_info.invalid_dependencies {
+                let resolved_dependency = context
+                    .class_aliases
+                    .iter()
+                    .find_map(|(alias_id, target_id)| {
+                        (alias_id == dependency).then_some(*target_id)
+                    })
+                    .unwrap_or(*dependency);
+                if analyzer.codebase.get_class(resolved_dependency).is_some() {
+                    continue;
                 }
-            }
-
-            if class_info.kind == ClassLikeKind::Enum {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
-                    IssueKind::UndefinedClass,
-                    format!("Class {} does not exist", class_name),
+                    IssueKind::MissingDependency,
+                    format!(
+                        "{} depends on class or interface {} that does not exist",
+                        class_name,
+                        analyzer.interner.lookup(*dependency)
+                    ),
                     analyzer.file_path,
                     pos.0,
                     pos.1,
                     line,
                     col,
                 ));
-            } else if class_info.kind == ClassLikeKind::Interface {
+            }
+
+            if class_info.kind == ClassLikeKind::Enum {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UndefinedClass,
+                    crate::class_casing::undefined_class_message(analyzer, &class_name),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            } else if class_info.kind == ClassLikeKind::Interface
+                && !class_expr_type.as_ref().is_some_and(|class_type| {
+                    // `new $class()` where $class is a *generic*
+                    // class-string<SomeInterface> holds a concrete
+                    // implementor at runtime — Psalm allows it; a literal
+                    // I::class is the interface itself and still reports.
+                    class_type
+                        .types
+                        .iter()
+                        .any(|atomic| matches!(atomic, TAtomic::TClassString { as_type: Some(_) }))
+                })
+            {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::InterfaceInstantiation,
@@ -193,7 +299,19 @@ pub fn analyze(
                     line,
                     col,
                 ));
-            } else if class_info.is_abstract && !is_static_class_reference {
+            } else if class_info.is_abstract
+                && !is_static_class_reference
+                && !class_expr_type.as_ref().is_some_and(|class_type| {
+                    // `new $class()` where $class is a *generic*
+                    // class-string<AbstractClass> may hold a concrete child
+                    // at runtime — Psalm allows it; a literal A::class is the
+                    // abstract class itself and still reports.
+                    class_type
+                        .types
+                        .iter()
+                        .any(|atomic| matches!(atomic, TAtomic::TClassString { as_type: Some(_) }))
+                })
+            {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::AbstractInstantiation,
@@ -204,6 +322,73 @@ pub fn analyze(
                     line,
                     col,
                 ));
+            }
+
+            // Psalm NewAnalyzer: `new static` is unsafe when the constructor
+            // may change in child classes (no @psalm-consistent-constructor),
+            // and unsafe for templated classes whose generic params may be
+            // constrained in children (no @psalm-consistent-templates) when
+            // the enclosing function declares a `static`-mentioning return.
+            // Psalm's from_static is only set when the class is non-final —
+            // `new static` in a final class can't resolve to a child.
+            if is_static_class_reference && !class_info.is_final {
+                // Psalm's preserve_constructor_signature: the annotation, a
+                // final constructor (declared or inherited — "a bit of a
+                // hack, but makes sure that `new static` works"), or an
+                // annotated ancestor (Populator propagates it).
+                let preserve_constructor_signature = class_info.is_consistent_constructor
+                    || class_info
+                        .methods
+                        .get(&pzoom_str::StrId::CONSTRUCT)
+                        .is_some_and(|constructor| constructor.is_final)
+                    || class_info.all_parent_classes.iter().any(|parent| {
+                        analyzer
+                            .codebase
+                            .get_class(*parent)
+                            .is_some_and(|parent_info| parent_info.is_consistent_constructor)
+                    });
+                if !preserve_constructor_signature {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::UnsafeInstantiation,
+                        format!(
+                            "Cannot safely instantiate class {} with \"new static\" as its constructor might change in child classes",
+                            class_name
+                        ),
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
+                } else if !class_info.template_types.is_empty()
+                    && !class_info.enforce_template_inheritance
+                    && analyzer.function_info.is_some_and(|function_info| {
+                        function_info
+                            .return_type
+                            .as_ref()
+                            .or(function_info.signature_return_type.as_ref())
+                            .is_some_and(|return_type| {
+                                return_type
+                                    .get_id(Some(analyzer.interner))
+                                    .contains("static")
+                            })
+                    })
+                {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::UnsafeGenericInstantiation,
+                        format!(
+                            "Cannot safely instantiate generic class {} with \"new static\" as its generic parameters may be constrained in child classes.",
+                            class_name
+                        ),
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
+                }
             }
 
             if class_info.is_deprecated
@@ -274,7 +459,10 @@ pub fn analyze(
                 }
             }
 
-            if let Some(construct_info) = class_info.methods.get(&StrId::CONSTRUCT) {
+            if class_resolved_from_bound {
+                // Constructor signature unknown for `new $class`: skip the
+                // argument checks (args were already analyzed above).
+            } else if let Some(construct_info) = class_info.methods.get(&StrId::CONSTRUCT) {
                 analyze_pending_closure_args_for_constructor(
                     analyzer,
                     instantiation,
@@ -488,6 +676,7 @@ pub fn analyze(
                 class_info,
                 instantiation,
                 &arg_positions,
+                pos,
                 analysis_data,
                 context,
             );
@@ -502,7 +691,7 @@ pub fn analyze(
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UndefinedClass,
-                format!("Class {} does not exist", class_name),
+                crate::class_casing::undefined_class_message(analyzer, &class_name),
                 analyzer.file_path,
                 pos.0,
                 pos.1,
@@ -539,17 +728,33 @@ pub fn analyze(
         // (e.g. `class-string<static>` from `get_called_class()`) is carried through.
         // `new static()` likewise produces the late-static-bound type. The concrete
         // class stays in `name`; `is_static` marks it for re-resolution at each use site.
-        let constraint_is_static = class_string_constraint(class_expr_type.as_ref())
-            .is_some_and(|constraint| matches!(
-                constraint,
-                TAtomic::TNamedObject { is_static: true, .. }
-            ));
+        let constraint_is_static =
+            class_string_constraint(class_expr_type.as_ref()).is_some_and(|constraint| {
+                matches!(
+                    constraint,
+                    TAtomic::TNamedObject {
+                        is_static: true,
+                        ..
+                    }
+                )
+            });
         let result_type = TUnion::new(TAtomic::TNamedObject {
             name: result_class_id,
             type_params: inferred_type_params,
             is_static: is_static_class_reference || constraint_is_static,
             remapped_params: false,
         });
+        // Psalm's NewAnalyzer: `new $obj` where `$obj` is an object-valued
+        // template param yields the template param itself (the constraint
+        // only located the concrete class above).
+        let result_type = match class_expr_type.as_ref().and_then(|t| t.get_single()) {
+            Some(template_atomic @ TAtomic::TTemplateParam { .. })
+                if requested_class_id.is_none() =>
+            {
+                TUnion::new(template_atomic.clone())
+            }
+            _ => result_type,
+        };
         let result_type = add_instantiation_dataflow(
             analyzer,
             analysis_data,
@@ -567,7 +772,7 @@ pub fn analyze(
             .get_class(result_class_id)
             .is_some_and(|class_info| class_info.is_external_mutation_free);
         let result_type = result_type.with_reference_free(result_is_reference_free);
-        analysis_data.set_expr_type(pos, result_type);
+        analysis_data.expr_types.insert(pos, Rc::new(result_type));
         return;
     }
 
@@ -612,7 +817,7 @@ pub fn analyze(
                     col,
                 ));
             }
-            analysis_data.set_expr_type(pos, dynamic_type);
+            analysis_data.expr_types.insert(pos, Rc::new(dynamic_type));
             return;
         }
 
@@ -642,13 +847,12 @@ pub fn analyze(
 
     let class_expr_is_dynamic_instantiable = class_expr_type
         .as_ref()
-        .is_some_and(is_dynamic_instantiable_union);
+        .is_some_and(|union| is_dynamic_instantiable_union(analyzer, union));
 
     if !class_is_known && !class_expr_is_dynamic_instantiable {
-        let already_emitted_undefined_class = analysis_data
-            .issues
-            .iter()
-            .any(|issue| issue.kind == IssueKind::UndefinedClass && issue.location.start_offset == pos.0);
+        let already_emitted_undefined_class = analysis_data.issues.iter().any(|issue| {
+            issue.kind == IssueKind::UndefinedClass && issue.location.start_offset == pos.0
+        });
 
         if !already_emitted_undefined_class {
             let class_expr_id = class_expr_type
@@ -669,46 +873,51 @@ pub fn analyze(
     }
 
     // Fall back to generic object
-    analysis_data.set_expr_type(pos, TUnion::new(TAtomic::TObject));
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
 }
 
+/// Port of Hakana `new_analyzer::add_dataflow`. Function-body branch: the
+/// instantiation's return node is a call-site-specialized `CallTo
+/// Class::__construct` node. Whole-program (taint) branch: the object's
+/// parent is the constructor's `ThisAfterMethod` node — instance state
+/// assigned in the ctor body flows out through it; a
+/// `@psalm-taint-specialize` class keys the node per allocation site,
+/// separating instances. (Descendant-class nodes for `new $classname` are
+/// not ported; argument flow goes through `FunctionLikeArg` nodes.)
 fn add_instantiation_dataflow(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     class_id: StrId,
-    class_expr_type: Option<&TUnion>,
-    arg_positions: &[Pos],
+    _class_expr_type: Option<&TUnion>,
+    _arg_positions: &[Pos],
     pos: Pos,
     mut result_type: TUnion,
 ) -> TUnion {
-    let call_node = DataFlowNode::get_for_call(
-        FunctionLikeIdentifier::Method(class_id, StrId::CONSTRUCT),
-        make_data_flow_node_position(analyzer, pos),
-    );
-    analysis_data.data_flow_graph.add_node(call_node.clone());
+    let call_node_pos = make_data_flow_node_position(analyzer, pos);
 
-    if let Some(class_expr_type) = class_expr_type {
-        add_default_dataflow_paths(
-            &mut analysis_data.data_flow_graph,
-            &class_expr_type.parent_nodes,
-            &call_node,
-        );
-    }
+    let new_call_node =
+        if let pzoom_code_info::GraphKind::WholeProgram(_) = analysis_data.data_flow_graph.kind {
+            let specialize_instance = analyzer
+                .codebase
+                .get_class(class_id)
+                .is_some_and(|class_info| class_info.specialize_instance);
+            DataFlowNode::get_for_this_after_method(
+                &pzoom_code_info::method_identifier::MethodIdentifier(class_id, StrId::CONSTRUCT),
+                None,
+                specialize_instance.then_some(call_node_pos),
+            )
+        } else {
+            DataFlowNode::get_for_method_return(
+                &FunctionLikeIdentifier::Method(class_id, StrId::CONSTRUCT),
+                Some(call_node_pos),
+                Some(call_node_pos),
+            )
+        };
+    analysis_data
+        .data_flow_graph
+        .add_node(new_call_node.clone());
 
-    for arg_pos in arg_positions {
-        if let Some(arg_type) = analysis_data.get_expr_type(*arg_pos) {
-            add_default_dataflow_paths(
-                &mut analysis_data.data_flow_graph,
-                &arg_type.parent_nodes,
-                &call_node,
-            );
-        }
-    }
-
-    pzoom_code_info::ttype::extend_dataflow_uniquely(
-        &mut result_type.parent_nodes,
-        vec![call_node],
-    );
+    result_type.parent_nodes = vec![new_call_node];
     result_type
 }
 
@@ -747,7 +956,7 @@ fn emit_definite_dynamic_instantiation_issues(
         if class_info.kind == ClassLikeKind::Enum {
             analysis_data.add_issue(Issue::new(
                 IssueKind::UndefinedClass,
-                format!("Class {} does not exist", class_name),
+                crate::class_casing::undefined_class_message(analyzer, &class_name),
                 analyzer.file_path,
                 pos.0,
                 pos.1,
@@ -788,7 +997,10 @@ fn get_resolved_class_id(
             let offset = id.span().start.offset;
             analyzer
                 .get_resolved_name(offset)
-                .or_else(|| Some(analyzer.interner.intern(id.value())))
+                // Names inside subtrees the resolver does not visit (e.g.
+                // partial applications) fall back to the literal text, with
+                // any fully-qualified leading backslash stripped.
+                .or_else(|| Some(analyzer.interner.intern(id.value().trim_start_matches('\\'))))
         }
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
         Expression::Parent(_) => analyzer.get_declaring_class().and_then(|class_id| {
@@ -799,24 +1011,6 @@ fn get_resolved_class_id(
         }),
         _ => None,
     }
-}
-
-fn find_class_case_insensitive(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_name: &str,
-) -> Option<StrId> {
-    analyzer
-        .codebase
-        .classlike_infos
-        .keys()
-        .copied()
-        .find(|class_id| {
-            analyzer
-                .interner
-                .lookup(*class_id)
-                .trim_start_matches('\\')
-                .eq_ignore_ascii_case(class_name.trim_start_matches('\\'))
-        })
 }
 
 /// The constraint atomic of a `class-string<T>` receiver — pzoom's analog of Psalm's
@@ -842,6 +1036,10 @@ fn infer_concrete_class_id_from_class_expr_type(
 
     let raw_class_id = match atomic {
         TAtomic::TLiteralClassString { name } => Some(analyzer.interner.intern(name)),
+        // `$d = "Foo"; new $d;` — Psalm resolves the literal string.
+        TAtomic::TLiteralString { value } => {
+            Some(analyzer.interner.intern(value.trim_start_matches('\\')))
+        }
         TAtomic::TClassString {
             as_type: Some(as_type),
         }
@@ -862,13 +1060,7 @@ fn infer_concrete_class_id_from_class_expr_type(
         .copied()
         .unwrap_or(raw_class_id);
 
-    analyzer
-        .codebase
-        .get_class(class_id)
-        .map(|_| class_id)
-        .or_else(|| {
-            find_class_case_insensitive(analyzer, analyzer.interner.lookup(class_id).as_ref())
-        })
+    analyzer.codebase.get_class(class_id).map(|_| class_id)
 }
 
 fn get_instantiated_type_name_id(
@@ -907,17 +1099,22 @@ fn analyze_pending_closure_args_for_constructor(
     };
 
     let args: Vec<_> = argument_list.arguments.iter().collect();
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
-        construct_info,
-    ));
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    for template_type in &construct_info.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
 
-    let template_replacements = function_call_analyzer::infer_template_replacements_from_args(
+    function_call_analyzer::infer_template_replacements_from_args(
         analyzer,
         &args,
         arg_positions,
         &construct_info.params,
-        &template_defaults,
+        &mut template_result,
         analysis_data,
         context,
     );
@@ -932,7 +1129,7 @@ fn analyze_pending_closure_args_for_constructor(
             .get(idx)
             .copied()
             .unwrap_or((arg_span.start.offset, arg_span.end.offset));
-        if analysis_data.get_expr_type(arg_pos).is_some() {
+        if analysis_data.expr_types.get(&arg_pos).cloned().is_some() {
             continue;
         }
 
@@ -946,14 +1143,10 @@ fn analyze_pending_closure_args_for_constructor(
         };
 
         let expected_param_type = param.and_then(|param| param.get_type()).map(|param_type| {
-            if template_defaults.is_empty() && template_replacements.is_empty() {
+            if crate::template::template_result_is_empty(&template_result) {
                 param_type.clone()
             } else {
-                function_call_analyzer::replace_templates_in_union(
-                    param_type,
-                    &template_replacements,
-                    &template_defaults,
-                )
+                function_call_analyzer::replace_templates_in_union(param_type, &template_result)
             }
         });
 
@@ -991,7 +1184,7 @@ fn analyze_pending_closure_args_without_context(
             .get(idx)
             .copied()
             .unwrap_or((arg_span.start.offset, arg_span.end.offset));
-        if analysis_data.get_expr_type(arg_pos).is_some() {
+        if analysis_data.expr_types.get(&arg_pos).cloned().is_some() {
             continue;
         }
 
@@ -1022,7 +1215,95 @@ fn verify_constructor_arguments(
         .filter(|param| !param.is_optional && !param.is_variadic)
         .count();
 
-    if !has_spread && args.len() < required_params {
+    // With named arguments — and spreads of known array shapes, whose string
+    // keys act as named arguments and integer keys as positional — each
+    // required parameter must be covered by position or by name (Psalm's
+    // checkArgumentsMatch).
+    let mut spread_unknown = false;
+    let mut positional_count = 0usize;
+    let mut named_arg_names: Vec<String> = Vec::new();
+
+    for (arg_index, arg) in args.iter().enumerate() {
+        if arg.is_unpacked() {
+            let spread_type = arg_positions
+                .get(arg_index)
+                .and_then(|spread_pos| analysis_data.expr_types.get(&*spread_pos).cloned());
+            match spread_type.as_deref().map(|t| t.types.as_slice()) {
+                Some(
+                    [
+                        TAtomic::TKeyedArray {
+                            properties,
+                            fallback_value_type: None,
+                            ..
+                        },
+                    ],
+                ) => {
+                    for (key, property_type) in properties.iter() {
+                        if property_type.possibly_undefined {
+                            continue;
+                        }
+                        match key {
+                            pzoom_code_info::ArrayKey::Int(_) => positional_count += 1,
+                            pzoom_code_info::ArrayKey::String(name) => {
+                                // An unknown named key reports
+                                // InvalidNamedArgument (in the argument
+                                // matcher); don't also claim too-few args.
+                                let matches_some_param =
+                                    construct_info.params.iter().any(|param| {
+                                        analyzer
+                                            .interner
+                                            .lookup(param.name)
+                                            .as_ref()
+                                            .trim_start_matches('$')
+                                            == name.as_str()
+                                    });
+                                if matches_some_param {
+                                    named_arg_names.push(name.clone());
+                                } else {
+                                    spread_unknown = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => spread_unknown = true,
+            }
+            continue;
+        }
+
+        match arg {
+            mago_syntax::ast::ast::argument::Argument::Named(named) => {
+                named_arg_names.push(named.name.value.to_string());
+            }
+            _ => positional_count += 1,
+        }
+    }
+
+    let missing_required_params: Vec<usize> = if !named_arg_names.is_empty() {
+        construct_info
+            .params
+            .iter()
+            .enumerate()
+            .filter(|(param_index, param)| {
+                !param.is_optional
+                    && !param.is_variadic
+                    && *param_index >= positional_count
+                    && !named_arg_names.iter().any(|named| {
+                        analyzer
+                            .interner
+                            .lookup(param.name)
+                            .as_ref()
+                            .trim_start_matches('$')
+                            == named.as_str()
+                    })
+            })
+            .map(|(param_index, _)| param_index)
+            .collect()
+    } else {
+        (positional_count..required_params).collect()
+    };
+
+    if !spread_unknown && !missing_required_params.is_empty() {
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::TooFewArguments,
@@ -1038,6 +1319,36 @@ fn verify_constructor_arguments(
             line,
             col,
         ));
+
+        // Psalm additionally types the slots a spread's unknown remainder
+        // would fill as mixed: "Argument N of C::__construct cannot be mixed".
+        if has_spread {
+            for param_index in &missing_required_params {
+                let Some(param) = construct_info.params.get(*param_index) else {
+                    continue;
+                };
+                let Some(param_type) = param.get_type() else {
+                    continue;
+                };
+                if param_type.is_mixed() {
+                    continue;
+                }
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::MixedArgument,
+                    format!(
+                        "Argument {} of {}::__construct cannot be mixed, expecting {}",
+                        param_index + 1,
+                        analyzer.interner.lookup(class_info.name),
+                        param_type.get_id(Some(analyzer.interner))
+                    ),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+        }
     }
 
     let accepts_unbounded = construct_info
@@ -1062,18 +1373,30 @@ fn verify_constructor_arguments(
         ));
     }
 
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
-        construct_info,
-    ));
-    let template_replacements = function_call_analyzer::infer_template_replacements_from_args(
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    for template_type in &construct_info.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
+    function_call_analyzer::infer_template_replacements_from_args(
         analyzer,
         &args,
         arg_positions,
         &construct_info.params,
-        &template_defaults,
+        &mut template_result,
         analysis_data,
         context,
+    );
+    // `@template-extends` pins ancestor templates (AppUser extends User<int>
+    // fixes T:User to int for the inherited constructor); those bindings win
+    // over anything inferred from the arguments.
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
     );
 
     let callable_name = format!("{}::__construct", analyzer.interner.lookup(class_info.name));
@@ -1085,8 +1408,7 @@ fn verify_constructor_arguments(
         &callable_name,
         analysis_data,
         context,
-        Some(&template_defaults),
-        Some(&template_replacements),
+        Some(&template_result),
         pos,
         false,
         false,
@@ -1131,13 +1453,12 @@ fn verify_constructor_arguments(
         };
 
         let mut effective_param = param.clone();
-        if !template_defaults.is_empty() || !template_replacements.is_empty() {
+        if !crate::template::template_result_is_empty(&template_result) {
             if let Some(param_type) = param.get_type() {
                 effective_param.param_type =
                     Some(function_call_analyzer::replace_templates_in_union(
                         param_type,
-                        &template_replacements,
-                        &template_defaults,
+                        &template_result,
                     ));
             }
         }
@@ -1152,17 +1473,22 @@ fn verify_constructor_arguments(
             &callable_name,
             analysis_data,
             context,
+            Some(arguments_analyzer::call_dataflow_for_method_call(
+                class_info.name,
+                construct_info,
+                pos,
+            )),
         );
 
         if effective_param.by_ref
             && let Expression::Variable(Variable::Direct(direct)) = arg.value().unparenthesized()
         {
-            let var_id = analyzer.interner.intern(direct.name);
+            let var_id = VarName::new(direct.name);
             if let Some(constraint_type) = effective_param.get_type()
                 && !constraint_type.is_mixed()
-                && var_id != StrId::THIS_VAR
+                && var_id != "$this"
             {
-                context.add_reference_constraint(var_id, constraint_type.clone());
+                context.add_reference_constraint(var_id.clone(), constraint_type.clone());
                 context.set_var_type(var_id, constraint_type.clone());
             }
         }
@@ -1174,38 +1500,156 @@ fn infer_constructor_template_params(
     class_info: &pzoom_code_info::ClassLikeInfo,
     instantiation: &Instantiation<'_>,
     arg_positions: &[Pos],
-    analysis_data: &FunctionAnalysisData,
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
 ) -> Option<Vec<TUnion>> {
     if class_info.template_types.is_empty() {
         return None;
     }
 
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
+    // Psalm's NewAnalyzer special-cases SplObjectStorage: its unbound
+    // templates resolve to `never` rather than their bounds, so a later
+    // `$storage[$key]` write on a bare `new SplObjectStorage()` reports
+    // InvalidArgument. No type variable is minted for it.
+    let class_is_spl_object_storage = analyzer
+        .interner
+        .lookup(class_info.name)
+        .eq_ignore_ascii_case("SplObjectStorage");
 
     // Arg-inferred lower bounds only — Psalm's `$template_result->lower_bounds`.
     // The extended-params mappings must NOT be folded in here: they contain
     // identity entries (`[Ancestor][T] = T:Child`) that would satisfy the
     // extends-chain walk below before a real inferred bound is found.
-    let mut lower_bounds = TemplateMap::new();
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
 
-    if let (Some(argument_list), Some(construct_info)) = (
-        instantiation.argument_list.as_ref(),
-        class_info.methods.get(&StrId::CONSTRUCT),
-    ) {
-        template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(
-            construct_info,
-        ));
-        let args: Vec<_> = argument_list.arguments.iter().collect();
-        lower_bounds = function_call_analyzer::infer_template_replacements_from_args(
-            analyzer,
-            &args,
-            arg_positions,
-            &construct_info.params,
-            &template_defaults,
-            analysis_data,
-            context,
-        );
+    if let Some(construct_info) = class_info.methods.get(&StrId::CONSTRUCT) {
+        for template_type in &construct_info.template_types {
+            crate::template::template_types_insert(
+                &mut template_result,
+                template_type.name,
+                template_type.defining_entity,
+                template_type.as_type.clone(),
+            );
+        }
+        if let Some(argument_list) = instantiation.argument_list.as_ref() {
+            let args: Vec<_> = argument_list.arguments.iter().collect();
+            function_call_analyzer::infer_template_replacements_from_args(
+                analyzer,
+                &args,
+                arg_positions,
+                &construct_info.params,
+                &mut template_result,
+                analysis_data,
+                context,
+            );
+        }
+
+        // Hakana's type-variable creation (`new_analyzer`'s placeholder type
+        // arg path). PHP has no constructor type arguments, so every class
+        // template here is an omitted type arg — Hack's `new Foo<_>(...)` —
+        // and mints a fresh ``_N` type variable: its upper bound is the
+        // template's declared constraint, its lower bounds are whatever the
+        // constructor arguments already inferred, and the class template's
+        // lower bound becomes the variable itself, so the constructed
+        // object's type params carry it. Constraints recorded while the
+        // variable flows through the rest of the body reconcile at the end
+        // of the function (Hack's local inference: `T` is not pinned at the
+        // construction site, so a later conflicting use solves to a union
+        // rather than a per-argument mismatch).
+        //
+        // Hakana's `template_readonly` gate: a template with no public
+        // mutation channel (named only in the constructor) can never be
+        // constrained later, so no variable is minted and it resolves
+        // eagerly below — later mismatches then surface through the plain
+        // comparisons, the way Hakana reports them.
+        for (template_name, map) in &template_result.template_types {
+            let template_name = *template_name;
+            let map = map.clone();
+
+            if class_info.template_readonly.contains(&template_name) || class_is_spl_object_storage
+            {
+                continue;
+            }
+
+            let placeholder_name = format!("`_{}", analysis_data.type_variable_bounds.len());
+
+            let mut placeholder_lower_bounds = vec![];
+
+            if let Some(bounds) = template_result.lower_bounds.get(&template_name) {
+                if let Some(bounds) =
+                    bounds.get(&pzoom_code_info::GenericParent::ClassLike(class_info.name))
+                {
+                    for bound in bounds {
+                        placeholder_lower_bounds.push(bound.clone());
+                    }
+                }
+            }
+
+            // The template's declared constraint is enforced where Psalm
+            // enforces it: the loose bind gate when the constructor arguments
+            // bound the template, and the ordinary argument comparison.
+            // Recording it as an upper bound here would re-check the inferred
+            // binding strictly at function end ("Key as mixed should be a
+            // subtype of array-key") — a check Psalm never makes. Only
+            // arg-derived constraints become upper bounds below. With no
+            // arg-derived bound the constraint still seeds the variable so a
+            // later conflicting use has something to push against.
+            let mut placeholder_upper_bounds: Vec<TemplateBound> = vec![];
+            if placeholder_lower_bounds.is_empty() {
+                placeholder_upper_bounds.push(TemplateBound {
+                    bound_type: (*map.first().unwrap().1).clone(),
+                    appearance_depth: 0,
+                    arg_offset: None,
+                    equality_bound_classlike: None,
+                    pos: Some(crate::template::bound_location(analyzer, pos)),
+                });
+            }
+
+            // A constructor argument that bound this template through a
+            // `class-string<T>` position *names* the type exactly
+            // (`new ReflectionClass(Foo::class)` reflects Foo, nothing
+            // wider): such equality bounds pin the variable to precise upper
+            // and lower bounds, so a later conflicting use fails
+            // reconciliation ("Type Bar should be a subtype of Foo") at the
+            // offending argument. Value-typed bindings stay lower-only —
+            // Psalm tolerates their widening coercions.
+            for bound in &placeholder_lower_bounds {
+                if bound.equality_bound_classlike.is_some() {
+                    let mut pinned_bound = bound.clone();
+                    pinned_bound.equality_bound_classlike = None;
+                    pinned_bound.pos = Some(crate::template::bound_location(analyzer, pos));
+                    placeholder_upper_bounds.push(pinned_bound);
+                }
+            }
+
+            analysis_data.type_variable_bounds.insert(
+                placeholder_name.clone(),
+                TypeVariableBounds {
+                    lower_bounds: placeholder_lower_bounds,
+                    upper_bounds: placeholder_upper_bounds,
+                },
+            );
+
+            template_result.lower_bounds.insert(
+                template_name,
+                map.iter()
+                    .map(|(entity, _)| {
+                        (
+                            *entity,
+                            vec![TemplateBound::new(
+                                TUnion::new(TAtomic::TTypeVariable {
+                                    name: placeholder_name.clone(),
+                                }),
+                                0,
+                                None,
+                                None,
+                            )],
+                        )
+                    })
+                    .collect(),
+            );
+        }
     }
 
     // Resolve each of the class's own templates the way Psalm's `NewAnalyzer`
@@ -1217,20 +1661,29 @@ fn infer_constructor_template_params(
             .template_types
             .iter()
             .map(|template_type| {
-                if let Some(bound) = lower_bounds.get_exact(template_type.name, class_info.name) {
-                    bound.clone()
+                let resolved = if let Some(bound) = crate::template::lower_bounds_get(
+                    &template_result,
+                    template_type.name,
+                    pzoom_code_info::GenericParent::ClassLike(class_info.name),
+                ) {
+                    bound
                 } else if !class_info.template_extended_params.is_empty()
-                    && !lower_bounds.is_empty()
+                    && !template_result.lower_bounds.is_empty()
                 {
                     get_generic_param_for_offset(
                         class_info.name,
                         template_type.name,
                         &class_info.template_extended_params,
-                        &lower_bounds,
+                        &template_result,
                     )
+                } else if class_is_spl_object_storage {
+                    // Psalm: `if ($fq_class_name === 'SplObjectStorage')
+                    // { $generic_param_type = Type::getNever(); }`
+                    TUnion::nothing()
                 } else {
                     template_type.as_type.clone()
-                }
+                };
+                resolved
             })
             .collect(),
     )
@@ -1244,22 +1697,20 @@ fn infer_constructor_template_params(
 /// `TTemplateParam{template_name, classlike_name}`) and recurse; a broken
 /// chain maps the ancestor template to a non-template default, which stops the
 /// walk and yields `mixed`.
-pub(crate) fn get_generic_param_for_offset(
+fn get_generic_param_for_offset(
     classlike_name: StrId,
     template_name: StrId,
     template_extended_params: &indexmap::IndexMap<StrId, indexmap::IndexMap<StrId, TUnion>>,
-    found_generic_params: &TemplateMap,
+    found_generic_params: &TemplateResult,
 ) -> TUnion {
-    if let Some(found) = found_generic_params.get_exact(template_name, classlike_name) {
-        return found.clone();
+    if let Some(found) = crate::template::lower_bounds_get(
+        found_generic_params,
+        template_name,
+        pzoom_code_info::GenericParent::ClassLike(classlike_name),
+    ) {
+        return found;
     }
 
-    // Psalm returns on the first matching entry; it can afford to because its
-    // standin replacer has already mapped constructor bounds onto the static
-    // class (`getMappedGenericTypeParams`). pzoom's arg inference binds bounds
-    // at the declaring class only, so several entries can name this template
-    // (`[DirectParent][T2]` and `[GrandAncestor][T1]` both mapping to it) —
-    // try each and take the first that resolves to a real bound.
     for (extended_class_name, type_map) in template_extended_params {
         for (extended_template_name, extended_type) in type_map {
             for extended_atomic_type in &extended_type.types {
@@ -1269,18 +1720,14 @@ pub(crate) fn get_generic_param_for_offset(
                     ..
                 } = extended_atomic_type
                     && *name == template_name
-                    && *defining_entity == classlike_name
+                    && *defining_entity == pzoom_code_info::GenericParent::ClassLike(classlike_name)
                 {
-                    let candidate = get_generic_param_for_offset(
+                    return get_generic_param_for_offset(
                         *extended_class_name,
                         *extended_template_name,
                         template_extended_params,
                         found_generic_params,
                     );
-
-                    if !candidate.is_mixed() {
-                        return candidate;
-                    }
                 }
             }
         }
@@ -1315,10 +1762,17 @@ fn emit_dynamic_instantiation_issues(
     let mut emitted = false;
 
     for atomic in &class_expr_type.types {
+        if let TAtomic::TLiteralString { value } = atomic {
+            let class_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+            if analyzer.codebase.get_class(class_id).is_some() {
+                continue;
+            }
+        }
         match atomic {
             TAtomic::TNamedObject { .. }
             | TAtomic::TLiteralClassString { .. }
             | TAtomic::TClassString { .. }
+            | TAtomic::TDependentGetClass { .. }
             | TAtomic::TTemplateParam { .. }
             | TAtomic::TTemplateParamClass { .. } => {}
             TAtomic::TMixed => {}
@@ -1363,8 +1817,8 @@ fn emit_unknown_class_constructor_arg_issues(
             continue;
         };
 
-        let var_id = analyzer.interner.intern(variable.name);
-        if context.get_var_type(var_id).is_some() {
+        let var_id = VarName::new(variable.name);
+        if context.get_var_type(&var_id).is_some() {
             continue;
         }
 
@@ -1445,7 +1899,7 @@ fn constructor_is_pure_compatible(
 fn find_inherited_constructor(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
-) -> Option<(StrId, pzoom_code_info::FunctionLikeInfo)> {
+) -> Option<(StrId, std::sync::Arc<pzoom_code_info::FunctionLikeInfo>)> {
     let mut current_parent = class_info.parent_class;
 
     while let Some(parent_class_id) = current_parent {
@@ -1461,31 +1915,50 @@ fn find_inherited_constructor(
     None
 }
 
-fn is_dynamic_instantiable_union(union: &TUnion) -> bool {
-    !union.types.is_empty() && union.types.iter().all(is_dynamic_instantiable_atomic)
+fn is_dynamic_instantiable_union(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> bool {
+    // An internal function's falsable return (get_parent_class) keeps its
+    // false-leniency here (Psalm's ignore_internal_falsable_issues).
+    let mut atomics = union.types.iter().filter(|atomic| {
+        !(union.ignore_falsable_issues && matches!(atomic, TAtomic::TFalse))
+    });
+    let mut any = false;
+    for atomic in &mut atomics {
+        if !is_dynamic_instantiable_atomic(analyzer, atomic) {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
-fn is_dynamic_instantiable_atomic(atomic: &TAtomic) -> bool {
+fn is_dynamic_instantiable_atomic(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
+    // A literal string naming an existing class instantiates fine in Psalm
+    // (`$d = "Foo"; new $d;`).
+    if let TAtomic::TLiteralString { value } = atomic {
+        let class_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+        return analyzer.codebase.get_class(class_id).is_some();
+    }
     matches!(
         atomic,
         TAtomic::TNamedObject { .. }
             | TAtomic::TLiteralClassString { .. }
             | TAtomic::TClassString { .. }
+            // `new $x` where $x = get_class($obj) (Psalm's TDependentGetClass
+            // is a class-string subtype).
+            | TAtomic::TDependentGetClass { .. }
             | TAtomic::TTemplateParam { .. }
             | TAtomic::TTemplateParamClass { .. }
     )
 }
 
 fn get_dynamic_class_var_id(
-    analyzer: &StatementsAnalyzer<'_>,
+    _analyzer: &StatementsAnalyzer<'_>,
     class_expr: &Expression<'_>,
-) -> Option<StrId> {
+) -> Option<VarName> {
     match class_expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(variable)) => {
-            Some(analyzer.interner.intern(variable.name))
-        }
+        Expression::Variable(Variable::Direct(variable)) => Some(VarName::new(variable.name)),
         Expression::Identifier(identifier) if identifier.value().starts_with('$') => {
-            Some(analyzer.interner.intern(identifier.value()))
+            Some(VarName::new(identifier.value()))
         }
         _ => None,
     }
@@ -1503,7 +1976,9 @@ fn collect_instantiable_atomic(
             TAtomic::TNamedObject {
                 name: analyzer.interner.intern(name.trim_start_matches('\\')),
                 type_params: None,
-            is_static: false, remapped_params: false },
+                is_static: false,
+                remapped_params: false,
+            },
         ),
         // Instantiating a `class-string<T>` produces the template parameter `T`
         // itself, not its `as` bound — Psalm keeps the link to the template so
@@ -1583,3 +2058,4 @@ fn union_has_unresolved_class_string_target(union: &TUnion) -> bool {
         _ => false,
     })
 }
+

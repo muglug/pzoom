@@ -24,7 +24,6 @@ const ATTR_TARGET_METHOD: u8 = 4;
 const ATTR_TARGET_PROPERTY: u8 = 8;
 const ATTR_TARGET_CLASS_CONSTANT: u8 = 16;
 const ATTR_TARGET_PARAMETER: u8 = 32;
-const ATTR_TARGET_ALL: u8 = 63;
 const ATTR_IS_REPEATABLE: u8 = 64;
 
 #[derive(Clone, Copy, Debug)]
@@ -84,6 +83,35 @@ pub fn analyze_class_attributes(
         &mut attribute_context,
         analysis_data,
     );
+
+    // PHP 8.2: `#[AllowDynamicProperties]` on a readonly class is invalid
+    // (Psalm's ClassLikeNodeScanner InvalidAttribute).
+    if class_info.is_some_and(|info| info.is_readonly) {
+        for attribute in class_stmt
+            .attribute_lists
+            .iter()
+            .flat_map(|attribute_list| attribute_list.attributes.iter())
+        {
+            if attribute
+                .name
+                .value()
+                .trim_start_matches('\\')
+                .eq_ignore_ascii_case("AllowDynamicProperties")
+            {
+                let attr_span = attribute.span();
+                let (line, col) = analyzer.get_line_column(attr_span.start.offset);
+                analysis_data.add_issue(pzoom_code_info::Issue::new(
+                    pzoom_code_info::IssueKind::InvalidAttribute,
+                    "Readonly classes cannot have dynamic properties",
+                    analyzer.file_path,
+                    attr_span.start.offset,
+                    attr_span.end.offset,
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
 
     analyze_class_member_attributes(
         analyzer,
@@ -192,7 +220,7 @@ pub fn analyze_attribute_lists(
                 .trim_start_matches('\\')
                 .eq_ignore_ascii_case("Attribute")
         {
-            attribute_name_id = analyzer.interner.intern("Attribute");
+            attribute_name_id = StrId::ATTRIBUTE;
         }
         let attribute_name = analyzer.interner.lookup(attribute_name_id).to_string();
 
@@ -350,7 +378,7 @@ pub fn analyze_reflection_get_attributes_call(
     let Some(arg_pos) = arg_positions.get(arg_index).copied() else {
         return;
     };
-    let Some(arg_type) = analysis_data.get_expr_type(arg_pos) else {
+    let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned() else {
         return;
     };
 
@@ -659,7 +687,7 @@ fn validate_attribute_constructor_call(
         let Some(arg_pos) = arg_positions.get(arg_index).copied() else {
             continue;
         };
-        let Some(arg_type) = analysis_data.get_expr_type(arg_pos) else {
+        let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned() else {
             continue;
         };
 
@@ -676,6 +704,8 @@ fn validate_attribute_constructor_call(
             ),
             analysis_data,
             context,
+            // Attribute instantiations are declarative, not executed dataflow.
+            None,
         );
     }
 }

@@ -23,7 +23,6 @@
 
 use std::collections::BTreeMap;
 
-use indexmap::IndexMap;
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::binary::BinaryOperator;
 use mago_syntax::ast::ast::expression::Expression;
@@ -31,6 +30,7 @@ use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::Assertion;
+use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{
     Clause, ClauseKey, combine_ored_clauses, get_truths_from_formula, negate_formula, simplify_cnf,
 };
@@ -51,7 +51,7 @@ pub fn get_true_assertions(
     conditional: &Expression<'_>,
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &FunctionAnalysisData,
-) -> BTreeMap<String, Vec<Vec<Assertion>>> {
+) -> BTreeMap<VarName, Vec<Vec<Assertion>>> {
     let cond_id = span_id(conditional);
     let clauses =
         get_formula(cond_id, cond_id, conditional, analyzer, analysis_data, false).unwrap_or_default();
@@ -64,7 +64,7 @@ pub fn get_false_assertions(
     conditional: &Expression<'_>,
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &FunctionAnalysisData,
-) -> BTreeMap<String, Vec<Vec<Assertion>>> {
+) -> BTreeMap<VarName, Vec<Vec<Assertion>>> {
     let cond_id = span_id(conditional);
     let clauses =
         get_formula(cond_id, cond_id, conditional, analyzer, analysis_data, false).unwrap_or_default();
@@ -75,7 +75,7 @@ pub fn get_false_assertions(
 fn truths_for_clauses(
     clauses: Vec<Clause>,
     creating_conditional_id: Option<(u32, u32)>,
-) -> BTreeMap<String, Vec<Vec<Assertion>>> {
+) -> BTreeMap<VarName, Vec<Vec<Assertion>>> {
     if clauses.is_empty() {
         return BTreeMap::new();
     }
@@ -145,7 +145,7 @@ pub fn get_formula(
     // keyed by its source range (mirrors Hakana's fallback clause).
     let (start, end) = span_id(conditional);
     let mut possibilities = BTreeMap::new();
-    let mut orred = IndexMap::new();
+    let mut orred = pzoom_code_info::AssertionSet::default();
     orred.insert(Assertion::Truthy.to_hash(), Assertion::Truthy);
     possibilities.insert(ClauseKey::Range(start, end), orred);
 

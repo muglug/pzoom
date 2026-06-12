@@ -1,0 +1,1137 @@
+<?php
+
+// The Event class
+
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Сopyright (https://php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class Event
+{
+    /**
+     * @var bool
+         * @psalm-immutable
+     */
+        public $pending;
+    public const ET = 32;
+    public const PERSIST = 16;
+    public const READ = 2;
+    public const WRITE = 4;
+    public const SIGNAL = 8;
+    public const TIMEOUT = 1;
+
+    /**
+     * @param EventBase $base
+     * @param mixed     $fd
+     * @param int       $what
+     * @param callable  $cb
+     * @param mixed     $arg  = null
+     */
+    #[Pure]
+    public function __construct(EventBase $base, $fd, int $what, callable $cb, $arg = null) {}
+
+    /**
+     * @param float $timeout (optional)
+     * @return bool
+     */
+    public function add(float $timeout = -1): bool {}
+
+    /**
+     * @param float $timeout (optional)
+     * @return bool
+     */
+    public function addSignal(float $timeout = -1): bool {}
+
+    /**
+     * @param float $timeout (optional)
+     * @return bool
+     */
+    public function addTimer(float $timeout = -1): bool {}
+
+    /**
+     * @return bool
+     */
+    public function del(): bool {}
+
+    /**
+     * @return bool
+     */
+    public function delSignal(): bool {}
+
+    /**
+     * @return bool
+     */
+    public function delTimer(): bool {}
+
+        public function free(): void {}
+
+    /**
+     * @return array
+     */
+    public static function getSupportedMethods(): array {}
+
+    /**
+     * @param int $flags
+     * @return bool
+     */
+    public function pending(int $flags): bool {}
+
+    /**
+     * @param EventBase $base
+     * @param mixed     $fd
+     * @param int       $what (optional)
+     * @param callable  $cb   (optional)
+     * @param mixed     $arg  (optional)
+     * @return bool
+     */
+    public function set(EventBase $base, $fd, int $what, callable $cb, $arg): bool {}
+
+    /**
+     * @param int $priority
+     * @return bool
+     */
+    public function setPriority(int $priority): bool {}
+
+    /**
+     * @param EventBase $base
+     * @param callable  $cb
+     * @param mixed     $arg  (optional)
+     * @return bool
+     */
+    public function setTimer(EventBase $base, callable $cb, $arg): bool {}
+
+    /**
+     * @param EventBase $base
+     * @param int       $signum
+     * @param callable  $cb
+     * @param mixed     $arg    (optional)
+     * @return Event
+     */
+    public static function signal(EventBase $base, int $signum, callable $cb, $arg): Event {}
+
+    /**
+     * @param EventBase $base
+     * @param callable  $cb
+     * @param mixed     $arg  (optional)
+     * @return Event
+     */
+    public static function timer(EventBase $base, callable $cb, $arg): Event {}
+}
+
+//  The EventBase class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventBase
+{
+    public const LOOP_ONCE = 1;
+    public const LOOP_NONBLOCK = 2;
+    public const NOLOCK = 1;
+    public const STARTUP_IOCP = 4;
+    public const NO_CACHE_TIME = 8;
+    public const EPOLL_USE_CHANGELIST = 16;
+    public const IGNORE_ENV = 2;
+    public const PRECISE_TIMER = 32;
+
+    /**
+     * @param null|EventConfig $cfg
+     */
+    public function __construct(?EventConfig $cfg = null) {}
+
+        public function dispatch(): void {}
+
+    /**
+     * @param float $timeout
+     * @return bool
+     */
+    public function exit(float $timeout = 0.0): bool {}
+
+        public function free(): void {}
+
+    /**
+     * @return int
+     */
+    #[Pure]
+    public function getFeatures(): int {}
+
+    /**
+     * @return string
+     */
+    #[Pure]
+    public function getMethod(): string {}
+
+    /**
+     * @return float
+     */
+    #[Pure]
+    public function getTimeOfDayCached(): float {}
+
+    /**
+     * @return bool
+     */
+    #[Pure]
+    public function gotExit(): bool {}
+
+    /**
+     * @return bool
+     */
+    #[Pure]
+    public function gotStop(): bool {}
+
+    /**
+     * @param int $flags
+     * @return bool
+     */
+    public function loop(int $flags = -1): bool {}
+
+    /**
+     * @param int $n_priorities
+     * @return bool
+     */
+    public function priorityInit(int $n_priorities): bool {}
+
+    /**
+     * @return bool
+     */
+    public function reInit(): bool {}
+
+    /**
+     * @return bool
+     * @since libevent version 2.1.2-alpha
+     */
+    public function resume(): bool {}
+
+    /**
+     * @return bool
+     */
+    public function stop(): bool {}
+
+    /**
+     * @return bool
+     * @since libevent 2.1.1-alpha
+     */
+    public function updateCacheTime(): bool {}
+}
+
+// The EventBuffer class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+class EventBuffer
+{
+    /**
+     * @var int
+         * @psalm-immutable
+     */
+        public $length;
+
+    /**
+     * @var int
+         * @psalm-immutable
+     */
+        public $contiguous_space;
+    public const EOL_ANY = 0;
+    public const EOL_CRLF = 1;
+    public const EOL_CRLF_STRICT = 2;
+    public const EOL_LF = 3;
+    public const EOL_NUL = 4;
+    public const PTR_SET = 0;
+    public const PTR_ADD = 1;
+
+        #[Pure]
+    public function __construct() {}
+
+    /**
+     * @param string $data
+     * @return bool
+     */
+    public function add(string $data): bool {}
+
+    /**
+     * @param EventBuffer $buf
+     * @return bool
+     */
+    public function addBuffer(EventBuffer $buf): bool {}
+
+    /**
+     * @param EventBuffer $buf
+     * @param int         $len
+     * @return int
+     */
+    public function appendFrom(EventBuffer $buf, int $len): int {}
+
+    /**
+     * @param string &$data
+     * @param int    $max_bytes
+     * @return int
+     */
+    public function copyout(string &$data, int $max_bytes): int {}
+
+    /**
+     * @param int $len
+     * @return bool
+     */
+    public function drain(int $len): bool {}
+
+        public function enableLocking(): void {}
+
+    /**
+     * @param int $len
+     * @return bool
+     */
+    public function expand(int $len): bool {}
+
+    /**
+     * @param bool $at_front
+     * @return bool
+     */
+    public function freeze(bool $at_front): bool {}
+
+        public function lock(): void {}
+
+    /**
+     * @param string $data
+     * @return bool
+     */
+    public function prepend(string $data): bool {}
+
+    /**
+     * @param EventBuffer $buf
+     * @return bool
+     */
+    public function prependBuffer(EventBuffer $buf): bool {}
+
+    /**
+     * @param int $size
+     * @return null|string
+     */
+    public function pullup(int $size): ?string {}
+
+    /**
+     * @param int $max_bytes
+     * @return null | string
+     */
+    public function read(int $max_bytes): ?string {}
+
+    /**
+     * @param mixed $fd
+     * @param int   $howmuch
+     * @return int
+     */
+    public function readFrom($fd, int $howmuch): int {}
+
+    /**
+     * @param int $eol_style
+     * @return null | string
+     */
+    public function readLine(int $eol_style): ?string {}
+
+    /**
+     * @param string $what
+     * @param int    $start = 1
+     * @param int    $end   = 1
+     * @return int|false
+     */
+    public function search(string $what, int $start = 1, int $end = 1): int|false {}
+
+    /**
+     * @param int $start     = 1
+     * @param int $eol_style = EOL_ANY
+     * @return int|false
+     */
+    public function searchEol(int $start = 1, int $eol_style = EventBuffer::EOL_ANY): int|false {}
+
+    /**
+     * @param int $start
+     * @param int $length (optional)
+     * @return string
+     */
+    public function substr(int $start, int $length): string {}
+
+    /**
+     * @param bool $at_front
+     * @return bool
+     */
+    public function unfreeze(bool $at_front): bool {}
+
+    /**
+     * @return void
+     */
+    public function unlock(): void {}
+
+    /**
+     * @param mixed $fd
+     * @param int $howmuch (optional)
+     * @return int|false
+     */
+    public function write(mixed $fd, int $howmuch): int|false {}
+}
+
+// The EventBufferEvent class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventBufferEvent
+{
+    /**
+     * @var int
+     */
+    public $fd;
+
+    /**
+     * @var int
+     */
+    public $priority;
+
+    /**
+     * @var EventBuffer
+         * @psalm-immutable
+     */
+        public $input;
+
+    /**
+     * @var EventBuffer
+         * @psalm-immutable
+     */
+        public $output;
+    public const READING = 1;
+    public const WRITING = 2;
+    public const EOF = 16;
+    public const ERROR = 32;
+    public const TIMEOUT = 64;
+    public const CONNECTED = 128;
+    public const OPT_CLOSE_ON_FREE = 1;
+    public const OPT_THREADSAFE = 2;
+    public const OPT_DEFER_CALLBACKS = 4;
+    public const OPT_UNLOCK_CALLBACKS = 8;
+    public const SSL_OPEN = 0;
+    public const SSL_CONNECTING = 1;
+    public const SSL_ACCEPTING = 2;
+
+    /**
+     * @param EventBase $base
+     * @param mixed     $socket  = null
+     * @param int       $options = 0
+     * @param null|callable $readcb  = null
+     * @param null|callable $writecb = null
+     * @param null|callable $eventcb = null
+     */
+    #[Pure]
+    public function __construct(EventBase $base, $socket = null, int $options = 0, ?callable $readcb = null, ?callable $writecb = null, ?callable $eventcb = null) {}
+
+    /**
+     * @return bool
+     */
+    public function close(): bool {}
+
+    /**
+     * @param string $addr
+     * @return bool
+     */
+    public function connect(string $addr): bool {}
+
+    /**
+     * @param null|EventDnsBase $dns_base
+     * @param string       $hostname
+     * @param int          $port
+     * @param int          $family   = EventUtil::AF_UNSPEC
+     * @return bool
+     */
+    public function connectHost(?EventDnsBase $dns_base, string $hostname, int $port, int $family = EventUtil::AF_UNSPEC): bool {}
+
+    /**
+     * @param EventBufferEvent $underlying
+     * @param EventSslContext $ctx
+     * @param int $state
+     * @param int $options
+     * @return EventBufferEvent
+     */
+    public function createSslFilter(EventBufferEvent $underlying, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
+
+    /**
+     * @param EventBase $base
+     * @param int       $options = 0
+     * @return array
+     */
+    public static function createPair(EventBase $base, int $options = 0): array {}
+
+    /**
+     * @param int $events
+     * @return bool
+     */
+    public function disable(int $events): bool {}
+
+    /**
+     * @param int $events
+     * @return bool
+     */
+    public function enable(int $events): bool {}
+
+        public function free(): void {}
+
+    /**
+     * @return string
+     */
+    #[Pure]
+    public function getDnsErrorString(): string {}
+
+    /**
+     * @return int
+     */
+    #[Pure]
+    public function getEnabled(): int {}
+
+    /**
+     * @return EventBuffer
+     */
+    #[Pure]
+    public function getInput(): EventBuffer {}
+
+    /**
+     * @return EventBuffer
+     */
+    #[Pure]
+    public function getOutput(): EventBuffer {}
+
+    /**
+     * @param int $size
+     * @return null|string
+     */
+    public function read(int $size): ?string {}
+
+    /**
+     * @param EventBuffer $buf
+     * @return bool
+     */
+    public function readBuffer(EventBuffer $buf): bool {}
+
+    /**
+     * @param callable $readcb
+     * @param callable $writecb
+     * @param callable $eventcb
+     * @param string   $arg     (optional)
+     */
+    public function setCallbacks(callable $readcb, callable $writecb, callable $eventcb, mixed $arg = null): void {}
+
+    /**
+     * @param int $priority
+     * @return bool
+     */
+    public function setPriority(int $priority): bool {}
+
+    /**
+     * @param float $timeout_read
+     * @param float $timeout_write
+     * @return bool
+     */
+    public function setTimeouts(float $timeout_read, float $timeout_write): bool {}
+
+    /**
+     * @param int $events
+     * @param int $lowmark
+     * @param int $highmark
+     */
+    public function setWatermark(int $events, int $lowmark, int $highmark): void {}
+
+    /**
+     * @return false|string
+     */
+    public function sslError(): false|string {}
+
+    /**
+     * @param EventBase        $base
+     * @param EventBufferEvent $underlying
+     * @param EventSslContext  $ctx
+     * @param int              $state
+     * @param int              $options    = 0
+     * @return EventBufferEvent
+     */
+    public static function sslFilter(EventBase $base, EventBufferEvent $underlying, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
+
+    /**
+     * @return string|false
+     */
+    public function sslGetCipherInfo(): string|false {}
+
+    /**
+     * @return string|false
+     */
+    public function sslGetCipherName(): string|false {}
+
+    /**
+     * @return string|false
+     */
+    public function sslGetCipherVersion(): string|false {}
+
+    /**
+     * @return string
+     */
+    public function sslGetProtocol(): string {}
+
+        public function sslRenegotiate(): void {}
+
+    /**
+     * @param EventBase $base
+     * @param mixed $socket
+     * @param EventSslContext $ctx
+     * @param int $state
+     * @param int $options (optional)
+     * @return EventBufferEvent
+     */
+    public static function sslSocket(EventBase $base, mixed $socket, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
+
+    /**
+     * @param string $data
+     * @return bool
+     */
+    public function write(string $data): bool {}
+
+    /**
+     * @param EventBuffer $buf
+     * @return bool
+     */
+    public function writeBuffer(EventBuffer $buf): bool {}
+}
+
+// The EventConfig class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventConfig
+{
+    public const FEATURE_ET = 1;
+    public const FEATURE_O1 = 2;
+    public const FEATURE_FDS = 4;
+
+        #[Pure]
+    public function __construct() {}
+
+    /**
+     * @param string $method
+     * @return bool
+     */
+    public function avoidMethod(string $method): bool {}
+
+    /**
+     * @param int $feature
+     * @return bool
+     */
+    public function requireFeatures(int $feature): bool {}
+
+    /**
+     * @param int $flags
+     * @return bool
+     * @since libevent version 2.0.2-alpha
+     */
+    public function setFlags(int $flags): bool {}
+
+    /**
+     * @param int $max_interval
+     * @param int $max_callbacks
+     * @param int $min_priority
+     */
+    public function setMaxDispatchInterval(int $max_interval, int $max_callbacks, int $min_priority): void {}
+}
+
+// The EventDnsBase class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventDnsBase
+{
+    public const OPTION_SEARCH = 1;
+    public const OPTION_NAMESERVERS = 2;
+    public const OPTION_MISC = 4;
+    public const OPTION_HOSTSFILE = 8;
+    public const OPTIONS_ALL = 15;
+
+    /**
+     * @param EventBase $base
+     * @param bool      $initialize
+     */
+    #[Pure]
+    public function __construct(EventBase $base, bool $initialize) {}
+
+    /**
+     * @param string $ip
+     * @return bool
+     */
+    public function addNameserverIp(string $ip): bool {}
+
+    /**
+     * @param string $domain
+     */
+    public function addSearch(string $domain): void {}
+
+        public function clearSearch(): void {}
+
+    /**
+     * @return int
+     */
+    public function countNameservers(): int {}
+
+    /**
+     * @param string $hosts
+     * @return bool
+     */
+    public function loadHosts(string $hosts): bool {}
+
+    /**
+     * @param int    $flags
+     * @param string $filename
+     * @return bool
+     */
+    public function parseResolvConf(int $flags, string $filename): bool {}
+
+    /**
+     * @param string $option
+     * @param string $value
+     * @return bool
+     */
+    public function setOption(string $option, string $value): bool {}
+
+    /**
+     * @param int $ndots
+     * @return void
+     */
+    public function setSearchNdots(int $ndots): void {}
+}
+
+// The EventHttp class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventHttp
+{
+    /**
+     * @param EventBase       $base
+     * @param null|EventSslContext $ctx
+     */
+    public function __construct(EventBase $base, ?EventSslContext $ctx = null) {}
+
+    /**
+     * @param mixed $socket
+     * @return bool
+     */
+    public function accept(mixed $socket): bool {}
+
+    /**
+     * @param string $alias
+     * @return bool
+     */
+    public function addServerAlias(string $alias): bool {}
+
+    /**
+     * @param string $address
+     * @param int    $port
+     * @return bool
+     */
+    public function bind(string $address, int $port): bool {}
+
+    /**
+     * @param string $alias
+     * @return bool
+     */
+    public function removeServerAlias(string $alias): bool {}
+
+    /**
+     * @param int $methods
+     */
+    public function setAllowedMethods(int $methods): void {}
+
+    /**
+     * @param string $path
+     * @param string $cb
+     * @param null|string $arg (optional)
+     * @return bool
+     */
+    public function setCallback(string $path, string $cb, ?string $arg = null): bool {}
+
+    /**
+     * @param string $cb
+     * @param null|string $arg (optional)
+     */
+    public function setDefaultCallback(string $cb, ?string $arg = null): void {}
+
+    /**
+     * @param int $value
+     */
+    public function setMaxBodySize(int $value): void {}
+
+    /**
+     * @param int $value
+     */
+    public function setMaxHeadersSize(int $value): void {}
+
+    /**
+     * @param int $value
+     */
+    public function setTimeout(int $value): void {}
+}
+
+// The EventHttpConnection class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+class EventHttpConnection
+{
+    /**
+     * @param EventBase       $base
+     * @param EventDnsBase    $dns_base
+     * @param string          $address
+     * @param int             $port
+     * @param null|EventSslContext $ctx
+     */
+    #[Pure]
+    public function __construct(EventBase $base, EventDnsBase $dns_base, string $address, int $port, ?EventSslContext $ctx = null) {}
+
+    /**
+     * @return false|EventBase
+     */
+    public function getBase(): false|EventBase {}
+
+    /**
+     * @param string &$address
+     * @param int    &$port
+     */
+    public function getPeer(string &$address, int &$port): void {}
+
+    /**
+     * @param EventHttpRequest $req
+     * @param int              $type
+     * @param string           $uri
+     * @return bool
+     */
+    public function makeRequest(EventHttpRequest $req, int $type, string $uri): bool {}
+
+    /**
+     * @param callable $callback
+     * @param mixed    $data     (optional)
+     */
+    public function setCloseCallback(callable $callback, mixed $data = null): void {}
+
+    /**
+     * @param string $address
+     */
+    public function setLocalAddress(string $address): void {}
+
+    /**
+     * @param int $port
+     */
+    public function setLocalPort(int $port): void {}
+
+    /**
+     * @param string $max_size
+     */
+    public function setMaxBodySize(string $max_size): void {}
+
+    /**
+     * @param string $max_size
+     */
+    public function setMaxHeadersSize(string $max_size): void {}
+
+    /**
+     * @param int $retries
+     */
+    public function setRetries(int $retries): void {}
+
+    /**
+     * @param int $timeout
+     */
+    public function setTimeout(int $timeout): void {}
+}
+
+// The EventHttpRequest class
+class EventHttpRequest
+{
+    public const CMD_GET = 1;
+    public const CMD_POST = 2;
+    public const CMD_HEAD = 4;
+    public const CMD_PUT = 8;
+    public const CMD_DELETE = 16;
+    public const CMD_OPTIONS = 32;
+    public const CMD_TRACE = 64;
+    public const CMD_CONNECT = 128;
+    public const CMD_PATCH = 256;
+    public const INPUT_HEADER = 1;
+    public const OUTPUT_HEADER = 2;
+
+    /**
+     * @param callable $callback
+     * @param mixed $data
+     */
+    #[Pure]
+    public function __construct(
+        callable $callback,
+        $data = null
+    ) {}
+
+    public function addHeader(string $key, string $value, int $type): bool {}
+
+    public function cancel(): void {}
+
+    public function clearHeaders(): void {}
+
+    public function closeConnection(): void {}
+
+    public function findHeader(string $key, string $type): ?string {}
+
+    public function free() {}
+
+    #[Pure]
+    public function getCommand(): int {}
+
+    #[Pure]
+    public function getConnection(): ?EventHttpConnection {}
+
+    #[Pure]
+    public function getHost(): string {}
+
+    #[Pure]
+    public function getInputBuffer(): EventBuffer {}
+
+    #[Pure]
+    public function getInputHeaders(): array {}
+
+    #[Pure]
+    public function getOutputBuffer(): EventBuffer {}
+
+    #[Pure]
+    public function getOutputHeaders(): array {}
+
+    #[Pure]
+    public function getResponseCode(): int {}
+
+    #[Pure]
+    public function getUri(): string {}
+
+    public function removeHeader(string $key, int $type): bool {}
+
+    public function sendError(int $error, ?string $reason = null) {}
+
+    public function sendReply(int $code, string $reason, ?EventBuffer $buf = null) {}
+
+    public function sendReplyChunk(EventBuffer $buf) {}
+
+    public function sendReplyEnd(): void {}
+
+    public function sendReplyStart(int $code, string $reason): void {}
+}
+
+//  The EventListener class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventListener
+{
+    /**
+     * @var int
+         * @psalm-immutable
+     */
+        public $fd;
+    public const OPT_LEAVE_SOCKETS_BLOCKING = 1;
+    public const OPT_CLOSE_ON_FREE = 2;
+    public const OPT_CLOSE_ON_EXEC = 4;
+    public const OPT_REUSEABLE = 8;
+    public const OPT_THREADSAFE = 16;
+    public const OPT_DISABLED = 32;
+    public const OPT_DEFERRED_ACCEPT = 64;
+
+    /**
+     * @param EventBase $base
+     * @param callable  $cb
+     * @param mixed     $data
+     * @param int       $flags
+     * @param int       $backlog
+     * @param mixed     $target
+     */
+    public function __construct(EventBase $base, callable $cb, mixed $data, int $flags, int $backlog, mixed $target) {}
+
+    /**
+     * @return bool
+     */
+    public function disable(): bool {}
+
+    /**
+     * @return bool
+     */
+    public function enable(): bool {}
+
+    public function free(): void {}
+
+        public function getBase(): void {}
+
+    /**
+     * @param string &$address
+     * @param mixed  &$port
+     * @return bool
+     */
+    public static function getSocketName(string &$address, int &$port): bool {}
+
+    /**
+     * @param callable $cb
+     * @param mixed    $arg = null
+     */
+    public function setCallback(callable $cb, mixed $arg = null): void {}
+
+    /**
+     * @param string $cb
+     */
+    public function setErrorCallback(string $cb): void {}
+}
+
+//  The EventSslContext class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventSslContext
+{
+    public const SSLv2_CLIENT_METHOD = 1;
+    public const SSLv3_CLIENT_METHOD = 2;
+    public const SSLv23_CLIENT_METHOD = 3;
+    public const TLS_CLIENT_METHOD = 4;
+    public const SSLv2_SERVER_METHOD = 5;
+    public const SSLv3_SERVER_METHOD = 6;
+    public const SSLv23_SERVER_METHOD = 7;
+    public const TLS_SERVER_METHOD = 8;
+    public const TLSv11_CLIENT_METHOD = 9;
+    public const TLSv11_SERVER_METHOD = 10;
+    public const TLSv12_CLIENT_METHOD = 11;
+    public const TLSv12_SERVER_METHOD = 12;
+    public const OPT_LOCAL_CERT = 1;
+    public const OPT_LOCAL_PK = 2;
+    public const OPT_PASSPHRASE = 3;
+    public const OPT_CA_FILE = 4;
+    public const OPT_CA_PATH = 5;
+    public const OPT_ALLOW_SELF_SIGNED = 6;
+    public const OPT_VERIFY_PEER = 7;
+    public const OPT_VERIFY_DEPTH = 8;
+    public const OPT_CIPHERS = 9;
+    public const OPT_NO_SSLv2 = 10;
+    public const OPT_NO_SSLv3 = 11;
+    public const OPT_NO_TLSv1 = 12;
+    public const OPT_NO_TLSv1_1 = 13;
+    public const OPT_NO_TLSv1_2 = 14;
+    public const OPT_CIPHER_SERVER_PREFERENCE = 15;
+    public const OPT_REQUIRE_CLIENT_CERT = 16;
+    public const OPT_VERIFY_CLIENT_ONCE = 17;
+
+    /**
+     * @var string
+     */
+    public $local_cert;
+
+    /**
+     * @var string
+     */
+    public $local_pk;
+
+    /**
+     * @param int $method
+     * @param array $options
+     */
+    #[Pure]
+    public function __construct(int $method, array $options) {}
+
+    /**
+     * @param int $proto
+     * @return bool
+     */
+    public function setMinProtoVersion(int $proto): bool {}
+
+    /**
+     * @param int $proto
+     * @return bool
+     */
+    public function setMaxProtoVersion(int $proto): bool {}
+}
+
+// The EventUtil class
+/**
+ * @author Kazuaki MABUCHI
+ * @copyright Copyright (https://secure.php.net/manual/cc.license.php) by the PHP Documentation Group is licensed under [CC by 3.0 or later](https://creativecommons.org/licenses/by/3.0/).
+ */
+final class EventUtil
+{
+    public const AF_INET = 2;
+    public const AF_INET6 = 10;
+    public const AF_UNIX = 1;
+    public const AF_UNSPEC = 0;
+    public const LIBEVENT_VERSION_NUMBER = 33559808;
+    public const SO_DEBUG = 1;
+    public const SO_REUSEADDR = 2;
+    public const SO_KEEPALIVE = 9;
+    public const SO_DONTROUTE = 5;
+    public const SO_LINGER = 13;
+    public const SO_BROADCAST = 6;
+    public const SO_OOBINLINE = 10;
+    public const SO_SNDBUF = 7;
+    public const SO_RCVBUF = 8;
+    public const SO_SNDLOWAT = 19;
+    public const SO_RCVLOWAT = 18;
+    public const SO_SNDTIMEO = 21;
+    public const SO_RCVTIMEO = 20;
+    public const SO_TYPE = 3;
+    public const SO_ERROR = 4;
+    public const SOL_SOCKET = 1;
+    public const SOL_TCP = 6;
+    public const SOL_UDP = 17;
+    public const SOCK_RAW = 3;
+    public const TCP_NODELAY = 1;
+    public const IPPROTO_IP = 0;
+    public const IPPROTO_IPV6 = 41;
+
+        abstract public function __construct();
+
+    /**
+     * @param mixed $socket
+     * @return resource
+     */
+    public function createSocket(mixed $socket) {}
+
+    /**
+     * @param mixed $socket = null
+     * @return int|false
+     */
+    public static function getLastSocketErrno($socket = null): int|false {}
+
+    /**
+     * @param mixed $socket
+     * @return string|false
+     */
+    public static function getLastSocketError(mixed $socket): string|false {}
+
+    /**
+     * @param mixed $socket
+     * @return int
+     */
+    public static function getSocketFd(mixed $socket): int {}
+
+    /**
+     * @param mixed $socket
+     * @param string &$address
+     * @param mixed  &$port
+     * @return bool
+     */
+    public static function getSocketName(mixed $socket, string &$address, int &$port): bool {}
+
+    /**
+     * @param mixed $socket
+     * @param int   $level
+     * @param int   $optname
+     * @param int|array $optval
+     * @return bool
+     */
+    public static function setSocketOption(mixed $socket, int $level, int $optname, int|array $optval): bool {}
+
+        public static function sslRandPoll(): bool {}
+}

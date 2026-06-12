@@ -28,7 +28,7 @@ fn infer_array_values_return_type(
     analysis_data: &mut FunctionAnalysisData,
 ) -> Option<TUnion> {
     let array_pos = arg_positions.first().copied()?;
-    let array_type = analysis_data.get_expr_type(array_pos)?;
+    let array_type = analysis_data.expr_types.get(&array_pos).cloned()?;
     let array_info = fca::extract_array_like_info_from_union(&array_type)?;
 
     if array_info.is_list {
@@ -54,5 +54,10 @@ fn infer_array_values_return_type(
         }
     };
 
-    Some(TUnion::new(atomic))
+    // Psalm has no array_values provider — the type comes from the stub's
+    // `@return list<T>` docblock, so downstream redundancies report as the
+    // GivenDocblockType kinds.
+    let mut result = TUnion::new(atomic);
+    result.from_docblock = true;
+    Some(result)
 }

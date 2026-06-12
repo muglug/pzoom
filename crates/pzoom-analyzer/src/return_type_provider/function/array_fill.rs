@@ -24,12 +24,13 @@ fn infer_array_fill_return_type(
     arg_positions: &[Pos],
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
+    let start_pos = arg_positions.first().copied()?;
     let count_pos = arg_positions.get(1).copied()?;
     let value_pos = arg_positions.get(2).copied()?;
 
-    let count_type = analysis_data.get_expr_type(count_pos)?;
+    let count_type = analysis_data.expr_types.get(&count_pos).cloned()?;
     let value_type = analysis_data
-        .get_expr_type(value_pos)
+        .expr_types.get(&value_pos).cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -38,6 +39,25 @@ fn infer_array_fill_return_type(
         TAtomic::TIntRange { min, .. } => min.is_some_and(|min| min > 0),
         _ => false,
     });
+
+    // Psalm's ArrayFillReturnTypeProvider: a literal-0 start index yields a
+    // (non-empty-)list of the value type.
+    let starts_at_zero = analysis_data
+        .expr_types.get(&start_pos).cloned()
+        .is_some_and(|start_type| {
+            matches!(start_type.get_single(), Some(TAtomic::TLiteralInt { value: 0 }))
+        });
+    if starts_at_zero {
+        return Some(TUnion::new(if is_non_empty {
+            TAtomic::TNonEmptyList {
+                value_type: Box::new(value_type),
+            }
+        } else {
+            TAtomic::TList {
+                value_type: Box::new(value_type),
+            }
+        }));
+    }
 
     Some(TUnion::new(if is_non_empty {
         TAtomic::TNonEmptyArray {

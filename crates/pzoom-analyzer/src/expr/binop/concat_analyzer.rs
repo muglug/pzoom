@@ -11,6 +11,7 @@ use crate::context::BlockContext;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Analyze a string concatenation expression (.).
 pub fn analyze(
@@ -24,13 +25,10 @@ pub fn analyze(
     let left_pos = expression_analyzer::analyze(analyzer, left, analysis_data, context);
     let right_pos = expression_analyzer::analyze(analyzer, right, analysis_data, context);
 
-    let left_type = analysis_data.get_expr_type(left_pos);
-    let right_type = analysis_data.get_expr_type(right_pos);
+    let left_type = analysis_data.expr_types.get(&left_pos).cloned();
+    let right_type = analysis_data.expr_types.get(&right_pos).cloned();
 
-    analysis_data.set_expr_type(
-        pos,
-        infer_concat_type(analyzer, left_type.as_deref(), right_type.as_deref()),
-    );
+    analysis_data.expr_types.insert(pos, Rc::new(infer_concat_type(analyzer, left_type.as_deref(), right_type.as_deref())));
 }
 
 #[derive(Clone, Copy)]
@@ -50,6 +48,7 @@ struct ConcatUnionInfo {
     any_truthy: bool,
     all_numericish: bool,
     all_non_negative_int: bool,
+    all_literal: bool,
 }
 
 pub(crate) fn infer_concat_type(
@@ -61,13 +60,49 @@ pub(crate) fn infer_concat_type(
         return TUnion::string();
     };
 
-    if let (Some(left_literal), Some(right_literal)) = (
-        get_single_literal_concat_string_value(left),
-        get_single_literal_concat_string_value(right),
-    ) {
-        return TUnion::new(TAtomic::TLiteralString {
-            value: format!("{}{}", left_literal, right_literal),
-        });
+    // Psalm enumerates the concatenations when both sides are unions of
+    // specific literals and the combination count stays small (< 64).
+    let literal_concat_values = |union: &TUnion| -> Option<Vec<String>> {
+        union
+            .types
+            .iter()
+            .map(get_literal_concat_string_value)
+            .collect()
+    };
+    if let (Some(left_values), Some(right_values)) =
+        (literal_concat_values(left), literal_concat_values(right))
+        && !left_values.is_empty()
+        && !right_values.is_empty()
+        && left_values.len() * right_values.len() < 64
+    {
+        let mut combined_values = Vec::new();
+        let mut all_within_limit = true;
+        for left_value in &left_values {
+            for right_value in &right_values {
+                let combined = format!("{}{}", left_value, right_value);
+                // A literal at or over the limit is graded like any
+                // non-literal concat instead (Psalm `ConcatAnalyzer`'s
+                // `$literal_concat = false`).
+                if combined.len() >= analyzer.config.max_string_length {
+                    all_within_limit = false;
+                    break;
+                }
+                if !combined_values.contains(&combined) {
+                    combined_values.push(combined);
+                }
+            }
+            if !all_within_limit {
+                break;
+            }
+        }
+        if all_within_limit {
+            return TUnion::from_types(
+                combined_values
+                    .into_iter()
+                    .map(|value| TAtomic::TLiteralString { value })
+                    .collect(),
+            );
+        }
     }
 
     let left_info = get_concat_union_info(analyzer, left);
@@ -79,6 +114,14 @@ pub(crate) fn infer_concat_type(
 
     let all_lowercase = left_info.all_lowercase && right_info.all_lowercase;
     let has_non_empty = left_info.all_non_empty || right_info.all_non_empty;
+
+    // Psalm's all-literals concat keeps literal-string-ness
+    // (TNonspecificLiteralString / its non-empty flavor).
+    if left_info.all_literal && right_info.all_literal {
+        return TUnion::new(TAtomic::TLiteralString {
+            value: NON_SPECIFIC_LITERAL_STRING_VALUE.to_string(),
+        });
+    }
 
     if all_lowercase && has_non_empty {
         return TUnion::new(TAtomic::TNonEmptyLowercaseString);
@@ -136,6 +179,26 @@ pub(crate) fn emit_concat_operand_issue(
             continue;
         }
 
+        // Hakana's `can_be_coerced_to_string`: a type variable concatenates,
+        // constrained from above to `array-key`.
+        if let TAtomic::TTypeVariable { name } = atomic {
+            let bound_pos = crate::template::bound_location(analyzer, pos);
+            analysis_data
+                .type_variable_bounds
+                .entry(name.clone())
+                .and_modify(|bounds| {
+                    bounds.upper_bounds.push(pzoom_code_info::TemplateBound {
+                        bound_type: TUnion::array_key(),
+                        appearance_depth: 0,
+                        arg_offset: None,
+                        equality_bound_classlike: None,
+                        pos: Some(bound_pos),
+                    })
+                });
+            has_valid = true;
+            continue;
+        }
+
         if get_concat_atomic_info(analyzer, atomic).is_some() {
             has_valid = true;
         } else {
@@ -174,8 +237,7 @@ fn union_has_explicit_null(t: &TUnion) -> bool {
         .any(|atomic| matches!(atomic, TAtomic::TNull))
 }
 
-fn get_single_literal_concat_string_value(union: &TUnion) -> Option<String> {
-    let atomic = union.get_single()?;
+fn get_literal_concat_string_value(atomic: &TAtomic) -> Option<String> {
     match atomic {
         TAtomic::TLiteralString { value } => {
             if value == NON_SPECIFIC_LITERAL_STRING_VALUE {
@@ -199,6 +261,20 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
     let mut any_truthy = false;
     let mut all_numericish = !union.types.is_empty();
     let mut all_non_negative_int = !union.types.is_empty();
+    // Psalm's Union::allLiterals: literal strings (including the nonspecific
+    // `literal-string`), literal ints/floats, and bools.
+    let mut all_literal = !union.types.is_empty()
+        && union.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TLiteralString { .. }
+                    | TAtomic::TLiteralInt { .. }
+                    | TAtomic::TNonspecificLiteralInt
+                    | TAtomic::TLiteralFloat { .. }
+                    | TAtomic::TTrue
+                    | TAtomic::TFalse
+            )
+        });
 
     for atomic in &union.types {
         let Some(info) = get_concat_atomic_info(analyzer, atomic) else {
@@ -207,6 +283,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
             all_non_empty = false;
             all_numericish = false;
             all_non_negative_int = false;
+            all_literal = false;
             continue;
         };
 
@@ -224,6 +301,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
         any_truthy,
         all_numericish,
         all_non_negative_int,
+        all_literal,
     }
 }
 
@@ -241,7 +319,10 @@ fn get_concat_atomic_info(
             non_negative_int: value != NON_SPECIFIC_LITERAL_STRING_VALUE
                 && value.parse::<i64>().is_ok_and(|v| v >= 0),
         }),
-        TAtomic::TLiteralClassString { .. } => Some(ConcatAtomicInfo {
+        TAtomic::TLiteralClassString { .. }
+        | TAtomic::TClassString { .. }
+        | TAtomic::TDependentGetClass { .. }
+        | TAtomic::TDependentGetType { .. } => Some(ConcatAtomicInfo {
             lowercase: false,
             non_empty: true,
             truthy: true,
@@ -304,6 +385,13 @@ fn get_concat_atomic_info(
             numericish: true,
             non_negative_int: false,
         }),
+        TAtomic::TNonspecificLiteralInt => Some(ConcatAtomicInfo {
+            lowercase: true,
+            non_empty: true,
+            truthy: false,
+            numericish: true,
+            non_negative_int: false,
+        }),
         TAtomic::TIntRange { min, max } => Some(ConcatAtomicInfo {
             lowercase: true,
             non_empty: true,
@@ -326,6 +414,14 @@ fn get_concat_atomic_info(
             numericish: true,
             non_negative_int: false,
         }),
+        // array-key is int|string — both concatenate (Psalm allows it).
+        TAtomic::TArrayKey => Some(ConcatAtomicInfo {
+            lowercase: false,
+            non_empty: false,
+            truthy: false,
+            numericish: false,
+            non_negative_int: false,
+        }),
         TAtomic::TLiteralFloat { value } => Some(ConcatAtomicInfo {
             lowercase: true,
             non_empty: true,
@@ -344,13 +440,6 @@ fn get_concat_atomic_info(
             lowercase: true,
             non_empty: false,
             truthy: false,
-            numericish: false,
-            non_negative_int: false,
-        }),
-        TAtomic::TClassString { .. } => Some(ConcatAtomicInfo {
-            lowercase: false,
-            non_empty: true,
-            truthy: true,
             numericish: false,
             non_negative_int: false,
         }),

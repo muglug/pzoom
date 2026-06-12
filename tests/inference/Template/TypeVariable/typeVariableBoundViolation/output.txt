@@ -1,0 +1,1 @@
+IncompatibleTypeParameters - input.php:12:15 - Type 'nope' should be a subtype of int

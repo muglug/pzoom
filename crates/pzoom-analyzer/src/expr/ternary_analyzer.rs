@@ -12,6 +12,7 @@ use mago_syntax::ast::ast::construct::Construct;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
+use pzoom_code_info::VarName;
 use pzoom_code_info::{Assertion, Issue, IssueKind, TUnion, combine_union_types};
 
 use crate::assertion_finder;
@@ -61,14 +62,22 @@ pub fn analyze(
 
     let mut if_scope = IfScope::default();
 
-    // Analyze the condition expression
+    // Analyze the condition expression. Psalm routes ternary conditions through
+    // IfConditionalAnalyzer, which analyzes them with inside_conditional set —
+    // the &&/|| analyzers gate their assigned-vars merge on it. Psalm also
+    // gives the ternary condition its own if-body context, so a nested `&&`
+    // boils its narrowing over into the ternary's true branch — never into an
+    // enclosing if's body context.
+    let was_inside_conditional = context.inside_conditional;
+    let enclosing_if_body_context = context.if_body_context.take();
+    context.inside_conditional = true;
     let cond_pos = expression_analyzer::analyze(analyzer, cond.condition, analysis_data, context);
+    context.inside_conditional = was_inside_conditional;
+    context.if_body_context = enclosing_if_body_context;
 
-    // Copy effects from condition to the ternary expression
-    analysis_data.copy_effects(cond_pos, pos);
 
     // Get the condition type for later use
-    let stmt_cond_type = analysis_data.get_rc_expr_type(cond_pos).cloned();
+    let stmt_cond_type = analysis_data.expr_types.get(&cond_pos).cloned();
 
     // Get type narrowing assertions from the condition
     let assertion_result =
@@ -149,6 +158,12 @@ pub fn analyze(
     if !reconcilable_if_types.is_empty() {
         let mut if_changed_var_ids = FxHashSet::default();
         let inside_loop = if_context.inside_loop;
+        // Psalm's reconciler issues point at the ternary condition.
+        let previous_reconcile_pos = analysis_data.current_reconcile_pos;
+        analysis_data.current_reconcile_pos = Some((
+            cond.condition.start_offset() as u32,
+            cond.condition.end_offset() as u32,
+        ));
         reconciler::reconcile_keyed_types(
             &reconcilable_if_types,
             &mut if_context,
@@ -157,9 +172,10 @@ pub fn analyze(
             analysis_data,
             inside_loop,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             None,
         );
+        analysis_data.current_reconcile_pos = previous_reconcile_pos;
     }
 
     // Create the else-branch context (post-if context with negated types)
@@ -179,15 +195,13 @@ pub fn analyze(
         let if_branch_pos =
             expression_analyzer::analyze(analyzer, if_expr, analysis_data, &mut if_context);
 
-        // Combine effects
-        analysis_data.combine_effects(if_branch_pos, pos, pos);
 
         // Merge cond_referenced_var_ids
         let mut new_referenced_var_ids = context.cond_referenced_var_ids.clone();
         new_referenced_var_ids.extend(if_context.cond_referenced_var_ids.clone());
         context.cond_referenced_var_ids = new_referenced_var_ids;
 
-        if let Some(stmt_if_type) = analysis_data.get_expr_type(if_branch_pos) {
+        if let Some(stmt_if_type) = analysis_data.expr_types.get(&if_branch_pos).cloned() {
             lhs_type = Some((*stmt_if_type).clone());
         }
     } else if let Some(cond_type) = &stmt_cond_type {
@@ -219,7 +233,7 @@ pub fn analyze(
             analysis_data,
             inside_loop,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             None,
         );
 
@@ -227,9 +241,7 @@ pub fn analyze(
         // remove_reconciled_clause_refs on the else context).
         let (new_clauses, _) = BlockContext::remove_reconciled_clause_refs(
             &else_context.clauses,
-            &changed_var_ids,
-            analyzer.interner,
-        );
+            &changed_var_ids);
         else_context.clauses = new_clauses;
     }
 
@@ -237,11 +249,9 @@ pub fn analyze(
     let else_pos =
         expression_analyzer::analyze(analyzer, cond.r#else, analysis_data, &mut else_context);
 
-    // Combine effects
-    analysis_data.combine_effects(else_pos, pos, pos);
 
     // Get the else type
-    let stmt_else_type = analysis_data.get_rc_expr_type(else_pos).cloned();
+    let stmt_else_type = analysis_data.expr_types.get(&else_pos).cloned();
 
     // Merge variable assignments from both branches
     let assign_var_ifs = if_context.assigned_var_ids.clone();
@@ -251,7 +261,7 @@ pub fn analyze(
     let assign_all: FxHashSet<_> = assign_var_ifs
         .keys()
         .filter(|k| assign_var_else.contains_key(*k))
-        .copied()
+        .cloned()
         .collect();
 
     // If the same var was assigned in both branches, combine their types
@@ -261,7 +271,7 @@ pub fn analyze(
             else_context.locals.get(var_id),
         ) {
             let combined = combine_union_types(if_type, else_type, false);
-            context.locals.insert(*var_id, combined);
+            context.locals.insert(var_id.clone(), combined);
         }
     }
 
@@ -280,7 +290,7 @@ pub fn analyze(
     let redef_all: FxHashSet<_> = redef_var_ifs
         .iter()
         .filter(|k| redef_var_else.contains(*k))
-        .copied()
+        .cloned()
         .collect();
 
     // Merge types for variables redefined in both branches
@@ -290,7 +300,7 @@ pub fn analyze(
             else_context.locals.get(redef_var_id),
         ) {
             let combined = combine_union_types(if_type, else_type, false);
-            context.locals.insert(*redef_var_id, combined);
+            context.locals.insert(redef_var_id.clone(), combined);
         }
     }
 
@@ -300,7 +310,7 @@ pub fn analyze(
             if let Some(if_type) = if_context.locals.get(redef_var_id) {
                 let parent_type = context.locals.get(redef_var_id).unwrap();
                 let combined = combine_union_types(parent_type, if_type, false);
-                context.locals.insert(*redef_var_id, combined);
+                context.locals.insert(redef_var_id.clone(), combined);
             }
         }
     }
@@ -311,7 +321,7 @@ pub fn analyze(
             if let Some(else_type) = else_context.locals.get(redef_var_id) {
                 let parent_type = context.locals.get(redef_var_id).unwrap();
                 let combined = combine_union_types(parent_type, else_type, false);
-                context.locals.insert(*redef_var_id, combined);
+                context.locals.insert(redef_var_id.clone(), combined);
             }
         }
     }
@@ -350,7 +360,7 @@ pub fn analyze(
         (None, None) => TUnion::mixed(),
     };
 
-    analysis_data.set_expr_type(pos, result_type);
+    analysis_data.expr_types.insert(pos, Rc::new(result_type));
 }
 
 fn emit_ternary_condition_paradox_if_needed(
@@ -403,7 +413,7 @@ fn formula_contradicts_entry_clauses(
             }
 
             let mut negated_contains_entry = true;
-            for (key, entry_possibilities) in &entry_clause.possibilities {
+            for (key, entry_possibilities) in entry_clause.possibilities.iter() {
                 let Some(negated_possibilities) = negated_clause.possibilities.get(key) else {
                     negated_contains_entry = false;
                     break;
@@ -433,13 +443,13 @@ fn formula_contradicts_entry_clauses(
 
 
 fn merge_direct_assertions_into_reconciled_types(
-    reconciled_types: &mut BTreeMap<String, Vec<Vec<Assertion>>>,
-    direct_assertions: &BTreeMap<String, Vec<Assertion>>,
+    reconciled_types: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    direct_assertions: &BTreeMap<VarName, Vec<Vec<Assertion>>>,
 ) {
-    for (var_name, assertions) in direct_assertions {
+    // Both maps share Psalm's `$if_types` shape (AND groups of OR
+    // alternatives), so the finder's groups append directly.
+    for (var_name, groups) in direct_assertions {
         let entry = reconciled_types.entry(var_name.clone()).or_default();
-        for assertion in assertions {
-            entry.push(vec![assertion.clone()]);
-        }
+        entry.extend(groups.iter().cloned());
     }
 }

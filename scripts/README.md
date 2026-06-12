@@ -58,9 +58,17 @@ A **Psalm-only**, **method-level** parity scorer — a sharper instrument than t
 broad three-way `similarity_heuristic.py`. It answers: *how faithfully does each
 pzoom file mirror the Psalm file it ports?*
 
-For every in-scope Psalm file it finds the pzoom counterpart (from
-`PSALM_HAKANA_MAPPING.md`, else an exact canonical-filename match) and scores
-**recall × precision**:
+The pzoom side is the `pzoom-analyzer` and `pzoom-code-info` crates only,
+mapped file-by-file in `PSALM_FILE_MAP.json` — a complete JSON dict over every
+`.rs` file in those crates whose value is the Psalm counterpart path (relative
+to `src/Psalm`), a list of paths (one pzoom file covering several small Psalm
+files, e.g. `unop_analyzer.rs` ↔ `UnaryPlusMinusAnalyzer.php` +
+`BooleanNotAnalyzer.php`), or `null` (pzoom-specific: module roots, Hakana
+ports, conscious departures). There is no fuzzy filename fallback; Psalm files
+ported in *other* crates (scanner, docblock parsing, orchestrator, reporting)
+are listed in the script's `PORTED_OUTSIDE_SCOPE` and excluded from the score
+entirely. For every in-scope Psalm file it finds the pzoom counterpart and
+scores **recall × precision**:
 
 - **recall** — what fraction of Psalm's referenced members / methods / functions
   are mirrored on the pzoom side (directional, so pzoom isn't punished for extra
@@ -128,21 +136,14 @@ python3 scripts/psalm_parity.py --weight idf     # weight distinctive constructs
 python3 scripts/psalm_parity.py --keep-interning --dense-threshold 0.5
 ```
 
-### Distribution splits
+### Mega-file shares
 
-Some Psalm "mega-files" are carved into several pzoom files. Where pzoom invents
-an extra helper that has **no Psalm file of its own**, the parity scorer unions
-that helper into the Psalm file's pzoom side — but **only if the same helper
-also exists standalone in Hakana** (verified at runtime against the mapping's
-Hakana column). That gates the union on a genuine cross-language structural
-decision rather than a pzoom-only quirk. Currently:
-
-- `StatementsAnalyzer.php` += `stmt_analyzer.rs`
-- `FunctionLikeAnalyzer.php` += `function_analysis_data.rs`
-
-(`function_analyzer.rs`/`class_analyzer.rs` are *not* unioned: Hakana keeps
-`FunctionLikeAnalyzer` monolithic, so those splits are pzoom-only.) Edit
-`DISTRIBUTION_SPLITS` in the script to add more; the Hakana check is automatic.
+Some Psalm "mega-files" are carved into several pzoom files. The map expresses
+this directly: several pzoom files may carry the same Psalm value, and their
+reference bags are unioned for scoring. Currently `StatementsAnalyzer.php` is
+shared by `statements_analyzer.rs` + `stmt_analyzer.rs`, and
+`FunctionLikeAnalyzer.php` by `function_analyzer.rs`-adjacent
+`function_analysis_data.rs`. Edit `PSALM_FILE_MAP.json` to add more.
 
 > **Reading the scores:** they are a *relative* signal (rank files, track over
 > time, surface gaps), not an absolute percentage. Even faithful ports share

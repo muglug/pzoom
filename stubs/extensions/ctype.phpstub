@@ -31,6 +31,8 @@ function ctype_digit(string $text): bool
 }
 
 /**
+ * @assert-if-true non-empty-lowercase-string $text
+ *
  * @pure
  */
 function ctype_lower(string $text): bool

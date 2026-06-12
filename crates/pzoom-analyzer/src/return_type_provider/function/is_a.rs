@@ -56,7 +56,7 @@ fn union_is_string_type(union: &TUnion) -> bool {
 /// argument is a string and the third argument is `false` (or omitted, which
 /// defaults to `false`), `is_a` always returns false. Mirrors Psalm's
 /// NamedFunctionCallHandler behaviour.
-pub(crate) fn maybe_emit_is_a_redundant_call(
+fn maybe_emit_is_a_redundant_call(
     analyzer: &StatementsAnalyzer<'_>,
     arg_positions: &[Pos],
     analysis_data: &mut FunctionAnalysisData,
@@ -72,7 +72,7 @@ pub(crate) fn maybe_emit_is_a_redundant_call(
         return;
     };
 
-    let Some(first_arg_type) = analysis_data.get_expr_type(first_pos) else {
+    let Some(first_arg_type) = analysis_data.expr_types.get(&first_pos).cloned() else {
         return;
     };
 
@@ -84,7 +84,7 @@ pub(crate) fn maybe_emit_is_a_redundant_call(
     // redundant when it is exactly `false`.
     let third_is_false = match arg_positions.get(2).copied() {
         Some(third_pos) => analysis_data
-            .get_expr_type(third_pos)
+            .expr_types.get(&third_pos).cloned()
             .is_some_and(|third| matches!(third.get_single(), Some(TAtomic::TFalse))),
         None => true,
     };

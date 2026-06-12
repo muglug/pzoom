@@ -1,0 +1,217 @@
+<?php
+
+/**
+ * @author   Olegs Capligins
+ */
+
+// start of PECL/rrd v1.0
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @return string
+ */
+function rrd_error() {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $filename
+ * @param array<array-key, mixed> $options
+ * @return bool
+ */
+function rrd_create($filename, $options) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @param array<array-key, mixed> $options
+ * @return array<array-key, mixed>
+ */
+function rrd_fetch($file, $options) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @param int $raaindex
+ * @return false|int
+ */
+function rrd_first($file, $raaindex = 0) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @param array<array-key, mixed> $options
+ * @return array<array-key, mixed>|false
+ */
+function rrd_graph($file, $options) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @return array<array-key, mixed>|false
+ */
+function rrd_info($file) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @return int
+ */
+function rrd_last($file) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @return array<array-key, mixed>|false
+ */
+function rrd_lastupdate($file) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $xml_file
+ * @param string $rrd_file
+ * @param array<array-key, mixed> $options
+ * @return bool
+ */
+function rrd_restore($xml_file, $rrd_file, $options = []) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @param array<array-key, mixed> $options
+ * @return bool
+ */
+function rrd_tune($file, $options) {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param string $file
+ * @param array<array-key, mixed> $options
+ * @return bool
+ */
+function rrd_update($file, $options) {}
+
+/**
+ * @since PECL rrd >= 1.0.0
+ *
+ * @return string
+ */
+function rrd_version() {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ *
+ * @param array<array-key, mixed> $options
+ * @return array<array-key, mixed>|false
+ */
+function rrd_xport($options) {}
+
+/**
+ * @since PECL rrd >= 1.1.2
+ *
+ * @return void
+ */
+function rrd_disconnect() {}
+
+/**
+ * @return void
+ */
+function rrdc_disconnect() {}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ */
+class RRDCreator
+{
+    /**
+     * @param string $description
+     * @return void
+     * @since PECL rrd >= 0.9.0
+     */
+    public function addArchive($description) {}
+
+    /**
+     * @param string $description
+     * @return void
+     * @since PECL rrd >= 0.9.0
+     */
+    public function addDataSource($description) {}
+
+    /**
+     * @param string $path
+     * @param string $startTime
+     * @param int $step
+     * @since PECL rrd >= 0.9.0
+     */
+    public function __construct($path, $startTime = '', $step = 0) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     * @since PECL rrd >= 0.9.0
+     */
+    public function save() {}
+}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ */
+class RRDGraph
+{
+    /**
+     * @param string $path
+     * @since PECL rrd >= 0.9.0
+     */
+    public function __construct($path) {}
+
+    /**
+     * @return array|false Array with information about generated image is returned, FALSE if error occurs.
+     * @since PECL rrd >= 0.9.0
+     */
+    public function save() {}
+
+    /**
+     * @return array|false Array with detailed information about generated image is returned, optionally with image data, FALSE if error occurs.
+     * @since PECL rrd >= 0.9.0
+     */
+    public function saveVerbose() {}
+
+    /**
+     * @param array $options
+     * @return void
+     * @since PECL rrd >= 0.9.0
+     */
+    public function setOptions($options) {}
+}
+
+/**
+ * @since PECL rrd >= 0.9.0
+ */
+class RRDUpdater
+{
+    /**
+     * @param string $path
+     * @since PECL rrd >= 0.9.0
+     */
+    public function __construct($path) {}
+
+    /**
+     * @param array $values
+     * @param string $time
+     * @return bool TRUE on success or FALSE on failure.
+     * @throws \Exception on error
+     * @since PECL rrd >= 0.9.0
+     */
+    public function update($values, $time = '') {}
+}
+
+// end of PECL/rrd v1.0

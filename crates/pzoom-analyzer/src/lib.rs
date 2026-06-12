@@ -8,6 +8,7 @@
 
 pub mod algebra_analyzer;
 pub mod assertion_finder;
+pub mod class_casing;
 pub mod config;
 pub mod context;
 pub(crate) mod data_flow;
@@ -20,9 +21,12 @@ pub mod function_analysis_data;
 pub mod function_like_analyzer;
 pub(crate) mod internal_access;
 pub(crate) mod issue_suppression;
+pub(crate) mod unused_variable_analyzer;
+pub mod taint_analyzer;
 pub mod psalm_baseline;
 pub mod psalm_config;
 pub mod reconciler;
+pub mod params_provider;
 pub mod return_type_provider;
 pub mod scope;
 pub mod statements_analyzer;

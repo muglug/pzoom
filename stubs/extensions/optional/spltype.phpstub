@@ -1,0 +1,50 @@
+<?php
+
+abstract class SplType
+{
+    /**
+     * @var null Default value
+     */
+    public const __default = null;
+
+    /**
+     * @param mixed $initial_value
+     * @param bool $strict  If set to true then will throw UnexpectedValueException if value of other type will be assigned. True by default
+     */
+    public function __construct($initial_value = self::__default, $strict = true) {}
+}
+
+class SplInt extends SplType
+{
+        public const __default = 0;
+}
+
+class SplFloat extends SplType
+{
+    public const __default = 0;
+}
+
+class SplEnum extends SplType
+{
+        public const __default = null;
+
+    /**
+     * @param bool $include_default Whether to include __default constant (property). False by default.
+     * @return array
+     */
+    public function getConstList($include_default = false) {}
+}
+
+class SplBool extends SplEnum
+{
+        public const __default = false;
+
+        public const false = false;
+
+        public const true = true;
+}
+
+class SplString extends SplType
+{
+        public const __default = 0;
+}

@@ -217,14 +217,27 @@ function gmp_sign(GMP|int|string $num): int
 {
 }
 
+/**
+ * @param GMP|int|string $seed
+ * @return void
+ */
 function gmp_random_seed(GMP|int|string $seed): void
 {
 }
 
+/**
+ * @param int $bits
+ * @return GMP
+ */
 function gmp_random_bits(int $bits): GMP
 {
 }
 
+/**
+ * @param GMP|int|string $min
+ * @param GMP|int|string $max
+ * @return GMP
+ */
 function gmp_random_range(GMP|int|string $min, GMP|int|string $max): GMP
 {
 }

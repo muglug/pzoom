@@ -1,0 +1,1 @@
+InvalidReturnType - input.php:8:16 - No return statements were found for method Collection::partition but return type 'array{0: Collection<TKey:Collection as mixed, TValue:Collection as mixed>, 1: Collection<TKey:Collection as mixed, TValue:Collection as mixed>}' was expected

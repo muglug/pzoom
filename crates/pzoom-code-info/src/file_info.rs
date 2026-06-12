@@ -25,6 +25,15 @@ pub struct FileInfo {
     pub content_hash: String,
     /// The file contents (for re-parsing during analysis).
     pub contents: String,
+    /// Parser diagnostics for this file as (offset, message) — surfaced as
+    /// ParseError issues during analysis (Psalm's parser errors become issues).
+    #[serde(default)]
+    pub parse_errors: Vec<(u32, String)>,
+    /// Scan-time docblock problems as (offset, message) — surfaced as
+    /// InvalidDocblock issues during analysis (e.g. a malformed
+    /// `@psalm-type` definition).
+    #[serde(default)]
+    pub docblock_parse_issues: Vec<(u32, String)>,
     /// Whether this file is a stub file.
     #[serde(default)]
     pub is_stub: bool,
@@ -34,9 +43,23 @@ pub struct FileInfo {
     /// phpstorm-stubs, which fill in only declarations the curated stubs don't define.
     #[serde(default)]
     pub is_low_precedence_stub: bool,
+    /// Whether the file is part of the analyzed project (Psalm's
+    /// `Config::isInProjectDirs`). Dependency sources (vendor/) are scanned for
+    /// declarations but are not project files: a stub may member-override their
+    /// classes, while a project-dir class always beats the stub.
+    #[serde(default = "default_true")]
+    pub is_in_project_dirs: bool,
     /// Preprocessed inline docblock annotations keyed by expression/statement offset.
     #[serde(default)]
     pub inline_annotations: InlineTypeAnnotations,
+    /// `@psalm-import-type ALIAS from CLASS` records (source class id, alias
+    /// name), validated against the populated codebase during analysis.
+    #[serde(default)]
+    pub type_alias_imports: Vec<(StrId, String)>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Scanner-preprocessed inline type annotations for a file.
@@ -56,6 +79,11 @@ pub struct InlineTypeAnnotations {
     /// statement follows, for malformed annotations).
     #[serde(default)]
     pub check_type_annotations: FxHashMap<u32, Vec<InlineCheckTypeAnnotation>>,
+    /// `@psalm-scope-this C` annotations keyed by the offset of the statement
+    /// they precede: from that statement on, `$this` is typed as the resolved
+    /// class (Psalm's StatementsAnalyzer `psalm-scope-this` handling).
+    #[serde(default)]
+    pub scope_this_annotations: FxHashMap<u32, StrId>,
 }
 
 /// A single inline `@psalm-check-type[-exact]` assertion (`$var = Type`).
@@ -82,6 +110,10 @@ pub struct InlineVarTypeAnnotation {
     pub var_type: TUnion,
     #[serde(default)]
     pub is_invalid: bool,
+    /// The legacy name-first form (`@var $x Type`): Psalm's CommentAnalyzer
+    /// throws "Misplaced variable", reported as MissingDocblockType.
+    #[serde(default)]
+    pub is_misplaced_variable: bool,
 }
 
 /// Inline callable annotation data for anonymous functions.

@@ -1,0 +1,176 @@
+<?php
+
+class ExcimerLog implements ArrayAccess, Iterator
+{
+        final private function __construct() {}
+
+    /**
+     * @return string
+     */
+    public function formatCollapsed() {}
+
+    /**
+     * @return array
+     */
+    public function aggregateByFunction() {}
+
+    /**
+     * @return array
+     */
+    public function getSpeedscopeData() {}
+
+    /**
+     * @return int
+     */
+    public function getEventCount() {}
+
+    /**
+     * @return ExcimerLogEntry|null
+     */
+    public function current() {}
+
+    /**
+     * @return int|null
+     */
+    public function key() {}
+
+        public function next() {}
+
+        public function rewind() {}
+
+    /**
+     * @return bool
+     */
+    public function valid() {}
+
+    /**
+     * @return int
+     */
+    public function count() {}
+
+    /**
+     * @param int $offset
+     * @return bool
+     */
+    public function offsetExists($offset) {}
+
+    /**
+     * @param int $offset
+     * @return ExcimerLogEntry|null
+     */
+    public function offsetGet($offset) {}
+
+    /**
+     * @param int $offset
+     * @param mixed $value
+     */
+    public function offsetSet($offset, $value) {}
+
+    /**
+     * @param int $offset
+     */
+    public function offsetUnset($offset) {}
+}
+
+class ExcimerLogEntry
+{
+        final private function __construct() {}
+
+    /**
+     * @return float
+     */
+    public function getTimestamp() {}
+
+    /**
+     * @return int
+     */
+    public function getEventCount() {}
+
+    /**
+     * @return array
+     */
+    public function getTrace() {}
+}
+
+class ExcimerProfiler
+{
+    /**
+     * @param float $period The period in seconds
+     */
+    public function setPeriod($period) {}
+
+    /**
+     * @param int $eventType
+     */
+    public function setEventType($eventType) {}
+
+    /**
+     * @param int $maxDepth
+     */
+    public function setMaxDepth($maxDepth) {}
+
+    /**
+     * @param callable $callback
+     * @param int $maxSamples
+     */
+    public function setFlushCallback($callback, $maxSamples) {}
+
+        public function clearFlushCallback() {}
+
+        public function start() {}
+
+        public function stop() {}
+
+    /**
+     * @return ExcimerLog
+     */
+    public function getLog() {}
+
+    /**
+     * @return ExcimerLog
+     */
+    public function flush() {}
+}
+
+class ExcimerTimer
+{
+    /**
+     * @param int $eventType
+     */
+    public function setEventType($eventType) {}
+
+    /**
+     * @param float $interval The interval in seconds
+     */
+    public function setInterval($interval) {}
+
+    /**
+     * @param float $interval The period in seconds.
+     */
+    public function setPeriod($period) {}
+
+    /**
+     * @param callable|null $callback
+     */
+    public function setCallback($callback) {}
+
+        public function start() {}
+
+        public function stop() {}
+
+    /**
+     * @return float
+     */
+    public function getTime() {}
+}
+
+define('EXCIMER_REAL', 0);
+
+define('EXCIMER_CPU', 1);
+
+/**
+ * @param callable $callback
+ * @param float $interval
+ * @return ExcimerTimer|null
+ */
+function excimer_set_timeout($callback, $interval) {}

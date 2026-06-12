@@ -1,1 +1,1 @@
-Argument 1 of ReflectionClass::resetAsLazyProxy expects Foo, but Bar provided
+IncompatibleTypeParameters - input.php:5:36 - Type Bar should be a subtype of Foo

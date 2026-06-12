@@ -41,21 +41,21 @@ fn infer_array_column_return_type(
     }
 
     // Value column (2nd arg): a literal key, or null.
-    let value_arg = analysis_data.get_expr_type(arg_positions[1])?;
+    let value_arg = analysis_data.expr_types.get(&arg_positions[1]).cloned()?;
     let value_column = single_literal_array_key(&value_arg);
     let value_column_is_null = value_arg.is_null();
 
     // Key column (3rd arg, optional): a literal key, or null.
     let third_present = arg_positions.len() >= 3;
     let (key_column, key_column_is_null) = if third_present {
-        let key_arg = analysis_data.get_expr_type(arg_positions[2])?;
+        let key_arg = analysis_data.expr_types.get(&arg_positions[2]).cloned()?;
         (single_literal_array_key(&key_arg), key_arg.is_null())
     } else {
         (None, false)
     };
 
     // Row type = the value type of the input array.
-    let input_type = analysis_data.get_expr_type(arg_positions[0])?;
+    let input_type = analysis_data.expr_types.get(&arg_positions[0]).cloned()?;
     let (row_type, input_not_empty) = input_array_value_type(&input_type);
 
     let row_shape = row_type
@@ -180,8 +180,8 @@ fn row_shape_properties(
     row: &TUnion,
 ) -> Option<FxHashMap<ArrayKey, TUnion>> {
     match row.get_single()? {
-        TAtomic::TKeyedArray { properties, .. } => Some(properties.clone()),
-        TAtomic::TObjectWithProperties { properties } => Some(properties.clone()),
+        TAtomic::TKeyedArray { properties, .. } => Some((**properties).clone()),
+        TAtomic::TObjectWithProperties { properties, .. } => Some(properties.clone()),
         TAtomic::TNamedObject { name, .. } => {
             let class_info = analyzer.codebase.get_class(*name)?;
             let calling_class = analyzer.get_declaring_class();

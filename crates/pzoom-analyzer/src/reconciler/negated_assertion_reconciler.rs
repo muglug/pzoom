@@ -5,7 +5,7 @@
 //! implementation style reference where needed.
 
 use pzoom_code_info::ttype::type_combiner;
-use pzoom_code_info::{Assertion, TAtomic, TUnion};
+use pzoom_code_info::{Assertion, TAtomic, TUnion, TemplateResult};
 use pzoom_str::StrId;
 
 use super::simple_negated_assertion_reconciler;
@@ -19,8 +19,165 @@ use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
+    possibly_undefined: bool,
+    analysis_data: &mut FunctionAnalysisData,
+    analyzer: &StatementsAnalyzer<'_>,
+    inside_loop: bool,
+) -> TUnion {
+    // Psalm's NegatedAssertionReconciler first maps closed-inheritance types
+    // (`@psalm-inheritors`) to the union of their allowed subtypes
+    // (ClosedInheritanceToUnion::map), so negations carve members out of the
+    // closed set.
+    let expanded_existing = closed_inheritance_to_union(existing_var_type, analyzer);
+    let existing_var_type = &expanded_existing;
+
+    let result = reconcile_inner(
+        assertion,
+        existing_var_type,
+        key,
+        negated,
+        possibly_undefined,
+        analysis_data,
+        analyzer,
+        inside_loop,
+    );
+
+    // Emission lives with the reconcile (Psalm's triggerIssueForImpossible
+    // placement): an empty result is an impossible negation; an untouched
+    // result is redundant when the negated possibility provably wasn't
+    // present (overlap-aware, e.g. `!== "a"` on `string` stays silent).
+    if let Some(key) = key {
+        // Psalm's NegatedAssertionReconciler: a `!== T` (IsNotIdentical) whose
+        // type could never be identical to the existing type is redundant.
+        // The comparison uses the PRE-reconciliation type — the narrowed
+        // result trivially excludes the asserted value (`string − "" ⇒
+        // non-empty-string` must not read as redundant).
+        if let Assertion::IsNotEqual(atomic) = assertion {
+            let assertion_union = TUnion::new(atomic.clone());
+            if !crate::type_comparator::union_type_comparator::can_expression_types_be_identical(
+                analyzer.codebase,
+                existing_var_type,
+                &assertion_union,
+            ) {
+                super::trigger_issue_for_impossible(
+                    analysis_data,
+                    analyzer,
+                    existing_var_type,
+                    key,
+                    assertion,
+                    true,
+                    negated,
+                );
+            }
+        }
+
+        if result.is_nothing() && !existing_var_type.is_nothing() && !assertion.has_equality() {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key,
+                assertion,
+                false,
+                negated,
+            );
+        } else if !assertion.has_equality()
+            && !inside_loop
+            && !existing_var_type.possibly_undefined
+            && !existing_var_type.possibly_undefined_from_try
+            && !matches!(
+                assertion,
+                Assertion::IsNotType(TAtomic::TNull) | Assertion::IsNotEqual(TAtomic::TNull)
+            )
+            && result.types == existing_var_type.types
+            && super::should_emit_redundant_issue_for_unchanged_assertion(
+                assertion,
+                existing_var_type,
+                analyzer,
+            )
+        {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key,
+                assertion,
+                true,
+                negated,
+            );
+        }
+    }
+
+    result
+}
+
+/// Psalm's `ClosedInheritanceToUnion::map`: replaces each named-object member
+/// whose class declares `@psalm-inheritors` with the listed subtypes, with the
+/// generic object's type params substituted for the class templates.
+fn closed_inheritance_to_union(input: &TUnion, analyzer: &StatementsAnalyzer<'_>) -> TUnion {
+    let mut new_types = Vec::new();
+    let mut met_inheritors = false;
+
+    for atomic in &input.types {
+        let TAtomic::TNamedObject {
+            name, type_params, ..
+        } = atomic
+        else {
+            new_types.push(atomic.clone());
+            continue;
+        };
+
+        let Some(storage) = analyzer
+            .codebase
+            .get_class(*name)
+            .filter(|storage| !storage.inheritors.is_empty())
+        else {
+            new_types.push(atomic.clone());
+            continue;
+        };
+
+        let inheritors_union = TUnion::from_types(storage.inheritors.clone());
+
+        let replaced = if let Some(params) = type_params {
+            let mut template_result = TemplateResult::default();
+            for (template, param) in storage.template_types.iter().zip(params.iter()) {
+                crate::template::lower_bounds_insert(
+                    &mut template_result,
+                    template.name,
+                    template.defining_entity,
+                    param.clone(),
+                );
+            }
+            crate::template::inferred_type_replacer::replace_in(
+                Some(analyzer.codebase),
+                &inheritors_union,
+                &template_result,
+            )
+        } else {
+            inheritors_union
+        };
+
+        new_types.extend(replaced.types.iter().cloned());
+        met_inheritors = true;
+    }
+
+    if !met_inheritors {
+        return input.clone();
+    }
+
+    let mut result = input.clone();
+    result.types = new_types;
+    result
+}
+
+fn reconcile_inner(
+    assertion: &Assertion,
+    existing_var_type: &TUnion,
+    key: Option<&str>,
+    negated: bool,
+    possibly_undefined: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
     _inside_loop: bool,
@@ -46,6 +203,17 @@ pub fn reconcile(
                     analyzer,
                 );
             }
+
+            // Psalm: equality negations of non-literal types cannot remove
+            // anything (two strings can differ by value) — keep the type.
+            // Singleton-value types (true/false/null) stay value-certain and
+            // fall through to the simple/subtract paths.
+            if !matches!(
+                assertion_atomic,
+                TAtomic::TTrue | TAtomic::TFalse | TAtomic::TNull
+            ) {
+                return existing_var_type.clone();
+            }
         }
     }
 
@@ -64,6 +232,7 @@ pub fn reconcile(
         existing_var_type,
         key,
         negated,
+        possibly_undefined,
         analysis_data,
         analyzer,
     ) {
@@ -94,9 +263,28 @@ fn reconcile_not_type(
 
     if let TAtomic::TNamedObject { name, .. } = assertion_type {
         if let Some(date_time_result) =
-            reconcile_datetime_interface_negation(existing_var_type, *name, analyzer)
+            reconcile_datetime_interface_negation(existing_var_type, *name)
         {
             return date_time_result;
+        }
+
+        // Psalm's NegatedAssertionReconciler falls through untouched when a
+        // negated `instanceof C` meets a single existing type that is exactly
+        // C: "checking if two types share a common parent is not enough to
+        // guarantee children are instanceof each other" — the runtime value
+        // may be a subclass that fails an `instanceof $class` check, so the
+        // branch keeps type C and stays silent.
+        if existing_var_type.types.len() == 1
+            && matches!(
+                existing_var_type.types.first(),
+                Some(TAtomic::TNamedObject {
+                    name: existing_name,
+                    type_params: None,
+                    ..
+                }) if existing_name == name
+            )
+        {
+            return existing_var_type.clone();
         }
     }
 
@@ -112,7 +300,6 @@ fn reconcile_not_type(
 fn reconcile_datetime_interface_negation(
     existing_var_type: &TUnion,
     assertion_class_name: StrId,
-    analyzer: &StatementsAnalyzer<'_>,
 ) -> Option<TUnion> {
     if assertion_class_name != StrId::DATE_TIME
         && assertion_class_name != StrId::DATE_TIME_IMMUTABLE
@@ -120,7 +307,7 @@ fn reconcile_datetime_interface_negation(
         return None;
     }
 
-    let date_time_interface_id = analyzer.interner.intern("DateTimeInterface");
+    let date_time_interface_id = StrId::DATE_TIME_INTERFACE;
     if !existing_var_type.types.iter().any(|atomic| {
         matches!(
             atomic,
@@ -303,6 +490,18 @@ pub fn subtract_type(
     let mut remaining_types = Vec::new();
 
     for atomic in &existing_var_type.types {
+        // `!== <literal int>` splits a containing range around the excluded
+        // value (Psalm's handleLiteralNegatedEquality TIntRange path:
+        // `int<0, max> !== 0` ⇒ `int<1, max>`).
+        if let (TAtomic::TIntRange { min, max }, TAtomic::TLiteralInt { value }) =
+            (atomic, type_to_remove)
+            && min.is_none_or(|m| m <= *value)
+            && max.is_none_or(|m| m >= *value)
+        {
+            push_int_except_literal(&mut remaining_types, *min, *max, *value);
+            continue;
+        }
+
         if let Some(narrowed) = narrow_after_subtraction(atomic, type_to_remove, analyzer) {
             push_unique_atomic(&mut remaining_types, narrowed);
             continue;
@@ -326,10 +525,6 @@ pub fn subtract_type(
         result.types = type_combiner::combine(remaining_types, false);
     } else {
         result.types = remaining_types;
-    }
-
-    if matches!(type_to_remove, TAtomic::TNull) {
-        result.is_nullable = false;
     }
 
     result
@@ -632,14 +827,22 @@ fn narrow_after_subtraction(
                 value_type,
             },
             TAtomic::TNamedObject { name, .. },
-        ) if object_type_comparator::is_class_subtype_of(
-            *name,
-            StrId::TRAVERSABLE,
-            analyzer.codebase,
-        ) =>
+        ) if *name == StrId::TRAVERSABLE
+            || object_type_comparator::is_class_subtype_of(
+                *name,
+                StrId::TRAVERSABLE,
+                analyzer.codebase,
+            ) =>
         {
+            // Psalm clamps a mixed iterable key to array-key when converting
+            // to the array side (arrays cannot have mixed keys).
+            let array_key_type = if key_type.has_mixed() {
+                Box::new(TUnion::array_key())
+            } else {
+                key_type.clone()
+            };
             Some(TAtomic::TArray {
-                key_type: key_type.clone(),
+                key_type: array_key_type,
                 value_type: value_type.clone(),
             })
         }
@@ -672,6 +875,16 @@ fn should_subtract(
 ) -> bool {
     if existing == to_remove {
         return true;
+    }
+
+    // Psalm's NegatedAssertionReconciler only eliminates subtypes when the
+    // asserted type is a named object (`$assertion_type instanceof
+    // TNamedObject` guards the "go deeper" loop). A negated template-param
+    // assertion (`!T`) removes nothing beyond an exact match: the runtime
+    // type bound to `T` is unknown, so concrete types that merely fit T's
+    // upper bound must survive.
+    if matches!(to_remove, TAtomic::TTemplateParam { .. }) {
+        return false;
     }
 
     let mut comparison_result = TypeComparisonResult::new();

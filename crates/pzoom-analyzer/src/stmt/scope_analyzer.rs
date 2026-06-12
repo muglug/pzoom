@@ -47,6 +47,27 @@ pub enum BreakContext {
 /// * `break_context` - Stack of loop/switch contexts for break/continue resolution
 /// * `return_is_exit` - If true, return is treated same as throw/exit (ACTION_END).
 ///                      If false, return is distinguished (ACTION_RETURN).
+/// Whether a loop condition is provably always truthy — Psalm's ScopeAnalyzer
+/// consults the INFERRED type of the condition (`while (new stdClass)`,
+/// `for (;1;)`), falling back to the literal-true AST check when no type was
+/// recorded.
+fn condition_is_always_truthy(
+    condition: &Expression<'_>,
+    analysis_data: &FunctionAnalysisData,
+) -> bool {
+    let span = mago_span::HasSpan::span(condition);
+    if let Some(condition_type) =
+        analysis_data.expr_types.get(&(span.start.offset, span.end.offset)).cloned()
+    {
+        return condition_type.is_always_truthy();
+    }
+
+    matches!(
+        condition.unparenthesized(),
+        Expression::Literal(mago_syntax::ast::ast::literal::Literal::True(_))
+    )
+}
+
 pub fn get_control_actions(
     stmts: &[Statement<'_>],
     analysis_data: &FunctionAnalysisData,
@@ -93,7 +114,7 @@ pub fn get_control_actions(
                 // Check if the expression type is `never` (e.g., a function that always throws)
                 let span = expr_stmt.expression.span();
                 let pos = (span.start.offset, span.end.offset);
-                if let Some(t) = analysis_data.get_expr_type(pos) {
+                if let Some(t) = analysis_data.expr_types.get(&pos).cloned() {
                     if t.is_nothing() {
                         control_actions.insert(ControlAction::End);
                         return control_actions;
@@ -165,9 +186,9 @@ pub fn get_control_actions(
                         Some(BreakContext::Switch) => {
                             control_actions.insert(ControlAction::LeaveSwitch);
                         }
-                        Some(BreakContext::Loop) | None => {
-                            control_actions.insert(ControlAction::Continue);
-                        }
+                        // Consumed by a nested loop: Psalm's ScopeAnalyzer
+                        // adds no action — the continue never escapes it.
+                        Some(BreakContext::Loop) | None => {}
                     }
                 } else {
                     control_actions.insert(ControlAction::Continue);
@@ -242,13 +263,32 @@ pub fn get_control_actions(
                     return_is_exit,
                 );
 
+                let while_true =
+                    condition_is_always_truthy(while_stmt.condition, analysis_data);
+                let breaks_out = loop_actions.contains(&ControlAction::Break)
+                    || loop_actions.contains(&ControlAction::BreakImmediateLoop);
+
                 control_actions.extend(loop_actions);
                 control_actions.retain(|a| *a != ControlAction::None);
-
-                // Check for infinite loop (while(true) with no break)
-                // TODO: Check if condition is always truthy
-                // For now, just remove BreakImmediateLoop since we exited the loop
                 control_actions.retain(|a| *a != ControlAction::BreakImmediateLoop);
+
+                // Psalm's ScopeAnalyzer: a break-less `while (true)` whose
+                // only actions are return/end never completes normally, so
+                // nothing after it executes.
+                if while_true && !breaks_out {
+                    let has_exit_path = control_actions.iter().any(|action| {
+                        !matches!(
+                            action,
+                            ControlAction::End | ControlAction::Return | ControlAction::Continue
+                        )
+                    });
+                    if !has_exit_path {
+                        if control_actions.is_empty() {
+                            control_actions.insert(ControlAction::End);
+                        }
+                        return control_actions;
+                    }
+                }
             }
 
             // Do-While loop - body is a single statement
@@ -264,9 +304,32 @@ pub fn get_control_actions(
                     return_is_exit,
                 );
 
+                let do_while_true =
+                    condition_is_always_truthy(do_while_stmt.condition, analysis_data);
+                let breaks_out = loop_actions.contains(&ControlAction::Break)
+                    || loop_actions.contains(&ControlAction::BreakImmediateLoop);
+
                 control_actions.extend(loop_actions);
                 control_actions.retain(|a| *a != ControlAction::None);
                 control_actions.retain(|a| *a != ControlAction::BreakImmediateLoop);
+
+                // Psalm treats `do ... while (true)` exactly like
+                // `while (true)`: break-less and only return/end actions
+                // means nothing after the loop executes.
+                if do_while_true && !breaks_out {
+                    let has_exit_path = control_actions.iter().any(|action| {
+                        !matches!(
+                            action,
+                            ControlAction::End | ControlAction::Return | ControlAction::Continue
+                        )
+                    });
+                    if !has_exit_path {
+                        if control_actions.is_empty() {
+                            control_actions.insert(ControlAction::End);
+                        }
+                        return control_actions;
+                    }
+                }
             }
 
             // For loop
@@ -281,9 +344,26 @@ pub fn get_control_actions(
                     return_is_exit,
                 );
 
+                // Psalm requires EVERY for-condition to be always truthy.
+                let for_true = for_stmt
+                    .conditions
+                    .iter()
+                    .all(|condition| condition_is_always_truthy(condition, analysis_data));
+                let breaks_out = loop_actions.contains(&ControlAction::Break)
+                    || loop_actions.contains(&ControlAction::BreakImmediateLoop);
+
                 control_actions.extend(loop_actions);
                 control_actions.retain(|a| *a != ControlAction::None);
                 control_actions.retain(|a| *a != ControlAction::BreakImmediateLoop);
+
+                // Psalm's ScopeAnalyzer: a break-less infinite `for` never
+                // completes, so nothing after it executes.
+                if for_true && !breaks_out {
+                    if control_actions.is_empty() {
+                        control_actions.insert(ControlAction::End);
+                    }
+                    return control_actions;
+                }
             }
 
             // Foreach loop
@@ -512,7 +592,7 @@ pub fn only_throws_or_exits(stmts: &[Statement<'_>], analysis_data: &FunctionAna
 
             let span = expr_stmt.expression.span();
             let pos = (span.start.offset, span.end.offset);
-            if let Some(t) = analysis_data.get_expr_type(pos) {
+            if let Some(t) = analysis_data.expr_types.get(&pos).cloned() {
                 if t.is_nothing() {
                     return true;
                 }

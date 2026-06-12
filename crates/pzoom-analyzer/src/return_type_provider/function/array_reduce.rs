@@ -40,8 +40,8 @@ fn infer_array_reduce_return_type(
         return None;
     }
 
-    let array_type = analysis_data.get_expr_type(arg_positions[0])?;
-    let callback_type = analysis_data.get_expr_type(arg_positions[1])?;
+    let array_type = analysis_data.expr_types.get(&arg_positions[0]).cloned()?;
+    let callback_type = analysis_data.expr_types.get(&arg_positions[1]).cloned()?;
 
     // The value type of the input array (the second closure parameter must accept it).
     let array_value_type = fca::extract_array_like_info_from_union(&array_type).map(|info| info.value_type);
@@ -49,7 +49,7 @@ fn infer_array_reduce_return_type(
     // The initial/carry type: the third argument, or `null` when omitted.
     let initial_type = match arg_positions.get(2) {
         Some(initial_pos) => {
-            let initial = analysis_data.get_expr_type(*initial_pos)?;
+            let initial = analysis_data.expr_types.get(&*initial_pos).cloned()?;
             // A mixed initial means we can't say anything useful — bail to mixed.
             if initial.is_mixed() {
                 return Some(TUnion::mixed());

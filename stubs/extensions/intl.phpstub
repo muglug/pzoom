@@ -1597,12 +1597,19 @@ function collator_get_locale(Collator $object, int $type): string|false
 {
 }
 
+/**
+ * @param collator $object
+ * @return int
+ */
 function collator_get_error_code(Collator $object): int|false
 {
 }
 
 /**
  * @pure
+ *
+ * @param collator $object
+ * @return string
  */
 function collator_get_error_message(Collator $object): string|false
 {
@@ -1734,6 +1741,8 @@ function normalizer_is_normalized(string $string, int $form = Normalizer::FORM_C
 
 /**
  * @pure
+ *
+ * @return string
  */
 function locale_get_default(): string
 {
@@ -1874,6 +1883,10 @@ function locale_is_right_to_left(string $locale): bool
 
 /**
  * @pure
+ *
+ * @param string $locale
+ * @param string $pattern
+ * @return MessageFormatter|null
  */
 function msgfmt_create(string $locale, string $pattern): null|MessageFormatter
 {
@@ -2072,9 +2085,10 @@ function datefmt_get_error_message(IntlDateFormatter $formatter): string
 }
 
 /**
- * @return int<0, max>|false|null
- *
  * @pure
+ *
+ * @param string $string
+ * @return false|int<0, max>|null
  */
 function grapheme_strlen(string $string): int|false|null
 {
@@ -2182,14 +2196,17 @@ function intlcal_get_keyword_values_for_locale(string $keyword, string $locale, 
 {
 }
 
+/**
+ * @return float
+ */
 function intlcal_get_now(): float
 {
 }
 
 /**
- * @return string[]
- *
  * @pure
+ *
+ * @return array<array-key, mixed>
  */
 function intlcal_get_available_locales(): array
 {
@@ -2204,6 +2221,9 @@ function intl_get(IntlCalendar $calendar, int $field): int
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return float
  */
 function intlcal_get_time(IntlCalendar $calendar): float|false
 {
@@ -2267,6 +2287,10 @@ function intlcal_field_difference(IntlCalendar $calendar, float $timestamp, int 
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return int
  */
 function intlcal_get_actual_maximum(IntlCalendar $calendar, int $field): int|false
 {
@@ -2274,6 +2298,10 @@ function intlcal_get_actual_maximum(IntlCalendar $calendar, int $field): int|fal
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return int
  */
 function intlcal_get_actual_minimum(IntlCalendar $calendar, int $field): int|false
 {
@@ -2281,6 +2309,10 @@ function intlcal_get_actual_minimum(IntlCalendar $calendar, int $field): int|fal
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $dayOfWeek
+ * @return int
  */
 function intlcal_get_day_of_week_type(IntlCalendar $calendar, int $dayOfWeek): int|false
 {
@@ -2288,6 +2320,9 @@ function intlcal_get_day_of_week_type(IntlCalendar $calendar, int $dayOfWeek): i
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return int
  */
 function intlcal_get_first_day_of_week(IntlCalendar $calendar): int|false
 {
@@ -2302,6 +2337,10 @@ function intlcal_greates_minimum($calendar, $field)
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return false|int
  */
 function intlcal_get(IntlCalendar $calendar, int $field): int|false
 {
@@ -2309,6 +2348,10 @@ function intlcal_get(IntlCalendar $calendar, int $field): int|false
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return int
  */
 function intlcal_get_least_maximum(IntlCalendar $calendar, int $field): int|false
 {
@@ -2316,6 +2359,10 @@ function intlcal_get_least_maximum(IntlCalendar $calendar, int $field): int|fals
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return int
  */
 function intlcal_get_greatest_minimum(IntlCalendar $calendar, int $field): int|false
 {
@@ -2337,6 +2384,9 @@ function intcal_get_maximum(IntlCalendar $calendar, int $field): int|false
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return int
  */
 function intlcal_get_minimal_days_in_first_week(IntlCalendar $calendar): int|false
 {
@@ -2344,6 +2394,10 @@ function intlcal_get_minimal_days_in_first_week(IntlCalendar $calendar): int|fal
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return int
  */
 function intlcal_get_minimum(IntlCalendar $calendar, int $field): int|false
 {
@@ -2351,6 +2405,9 @@ function intlcal_get_minimum(IntlCalendar $calendar, int $field): int|false
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return IntlTimeZone
  */
 function intlcal_get_time_zone(IntlCalendar $calendar): IntlTimeZone|false
 {
@@ -2358,6 +2415,9 @@ function intlcal_get_time_zone(IntlCalendar $calendar): IntlTimeZone|false
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return string
  */
 function intlcal_get_type(IntlCalendar $calendar): string
 {
@@ -2365,6 +2425,10 @@ function intlcal_get_type(IntlCalendar $calendar): string
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $dayOfWeek
+ * @return false|int
  */
 function intlcal_get_weekend_transition(IntlCalendar $calendar, int $dayOfWeek): int|false
 {
@@ -2372,6 +2436,9 @@ function intlcal_get_weekend_transition(IntlCalendar $calendar, int $dayOfWeek):
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return bool
  */
 function intlcal_in_daylight_time(IntlCalendar $calendar): bool
 {
@@ -2379,6 +2446,9 @@ function intlcal_in_daylight_time(IntlCalendar $calendar): bool
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return bool
  */
 function intlcal_is_lenient(IntlCalendar $calendar): bool
 {
@@ -2386,6 +2456,10 @@ function intlcal_is_lenient(IntlCalendar $calendar): bool
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return bool
  */
 function intlcal_is_set(IntlCalendar $calendar, int $field): bool
 {
@@ -2393,6 +2467,10 @@ function intlcal_is_set(IntlCalendar $calendar, int $field): bool
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @param int $field
+ * @return false|int
  */
 function intlcal_get_maximum(IntlCalendar $calendar, int $field): false|int
 {
@@ -2422,6 +2500,9 @@ function intlcal_set_lenient(IntlCalendar $calendar, bool $lenient): bool
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return int
  */
 function intlcal_get_repeated_wall_time_option(IntlCalendar $calendar): int
 {
@@ -2436,6 +2517,9 @@ function intlcal_equals(IntlCalendar $calendar, IntlCalendar $other): bool
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return int
  */
 function intlcal_get_skipped_wall_time_option(IntlCalendar $calendar): int
 {
@@ -2458,6 +2542,9 @@ function intlcal_from_date_time(DateTime|string $datetime, null|string $locale =
 
 /**
  * @pure
+ *
+ * @param IntlCalendar $calendar
+ * @return DateTime|false
  */
 function intlcal_to_date_time(IntlCalendar $calendar): DateTime|false
 {
@@ -2479,9 +2566,9 @@ function intltz_count_equivalent_ids(string $timezoneId): int|false
 }
 
 /**
- * @return IntlTimeZone
- *
  * @pure
+ *
+ * @return IntlTimeZone
  */
 function intlz_create_default()
 {
@@ -2554,6 +2641,8 @@ function intltz_get_error_message(IntlTimeZone $timezone): string|false
 
 /**
  * @pure
+ *
+ * @return IntlTimeZone
  */
 function intltz_getGMT(): IntlTimeZone
 {
@@ -2585,6 +2674,8 @@ function intltz_get_raw_offset(IntlTimeZone $timezone): int
 
 /**
  * @pure
+ *
+ * @return string
  */
 function intltz_get_tz_data_version(): string|false
 {
@@ -2640,6 +2731,9 @@ function intlgregcal_set_gregorian_change(IntlGregorianCalendar $calendar, float
 
 /**
  * @pure
+ *
+ * @param IntlGregorianCalendar $calendar
+ * @return float
  */
 function intlgregcal_get_gregorian_change(IntlGregorianCalendar $calendar): float
 {
@@ -2647,6 +2741,10 @@ function intlgregcal_get_gregorian_change(IntlGregorianCalendar $calendar): floa
 
 /**
  * @pure
+ *
+ * @param IntlGregorianCalendar $calendar
+ * @param int $year
+ * @return bool
  */
 function intlgregcal_is_leap_year(IntlGregorianCalendar $calendar, int $year): bool
 {
@@ -2665,6 +2763,9 @@ function resourcebundle_get(ResourceBundle $bundle, string|int $index, bool $fal
 
 /**
  * @pure
+ *
+ * @param ResourceBundle $bundle
+ * @return int
  */
 function resourcebundle_count(ResourceBundle $bundle): int
 {
@@ -2677,16 +2778,28 @@ function resourcebundle_locales(string $bundle): array|false
 {
 }
 
+/**
+ * @param ResourceBundle $bundle
+ * @return int
+ */
 function resourcebundle_get_error_code(ResourceBundle $bundle): int
 {
 }
 
+/**
+ * @param ResourceBundle $bundle
+ * @return string
+ */
 function resourcebundle_get_error_message(ResourceBundle $bundle): string
 {
 }
 
 /**
  * @pure
+ *
+ * @param string $id
+ * @param int $direction
+ * @return Transliterator|null
  */
 function transliterator_create(string $id, int $direction = 0): null|Transliterator
 {
@@ -2694,15 +2807,19 @@ function transliterator_create(string $id, int $direction = 0): null|Translitera
 
 /**
  * @pure
+ *
+ * @param string $rules
+ * @param int $direction
+ * @return Transliterator|null
  */
 function transliterator_create_from_rules(string $rules, int $direction = 0): null|Transliterator
 {
 }
 
 /**
- * @return string[]|false
- *
  * @pure
+ *
+ * @return array<array-key, mixed>
  */
 function transliterator_list_ids(): array|false
 {
@@ -2734,10 +2851,16 @@ function transliterator_get_error_message(Transliterator $transliterator): strin
 {
 }
 
+/**
+ * @return int
+ */
 function intl_get_error_code(): int
 {
 }
 
+/**
+ * @return string
+ */
 function intl_get_error_message(): string
 {
 }

@@ -1,0 +1,1 @@
+TaintedHtml - input.php:2:10 - Detected tainted HTML in path: $_GET -> $_GET['name'] (input.php:2:10) -> var_dump#1 (input.php:2:10)

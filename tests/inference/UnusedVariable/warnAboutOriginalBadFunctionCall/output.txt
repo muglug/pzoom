@@ -1,0 +1,4 @@
+MixedArgument - input.php:9:10 - Argument 1 of echo cannot be mixed, expecting string
+    input.php:2:24 - Consider improving the type here
+MixedAssignment - input.php:8:18 - Unable to determine the type that $a is being assigned to
+    input.php:2:24 - Consider improving the type here

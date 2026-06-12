@@ -1,0 +1,647 @@
+<?php
+
+namespace {
+    // phpcs:disable PSR1.Classes.ClassDeclaration.MultipleClasses
+}
+
+namespace DDTrace {
+        /**
+         * @var int
+         */
+        const DBM_PROPAGATION_DISABLED = 0;
+
+        /**
+         * @var int
+         */
+        const DBM_PROPAGATION_SERVICE = 0;
+
+        /**
+         * @var int
+         */
+        const DBM_PROPAGATION_FULL = 0;
+
+        class SpanLink implements \JsonSerializable
+    {
+                    public string $traceId;
+
+                    public string $spanId;
+            public string $traceState;
+
+            /**
+             * @var string[]
+             */
+            public array $attributes;
+            public int $droppedAttributesCount;
+
+            public function jsonSerialize(): mixed {}
+
+            /**
+             * @param array|callable(string):mixed $headersOrCallback Either an array with a lowercase header to value mapping,
+             */
+            public static function fromHeaders(array|callable $headersOrCallback): SpanLink {}
+        }
+
+        class SpanData
+    {
+                    public string|null $name = "";
+
+                    public string|null $resource = "";
+
+                    public string|null $service = "";
+
+                    public string $env = "";
+
+                    public string $version = "";
+
+            /**
+             * @var string[] Meta struct can be used to send any data to the backend. The peculiarity of meta struct is
+             */
+            public array $meta_struct = [];
+
+                    public string|null $type = "";
+
+            /**
+             * @var string[] An array of key-value span metadata; keys and values must be strings.
+             */
+            public array $meta = [];
+
+            /**
+             * @var float[] An array of key-value span metrics; keys must be strings and values must be floats.
+             */
+            public array $metrics = [];
+
+                    public \Throwable|null $exception = null;
+
+                    public readonly string $id;
+
+            /**
+             * @var SpanLink[] An array of span links
+             */
+            public array $links = [];
+
+            /**
+             * @var string[] A sorted list of tag names used to set the `peer.service` tag. If a tag
+             */
+            public array $peerServiceSources = [];
+
+                    public readonly SpanData|null $parent;
+
+                    public readonly SpanStack $stack;
+
+                    public function getDuration(): int {}
+
+                    public function getStartTime(): int {}
+
+                    public function getLink(): SpanLink {}
+
+                    public function hexId(): string {}
+        }
+
+        class RootSpanData extends SpanData
+    {
+                    public string $origin;
+
+                    public array $propagatedTags = [];
+
+                    public int $samplingPriority = \DD_TRACE_PRIORITY_SAMPLING_UNKNOWN;
+
+                    public int $propagatedSamplingPriority;
+
+                    public string $tracestate;
+
+                    public array $tracestateTags = [];
+
+                    public string $parentId;
+
+                    public string $traceId = "";
+        }
+
+            class SpanStack
+    {
+                    public readonly SpanStack|null $parent;
+
+                    public SpanData|null $active = null;
+        }
+
+        interface Integration
+    {
+            // Possible statuses for the concrete:
+            /**
+             * @var int
+             */
+            const NOT_LOADED = 0;
+
+            /**
+             * @var int
+             */
+            const LOADED = 0;
+
+            /**
+             * @var int
+             */
+            const NOT_AVAILABLE = 0;
+
+                    public function init(): int;
+        }
+
+        // phpcs:disable Generic.Files.LineLength.TooLong
+
+        /**
+         * @param string $className The name of the class that contains the method.
+         * @param string $methodName The name of the method to instrument.
+         * @param null|\Closure(SpanData $span, array $args, mixed $retval, \Exception|null $exception):void|array{prehook?: \Closure, posthook?: \Closure, instrument_when_limited?: int, recurse?: bool} $tracingClosureOrConfigArray
+         * @return bool 'true' if the call was successfully instrumented, else 'false'
+         */
+        function trace_method(
+            string $className,
+            string $methodName,
+            null|\Closure|array $tracingClosureOrConfigArray
+        ): bool {}
+
+        /**
+         * @param string $functionName The name of the function to trace.
+         * @param null|\Closure(SpanData $span, array $args, mixed $retval, \Exception|null $exception):void|array{prehook?: \Closure, posthook?: \Closure, instrument_when_limited?: int, recurse?: bool} $tracingClosureOrConfigArray
+         * @return bool 'true' if the call was successfully instrumented, else 'false'
+         */
+        function trace_function(string $functionName, \Closure|array|null $tracingClosureOrConfigArray): bool {}
+
+        /**
+         * @param string $functionName The name of the function to be instrumented.
+         * @param \Closure(object ):void|null|array{prehook?: \Closure, posthook?: \Closure, instrument_when_limited?: int, recurse?: bool} $prehookOrConfigArray
+         * @param \Closure(array $args, mixed $retval, \Exception|null $exception):void|null $posthook A post-hook function that will be called after
+         * @return bool 'false' if the hook could not be successfully installed, else 'true'
+         */
+        function hook_function(
+            string $functionName,
+            \Closure|array|null $prehookOrConfigArray = null,
+            ?\Closure $posthook = null
+        ): bool {}
+
+        /**
+         * @param string $className The name of the class that contains the method.
+         * @param string $methodName The name of the method to instrument.
+         * @param \Closure(mixed $args):void|null|array{prehook?: \Closure, posthook?: \Closure, instrument_when_limited?: int, recurse?: bool} $prehookOrConfigArray
+         * @param \Closure(object $object, string $scope, array $args, mixed $retval, \Exception|null $exception):void|null $posthook A post-hook function that will be called after
+         * @return bool 'false' when no hook is passed, else 'true'
+         */
+        function hook_method(
+            string $className,
+            string $methodName,
+            \Closure|array|null $prehookOrConfigArray = null,
+            ?\Closure $posthook = null
+        ): bool {}
+
+        // phpcs:enable Generic.Files.LineLength.TooLong
+
+        /**
+         * @param string $key Tag key
+         * @param string $value Tag Value
+         */
+        function add_global_tag(string $key, string $value): void {}
+
+        /**
+         * @param string $key Tag key
+         * @param string $value Tag value
+         */
+        function add_distributed_tag(string $key, string $value): void {}
+
+        /**
+         * @param string $userId Unique identifier of the user (usr.id)
+         * @param array $metadata User monitoring tags (usr.) applied to the 'meta' section of the root span
+         * @param bool|null $propagate If set to 'true', user's information will be propagated in distributed traces
+         */
+        function set_user(string $userId, array $metadata = [], bool|null $propagate = null): void {}
+
+        /**
+         * @param SpanData|null $span The parent span
+         * @return false|int 'false' if spans couldn't be closed, else the number of span closed
+         */
+        function close_spans_until(?SpanData $span): false|int {}
+
+        /**
+         * @return SpanData|null 'null' if tracing isn't enabled or there isn't any active span, else the active span
+         */
+        function active_span(): null|SpanData {}
+
+        /**
+         * @return RootSpanData|null 'null' if tracing isn't enabled or if the active stack doesn't have a root span,
+         */
+        function root_span(): null|RootSpanData {}
+
+        /**
+         * @param float $startTime Start time of the span in seconds.
+         * @return SpanData|false The newly started span, or 'false' if a wrong parameter was given.
+         */
+        function start_span(float $startTime = 0): SpanData|false {}
+
+        /**
+         * @param float $finishTime Finish time in seconds. Defaults to now if zero.
+         * @return false|null 'false' if unexpected parameters were given, else 'null'
+         */
+        function close_span(float $finishTime = 0): false|null {}
+
+        /**
+         * @param SpanData $span The span to update.
+         * @param float $finishTime Finish time in seconds. Defaults to now if zero.
+         * @return false|null 'false' if unexpected parameters were given, else 'null'
+         */
+        function update_span_duration(SpanData $span, float $finishTime = 0): false|null {}
+
+        /**
+         * @param float $startTime Start time of the span in seconds.
+         * @return SpanData The newly created root span
+         */
+        function start_trace_span(float $startTime = 0): SpanData {}
+
+        /**
+         * @return SpanStack|null A copy of the active stack, or 'null' if the tracer is disabled. Won't happen
+         */
+        function active_stack(): SpanStack|null {}
+
+        /**
+         * @return SpanStack The newly created span stack
+         */
+        function create_stack(): SpanStack {}
+
+        /**
+         * @param SpanData|SpanStack|null $newStack Stack to switch to. If 'null' is given, switches to the parent of the
+         * @return null|false|SpanStack The newly active stack, or 'null' if the tracer is disabled (Won't happen under
+         */
+        function switch_stack(SpanData|SpanStack|null $newStack = null): null|false|SpanStack {}
+
+        /**
+         * @param int $priority The priority level to be set to.
+         * @param bool $global If set to 'true' and if there is no active stack (or the active stack doesn't have a
+         */
+        function set_priority_sampling(int $priority, bool $global = false): void {}
+
+        /**
+         * @param bool $global If set to 'true' and if there is no active stack (or the active stack doesn't have a
+         * @return int|null The priority sampling level, or 'null' if an unexpected parameter was given.
+         */
+        function get_priority_sampling(bool $global = false): int|null {}
+
+        /**
+         * @param \Exception|\Throwable $exception
+         * @param int $skipFrames The number of frames to be dropped from the start. E.g. to hide the fact that we're
+         */
+        function get_sanitized_exception_trace(\Exception|\Throwable $exception, int $skipFrames = 0): string {}
+
+        /**
+         * @param null|array|callable(string):mixed $headersOrCallback Either an array with a lowercase header to value mapping,
+         */
+        function consume_distributed_tracing_headers(null|array|callable $headersOrCallback): void {}
+
+        /**
+         * @param null|string[] $inject The types of sampling headers which shall be generated, equivalent to what
+         * @return array{x-datadog-sampling-priority: string,
+         */
+        function generate_distributed_tracing_headers(array|null $inject = null): array {}
+
+        /**
+         * @return \Throwable|null The active exception if there is one, else 'null'.
+         */
+        function find_active_exception(): \Throwable|null {}
+
+        /**
+         * @param string[] $headers
+         */
+        function extract_ip_from_headers(array $headers): array {}
+
+        /**
+         * @return string Startup information
+         */
+        function startup_logs(): string {}
+
+        /**
+         * @return string The id of the current trace
+         */
+        function trace_id(): string {}
+
+        /**
+         * @return string The formatted id of the current trace
+         */
+        function logs_correlation_trace_id(): string {}
+
+        /**
+         * @return array{trace_id: string, span_id: string, version: string, env: string}
+         */
+        function current_context(): array {}
+
+        /**
+         * @param string $traceId The unique integer (128-bit unsigned) ID of the trace containing this span
+         * @param string $parentId The span integer ID of the parent span
+         * @param string|null $origin The distributed tracing origin
+         * @param array|string|null $propagated_tags If provided, propagated tags from the root span will be cleared and
+         * @return bool 'true' if the distributed tracing context was properly set, else 'false' if an error occurred
+         */
+        function set_distributed_tracing_context(
+            string $traceId,
+            string $parentId,
+            ?string $origin = null,
+            array|string|null $propagated_tags = null
+        ): bool {}
+
+            function flush(): void {}
+
+        /**
+         * @internal
+         * @param list{\CurlHandle, SpanData}[] $array An array which will be populated with curl handles and spans.
+         */
+        function curl_multi_exec_get_request_spans(&$array): void {}
+
+        /**
+         * @param string $metric The metric name
+         * @param int $value The metric value
+         * @param array $tags A list of tags associated to the metric
+         */
+        function dogstatsd_count(string $metric, int $value, array $tags = []): void {}
+
+        /**
+         * @param string $metric The metric name
+         * @param float $value The metric value
+         * @param array $tags A list of tags associated to the metric
+         */
+        function dogstatsd_distribution(string $metric, float $value, array $tags = []): void {}
+
+        /**
+         * @param string $metric The metric name
+         * @param float $value The metric value
+         * @param array $tags A list of tags associated to the metric
+         */
+        function dogstatsd_gauge(string $metric, float $value, array $tags = []): void {}
+
+        /**
+         * @param string $metric The metric name
+         * @param float $value The metric value
+         * @param array $tags A list of tags associated to the metric
+         */
+        function dogstatsd_histogram(string $metric, float $value, array $tags = []): void {}
+
+        /**
+         * @param string $metric The metric name
+         * @param int $value The metric value
+         * @param array $tags A list of tags associated to the metric
+         */
+        function dogstatsd_set(string $metric, int $value, array $tags = []): void {}
+}
+
+namespace DDTrace\System {
+        /**
+         * @return string|null The container id, or 'null' if no id was found
+         */
+        function container_id(): string|null {}
+}
+
+namespace DDTrace\Config {
+        /**
+         * @param string $integrationName The name of the integration (e.g., mysqli)
+         * @return bool The status of the app analytics of the integration
+         */
+        function integration_analytics_enabled(string $integrationName): bool {}
+
+        /**
+         * @param string $integrationName The name of the integration (e.g., mysqli)
+         * @return float The sample rate of the app analytics of the integration
+         */
+        function integration_analytics_sample_rate(string $integrationName): float {}
+}
+
+namespace DDTrace\UserRequest {
+        /**
+         * @return bool true iif there are any listeners
+         */
+        function has_listeners(): bool {}
+
+        /**
+         * @param \DDTrace\RootSpanData $span the span associated with this user request.
+         * @param array $data an array with keys named '_GET', '_POST', '_SERVER', '_FILES', '_COOKIE'
+         * @param string|resource|null $body the body of the request (a string or a seekable resource)
+         * @return array|null an array with the keys 'status', 'headers' and 'body', or null
+         */
+        function notify_start(\DDTrace\RootSpanData $span, array $data, mixed $body = null): ?array {}
+
+        /**
+         * @param \DDTrace\RootSpanData $span the span associated with this user request.
+         * @param int $status the HTTP status code of the response
+         * @param array $headers the HTTP headers of the response in the form name => array(values)
+         * @param string|resource|null $body the body of the response (a string or a seekable resource)
+         * @return array|null an array with the keys 'status', 'headers' and 'body', or null
+         */
+        function notify_commit(\DDTrace\RootSpanData $span, int $status, array $headers, mixed $body = null): ?array {}
+
+        /**
+         * @param \DDTrace\RootSpanData $span
+         * @param callable $blockingFunction a blocking function taking an array with the keys 'status', 'headers', 'body'
+         */
+        function set_blocking_function(\DDTrace\RootSpanData $span, callable $blockingFunction): void {}
+}
+
+namespace DDTrace\Testing {
+        /**
+         * @param string $message Error message
+         * @param int $errorType Error Type. Supported error types are: E_ERROR, E_WARNING, E_PARSE, E_NOTICE, E_CORE_ERROR,
+         */
+        function trigger_error(string $message, int $errorType): void {}
+}
+
+namespace DDTrace\Internal {
+        /**
+         * @var int
+         */
+        const SPAN_FLAG_OPENTELEMETRY = 0;
+
+        /**
+         * @var int
+         */
+        const SPAN_FLAG_OPENTRACING = 0;
+
+        /**
+         * @internal
+         * @param \DDTrace\SpanData $span the span to flag
+         * @param int $flag the flag to add to the span
+         */
+        function add_span_flag(\DDTrace\SpanData $span, int $flag): void {}
+
+        /**
+         * @internal
+         */
+        function handle_fork(): void {}
+}
+
+namespace {
+        /**
+         * @var string
+         */
+        const DD_TRACE_VERSION = '0';
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_AUTO_KEEP = 0;
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_AUTO_REJECT = 0;
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_USER_KEEP = 0;
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_USER_REJECT = 0;
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_UNKNOWN = 0;
+
+        /**
+         * @var int
+         */
+        const DD_TRACE_PRIORITY_SAMPLING_UNSET = 0;
+
+        /**
+         * @param string $envName Environment variable name
+         * @return mixed Value of the environment variable
+         */
+        function dd_trace_env_config(string $envName): mixed {}
+
+            function dd_trace_disable_in_request(): bool {}
+
+        /**
+         * @internal
+         * @return bool 'true' if reset was successful, else 'false'
+         */
+        function dd_trace_reset(): bool {}
+
+        /**
+         * @internal
+         * @param array $traceArray Serialize values must be of type array, string, int, float, bool or null
+         * @return bool|string The serialized array, else 'false' if an error was encountered
+         */
+        function dd_trace_serialize_msgpack(array $traceArray): bool|string {}
+
+        /**
+         * @internal
+         * @return bool Return 'true' if tracing is enabled, else 'false'
+         */
+        function dd_trace_noop(mixed ...$args): bool {}
+
+        /**
+         * @return int The memory limit
+         */
+        function dd_trace_dd_get_memory_limit(): int {}
+
+        /**
+         * @return bool 'true' if the current memory usage is under the memory limit, else 'false'
+         */
+        function dd_trace_check_memory_under_limit(): bool {}
+
+        /**
+         * @param string|null $fallbackName Fallback name if the app's name wasn't set
+         * @return string|null The app name, else the fallback name. Return 'null' if the app name isn't set and no
+         */
+        function ddtrace_config_app_name(?string $fallbackName = null): ?string {}
+
+        /**
+         * @return bool 'true' if distributed tracing is enabled, else 'false'
+         */
+        function ddtrace_config_distributed_tracing_enabled(): bool {}
+
+        /**
+         * @return bool 'true' is tracing is enabled, else 'false'
+         */
+        function ddtrace_config_trace_enabled(): bool {}
+
+        /**
+         * @param string $integrationName The name of the integration (e.g., mysqli)
+         * @return bool The status of the integration, or 'false' if tracing isn't enabled.
+         */
+        function ddtrace_config_integration_enabled(string $integrationName): bool {}
+
+        /**
+         * @internal
+         * @param int $numTraces Trace count. Note that at the moment, the background sender is only capable of sending
+         * @param array $curlHeaders HTTP Headers
+         * @param string $payload HTTP Body
+         * @return bool 'true' if tracers were successfully sent or if the tracer is disabled, and 'false' if not exactly
+         */
+        function dd_trace_send_traces_via_thread(int $numTraces, array $curlHeaders, string $payload): bool {}
+
+        /**
+         * @internal
+         * @param array $traceArray Array in the format returned by dd_trace_serialize_closed_spans()
+         */
+        function dd_trace_buffer_span(array $traceArray): bool {}
+
+        /**
+         * @internal
+         */
+        function dd_trace_coms_trigger_writer_flush(): int {}
+
+        /**
+         * @internal
+         * @param string $functionName Internal function name
+         * @param mixed $args,... Arguments of the function
+         * @return mixed false if void function was properly executed, else the return value of it
+         */
+        function dd_trace_internal_fn(string $functionName, mixed ...$args): mixed {}
+
+        /**
+         * @param string|null $traceId New trace id
+         * @return bool 'true' if the change was properly applied, else 'false'
+         */
+        function dd_trace_set_trace_id(?string $traceId = null): bool {}
+
+        /**
+         * @return int Number of closed spans
+         */
+        function dd_trace_closed_spans_count(): int {}
+
+        /**
+         * @return bool 'true' if memory is overused, else 'false'
+         */
+        function dd_trace_tracer_is_limited(): bool {}
+
+        /**
+         * @return int Compile time
+         */
+        function dd_trace_compile_time_microseconds(): int {}
+
+        /**
+         * @return array Closed spans data
+         */
+        function dd_trace_serialize_closed_spans(): array {}
+
+        /**
+         * @return string Currently active span/trace unique identifier
+         */
+        function dd_trace_peek_span_id(): string {}
+
+            function dd_trace_close_all_spans_and_flush(): void {}
+
+            function dd_trace_function(string $functionName, \Closure|array|null $tracingClosureOrConfigArray): bool {}
+
+            function dd_trace_method(
+            string $className,
+            string $methodName,
+            \Closure|array|null $tracingClosureOrConfigArray
+        ): bool {}
+
+        /**
+         * @param string $functionName The name of the function or method to untrace
+         * @param string|null $className In the case of a method, its respective class should be provided as well
+         * @return bool 'true' if the un-tracing process was successful, else 'false'
+         */
+        function dd_untrace(string $functionName, string|null $className = null): bool {}
+
+        /**
+         * @param int $timeout Timeout in milliseconds to wait for the flush to complete
+         */
+        function dd_trace_synchronous_flush(int $timeout = 100): void {}
+}

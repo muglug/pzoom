@@ -9,14 +9,21 @@ use std::hash::{Hash, Hasher};
 use std::num::Wrapping;
 
 use indexmap::IndexMap;
+use pzoom_str::Interner;
 
 use crate::assertion::Assertion;
+use crate::var_name::VarName;
+
+/// Insertion-ordered set of assertions keyed by `Assertion::to_hash`. The
+/// keys are already FxHasher outputs, so the map uses Fx rather than the
+/// default SipHash.
+pub type AssertionSet = IndexMap<u64, Assertion, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// A key identifying a variable in a clause.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ClauseKey {
     /// A named variable (e.g., `$a`).
-    Name(String),
+    Name(VarName),
     /// A range expression identifier (start, end offsets).
     Range(u32, u32),
 }
@@ -57,8 +64,14 @@ pub struct Clause {
     /// Pre-computed hash for fast comparison.
     pub hash: u32,
 
-    /// Maps variables to their possible assertion types.
-    pub possibilities: BTreeMap<ClauseKey, IndexMap<u64, Assertion>>,
+    /// Bloom filter over var keys and assertion hashes (bit `hash & 63` per
+    /// element). `contains` uses it to reject non-subsets without map lookups.
+    keys_bloom: u64,
+
+    /// Maps variables to their possible assertion types. Shared copy-on-write:
+    /// cloning a `Clause` bumps a refcount; rewrites (`remove_possibilities`,
+    /// `add_possibility`) clone the map once.
+    pub possibilities: std::rc::Rc<BTreeMap<ClauseKey, AssertionSet>>,
 
     /// Whether this is a "wedge" clause (contradiction).
     pub wedge: bool,
@@ -68,6 +81,14 @@ pub struct Clause {
 
     /// Whether this clause was generated (vs. directly from source).
     pub generated: bool,
+
+    /// Variables this clause's conditional *reassigned* (Psalm's
+    /// `redefined_vars`, from `=`-prefixed assertion keys like
+    /// `($v = expr) === null`). Facts about a redefined var describe its
+    /// post-assignment value: `combine_ored_clauses` drops the other side's
+    /// pre-assignment possibilities and `get_truths_from_formula` replaces
+    /// (rather than conjoins) earlier truths.
+    pub redefined_vars: std::collections::BTreeSet<crate::var_name::VarName>,
 }
 
 impl PartialEq for Clause {
@@ -87,7 +108,7 @@ impl Hash for Clause {
 impl Clause {
     /// Creates a new clause.
     pub fn new(
-        possibilities: BTreeMap<ClauseKey, IndexMap<u64, Assertion>>,
+        possibilities: BTreeMap<ClauseKey, AssertionSet>,
         creating_conditional_id: (u32, u32),
         creating_object_id: (u32, u32),
         wedge: Option<bool>,
@@ -105,14 +126,30 @@ impl Clause {
             reconcilable,
             generated,
             hash: compute_hash(&possibilities, creating_object_id, wedge, reconcilable),
-            possibilities,
+            keys_bloom: compute_keys_bloom(&possibilities),
+            possibilities: std::rc::Rc::new(possibilities),
+            redefined_vars: std::collections::BTreeSet::new(),
         }
+    }
+
+    /// Mark a variable as redefined by this clause's conditional (Psalm's
+    /// `redefined_vars`).
+    pub fn mark_redefined(mut self, var: crate::var_name::VarName) -> Clause {
+        self.redefined_vars.insert(var);
+        self
+    }
+
+    /// Mark this clause as generated (exempt from "has already been asserted"
+    /// redundancy reporting, like Psalm's equality-derived clauses).
+    pub fn mark_generated(mut self) -> Clause {
+        self.generated = true;
+        self
     }
 
     /// Removes possibilities for a variable from this clause.
     /// Returns None if removing the variable would leave the clause empty.
     pub fn remove_possibilities(&self, var_id: &ClauseKey) -> Option<Clause> {
-        let mut possibilities = self.possibilities.clone();
+        let mut possibilities = (*self.possibilities).clone();
         possibilities.remove(var_id);
 
         if possibilities.is_empty() {
@@ -126,12 +163,14 @@ impl Clause {
                 self.wedge,
                 self.reconcilable,
             ),
-            possibilities,
+            keys_bloom: compute_keys_bloom(&possibilities),
+            possibilities: std::rc::Rc::new(possibilities),
             creating_conditional_id: self.creating_conditional_id,
             creating_object_id: self.creating_object_id,
             wedge: self.wedge,
             reconcilable: self.reconcilable,
             generated: self.generated,
+            redefined_vars: self.redefined_vars.clone(),
         })
     }
 
@@ -139,9 +178,9 @@ impl Clause {
     pub fn add_possibility(
         &self,
         var_id: ClauseKey,
-        new_possibility: IndexMap<u64, Assertion>,
+        new_possibility: AssertionSet,
     ) -> Clause {
-        let mut possibilities = self.possibilities.clone();
+        let mut possibilities = (*self.possibilities).clone();
         possibilities.insert(var_id, new_possibility);
 
         Clause {
@@ -151,18 +190,27 @@ impl Clause {
                 self.wedge,
                 self.reconcilable,
             ),
-            possibilities,
+            keys_bloom: compute_keys_bloom(&possibilities),
+            possibilities: std::rc::Rc::new(possibilities),
             creating_conditional_id: self.creating_conditional_id,
             creating_object_id: self.creating_object_id,
             wedge: self.wedge,
             reconcilable: self.reconcilable,
             generated: self.generated,
+            redefined_vars: self.redefined_vars.clone(),
         }
     }
 
     /// Returns true if this clause subsumes another clause.
     pub fn contains(&self, other_clause: &Self) -> bool {
         if other_clause.possibilities.len() > self.possibilities.len() {
+            return false;
+        }
+
+        // A subset clause's keys and assertion hashes all appear in this
+        // clause, so its bloom bits must too. Bail without map lookups when
+        // the other clause sets a bit this clause does not.
+        if other_clause.keys_bloom & !self.keys_bloom != 0 {
             return false;
         }
 
@@ -185,16 +233,27 @@ impl Clause {
     pub fn get_impossibilities(&self) -> BTreeMap<ClauseKey, Vec<Assertion>> {
         let mut impossibilities = BTreeMap::new();
 
-        for (var_key, possibility) in &self.possibilities {
+        for (var_key, possibility) in self.possibilities.iter() {
             let mut impossibility = vec![];
 
             for (_, assertion) in possibility {
                 match assertion {
                     Assertion::IsEqual(atomic) | Assertion::IsNotEqual(atomic) => {
-                        if atomic.is_literal() {
+                        // Literal equalities negate cleanly. Named-object
+                        // equalities model Psalm's IsClassEqual/IsClassNotEqual
+                        // (from get_class comparisons), whose negations map to
+                        // each other — so `get_class($a) !== B` lets the else
+                        // branch recover `=B`.
+                        if atomic.is_literal()
+                            || matches!(atomic, crate::TAtomic::TNamedObject { .. })
+                        {
                             impossibility.push(assertion.get_negation());
                         }
                     }
+                    // Psalm's Clause::calculateNegation skips equality
+                    // assertions with no literal value; `=isset` negates to
+                    // `Any`, which must never enter a clause.
+                    Assertion::IsEqualIsset => {}
                     _ => {
                         impossibility.push(assertion.get_negation());
                     }
@@ -210,7 +269,7 @@ impl Clause {
     }
 
     /// Converts the clause to a human-readable string for debugging.
-    pub fn to_string(&self) -> String {
+    pub fn to_string(&self, interner: &Interner) -> String {
         let mut clause_strings = vec![];
 
         if self.possibilities.is_empty() {
@@ -219,7 +278,7 @@ impl Clause {
 
         for (var_id, values) in self.possibilities.iter() {
             let var_id_str = match var_id {
-                ClauseKey::Name(name) => name.clone(),
+                ClauseKey::Name(name) => name.to_string(),
                 ClauseKey::Range(_, _) => "<expr>".to_string(),
             };
 
@@ -242,18 +301,18 @@ impl Clause {
                         clause_string_parts.push(format!(
                             "{} is {}",
                             var_id_str,
-                            value.get_id(None)
+                            value.get_id(Some(interner))
                         ));
                     }
                     Assertion::IsNotType(value) | Assertion::IsNotEqual(value) => {
                         clause_string_parts.push(format!(
                             "{} is not {}",
                             var_id_str,
-                            value.get_id(None)
+                            value.get_id(Some(interner))
                         ));
                     }
                     _ => {
-                        clause_string_parts.push(value.to_string());
+                        clause_string_parts.push(value.to_string(Some(interner)));
                     }
                 }
             }
@@ -276,10 +335,25 @@ impl Clause {
     }
 }
 
+/// Computes the `keys_bloom` prefilter for a clause's possibilities.
+#[inline]
+fn compute_keys_bloom(possibilities: &BTreeMap<ClauseKey, AssertionSet>) -> u64 {
+    let mut bloom = 0u64;
+    for (key, assertions) in possibilities {
+        let mut hasher = rustc_hash::FxHasher::default();
+        key.hash(&mut hasher);
+        bloom |= 1u64 << (hasher.finish() & 63);
+        for assertion_hash in assertions.keys() {
+            bloom |= 1u64 << (assertion_hash & 63);
+        }
+    }
+    bloom
+}
+
 /// Computes a hash for a clause.
 #[inline]
 fn compute_hash(
-    possibilities: &BTreeMap<ClauseKey, IndexMap<u64, Assertion>>,
+    possibilities: &BTreeMap<ClauseKey, AssertionSet>,
     creating_object_id: (u32, u32),
     wedge: bool,
     reconcilable: bool,

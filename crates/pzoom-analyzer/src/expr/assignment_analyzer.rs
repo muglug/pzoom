@@ -8,6 +8,7 @@
 //! - Destructuring: list($a, $b) = $arr or [$a, $b] = $arr
 
 use mago_span::HasSpan;
+use pzoom_str::StrId;
 use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::array::ArrayElement;
 use mago_syntax::ast::ast::assignment::{Assignment, AssignmentOperator};
@@ -16,13 +17,13 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
-use indexmap::IndexMap;
 use pzoom_code_info::algebra::{Clause, ClauseKey, combine_ored_clauses};
+use pzoom_code_info::VarName;
 use pzoom_code_info::t_atomic::{ArrayKey, NON_SPECIFIC_LITERAL_STRING_VALUE};
 use pzoom_code_info::{
-    Assertion, DataFlowNode, Issue, IssueKind, TAtomic, TUnion, VarId, combine_union_types,
+    Assertion, DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarId,
+    VariableSourceKind, combine_union_types,
 };
-use pzoom_str::StrId;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -72,6 +73,8 @@ pub fn analyze(
                     pos,
                     analysis_data,
                     context,
+                    // A compound assignment reads the old value.
+                    !matches!(assignment.operator, AssignmentOperator::Assign(_)),
                 );
                 return;
             }
@@ -131,17 +134,163 @@ pub fn analyze(
         }
     }
 
-    // Analyze the right-hand side first
+    // Psalm (AssignmentAnalyzer): a closure assigned to a variable it by-ref
+    // captures (`$f = function () use (&$f) {...}`) pre-declares the variable
+    // as Closure so the recursive self-reference isn't mixed inside the body.
+    if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+        && let Expression::Closure(closure) = assignment.rhs
+        && let Some(use_clause) = &closure.use_clause
+        && use_clause.variables.iter().any(|use_var| {
+            use_var.ampersand.is_some() && use_var.variable.name == direct_var.name
+        })
+    {
+        let var_id = VarName::new(direct_var.name);
+        context.locals.insert(
+            var_id.clone(),
+            TUnion::new(TAtomic::TClosure {
+                params: None,
+                return_type: None,
+                is_pure: None,
+            }),
+        );
+        context.vars_possibly_in_scope.insert(var_id);
+    }
+
+    // Analyze the right-hand side first (Psalm sets inside_assignment while
+    // analyzing the assigned value — the value is "used" by the assignment).
+    let was_inside_assignment = context.inside_assignment;
+    context.inside_assignment = true;
     let rhs_pos = expression_analyzer::analyze(analyzer, assignment.rhs, analysis_data, context);
+    context.inside_assignment = was_inside_assignment;
     let rhs_type = analysis_data
-        .get_expr_type(rhs_pos)
+        .expr_types.get(&rhs_pos).cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
     let rhs_type = if matches!(assignment.operator, AssignmentOperator::Concat(_)) {
-        infer_concat_assignment_type(analyzer, assignment.lhs, &rhs_type, context)
+        let mut concat_type =
+            infer_concat_assignment_type(analyzer, assignment.lhs, &rhs_type, context);
+
+        // Hakana rewrites `$a .= $b` to `$a = $a . $b`, where the concat analyzer adds
+        // a composition node taking parents from both operands.
+        let decision_node =
+            DataFlowNode::get_for_composition(make_data_flow_node_position(analyzer, pos));
+        analysis_data.data_flow_graph.add_node(decision_node.clone());
+
+        if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+            && let Some(lhs_type) =
+                context.get_var_type(direct_var.name)
+        {
+            concat_type.parent_nodes.push(decision_node.clone());
+
+            for old_parent_node in &lhs_type.parent_nodes {
+                analysis_data.data_flow_graph.add_path(
+                    &old_parent_node.id,
+                    &decision_node.id,
+                    PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+        }
+
+        if let Some(rhs_expr_type) = analysis_data.expr_types.get(&rhs_pos).cloned() {
+            concat_type.parent_nodes.push(decision_node.clone());
+
+            for old_parent_node in &rhs_expr_type.parent_nodes {
+                analysis_data.data_flow_graph.add_path(
+                    &old_parent_node.id,
+                    &decision_node.id,
+                    PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+        }
+
+        concat_type
+    } else if !matches!(assignment.operator, AssignmentOperator::Assign(_)) {
+        // Other compound ops (`+=`, `/=`, `??=`, …) read the old value too:
+        // Hakana rewrites `$a op= $b` to `$a = $a op $b`, so the old
+        // variable's dataflow parents feed the new assignment through a
+        // composition node (this is what marks a param used by `$hue /= 360`
+        // and earlier `$x = …` assignments used by `$x ??= $y`).
+        let mut compound_type = rhs_type;
+        let decision_node =
+            DataFlowNode::get_for_composition(make_data_flow_node_position(analyzer, pos));
+        analysis_data.data_flow_graph.add_node(decision_node.clone());
+
+        if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+            && let Some(lhs_type) = context.get_var_type(direct_var.name)
+        {
+            for old_parent_node in &lhs_type.parent_nodes {
+                analysis_data.data_flow_graph.add_path(
+                    &old_parent_node.id,
+                    &decision_node.id,
+                    PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+        }
+
+        for old_parent_node in &compound_type.parent_nodes {
+            analysis_data.data_flow_graph.add_path(
+                &old_parent_node.id,
+                &decision_node.id,
+                PathKind::Default,
+                vec![],
+                vec![],
+            );
+        }
+        compound_type.parent_nodes.push(decision_node);
+
+        compound_type
     } else {
         rhs_type
     };
+
+    // Psalm's AssignmentAnalyzer: assigning a void value to a variable is an
+    // AssignmentToVoid ("Cannot assign $a to type void").
+    if rhs_type.is_void()
+        && let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+    {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::AssignmentToVoid,
+            format!("Cannot assign {} to type void", direct_var.name),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
+    // Psalm's AssignmentAnalyzer: a `never` assigned value means every possible
+    // type for the variable was invalidated — likely dead code.
+    if !rhs_type.types.is_empty()
+        && rhs_type.is_nothing()
+        && let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+    {
+        let span = direct_var.span();
+        let (line, col) = analyzer.get_line_column(span.start.offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::NoValue,
+            "All possible types for this assignment were invalidated - This may be dead code",
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            line,
+            col,
+        ));
+    }
+
+    // Psalm's `registerVariable`: remember each variable's first assignment
+    // location so an always-exiting guard can later retract a MixedAssignment
+    // reported there (IfElseAnalyzer's `IssueBuffer::remove`).
+    if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs {
+        analysis_data.first_var_appearances.entry(VarName::new(direct_var.name)).or_insert(pos.0);
+    }
 
     emit_mixed_assignment_issue_if_needed(
         analyzer,
@@ -176,7 +325,7 @@ pub fn analyze(
     }
 
     // The assignment expression itself has the type of the RHS
-    analysis_data.set_expr_type(pos, rhs_type);
+    analysis_data.expr_types.insert(pos, Rc::new(rhs_type));
 }
 
 fn infer_concat_assignment_type(
@@ -189,7 +338,7 @@ fn infer_concat_assignment_type(
 
     let lhs_type = match lhs {
         Expression::Variable(Variable::Direct(direct_var)) => {
-            context.get_var_type(analyzer.interner.intern(direct_var.name))
+            context.get_var_type(direct_var.name)
         }
         _ => None,
     };
@@ -205,6 +354,12 @@ fn infer_concat_assignment_type(
             for lhs_literal in lhs_literals {
                 for rhs_literal in &rhs_literals {
                     let combined_literal = format!("{}{}", lhs_literal, rhs_literal);
+                    // Too long for a literal type: the whole result degrades,
+                    // as in Psalm's ConcatAnalyzer (any string this long is
+                    // truthy).
+                    if combined_literal.len() >= analyzer.config.max_string_length {
+                        return TUnion::new(TAtomic::TTruthyString);
+                    }
                     if !concatenated_literals.contains(&combined_literal) {
                         concatenated_literals.push(combined_literal);
                     }
@@ -274,16 +429,6 @@ fn emit_mixed_assignment_issue_if_needed(
         return;
     }
 
-    if let Expression::Access(Access::Property(prop_access)) = rhs_expr.unparenthesized() {
-        let object_span = prop_access.object.span();
-        let object_pos = (object_span.start.offset, object_span.end.offset);
-        if let Some(object_type) = analysis_data.get_expr_type(object_pos)
-            && union_has_simplexml_object(analyzer, &object_type)
-        {
-            return;
-        }
-    }
-
     let Expression::Variable(Variable::Direct(direct_var)) = lhs else {
         return;
     };
@@ -292,12 +437,12 @@ fn emit_mixed_assignment_issue_if_needed(
         return;
     }
 
-    let var_id = analyzer.interner.intern(direct_var.name);
-    let has_inline_annotation = get_inline_var_annotation_type(analyzer, pos.0, var_id)
+    let var_id = VarName::new(direct_var.name);
+    let has_inline_annotation = get_inline_var_annotation_type(analyzer, pos.0, &var_id)
         .or_else(|| {
             analysis_data
                 .current_stmt_start
-                .and_then(|stmt_start| get_inline_var_annotation_type(analyzer, stmt_start, var_id))
+                .and_then(|stmt_start| get_inline_var_annotation_type(analyzer, stmt_start, &var_id))
         })
         .is_some();
 
@@ -311,32 +456,25 @@ fn emit_mixed_assignment_issue_if_needed(
     }
 
     let (line, col) = analyzer.get_line_column(pos.0);
-    analysis_data.add_issue(Issue::new(
-        IssueKind::MixedAssignment,
-        format!(
-            "Unable to determine the type that {} is being assigned to",
-            direct_var.name
-        ),
-        analyzer.file_path,
-        pos.0,
-        pos.1,
-        line,
-        col,
-    ));
+    let origin_secondary =
+        crate::data_flow::mixed_origin_secondary(analyzer, analysis_data, rhs_type, pos.0);
+    analysis_data.add_issue(
+        Issue::new(
+            IssueKind::MixedAssignment,
+            format!(
+                "Unable to determine the type that {} is being assigned to",
+                direct_var.name
+            ),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        )
+        .with_secondary_opt(origin_secondary),
+    );
 }
 
-fn union_has_simplexml_object(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> bool {
-    union.types.iter().any(|atomic| {
-        let TAtomic::TNamedObject { name, .. } = atomic else {
-            return false;
-        };
-
-        let class_name = analyzer.interner.lookup(*name);
-        let normalized = class_name.trim_start_matches('\\');
-        normalized.eq_ignore_ascii_case("SimpleXMLElement")
-            || normalized.eq_ignore_ascii_case("SimpleXMLIterator")
-    })
-}
 
 /// Analyze the left-hand side of an assignment and set variable types.
 fn analyze_assignment_lhs(
@@ -350,11 +488,48 @@ fn analyze_assignment_lhs(
 ) {
     match lhs {
         Expression::Variable(var) => {
+            if let Variable::Indirect(indirect) = var {
+                // `${$name} = $value`: the destination is dynamic, so both
+                // the name expression and the assigned value escape tracking
+                // (general use; Hakana treats non-Lvar roots as dead-end
+                // usage).
+                let was_inside_general_use = context.inside_general_use;
+                context.inside_general_use = true;
+                let _ = expression_analyzer::analyze(
+                    analyzer,
+                    indirect.expression,
+                    analysis_data,
+                    context,
+                );
+                context.inside_general_use = was_inside_general_use;
+
+                if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody
+                    && !rhs_type.parent_nodes.is_empty()
+                {
+                    let span = lhs.span();
+                    let escape_sink = DataFlowNode::get_for_unlabelled_sink(
+                        make_data_flow_node_position(
+                            analyzer,
+                            (span.start.offset, span.end.offset),
+                        ),
+                    );
+                    for parent_node in &rhs_type.parent_nodes {
+                        analysis_data.data_flow_graph.add_path(
+                            &parent_node.id,
+                            &escape_sink.id,
+                            PathKind::Default,
+                            vec![],
+                            vec![],
+                        );
+                    }
+                    analysis_data.data_flow_graph.add_node(escape_sink);
+                }
+            }
             if let Variable::Direct(direct) = var {
                 let var_name = direct.name;
 
                 // Intern the variable name
-                let var_id = analyzer.interner.intern(var_name);
+                let var_id = VarName::new(var_name);
 
                 // Mirrors Psalm `AssignmentAnalyzer`: assigning to a by-reference variable
                 // mutates the caller's scope, so it is impure in a mutation-free context
@@ -362,7 +537,7 @@ fn analyze_assignment_lhs(
                 // on the in-scope variable; pzoom approximates that via the by-ref params).
                 let assigns_by_ref = analyzer
                     .function_info
-                    .is_some_and(|info| info.params.iter().any(|param| param.by_ref && param.name == var_id));
+                    .is_some_and(|info| info.params.iter().any(|param| analyzer.interner.lookup(param.name).as_ref() == var_id.as_str() && param.by_ref));
                 if assigns_by_ref
                     && crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer)
                 {
@@ -381,9 +556,10 @@ fn analyze_assignment_lhs(
                     ));
                 }
 
-                if var_id == StrId::THIS_VAR && context.get_var_type(StrId::THIS_VAR).is_none() {
+                if var_id == "$this" && context.get_var_type("$this").is_none() {
                     if !issue_suppression::is_issue_suppressed_at(
                         analyzer,
+                        analysis_data,
                         assignment_offset,
                         "InvalidScope",
                     ) {
@@ -401,7 +577,7 @@ fn analyze_assignment_lhs(
                     return;
                 }
 
-                if context.has_confusing_reference(var_id) {
+                if context.has_confusing_reference(&var_id) {
                     let (line, col) = analyzer.get_line_column(assignment_offset);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::ReferenceReusedFromConfusingScope,
@@ -417,51 +593,207 @@ fn analyze_assignment_lhs(
                     ));
                 }
 
-                let mut assigned_type =
-                    get_inline_var_annotation_type(analyzer, assignment_offset, var_id)
+                let inline_annotation_type =
+                    get_inline_var_annotation_type(analyzer, assignment_offset, &var_id)
                         .or_else(|| {
                             analysis_data.current_stmt_start.and_then(|stmt_start| {
-                                get_inline_var_annotation_type(analyzer, stmt_start, var_id)
+                                // A nameless statement-level @var binds to the
+                                // statement's top-level assignment only —
+                                // Psalm never applies it to an assignment
+                                // nested in the rhs (`$outer = ($inner = ...)`).
+                                if assignment_offset == stmt_start {
+                                    get_inline_var_annotation_type(analyzer, stmt_start, &var_id)
+                                } else {
+                                    get_named_inline_var_annotation_type(
+                                        analyzer, stmt_start, &var_id,
+                                    )
+                                }
                             })
-                        })
-                        .unwrap_or_else(|| rhs_type.clone());
+                        });
+                if let Some(annotation_type) = &inline_annotation_type {
+                    crate::expr::variable_fetch_analyzer::emit_undefined_docblock_classes_in_annotation(
+                        analyzer,
+                        annotation_type,
+                        (assignment_offset, assignment_offset.saturating_add(1)),
+                        analysis_data,
+                    );
+
+                    // Psalm (find_unused_variables): a @var annotation whose
+                    // type matches the inferred assigned type exactly is
+                    // unnecessary.
+                    if analyzer.config.report_unused
+                        && !annotation_type.is_mixed()
+                        && annotation_type.get_id(Some(analyzer.interner))
+                            == rhs_type.get_id(Some(analyzer.interner))
+                    {
+                        let (line, col) = analyzer.get_line_column(assignment_offset);
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::UnnecessaryVarAnnotation,
+                            format!(
+                                "The @var {} annotation for {} is unnecessary",
+                                annotation_type.get_id(Some(analyzer.interner)),
+                                direct.name
+                            ),
+                            analyzer.file_path,
+                            assignment_offset,
+                            assignment_offset.saturating_add(1),
+                            line,
+                            col,
+                        ));
+                    }
+                }
+                let mut assigned_type = match inline_annotation_type {
+                    Some(mut annotation_type) => {
+                        // A `@var` annotation overrides the inferred type but
+                        // not the value's dataflow (Psalm keeps the assigned
+                        // expression's parent nodes — `@var array $unsafe`
+                        // over `$_GET['unsafe']` still carries taint).
+                        annotation_type.parent_nodes = rhs_type.parent_nodes.clone();
+                        annotation_type
+                    }
+                    None => rhs_type.clone(),
+                };
 
                 emit_reference_constraint_issue_if_needed(
                     analyzer,
                     context,
-                    var_id,
+                    var_id.clone(),
                     &assigned_type,
                     assignment_offset,
                     analysis_data,
                 );
 
+                // Hakana `analyze_assignment_to_variable`: in function-body mode the
+                // assignment is a variable-use source node (feeding unused-variable
+                // analysis); in whole-program (taint) mode it is a plain lvar vertex.
+                // Hakana's `pure`/`has_awaitable`/`has_await_call`/`from_loop_init`
+                // inputs have no pzoom equivalents yet, so they are `false` here.
                 let direct_span = direct.span();
-                let assignment_node = DataFlowNode::get_for_lvar(
-                    VarId(var_id),
-                    make_data_flow_node_position(
-                        analyzer,
-                        (direct_span.start.offset, direct_span.end.offset),
-                    ),
+                let var_expr_pos = make_data_flow_node_position(
+                    analyzer,
+                    (direct_span.start.offset, direct_span.end.offset),
                 );
+                let has_parent_nodes = !assigned_type.parent_nodes.is_empty();
+                let assignment_node =
+                    if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody {
+                        DataFlowNode::get_for_variable_source(
+                            // Assigning through a by-ref closure use writes to
+                            // the enclosing scope (Psalm skips `byref_uses` in
+                            // checkUnreferencedVars); InoutArg sources are not
+                            // reported as unused variables.
+                            if context.references_to_external_scope.contains(&var_id)
+                                || context.static_var_ids.contains(&var_id)
+                            {
+                                VariableSourceKind::InoutArg
+                            } else {
+                                VariableSourceKind::Default
+                            },
+                            VarId(analyzer.interner.intern(var_name)),
+                            var_expr_pos,
+                            false,
+                            has_parent_nodes,
+                            false,
+                            false,
+                            false,
+                        )
+                    } else {
+                        DataFlowNode::get_for_lvar(VarId(analyzer.interner.intern(var_name)), var_expr_pos)
+                    };
                 analysis_data
                     .data_flow_graph
                     .add_node(assignment_node.clone());
-                if !assigned_type.parent_nodes.is_empty() {
+                if has_parent_nodes {
+                    // Psalm `AssignmentAnalyzer::taintAssignment`: a
+                    // `@psalm-taint-escape <kind>` docblock on the assignment
+                    // statement removes those taints from the rhs→lhs edge.
+                    let removed_taints = if matches!(
+                        analysis_data.data_flow_graph.kind,
+                        GraphKind::WholeProgram(_)
+                    ) {
+                        assignment_docblock_removed_taints(analyzer, direct_span.start.offset)
+                    } else {
+                        vec![]
+                    };
+
+                    for parent_node in &assigned_type.parent_nodes {
+                        analysis_data.data_flow_graph.add_path(
+                            &parent_node.id,
+                            &assignment_node.id,
+                            PathKind::Default,
+                            vec![],
+                            removed_taints.clone(),
+                        );
+                    }
+                }
+                // Writing through an external reference (global import, by-ref
+                // use/param, static var) or a local reference binding
+                // consumes the binding: the write only lands where it does
+                // because of it (Psalm's
+                // referenceAssignmentToNonReferenceCountsAsUse).
+                if (context.references_to_external_scope.contains(&var_id)
+                    || context.references_in_scope.contains_key(&var_id))
+                    && let Some(previous_type) = context.get_var_type(&var_id)
+                    && !previous_type.parent_nodes.is_empty()
+                {
+                    let write_sink = DataFlowNode::get_for_unlabelled_sink(var_expr_pos);
                     add_default_dataflow_paths(
                         &mut analysis_data.data_flow_graph,
-                        &assigned_type.parent_nodes,
-                        &assignment_node,
+                        &previous_type.parent_nodes,
+                        &write_sink,
                     );
+                    analysis_data.data_flow_graph.add_node(write_sink);
+                }
+                // Psalm marks an external-scope reference as used when a value
+                // is assigned to it (AssignmentAnalyzer's `variable-use` path):
+                // the written value escapes through the reference, so the rhs
+                // chain (`$new = …; $type = $new;` under `foreach (… as &$type)`)
+                // counts as used.
+                if has_parent_nodes && context.references_to_external_scope.contains(&var_id) {
+                    let escape_sink = DataFlowNode::get_for_unlabelled_sink(var_expr_pos);
+                    analysis_data.data_flow_graph.add_path(
+                        &assignment_node.id,
+                        &escape_sink.id,
+                        PathKind::Default,
+                        vec![],
+                        vec![],
+                    );
+                    analysis_data.data_flow_graph.add_node(escape_sink);
                 }
                 assigned_type.parent_nodes = vec![assignment_node];
 
+                // Writing through an external reference (global import, by-ref
+                // use/param, static var) consumes the imported binding: link
+                // the previous parents to the write node so the declaration
+                // counts as used.
+
+                // Psalm (AssignmentAnalyzer): inside a try, keep the previous
+                // assignment's parents too — an exception can interrupt at any
+                // point, so a later use also uses every earlier assignment.
+                if context.inside_try
+                    && let Some(previous_type) = context.get_var_type(&var_id)
+                {
+                    for parent_node in &previous_type.parent_nodes {
+                        if !assigned_type.parent_nodes.contains(parent_node) {
+                            assigned_type.parent_nodes.push(parent_node.clone());
+                        }
+                    }
+                }
+
                 // Set the variable's type in context (this also tracks assignment)
-                context.set_var_type(var_id, assigned_type);
-                clear_dependent_property_types(analyzer, context, var_name);
-                clear_array_path_types_for_base_var(analyzer, context, var_name);
-                clear_dependent_array_access_types(analyzer, context, var_name);
-                context.invalidate_dependent_types(var_id);
-                remove_var_clauses_from_context(context, var_name);
+                let var_existed = context.locals.contains_key(&var_id);
+                context.set_var_type(var_id.clone(), assigned_type);
+                clear_dependent_property_types( context, var_name);
+                clear_array_path_types_for_base_var( context, var_name);
+                clear_dependent_array_access_types( context, var_name);
+                context.invalidate_dependent_types(&var_id);
+                // Psalm reaches removeVarFromConflictingClauses (which seeds
+                // parent_remove_vars) only for re-assignments; a first
+                // assignment keeps dependent clauses like `$flag = $c !== null`.
+                if var_existed {
+                    remove_var_clauses_from_context(context, var_name);
+                } else {
+                    context.remove_var_name_clauses(var_name);
+                }
             }
         }
         Expression::Access(access) => {
@@ -522,9 +854,21 @@ fn analyze_assignment_lhs(
                 );
             }
         }
-        Expression::ArrayAccess(_) => {
-            // Array element assignment - $arr[key] = value
-            // Handled by array_assignment_analyzer when dispatched from expression_analyzer
+        Expression::ArrayAccess(access) => {
+            // A top-level `$arr[key] = value` is dispatched to
+            // array_assignment_analyzer from expression_analyzer before this
+            // function runs; reaching here means a destructuring target like
+            // `list($a["foo"]) = $parts`, whose element type is already known.
+            let span = access.span();
+            array_assignment_analyzer::analyze_with_known_type(
+                analyzer,
+                access,
+                rhs_expr,
+                rhs_type.clone(),
+                (span.start.offset, span.end.offset),
+                analysis_data,
+                context,
+            );
         }
         Expression::ArrayAppend(_) => {
             // Array append - $arr[] = value
@@ -539,12 +883,12 @@ fn analyze_assignment_lhs(
 fn emit_reference_constraint_issue_if_needed(
     analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
-    var_id: StrId,
+    var_id: VarName,
     assigned_type: &TUnion,
     assignment_offset: u32,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    let Some(constraints) = context.get_reference_constraints(var_id) else {
+    let Some(constraints) = context.get_reference_constraints(var_id.clone()) else {
         return;
     };
 
@@ -558,7 +902,7 @@ fn emit_reference_constraint_issue_if_needed(
             IssueKind::ConflictingReferenceConstraint,
             format!(
                 "${} is constrained by incompatible reference types",
-                analyzer.interner.lookup(var_id)
+                var_id.trim_start_matches('$')
             ),
             analyzer.file_path,
             assignment_offset,
@@ -590,7 +934,7 @@ fn emit_reference_constraint_issue_if_needed(
         IssueKind::ReferenceConstraintViolation,
         format!(
             "${} violates a by-reference type constraint",
-            analyzer.interner.lookup(var_id)
+            var_id.trim_start_matches('$')
         ),
         analyzer.file_path,
         assignment_offset,
@@ -620,8 +964,7 @@ fn reference_constraints_conflict(
     false
 }
 
-fn clear_dependent_property_types(
-    analyzer: &StatementsAnalyzer<'_>,
+pub(crate) fn clear_dependent_property_types(
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -629,14 +972,8 @@ fn clear_dependent_property_types(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .starts_with(&property_prefix)
-        })
+        .filter(|var_id| var_id.starts_with(&property_prefix))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -646,8 +983,7 @@ fn clear_dependent_property_types(
     }
 }
 
-fn clear_dependent_array_access_types(
-    analyzer: &StatementsAnalyzer<'_>,
+pub(crate) fn clear_dependent_array_access_types(
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -655,14 +991,8 @@ fn clear_dependent_array_access_types(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .contains(&key_fragment)
-        })
+        .filter(|var_id| var_id.contains(&key_fragment))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -672,8 +1002,7 @@ fn clear_dependent_array_access_types(
     }
 }
 
-fn clear_array_path_types_for_base_var(
-    analyzer: &StatementsAnalyzer<'_>,
+pub(crate) fn clear_array_path_types_for_base_var(
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -681,14 +1010,8 @@ fn clear_array_path_types_for_base_var(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .starts_with(&prefix)
-        })
+        .filter(|var_id| var_id.starts_with(&prefix))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -741,7 +1064,131 @@ fn analyze_destructuring_element(
         ));
     }
 
-    let target_type = infer_destructured_value_type(analyzer, rhs_type, &lookup_key);
+    // Psalm routes each destructuring element through ArrayFetchAnalyzer, so
+    // a nullable source reports PossiblyNullArrayAccess per element — except
+    // positional items over a list shape, which Psalm reads directly off the
+    // shape's properties (the elements just gain |null instead).
+    let positional_over_list_shape = matches!(lookup_key, DestructuringLookupKey::Int(_))
+        && matches!(element, ArrayElement::Value(_))
+        && rhs_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TKeyedArray { is_list: true, .. }));
+    if rhs_type.is_nullable() && !rhs_type.ignore_nullable_issues && !positional_over_list_shape {
+        let (line, col) = analyzer.get_line_column(assignment_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyNullArrayAccess,
+            "Cannot access array value on possibly null variable",
+            analyzer.file_path,
+            assignment_offset,
+            assignment_offset.saturating_add(1),
+            line,
+            col,
+        ));
+    }
+
+    // An optional shape property reports PossiblyUndefinedArrayOffset
+    // (Psalm's list-assignment handling, which then clears the flag).
+    if let Some(array_key) = lookup_key_to_array_key(&lookup_key) {
+        let optional_property_hit = rhs_type.types.iter().any(|atomic| match atomic {
+            TAtomic::TKeyedArray {
+                properties,
+                fallback_value_type: None,
+                ..
+            } => properties
+                .get(&array_key)
+                .is_some_and(|property_type| property_type.possibly_undefined),
+            _ => false,
+        });
+        if optional_property_hit {
+            let (line, col) = analyzer.get_line_column(assignment_offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyUndefinedArrayOffset,
+                "Possibly undefined array key",
+                analyzer.file_path,
+                assignment_offset,
+                assignment_offset.saturating_add(1),
+                line,
+                col,
+            ));
+        }
+    }
+
+    // ...and a literal offset every sealed shape member lacks reports
+    // InvalidArrayOffset (`[$w, $h, $d] = size()` over `array{int, int}`).
+    if let Some(array_key) = lookup_key_to_array_key(&lookup_key) {
+        let mut saw_sealed_shape = false;
+        let mut offset_can_exist = false;
+        for atomic in &rhs_type.types {
+            match atomic {
+                TAtomic::TKeyedArray {
+                    properties,
+                    sealed,
+                    fallback_value_type,
+                    ..
+                } => {
+                    if properties.contains_key(&array_key)
+                        || !*sealed
+                        || fallback_value_type.is_some()
+                    {
+                        offset_can_exist = true;
+                    } else {
+                        saw_sealed_shape = true;
+                    }
+                }
+                TAtomic::TNull | TAtomic::TFalse => {}
+                _ => offset_can_exist = true,
+            }
+        }
+        if saw_sealed_shape && !offset_can_exist {
+            let (line, col) = analyzer.get_line_column(assignment_offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::InvalidArrayOffset,
+                format!(
+                    "Cannot access value on variable of type {} using offset {:?}",
+                    rhs_type.get_id(Some(analyzer.interner)),
+                    array_key
+                ),
+                analyzer.file_path,
+                assignment_offset,
+                assignment_offset.saturating_add(1),
+                line,
+                col,
+            ));
+        }
+    }
+
+    let mut target_type = infer_destructured_value_type(analyzer, rhs_type, &lookup_key);
+
+    // Hakana's list assignment connects the source array's parents to each
+    // destructured value via `array_fetch_analyzer::add_array_fetch_dataflow`.
+    let keyed_array_var_id = expression_identifier::get_expression_var_key(rhs_expr).and_then(
+        |source_expr_id| match &lookup_key {
+            DestructuringLookupKey::Int(value) => {
+                Some(format!("{}['{}']", source_expr_id, value))
+            }
+            DestructuringLookupKey::String(value) => {
+                Some(format!("{}['{}']", source_expr_id, value))
+            }
+            DestructuringLookupKey::Unknown => None,
+        },
+    );
+    let mut destructure_key_type = match &lookup_key {
+        DestructuringLookupKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
+        DestructuringLookupKey::String(value) => TUnion::new(TAtomic::TLiteralString {
+            value: value.clone(),
+        }),
+        DestructuringLookupKey::Unknown => TUnion::array_key(),
+    };
+    let rhs_span = rhs_expr.span();
+    crate::expr::fetch::array_fetch_analyzer::add_array_fetch_dataflow(
+        analyzer,
+        (rhs_span.start.offset, rhs_span.end.offset),
+        analysis_data,
+        keyed_array_var_id,
+        &mut target_type,
+        &mut destructure_key_type,
+    );
 
     analyze_assignment_lhs(
         analyzer,
@@ -755,7 +1202,7 @@ fn analyze_destructuring_element(
 }
 
 fn rhs_can_be_destructured(analyzer: &StatementsAnalyzer<'_>, rhs_type: &TUnion) -> bool {
-    let array_access_id = analyzer.interner.intern("ArrayAccess");
+    let array_access_id = StrId::ARRAY_ACCESS;
 
     rhs_type.types.iter().any(|atomic| {
         matches!(
@@ -790,7 +1237,7 @@ fn infer_destructured_value_type(
 ) -> TUnion {
     let mut inferred_type: Option<TUnion> = None;
     let mut saw_destructurable_type = false;
-    let array_access_id = analyzer.interner.intern("ArrayAccess");
+    let array_access_id = StrId::ARRAY_ACCESS;
 
     for atomic in &rhs_type.types {
         match atomic {
@@ -829,6 +1276,13 @@ fn infer_destructured_value_type(
                     saw_destructurable_type = true;
                     add_inferred_union(&mut inferred_type, &TUnion::mixed());
                 }
+            }
+            // Destructuring a null (or false) half of the rhs union yields
+            // null elements — Psalm adds `|null` to each target without an
+            // issue, so `[$a, $b] = maybeReturnsShape()` keeps the targets
+            // nullable when the shape is nullable.
+            TAtomic::TNull | TAtomic::TFalse => {
+                add_inferred_union(&mut inferred_type, &TUnion::new(TAtomic::TNull));
             }
             _ => {}
         }
@@ -886,11 +1340,22 @@ fn analyze_reference_assignment(
         return false;
     };
 
-    let lhs_var_id = analyzer.interner.intern(&lhs_key);
-    let rhs_var_id = analyzer.interner.intern(&rhs_key);
+    // A reference to an array offset whose index is itself an array/property
+    // fetch cannot be tracked (Psalm's UnsupportedReferenceUsage).
+    if let Expression::ArrayAccess(array_access) = rhs_operand.unparenthesized()
+        && matches!(
+            array_access.index.unparenthesized(),
+            Expression::ArrayAccess(_) | Expression::Access(_)
+        )
+    {
+        return false;
+    }
 
-    if lhs_var_id == StrId::THIS_VAR && context.get_var_type(StrId::THIS_VAR).is_none() {
-        if !issue_suppression::is_issue_suppressed_at(analyzer, pos.0, "InvalidScope") {
+    let lhs_var_id = lhs_key.clone();
+    let rhs_var_id = rhs_key.clone();
+
+    if lhs_var_id == "$this" && context.get_var_type("$this").is_none() {
+        if !issue_suppression::is_issue_suppressed_at(analyzer, analysis_data, pos.0, "InvalidScope") {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidScope,
@@ -902,22 +1367,22 @@ fn analyze_reference_assignment(
                 col,
             ));
         }
-        analysis_data.set_expr_type(pos, TUnion::mixed());
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
         return true;
     }
 
     if let Expression::Variable(Variable::Direct(_)) = rhs_operand.unparenthesized()
-        && context.get_var_type(rhs_var_id).is_none()
+        && context.get_var_type(&rhs_var_id).is_none()
     {
         // Psalm initializes newly created references to null.
-        context.set_var_type_direct(rhs_var_id, TUnion::null());
+        context.set_var_type_direct(rhs_var_id.clone(), TUnion::null());
     }
 
     let rhs_pos = expression_analyzer::analyze(analyzer, rhs_operand, analysis_data, context);
     let rhs_type = analysis_data
-        .get_expr_type(rhs_pos)
+        .expr_types.get(&rhs_pos).cloned()
         .map(|t| (*t).clone())
-        .or_else(|| context.get_var_type(rhs_var_id).cloned())
+        .or_else(|| context.get_var_type(&rhs_var_id).cloned())
         .unwrap_or_else(TUnion::mixed);
 
     if has_unnamed_inline_var_annotation(analyzer, pos.0)
@@ -938,17 +1403,60 @@ fn analyze_reference_assignment(
     }
 
     let rhs_is_external = rhs_key.contains('[') || rhs_key.contains("->") || rhs_key.contains("::");
-    context.set_reference(lhs_var_id, rhs_var_id, rhs_type.clone(), rhs_is_external);
+    context.set_reference(lhs_var_id.clone(), rhs_var_id, rhs_type.clone(), rhs_is_external);
 
-    if let Expression::Variable(Variable::Direct(direct)) = lhs_expr.unparenthesized() {
-        clear_dependent_property_types(analyzer, context, direct.name);
-        clear_array_path_types_for_base_var(analyzer, context, direct.name);
-        clear_dependent_array_access_types(analyzer, context, direct.name);
-        context.invalidate_dependent_types(lhs_var_id);
-        remove_var_clauses_from_context(context, direct.name);
+    // Reference-binding dataflow: the bind publishes the target's current
+    // value (it stays reachable through the alias — Psalm reports nothing for
+    // a value only read via the reference), and the binding itself is an
+    // assignment to the alias variable that can be unused
+    // (unusedReferenceToPreviouslyUsedVariable).
+    if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody
+        && let Expression::Variable(Variable::Direct(lhs_direct)) = lhs_expr.unparenthesized()
+    {
+        let lhs_span = lhs_direct.span();
+        let node_pos = make_data_flow_node_position(
+            analyzer,
+            (lhs_span.start.offset, lhs_span.end.offset),
+        );
+
+        let binding_node = DataFlowNode::get_for_variable_source(
+            VariableSourceKind::Default,
+            VarId(analyzer.interner.intern(&lhs_var_id)),
+            node_pos,
+            false,
+            !rhs_type.parent_nodes.is_empty(),
+            false,
+            false,
+            false,
+        );
+        // The target's value flows into the binding (NOT a use by itself:
+        // `$a = 1; $b = &$a;` leaves BOTH unused in Psalm); it becomes used
+        // when the alias is later read or written through.
+        add_default_dataflow_paths(
+            &mut analysis_data.data_flow_graph,
+            &rhs_type.parent_nodes,
+            &binding_node,
+        );
+        analysis_data.data_flow_graph.add_node(binding_node.clone());
+        if let Some(lhs_type) = context.locals.get_mut(&lhs_var_id) {
+            lhs_type.parent_nodes = vec![binding_node];
+        }
     }
 
-    analysis_data.set_expr_type(pos, rhs_type);
+    if let Expression::Variable(Variable::Direct(direct)) = lhs_expr.unparenthesized() {
+        let var_existed = context.locals.contains_key(&lhs_var_id);
+        clear_dependent_property_types( context, direct.name);
+        clear_array_path_types_for_base_var( context, direct.name);
+        clear_dependent_array_access_types( context, direct.name);
+        context.invalidate_dependent_types(&lhs_var_id);
+        if var_existed {
+            remove_var_clauses_from_context(context, direct.name);
+        } else {
+            context.remove_var_name_clauses(direct.name);
+        }
+    }
+
+    analysis_data.expr_types.insert(pos, Rc::new(rhs_type));
     true
 }
 
@@ -1004,17 +1512,80 @@ fn should_suppress_issue(
         })
 }
 
+/// Psalm parses `@psalm-taint-escape <kind>` from the docblock attached to
+/// an assignment statement (`VarDocblockComment::removed_taints`) and removes
+/// those kinds on the assignment's dataflow edge.
+fn assignment_docblock_removed_taints(
+    analyzer: &StatementsAnalyzer<'_>,
+    assignment_offset: u32,
+) -> Vec<pzoom_code_info::data_flow::node::SinkType> {
+    let source = analyzer.source;
+    let offset = (assignment_offset as usize).min(source.len());
+
+    let bytes = source.as_bytes();
+    let mut cursor = offset;
+    while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
+        cursor -= 1;
+    }
+
+    if cursor < 2 || &source[cursor - 2..cursor] != "*/" {
+        return vec![];
+    }
+
+    let doc_end = cursor;
+    let Some(doc_start) = source[..doc_end - 2].rfind("/**") else {
+        return vec![];
+    };
+
+    let mut removed = vec![];
+    for line in source[doc_start..doc_end].split('\n') {
+        let Some(tag_pos) = line.find("@psalm-taint-escape") else {
+            continue;
+        };
+        let content = &line[tag_pos + "@psalm-taint-escape".len()..];
+        if let Some(kind) = content.split_whitespace().next() {
+            for sink in pzoom_code_info::data_flow::node::SinkType::kinds_from_name(
+                kind.trim_matches('\'').trim_matches('"'),
+            ) {
+                if !removed.contains(&sink) {
+                    removed.push(sink);
+                }
+            }
+        }
+    }
+
+    removed
+}
+
+/// Like [`get_inline_var_annotation_type`] but never falls back to a
+/// nameless annotation.
+fn get_named_inline_var_annotation_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    assignment_offset: u32,
+    var_id: &str,
+) -> Option<TUnion> {
+    let annotations = analyzer.get_inline_var_annotations(assignment_offset)?;
+    annotations.iter().find_map(|annotation| match annotation.var_name {
+        Some(name) if analyzer.interner.lookup(name).as_ref() == var_id => {
+            Some(annotation.var_type.clone())
+        }
+        _ => None,
+    })
+}
+
 fn get_inline_var_annotation_type(
     analyzer: &StatementsAnalyzer<'_>,
     assignment_offset: u32,
-    var_id: StrId,
+    var_id: &str,
 ) -> Option<TUnion> {
     let annotations = analyzer.get_inline_var_annotations(assignment_offset)?;
 
     let mut unnamed_match = None;
     for annotation in annotations {
         match annotation.var_name {
-            Some(name) if name == var_id => return Some(annotation.var_type.clone()),
+            Some(name) if analyzer.interner.lookup(name).as_ref() == var_id => {
+                return Some(annotation.var_type.clone());
+            }
             None if unnamed_match.is_none() => unnamed_match = Some(annotation.var_type.clone()),
             _ => {}
         }
@@ -1063,8 +1634,8 @@ fn handle_assignment_with_boolean_logic(
 
     let mut possibilities = BTreeMap::new();
     possibilities.insert(
-        ClauseKey::Name(assigned_var_name.to_string()),
-        IndexMap::from([(Assertion::Falsy.to_hash(), Assertion::Falsy)]),
+        ClauseKey::Name(VarName::new(assigned_var_name)),
+        pzoom_code_info::AssertionSet::from_iter([(Assertion::Falsy.to_hash(), Assertion::Falsy)]),
     );
 
     let assignment_clauses = combine_ored_clauses(
@@ -1101,7 +1672,7 @@ fn filter_clauses_for_assignment_target(
     clauses
         .into_iter()
         .filter_map(|clause| {
-            let mut possibilities = clause.possibilities.clone();
+            let mut possibilities = (*clause.possibilities).clone();
             possibilities.retain(|key, _| match key {
                 ClauseKey::Name(name) => {
                     name != assigned_var_name
@@ -1129,22 +1700,38 @@ fn filter_clauses_for_assignment_target(
 }
 
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
-    context.clauses.retain(|clause| {
-        !clause
-            .possibilities
-            .keys()
-            .any(|key| matches_assignment_target_key(key, assigned_var_name))
-    });
+    context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
 
-fn matches_assignment_target_key(key: &ClauseKey, assigned_var_name: &str) -> bool {
-    match key {
-        ClauseKey::Name(name) => {
-            name == assigned_var_name
-                || name.starts_with(&format!("{}[", assigned_var_name))
-                || name.starts_with(&format!("{}->", assigned_var_name))
-                || name.contains(&format!("[{}]", assigned_var_name))
+
+/// Whether `expr` is a direct variable (or its negation) that has only
+/// *possibly* been assigned in the current scope — i.e. assigned on some but
+/// not all paths.
+pub(crate) fn is_possibly_undefined_direct_var(
+    expr: &Expression<'_>,
+    context: Option<&BlockContext>,
+) -> bool {
+    let Some(context) = context else {
+        return false;
+    };
+
+    let var_name = match expr.unparenthesized() {
+        Expression::Variable(Variable::Direct(direct)) => Some(direct.name),
+        Expression::UnaryPrefix(unary) if matches!(unary.operator, UnaryPrefixOperator::Not(_)) => {
+            if let Expression::Variable(Variable::Direct(direct)) = unary.operand.unparenthesized() {
+                Some(direct.name)
+            } else {
+                None
+            }
         }
-        ClauseKey::Range(..) => false,
-    }
+        _ => None,
+    };
+
+    let Some(var_name) = var_name else {
+        return false;
+    };
+
+    let var_id = VarName::new(var_name);
+    context.possibly_assigned_var_ids.contains(&var_id)
+        && !context.assigned_var_ids.contains_key(&var_id)
 }

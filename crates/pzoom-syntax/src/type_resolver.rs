@@ -66,8 +66,9 @@ pub fn resolve_hint(
         Hint::String(_) => TUnion::string(),
         Hint::Object(_) => TUnion::new(TAtomic::TObject),
         Hint::Mixed(_) => TUnion::mixed(),
+        // Psalm's Type::getIterable(): iterable<mixed, mixed>.
         Hint::Iterable(_) => TUnion::new(TAtomic::TIterable {
-            key_type: Box::new(TUnion::array_key()),
+            key_type: Box::new(TUnion::mixed()),
             value_type: Box::new(TUnion::mixed()),
         }),
         Hint::Nullable(nullable) => {
@@ -126,21 +127,25 @@ pub fn resolve_hint(
                 resolved_names,
             );
 
-            let (Some(left_atomic), Some(right_atomic)) =
-                (left.get_single().cloned(), right.get_single().cloned())
-            else {
-                return left;
-            };
-
-            let mut parts = Vec::new();
-            push_intersection_part(left_atomic, &mut parts);
-            push_intersection_part(right_atomic, &mut parts);
-
-            if parts.len() == 1 {
-                TUnion::new(parts.pop().unwrap())
-            } else {
-                TUnion::new(TAtomic::TObjectIntersection { types: parts })
+            // An intersection over union sides distributes into disjunctive
+            // normal form: `A & (B|C)` = `(A&B) | (A&C)`. This both resolves
+            // the type correctly and preserves the intersection structure so
+            // version gating (DNF requires PHP 8.2) can see it.
+            let mut result_atomics = Vec::new();
+            for left_atomic in &left.types {
+                for right_atomic in &right.types {
+                    let mut parts = Vec::new();
+                    push_intersection_part(left_atomic.clone(), &mut parts);
+                    push_intersection_part(right_atomic.clone(), &mut parts);
+                    if parts.len() == 1 {
+                        result_atomics.push(parts.pop().unwrap());
+                    } else {
+                        result_atomics.push(TAtomic::TObjectIntersection { types: parts });
+                    }
+                }
             }
+
+            TUnion::from_types(result_atomics)
         }
         Hint::Parenthesized(paren) => resolve_hint(
             &paren.hint,
@@ -193,10 +198,13 @@ fn resolve_identifier_hint(
             name: parent_class.unwrap(),
             type_params: None,
         is_static: false, remapped_params: false }),
-        "int" | "integer" => TUnion::int(),
-        "float" | "double" | "real" => TUnion::float(),
+        // PHP signatures only recognize the canonical scalar keywords;
+        // `boolean`/`integer`/`double`/`real` are CLASS references there
+        // (Psalm reports UndefinedClass). Docblocks keep the loose aliases.
+        "int" => TUnion::int(),
+        "float" => TUnion::float(),
         "string" => TUnion::string(),
-        "bool" | "boolean" => TUnion::bool(),
+        "bool" => TUnion::bool(),
         "array" => TUnion::new(TAtomic::TArray {
             key_type: Box::new(TUnion::array_key()),
             value_type: Box::new(TUnion::mixed()),
@@ -208,8 +216,10 @@ fn resolve_identifier_hint(
         "true" => TUnion::new(TAtomic::TTrue),
         "false" => TUnion::new(TAtomic::TFalse),
         "never" | "no-return" | "never-return" => TUnion::nothing(),
+        // Psalm's Type::getIterable(): iterable<mixed, mixed> — the key is
+        // mixed, not array-key (objects can yield arbitrary keys).
         "iterable" => TUnion::new(TAtomic::TIterable {
-            key_type: Box::new(TUnion::array_key()),
+            key_type: Box::new(TUnion::mixed()),
             value_type: Box::new(TUnion::mixed()),
         }),
         "callable" => TUnion::new(TAtomic::TCallable {
@@ -217,9 +227,11 @@ fn resolve_identifier_hint(
             return_type: None,
             is_pure: None,
         }),
-        "resource" => TUnion::new(TAtomic::TResource),
-        "scalar" => TUnion::new(TAtomic::TScalar),
-        "numeric" => TUnion::new(TAtomic::TNumeric),
+        // `resource`/`scalar`/`numeric` are docblock pseudo-types only: in a
+        // native signature they are class references (Psalm resolves them as
+        // classes — `Scalar $x` hitting Psalm\Type\Atomic\Scalar and
+        // `Resource $r` hitting a Foo\Resource class are real code;
+        // lowercase spellings report InvalidClass/UndefinedClass).
         "array-key" => TUnion::array_key(),
         _ => {
             // It's a class name - resolve it
@@ -228,6 +240,14 @@ fn resolve_identifier_hint(
                 .unwrap_or_else(|| {
                     resolve_class_name(ident, interner, current_namespace, use_aliases)
                 });
+            // A hint resolving to the bare global name `resource` parses as
+            // the reserved pseudo-type (Psalm's TypeHintResolver goes through
+            // Type::parseString, where `resource` is a reserved word); the
+            // analyzer reports ReservedWord for it. Namespaced/aliased
+            // Resource names stay class references.
+            if interner.lookup(resolved_name).eq_ignore_ascii_case("resource") {
+                return TUnion::new(TAtomic::TResource);
+            }
             TUnion::new(TAtomic::TNamedObject {
                 name: resolved_name,
                 type_params: None,

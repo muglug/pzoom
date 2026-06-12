@@ -13,6 +13,7 @@ use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
+use std::rc::Rc;
 
 /// Analyze a throw expression.
 ///
@@ -34,7 +35,7 @@ pub fn analyze(
 
     context.inside_throw = false;
 
-    if let Some(throw_type) = analysis_data.get_expr_type(exception_pos) {
+    if let Some(throw_type) = analysis_data.expr_types.get(&exception_pos).cloned() {
         let is_valid_throw = !throw_type.types.is_empty()
             && throw_type
                 .types
@@ -65,12 +66,12 @@ pub fn analyze(
     // if context.finally_scope.is_some() { ... }
 
     // TODO: Validate that the thrown expression is Throwable
-    // if let Some(throw_type) = analysis_data.get_expr_type(exception_pos) {
+    // if let Some(throw_type) = analysis_data.expr_types.get(&exception_pos).cloned() {
     //     // Check if throw_type is a subtype of Throwable
     // }
 
     // Throw expression has type `never` (nothing)
-    analysis_data.set_expr_type(pos, TUnion::nothing());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
 }
 
 fn atomic_is_throwable(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {

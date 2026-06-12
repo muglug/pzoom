@@ -52,6 +52,17 @@ fn object_like_atomic_is_contained_by(
         TAtomic::TTemplateParamClass { as_type, .. } => {
             object_like_atomic_is_contained_by(codebase, input_type_part, as_type)
         }
+        // `object&callable(...)` intersections: an invokable class satisfies
+        // the callable part via its __invoke signature.
+        TAtomic::TCallable { .. } => {
+            let mut callable_result = TypeComparisonResult::new();
+            super::callable_type_comparator::is_contained_by(
+                codebase,
+                input_type_part,
+                container_type_part,
+                &mut callable_result,
+            )
+        }
         _ => false,
     }
 }
@@ -94,10 +105,23 @@ pub(crate) fn is_contained_by(
         );
     }
 
-    if matches!(
-        (container_type_part, input_type_part),
-        (TAtomic::TTemplateParamClass { .. }, TAtomic::TClassString { .. })
-    ) {
+    // A template-typed class-string container (`class-string<T>`) only accepts
+    // an input that itself names a template; a concrete `class-string` (even a
+    // bounded one like `class-string<C>` from `static::class`) is a coercion
+    // (Psalm ClassLikeStringComparator's TTemplateParamClass arm).
+    let is_template_class_string = |atomic: &TAtomic| match atomic {
+        TAtomic::TTemplateParamClass { .. } => true,
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => matches!(as_type.as_ref(), TAtomic::TTemplateParam { .. }),
+        _ => false,
+    };
+    let container_is_template_class_string = is_template_class_string(container_type_part);
+    let input_is_template_class_string = is_template_class_string(input_type_part);
+    if container_is_template_class_string
+        && !input_is_template_class_string
+        && matches!(input_type_part, TAtomic::TClassString { .. })
+    {
         atomic_comparison_result.type_coerced = Some(true);
         return false;
     }
@@ -136,7 +160,15 @@ pub(crate) fn is_contained_by(
         return false;
     };
 
-    object_like_atomic_is_contained_by(codebase, &fake_input_object, &fake_container_object)
+    // Psalm compares the bound objects through the full atomic comparator with
+    // the result threaded, so coercion/mixed flags from the bounds (e.g.
+    // Traversable's implicit mixed params vs iterable<int>) reach the caller.
+    super::atomic_type_comparator::is_contained_by(
+        codebase,
+        &fake_input_object,
+        &fake_container_object,
+        atomic_comparison_result,
+    )
 }
 
 fn class_string_is_unbounded(atomic: &TAtomic) -> bool {
@@ -144,28 +176,22 @@ fn class_string_is_unbounded(atomic: &TAtomic) -> bool {
 }
 
 fn class_string_bound_accepts_unbounded_input(bound: &TAtomic) -> bool {
-    match bound {
-        TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TObject => true,
-        TAtomic::TTemplateParam { as_type, .. } => {
-            as_type.is_mixed()
-                || as_type
-                    .types
-                    .iter()
-                    .any(class_string_bound_accepts_unbounded_input)
-        }
-        TAtomic::TTemplateParamClass { as_type, .. } => {
-            class_string_bound_accepts_unbounded_input(as_type)
-        }
-        _ => false,
-    }
+    // Psalm's accept-anything case is a *plain* `class-string` container
+    // (`as === 'object' && !as_type`); a templated bound stays rigid.
+    matches!(
+        bound,
+        TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TObject
+    )
 }
 
 fn classlike_string_to_object_bound(codebase: &CodebaseInfo, atomic: &TAtomic) -> Option<TAtomic> {
     match atomic {
         TAtomic::TClassString {
             as_type: Some(as_type),
-        } => Some((**as_type).clone()),
-        TAtomic::TTemplateParamClass { as_type, .. } => Some((**as_type).clone()),
+        } => Some(template_class_string_bound_object(as_type)),
+        TAtomic::TTemplateParamClass { as_type, .. } => {
+            Some(template_class_string_bound_object(as_type))
+        }
         TAtomic::TLiteralClassString { name } => codebase.resolve_classlike_name(name).map(|class_id| {
             TAtomic::TNamedObject {
                 name: class_id,
@@ -173,6 +199,22 @@ fn classlike_string_to_object_bound(codebase: &CodebaseInfo, atomic: &TAtomic) -
             is_static: false, remapped_params: false }
         }),
         _ => None,
+    }
+}
+
+/// Psalm's fake-object construction dissolves a template class-string to the
+/// template's *bound* (TTemplateParamClass::$as_type is the bound named
+/// object, `object` when unbounded) — the template param atom itself never
+/// reaches the object comparison.
+fn template_class_string_bound_object(as_type: &TAtomic) -> TAtomic {
+    match as_type {
+        TAtomic::TTemplateParam {
+            as_type: bound, ..
+        } => bound
+            .get_single()
+            .cloned()
+            .unwrap_or(TAtomic::TObject),
+        other => other.clone(),
     }
 }
 

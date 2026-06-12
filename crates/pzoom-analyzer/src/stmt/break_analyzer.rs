@@ -13,12 +13,29 @@ use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 
 pub fn analyze(
     _analyzer: &StatementsAnalyzer<'_>,
+    break_stmt: &mago_syntax::ast::ast::r#loop::Break<'_>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    let leaving_switch = matches!(context.break_types.last(), Some(BreakContext::Switch));
+    // Psalm: a break leaves the switch only when its level is < 2
+    // (`break 2` inside a switch exits the enclosing loop instead).
+    let leaving_switch = matches!(context.break_types.last(), Some(BreakContext::Switch))
+        && crate::stmt::continue_analyzer::break_level(break_stmt.level.as_ref()) < 2;
 
-    if let Some(loop_scope) = analysis_data.loop_scopes.last_mut() {
+    // A break that leaves a switch carries its context to the post-switch
+    // merge (Hakana's case_scope.break_vars).
+    if leaving_switch
+        && let Some(frame) = analysis_data.switch_break_contexts.last_mut()
+    {
+        frame.push(context.clone());
+    }
+
+    let scope_index = crate::stmt::continue_analyzer::loop_scope_index_for_level(
+        &context.break_types,
+        analysis_data.loop_scopes.len(),
+        break_stmt.level.as_ref(),
+    );
+    if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index)) {
         if leaving_switch {
             loop_scope.final_actions.insert(ControlAction::LeaveSwitch);
             context.control_actions.insert(ControlAction::LeaveSwitch);
@@ -27,16 +44,30 @@ pub fn analyze(
             context.control_actions.insert(ControlAction::Break);
         }
 
-        // Every variable in scope at the break may be its redefined value when the
-        // loop exits via this break.
+        // Psalm's BreakAnalyzer records `getRedefinedVars(loop_parent
+        // vars_in_scope)`: only variables the body actually redefined by
+        // break time — present in the loop-parent scope with a *different*
+        // type. Unchanged variables stay definitely-assigned after the loop
+        // (recording everything demoted pre-loop vars to possibly-assigned).
         for (var_id, var_type) in &context.locals {
+            let Some(parent_type) = loop_scope.parent_context_vars.get(var_id) else {
+                continue;
+            };
+
+            // Psalm's `Union::equals` (parent dataflow nodes included): a
+            // reassignment to the same display type is still a redefinition —
+            // its new parent nodes must reach the post-loop merge.
+            if parent_type == var_type {
+                continue;
+            }
+
             let combined = match loop_scope.possibly_redefined_loop_parent_vars.get(var_id) {
                 Some(existing) => combine_union_types(var_type, existing, false),
                 None => var_type.clone(),
             };
             loop_scope
                 .possibly_redefined_loop_parent_vars
-                .insert(*var_id, combined);
+                .insert(var_id.clone(), combined);
         }
 
         if loop_scope.iteration_count == 0 {
@@ -48,7 +79,7 @@ pub fn analyze(
                     };
                     loop_scope
                         .possibly_defined_loop_parent_vars
-                        .insert(*var_id, combined);
+                        .insert(var_id.clone(), combined);
                 }
             }
         }

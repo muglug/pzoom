@@ -205,14 +205,21 @@ fn is_tag_line(line: &str) -> bool {
 /// Parse a line as a tag, returning (tag_type, data, data_offset) if successful.
 fn parse_tag_line(line: &str) -> Option<(String, String, usize)> {
     // Pattern: ^ *\*?\s*@([\w\-\\\:]+) *(.*)$
-    let trimmed = line.trim_start();
-    let trimmed = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
+    let mut idx = line.len() - line.trim_start().len();
+    let mut rest = &line[idx..];
+    if rest.starts_with('*') {
+        idx += 1;
+        rest = &line[idx..];
+        idx += rest.len() - rest.trim_start().len();
+        rest = &line[idx..];
+    }
 
-    if !trimmed.starts_with('@') {
+    if !rest.starts_with('@') {
         return None;
     }
 
-    let rest = &trimmed[1..];
+    idx += 1;
+    let rest = &line[idx..];
 
     // Find end of tag name
     let tag_end = rest
@@ -224,20 +231,29 @@ fn parse_tag_line(line: &str) -> Option<(String, String, usize)> {
     }
 
     let tag_type = rest[..tag_end].to_string();
-    let data = rest[tag_end..].trim().to_string();
+    let after_tag = &rest[tag_end..];
+    let leading_ws = after_tag.len() - after_tag.trim_start().len();
+    let data = after_tag.trim().to_string();
 
-    // Calculate data offset within the line
-    let data_offset = line.len() - data.len();
+    // Offset of the data within the line (not end-anchored: trailing
+    // whitespace must not shift it).
+    let data_offset = idx + tag_end + leading_ws;
 
     Some((tag_type, data, data_offset))
 }
 
-/// Clean up asterisks in multi-line tag content.
+/// Clean up asterisks in multi-line tag content. Only continuation lines
+/// carry `*` decoration — a literal `*` in the first line's data (e.g.
+/// `@param * $x`) is content, not decoration (Psalm strips per comment line
+/// before splitting, so it keeps it too).
 fn clean_multiline_data(data: &str) -> String {
     data.lines()
-        .map(|line| {
+        .enumerate()
+        .map(|(index, line)| {
             let trimmed = line.trim();
-            if trimmed == "*" {
+            if index == 0 {
+                trimmed
+            } else if trimmed == "*" {
                 ""
             } else {
                 trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start()
@@ -618,6 +634,15 @@ impl ParsedDocblock {
             .get("return")
             .and_then(|m| m.values().next())
             .map(|s| s.as_str())
+    }
+
+    /// Like [`Self::get_return`], also yielding the tag content's absolute
+    /// file offset (the start of the type string).
+    pub fn get_return_with_offset(&self) -> Option<(usize, &str)> {
+        self.combined_tags
+            .get("return")
+            .and_then(|m| m.iter().next())
+            .map(|(offset, s)| (*offset, s.as_str()))
     }
 
     /// Get all param tag contents.

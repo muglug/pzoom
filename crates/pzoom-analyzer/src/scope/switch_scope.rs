@@ -9,6 +9,8 @@
 //! unmatched switch type, the seen case keys, and the pending fallthrough case
 //! types.
 
+use pzoom_code_info::VarName;
+
 use std::collections::BTreeMap;
 
 use pzoom_code_info::algebra::Clause;
@@ -28,10 +30,16 @@ pub struct SwitchScope {
     /// (only meaningful while `can_track_remaining`).
     pub remaining_switch_type: TUnion,
     /// For `switch (true)`: the false-branch assertions accumulated from prior
-    /// cases, applied to each subsequent case.
-    pub accumulated_false_assertions: BTreeMap<String, Vec<Assertion>>,
+    /// cases, applied to each subsequent case. Same `[var][group][alternative]`
+    /// shape as the assertion finder's maps (Psalm's `$if_types`).
+    pub accumulated_false_assertions: BTreeMap<VarName, Vec<Vec<Assertion>>>,
     /// Case types of empty (fallthrough) cases pending the next case body.
     pub pending_fallthrough_case_types: Vec<TUnion>,
+    /// End context of a case whose body can fall through into the next case
+    /// (Psalm wraps such bodies in a virtual `if` carried into the next case;
+    /// pzoom threads the resulting context instead): merged into the next
+    /// case's entry rather than the post-switch merge.
+    pub fallthrough_entry: Option<BlockContext>,
     /// CNF clauses negating each previously analyzed case's equality expression.
     /// Mirrors Psalm/Hakana `SwitchScope::negated_clauses`: a later case enters
     /// with every earlier case's `switch_cond === case_cond` known to be false,
@@ -56,6 +64,7 @@ impl SwitchScope {
             remaining_switch_type: switch_expr_type,
             accumulated_false_assertions: BTreeMap::new(),
             pending_fallthrough_case_types: Vec::new(),
+            fallthrough_entry: None,
             negated_clauses: Vec::new(),
             leftover_case_equality_clauses: None,
         }

@@ -1,0 +1,43 @@
+<?php
+
+/**
+ * @return mixed
+ */
+function zem_get_extension_info_by_id()
+{
+}
+
+/**
+ * @return mixed
+ */
+function zem_get_extension_info_by_name()
+{
+}
+
+/**
+ * @return mixed
+ */
+function zem_get_extensions_info()
+{
+}
+
+/**
+ * @return mixed
+ */
+function zem_get_license_info()
+{
+}
+
+/**
+ * @return mixed
+ */
+function zend_is_configuration_changed()
+{
+}
+
+/**
+ * @return mixed
+ */
+function zend_set_configuration_changed()
+{
+}

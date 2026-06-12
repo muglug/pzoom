@@ -4,6 +4,8 @@
 //! For example, after `if ($x instanceof Foo)`, we know `$x` is of type `Foo`.
 
 pub mod assertion_reconciler;
+#[macro_use]
+mod macros;
 mod negated_assertion_reconciler;
 mod simple_assertion_reconciler;
 mod simple_negated_assertion_reconciler;
@@ -11,6 +13,7 @@ mod simple_negated_assertion_reconciler;
 use std::collections::BTreeMap;
 
 use pzoom_code_info::{ArrayKey, Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -40,52 +43,72 @@ pub fn reconcile(
     )
 }
 
-/// Reconciles keyed types based on a map of assertions.
-///
-/// This processes assertions for multiple variables and updates the context accordingly.
-/// Convert a flat `var -> [Assertion]` map (a conjunction of assertions per
-/// variable) into the AND-of-OR-groups shape consumed by [`reconcile_keyed_types`].
-/// Each assertion becomes its own singleton (one-element) clause.
-pub fn to_and_groups(
-    assertions: &BTreeMap<String, Vec<Assertion>>,
-) -> BTreeMap<String, Vec<Vec<Assertion>>> {
-    assertions
-        .iter()
-        .map(|(key, list)| (key.clone(), list.iter().map(|a| vec![a.clone()]).collect()))
-        .collect()
-}
-
 /// Reconcile a map of per-variable assertions against the context, narrowing each
 /// variable's type. Mirrors Psalm's `Reconciler::reconcileKeyedTypes` /
 /// Hakana's `reconcile_keyed_types`: the value for each variable is a list of
 /// AND-ed clauses, and each clause is itself a list of OR-ed assertions (a
 /// disjunction is reconciled per-alternative and unioned).
 #[allow(clippy::too_many_arguments)]
+/// What reconcile_keyed_types may report. `All` mirrors Psalm's
+/// code-location-passing reconciles (redundancy + impossibility);
+/// `ImpossibleOnly` reports only assertions that empty the type (used for the
+/// if-branch clause application, where pzoom's redundancy reporting lives on
+/// other paths); `Silent` reports nothing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum EmissionMode {
+    Silent,
+    ImpossibleOnly,
+    All,
+}
+
+/// Whether the assertion narrows to a specific literal value (`$x === 2`,
+/// `$x === Enum::Case`). Value-equality narrowing keeps the existing type's
+/// docblock provenance (Psalm's handleLiteralEquality filters the existing
+/// atomics), unlike runtime type checks (`is_string($x)`).
+fn is_literal_value_assertion(assertion: &Assertion) -> bool {
+    matches!(
+        assertion.get_type(),
+        Some(
+            TAtomic::TLiteralInt { .. }
+                | TAtomic::TLiteralFloat { .. }
+                | TAtomic::TLiteralString { .. }
+                | TAtomic::TTrue
+                | TAtomic::TFalse
+                | TAtomic::TEnumCase { .. }
+        )
+    )
+}
+
 pub fn reconcile_keyed_types(
-    assertions: &BTreeMap<String, Vec<Vec<Assertion>>>,
+    assertions: &BTreeMap<VarName, Vec<Vec<Assertion>>>,
     context: &mut BlockContext,
-    changed_var_ids: &mut FxHashSet<StrId>,
+    changed_var_ids: &mut FxHashSet<VarName>,
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     inside_loop: bool,
     negated: bool,
-    emit_redundant_issues: bool,
-    active_assertion_offsets: Option<&BTreeMap<String, FxHashSet<usize>>>,
+    emission_mode: EmissionMode,
+    active_assertion_offsets: Option<&BTreeMap<VarName, FxHashSet<usize>>>,
 ) {
     if assertions.is_empty() {
         return;
     }
 
+    // Psalm's `$failed_reconciliation` is per-reconcile state: scope the
+    // redundancy markers to this call (the sub-reconcilers fill the set via
+    // trigger_issue_for_impossible while the loop below runs).
+    let redundant_vars_before = std::mem::take(&mut analysis_data.redundant_reconciled_vars);
+
     // Flatten groups for nested-isset augmentation and flag detection.
-    let mut flat: BTreeMap<String, Vec<Assertion>> = assertions
+    let mut flat: BTreeMap<VarName, Vec<Assertion>> = assertions
         .iter()
         .map(|(key, groups)| (key.clone(), groups.iter().flatten().cloned().collect()))
         .collect();
-    add_nested_assertions(&mut flat, context, analyzer);
+    add_nested_assertions(&mut flat, context);
 
     // Rebuild the nested working set, appending any assertions that
     // add_nested_assertions introduced as singleton (AND) groups.
-    let mut new_assertions: BTreeMap<String, Vec<Vec<Assertion>>> = assertions.clone();
+    let mut new_assertions: BTreeMap<VarName, Vec<Vec<Assertion>>> = assertions.clone();
     for (key, flat_assertions) in &flat {
         let original_flat_len = assertions
             .get(key)
@@ -112,7 +135,7 @@ pub fn reconcile_keyed_types(
         let has_falsyish = var_assertions
             .iter()
             .flatten()
-            .any(|a| matches!(a, Assertion::Falsy));
+            .any(|a| matches!(a, Assertion::Falsy | Assertion::Empty));
         let has_positive_non_isset_assertion = var_assertions.iter().flatten().any(|assertion| {
             matches!(
                 assertion,
@@ -121,6 +144,7 @@ pub fn reconcile_keyed_types(
                     | Assertion::IsEqual(_)
                     | Assertion::IsNotEqual(_)
                     | Assertion::Truthy
+                    | Assertion::NonEmpty
                     | Assertion::InArray(_)
                     | Assertion::NotInArray(_)
                     | Assertion::HasStringArrayAccess
@@ -133,16 +157,18 @@ pub fn reconcile_keyed_types(
         });
 
         // Get the current type for this variable
-        let var_id = analyzer.interner.intern(var_name);
-        let alt_var_id = get_alternate_var_id(analyzer, var_name);
+        let var_id = var_name.clone();
+        let alt_var_id = get_alternate_var_id(context, var_name);
         let mut possibly_undefined = false;
 
         let existing_type = if let Some(t) = context.locals.get(&var_id) {
             Some(t.clone())
-        } else if let Some(alt_var_id) = alt_var_id {
-            context.locals.get(&alt_var_id).cloned()
-        } else if var_name.contains('[') || var_name.contains("->") {
-            // Try to get value for nested key
+        } else if let Some(alt_var_id) = &alt_var_id {
+            context.locals.get(alt_var_id).cloned()
+        } else if var_name.contains('[') || var_name.contains("->") || var_name.contains("::$") {
+            // Try to get value for nested key (including `Foo::$prop` static
+            // properties, whose declared type Psalm's getValueForKey loads from
+            // class storage)
             get_value_for_key(
                 var_name,
                 context,
@@ -180,55 +206,101 @@ pub fn reconcile_keyed_types(
             if assertion_group.len() == 1 {
                 let assertion = &assertion_group[0];
                 let type_before_assertion = current_type.clone();
+                // Reporting follows Psalm/Hakana's convention: redundancy and
+                // impossibility are emitted *inside* the sub-reconcilers (where
+                // `did_remove_type` is known), gated by whether a key is
+                // passed (Hakana gates on `pos`; pzoom derives positions from
+                // analysis_data, so the key carries the gate).
+                let report_key = if emission_mode == EmissionMode::All
+                    && is_active_assertion
+                    && !type_before_assertion.is_mixed()
+                {
+                    Some(var_name.as_str())
+                } else {
+                    None
+                };
                 current_type = assertion_reconciler::reconcile(
                     assertion,
                     Some(&current_type),
                     possibly_undefined,
-                    Some(var_name),
+                    report_key,
                     analyzer,
                     analysis_data,
                     inside_loop,
                     negated,
                 );
 
+                // Psalm sets `$failed_reconciliation = RECONCILIATION_REDUNDANT`
+                // whether or not it reports: a non-equality, non-isset
+                // assertion that left the type untouched was redundant, and
+                // counts as changed below so its clauses are removed. (With a
+                // report key the sub-reconcilers record this exactly via
+                // trigger_issue_for_impossible; this covers the silent
+                // windows — e.g. an if-condition's ImpossibleOnly pass, whose
+                // surviving clauses would otherwise re-flag at a later
+                // assert().)
+                // The marking matches when Psalm's sub-reconcilers conclude
+                // REDUNDANT (e.g. reconcileTruthyOrNonEmpty's "every atomic
+                // already truthy") — NOT merely "type unchanged": a truthy
+                // check on a possibly-empty array leaves the type unchanged
+                // without being redundant, and its clause must survive so a
+                // later assert() reports "has already been asserted" via the
+                // paradox check instead.
+                if current_type == type_before_assertion
+                    && !current_type.is_mixed()
+                    && !assertion.has_equality()
+                    && !assertion.has_isset()
+                    && !assertion.has_negation()
+                    && !current_type.possibly_undefined
+                    && should_emit_redundant_issue_for_unchanged_assertion(
+                        assertion,
+                        &current_type,
+                        analyzer,
+                    )
+                {
+                    analysis_data
+                        .redundant_reconciled_vars
+                        .insert(var_id.clone());
+                }
+
+                // ImpossibleOnly: the sub-reconcilers stayed silent (no report
+                // key); report just the assertions that emptied the type.
+                if emission_mode == EmissionMode::ImpossibleOnly
+                    && is_active_assertion
+                    && !type_before_assertion.is_mixed()
+                    && current_type.is_nothing()
+                    && !type_before_assertion.is_nothing()
+                    && !assertion.has_equality()
+                {
+                    trigger_issue_for_impossible(
+                        analysis_data,
+                        analyzer,
+                        &type_before_assertion,
+                        var_name.as_str(),
+                        assertion,
+                        false,
+                        negated,
+                    );
+                }
+
                 // Psalm clears from_docblock only inside specific reconciles (plain
                 // TString/TInt/TBool), never for a truthy/falsy narrowing — so e.g.
                 // `if ($a && $a instanceof A)` on a `?static` docblock keeps the
                 // docblock flag and reports RedundantConditionGivenDocblockType.
+                // Value-equality narrowing (`$x === 2`) also keeps provenance
+                // (Psalm's handleLiteralEquality filters the existing atomics).
                 had_active_assertion |= is_active_assertion
                     && !assertion.has_isset()
-                    && !matches!(assertion, Assertion::Truthy | Assertion::Falsy)
+                    && !matches!(
+                        assertion,
+                        Assertion::Truthy
+                            | Assertion::NonEmpty
+                            | Assertion::Falsy
+                            | Assertion::Empty
+                    )
+                    && !is_literal_value_assertion(assertion)
                     && current_type != type_before_assertion;
 
-                if emit_redundant_issues && is_active_assertion && !type_before_assertion.is_mixed() {
-                    if current_type.is_nothing() {
-                        trigger_issue_for_impossible(
-                            analysis_data,
-                            analyzer,
-                            &type_before_assertion,
-                            var_name,
-                            assertion,
-                            false,
-                            negated,
-                        );
-                    } else if current_type == type_before_assertion
-                        && should_emit_redundant_issue_for_unchanged_assertion(
-                            assertion,
-                            &type_before_assertion,
-                            analyzer,
-                        )
-                    {
-                        trigger_issue_for_impossible(
-                            analysis_data,
-                            analyzer,
-                            &type_before_assertion,
-                            var_name,
-                            assertion,
-                            true,
-                            negated,
-                        );
-                    }
-                }
             } else {
                 // Disjunction: union of reconciling each alternative against the
                 // type as it was before this clause.
@@ -239,7 +311,7 @@ pub fn reconcile_keyed_types(
                         assertion,
                         Some(&base_type),
                         possibly_undefined,
-                        Some(var_name),
+                        None,
                         analyzer,
                         analysis_data,
                         inside_loop,
@@ -251,7 +323,31 @@ pub fn reconcile_keyed_types(
                     });
                 }
                 if let Some(result) = result {
-                    had_active_assertion |= is_active_assertion && result != current_type;
+                    // Psalm reports impossible OR alternatives individually;
+                    // pzoom reports once when the whole disjunction removes
+                    // everything (gated like the single-assertion case).
+                    if emission_mode != EmissionMode::Silent
+                        && is_active_assertion
+                        && !base_type.is_mixed()
+                        && result.is_nothing()
+                        && !base_type.is_nothing()
+                        && let Some(first_assertion) = assertion_group.first()
+                    {
+                        trigger_issue_for_impossible(
+                            analysis_data,
+                            analyzer,
+                            &base_type,
+                            var_name.as_str(),
+                            first_assertion,
+                            false,
+                            negated,
+                        );
+                    }
+                    had_active_assertion |= is_active_assertion
+                        && !assertion_group
+                            .iter()
+                            .all(|assertion| is_literal_value_assertion(assertion))
+                        && result != current_type;
                     current_type = result;
                 }
             }
@@ -260,6 +356,12 @@ pub fn reconcile_keyed_types(
         if had_active_assertion {
             current_type.from_docblock = false;
         }
+
+        // Psalm's reconcilers narrow on a builder of the existing union, so
+        // purity provenance (`$this` in an external-mutation-free method,
+        // fresh clones) survives narrowing; pzoom's rebuild must carry it.
+        current_type.reference_free = type_before.reference_free;
+        current_type.allow_mutations = type_before.allow_mutations;
 
         let is_nested_key = var_name.contains('[') || var_name.contains("->");
         if is_nested_key {
@@ -274,8 +376,41 @@ pub fn reconcile_keyed_types(
             }
         }
 
-        // Check if type changed
+        // Check if type changed (Hakana compares before rewriting parent
+        // nodes below, so the comparison itself stays parent-node-sensitive)
         let type_changed = current_type != type_before;
+
+        // Hakana rewrites the narrowed type's parent nodes AFTER computing
+        // type_changed. In taint (WholeProgram) mode, a narrowing whose result
+        // is purely literal scalars severs the dataflow — Psalm builds the
+        // equality-narrowed literal as a fresh union with no parent nodes
+        // (its `literalStringCannotCarryTaint`: after `if ($file !== "")`
+        // the fall-through `$file === ""` value is exactly `""`, which cannot
+        // carry the input's taint). Everything else carries the pre-narrowing
+        // dataflow forward unchanged.
+        let narrowed_to_literals = matches!(
+            analysis_data.data_flow_graph.kind,
+            pzoom_code_info::GraphKind::WholeProgram(_)
+        ) && type_changed
+            && !current_type.types.is_empty()
+            && current_type.types.iter().all(|atomic| {
+                matches!(
+                    atomic,
+                    TAtomic::TLiteralString { .. }
+                        | TAtomic::TLiteralInt { .. }
+                        | TAtomic::TLiteralFloat { .. }
+                        | TAtomic::TTrue
+                        | TAtomic::TFalse
+                        | TAtomic::TNull
+                )
+            });
+        if narrowed_to_literals {
+            current_type.parent_nodes.clear();
+        } else {
+            current_type
+                .parent_nodes
+                .clone_from(&type_before.parent_nodes);
+        }
 
         // Propagate a reconciled nested key back into its base array. Psalm's
         // `reconcileKeyedTypes` does this for any `…]` key that isn't an
@@ -287,10 +422,41 @@ pub fn reconcile_keyed_types(
             adjust_tkeyed_array_type(key_parts, context, changed_var_ids, &current_type, analyzer);
         }
 
-        if type_changed {
-            changed_var_ids.insert(var_id);
-            if let Some(alt_var_id) = alt_var_id {
-                changed_var_ids.insert(alt_var_id);
+        if type_changed || analysis_data.redundant_reconciled_vars.contains(&var_id) {
+            changed_var_ids.insert(var_id.clone());
+            if let Some(alt) = &alt_var_id {
+                changed_var_ids.insert(alt.clone());
+            }
+
+            // A changed root invalidates memoized dependent paths
+            // (`$key->...`, `$key[...]`) unless they are themselves being
+            // asserted in this round — Psalm's reconcileKeyedTypes dependent-
+            // key unset, gated on the assertion being "real" (not one derived
+            // by add_nested_assertions).
+            if var_name.as_str() != "$this" && !var_name.ends_with(']') {
+                let is_real = assertions.get(var_name) == new_assertions.get(var_name);
+                if is_real {
+                    let dependent_keys: Vec<VarName> = context
+                        .locals
+                        .keys()
+                        .filter(|existing| {
+                            existing.as_str() != var_name.as_str()
+                                && existing
+                                    .as_str()
+                                    .strip_prefix(var_name.as_str())
+                                    .is_some_and(|rest| {
+                                        rest.starts_with('[')
+                                            || rest.starts_with(']')
+                                            || rest.starts_with('-')
+                                    })
+                                && !new_assertions.contains_key(existing.as_str())
+                        })
+                        .cloned()
+                        .collect();
+                    for dependent_key in dependent_keys {
+                        context.locals.remove(&dependent_key);
+                    }
+                }
             }
         }
 
@@ -298,36 +464,95 @@ pub fn reconcile_keyed_types(
         // For plain variables, keep reference clusters in sync without marking
         // this narrowing as a concrete assignment.
         if !is_nested_key && !var_name.contains("::") {
-            context.set_var_type_for_inference(var_id, current_type.clone());
+            context.set_var_type_for_inference(var_id.clone(), current_type.clone());
         } else {
-            context.locals.insert(var_id, current_type.clone());
+            context.locals.insert(var_id.clone(), current_type.clone());
+
+            // A nested key rooted at a referenced variable narrows the same
+            // path through every alias (`$bar = &$foo` makes `$bar->bar`
+            // share `$foo->bar`'s narrowing).
+            if let Some(divider_idx) = var_name.find(|c| c == '-' || c == '[')
+                && var_name.starts_with('$')
+            {
+                let root = &var_name[..divider_idx];
+                let path = &var_name[divider_idx..];
+                let mut alias_roots: Vec<String> = Vec::new();
+                if let Some(target_id) = context.references_in_scope.get(root) {
+                    alias_roots.push(target_id.to_string());
+                }
+                for (ref_id, target_id) in &context.references_in_scope {
+                    if target_id.as_ref() == root {
+                        alias_roots.push(ref_id.to_string());
+                    }
+                }
+                for alias_root in alias_roots {
+                    context.locals.insert(
+                        pzoom_code_info::VarName::from(format!("{}{}", alias_root, path)),
+                        current_type.clone(),
+                    );
+                }
+            }
         }
-        if let Some(alt_var_id) = alt_var_id {
-            context.locals.insert(alt_var_id, current_type.clone());
+        if let Some(alt_var_id) = &alt_var_id {
+            context
+                .locals
+                .insert(alt_var_id.clone(), current_type.clone());
         }
     }
+
+    analysis_data.redundant_reconciled_vars = redundant_vars_before;
 }
 
-fn get_alternate_var_id(analyzer: &StatementsAnalyzer<'_>, var_name: &str) -> Option<StrId> {
+fn get_alternate_var_id(context: &BlockContext, var_name: &str) -> Option<VarName> {
     if var_name.contains('[') || var_name.contains("->") {
         return None;
     }
 
-    if let Some(stripped) = var_name.strip_prefix('$') {
-        analyzer.interner.find(stripped)
+    let alternate = if let Some(stripped) = var_name.strip_prefix('$') {
+        VarName::new(stripped)
     } else {
-        analyzer.interner.find(&format!("${}", var_name))
-    }
+        VarName::from(format!("${}", var_name))
+    };
+
+    // Only treat the other spelling as live when the context already knows it
+    // (pre-VarName code gated on the string having been interned somewhere).
+    (context.locals.contains_key(&alternate)
+        || context.vars_possibly_in_scope.contains(&alternate)
+        || context.assigned_var_ids.contains_key(&alternate))
+    .then_some(alternate)
 }
 
-fn should_emit_redundant_issue_for_unchanged_assertion(
+pub(crate) fn should_emit_redundant_issue_for_unchanged_assertion(
     assertion: &Assertion,
     existing_var_type: &TUnion,
     analyzer: &StatementsAnalyzer<'_>,
 ) -> bool {
     match assertion {
-        Assertion::Truthy => existing_var_type.is_always_truthy(),
-        Assertion::Falsy => existing_var_type.is_always_falsy(),
+        Assertion::Truthy | Assertion::NonEmpty => existing_var_type.is_always_truthy(),
+        Assertion::Falsy | Assertion::Empty => existing_var_type.is_always_falsy(),
+        // Psalm's negated comparison reconciliation (the int-range arm of its
+        // negated reconciler) carries no redundancy report: re-deriving
+        // `!($x > 16)` against an already-narrowed int<0, 16> — e.g. through
+        // assert()'s clause re-simplification — stays silent.
+        Assertion::IsNotType(TAtomic::TIntRange { .. }) => false,
+        // Psalm's NegatedAssertionReconciler doesn't evaluate negations of
+        // complex array types precisely, so it never reports them redundant
+        // (a folded `@psalm-assert-if-false array<...>` replayed in the true
+        // branch stays silent).
+        Assertion::IsNotType(
+            TAtomic::TArray { .. }
+            | TAtomic::TNonEmptyArray { .. }
+            | TAtomic::TList { .. }
+            | TAtomic::TNonEmptyList { .. }
+            | TAtomic::TKeyedArray { .. }
+            // Derived string subtypes likewise (a folded ¬numeric-string
+            // from @assert-if-true replayed against an int stays silent).
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString,
+        ) => false,
         Assertion::IsType(TAtomic::TInt)
             if existing_var_type.from_calculation && existing_var_type.has_int() =>
         {
@@ -356,7 +581,7 @@ fn should_emit_redundant_issue_for_unchanged_assertion(
             asserted_atomic,
             analyzer,
         )
-        .is_some_and(|intersection| intersection == *existing_var_type),
+        .is_some_and(|intersection| intersection.types == existing_var_type.types),
         Assertion::IsNotType(asserted_atomic) => assertion_reconciler::intersect_union_with_atomic(
             existing_var_type,
             asserted_atomic,
@@ -402,7 +627,7 @@ fn should_emit_redundant_issue_for_unchanged_assertion(
 /// Returns `None` when the union contains a non-countable atomic (so the count is
 /// unknown), or when there are no atomics. `max_count` is `None` when an unsealed
 /// or unbounded array is present.
-pub(crate) fn get_union_count_bounds(union: &TUnion) -> Option<(usize, Option<usize>)> {
+fn get_union_count_bounds(union: &TUnion) -> Option<(usize, Option<usize>)> {
     if union.types.is_empty() {
         return None;
     }
@@ -592,7 +817,7 @@ fn get_value_for_key(
     analyzer: &StatementsAnalyzer<'_>,
     has_isset: bool,
     has_inverted_isset: bool,
-    _inside_loop: bool,
+    inside_loop: bool,
     possibly_undefined: &mut bool,
 ) -> Option<TUnion> {
     if key.ends_with(']')
@@ -605,7 +830,7 @@ fn get_value_for_key(
             analyzer,
             has_isset,
             has_inverted_isset,
-            false,
+            inside_loop,
             possibly_undefined,
         )?;
 
@@ -616,6 +841,7 @@ fn get_value_for_key(
             analyzer,
             has_isset,
             has_inverted_isset,
+            inside_loop,
             possibly_undefined,
         ) {
             return Some(resolved_type);
@@ -625,32 +851,52 @@ fn get_value_for_key(
     let mut key_parts = break_up_path_into_parts(key);
 
     if key_parts.len() == 1 {
-        let var_id = analyzer
-            .interner
-            .find(key)
-            .or_else(|| get_alternate_var_id(analyzer, key))?;
-        return context.locals.get(&var_id).cloned();
+        let var_type = context
+            .locals
+            .get(key)
+            .or_else(|| get_alternate_var_id(context, key).and_then(|alt| context.locals.get(&alt)));
+        return var_type.cloned();
     }
 
     key_parts.reverse();
 
-    let base_key = key_parts.pop()?;
-    let mut base_type = if let Some(base_var_id) = analyzer
-        .interner
-        .find(&base_key)
-        .or_else(|| get_alternate_var_id(analyzer, &base_key))
-    {
-        context.locals.get(&base_var_id).cloned()
-    } else {
-        None
+    let mut base_key = key_parts.pop()?;
+
+    // `Foo::$prop` breaks into three parts ("Foo", "::$", "prop"); the static
+    // property as a whole is the base (Psalm's getValueForKey handles
+    // `$key_parts[1] === '::$'` as a unit).
+    if key_parts.len() >= 2 && key_parts.last().is_some_and(|part| part == "::$") {
+        let divider = key_parts.pop()?;
+        let property_part = key_parts.pop()?;
+        base_key.push_str(&divider);
+        base_key.push_str(&property_part);
     }
+
+    let mut base_type = context
+        .locals
+        .get(base_key.as_str())
+        .cloned()
+        .or_else(|| {
+            get_alternate_var_id(context, &base_key)
+                .and_then(|alt| context.locals.get(&alt).cloned())
+        })
     .or_else(|| resolve_class_constant_type_from_key(&base_key, analyzer))
     .or_else(|| resolve_static_property_type_from_key(&base_key, analyzer))?;
 
+    // Psalm's getValueForKey consults `$existing_keys[$new_base_key]` at every
+    // step: a narrowed context entry for an intermediate path (e.g.
+    // `$expr->getargs()[0]->value` after an instanceof) takes precedence over
+    // recomputing the link from declared types.
+    let mut composed_key = base_key.clone();
     while let Some(divider) = key_parts.pop() {
         if divider == "[" {
             let array_key = key_parts.pop()?;
             key_parts.pop(); // Pop the closing "]"
+            composed_key = format!("{composed_key}[{array_key}]");
+            if let Some(existing) = context.locals.get(composed_key.as_str()) {
+                base_type = existing.clone();
+                continue;
+            }
             base_type = apply_array_access_to_base_type(
                 &base_type,
                 &array_key,
@@ -658,27 +904,84 @@ fn get_value_for_key(
                 analyzer,
                 has_isset,
                 has_inverted_isset,
+                inside_loop,
                 possibly_undefined,
             )?;
         } else if divider == "->" {
             let property_name = key_parts.pop()?;
+            composed_key = format!("{composed_key}->{property_name}");
+            if let Some(existing) = context.locals.get(composed_key.as_str()) {
+                base_type = existing.clone();
+                continue;
+            }
+            let method_name = property_name.strip_suffix("()");
             let property_id = analyzer.interner.intern(&property_name);
             let mut new_type: Option<TUnion> = None;
 
-            for atomic in &base_type.types {
+            // Psalm walks a worklist here: a TTemplateParam atomic is replaced
+            // by its bound's atomics (`$atomic_types = array_merge(...,
+            // $part->as->getAtomicTypes())`), so `$tpl->prop` resolves through
+            // the template constraint.
+            let mut atomic_worklist: Vec<TAtomic> = base_type.types.clone();
+            let mut worklist_index = 0;
+            while worklist_index < atomic_worklist.len() {
+                if let TAtomic::TTemplateParam { as_type, .. } = &atomic_worklist[worklist_index] {
+                    let bound_atomics = as_type.types.clone();
+                    atomic_worklist.splice(worklist_index..=worklist_index, bound_atomics);
+                    continue;
+                }
+                worklist_index += 1;
+            }
+
+            for atomic in &atomic_worklist {
                 let candidate_type = match atomic {
-                    TAtomic::TNamedObject { name, .. } => analyzer
-                        .codebase
-                        .get_class(*name)
-                        .and_then(|class_info| class_info.properties.get(&property_id))
-                        .map(|property_info| {
-                            property_info
-                                .get_type()
-                                .cloned()
-                                .unwrap_or_else(TUnion::mixed)
-                        }),
+                    TAtomic::TNamedObject { name, .. } => {
+                        if let Some(method_name) = method_name {
+                            // Psalm's getValueForKey resolves a `$base->method()`
+                            // memoization key from the declared method's return
+                            // type; an unknown method fails the whole key.
+                            resolve_method_return_type_from_key(*name, method_name, analyzer)?
+                        } else {
+                            match analyzer.codebase.get_class(*name) {
+                                // Unknown class: Psalm contributes mixed.
+                                None => Some(TUnion::mixed()),
+                                Some(class_info) => {
+                                    // A known class without the property fails
+                                    // the whole key (Psalm returns null from
+                                    // getValueForKey), so no narrowing entry —
+                                    // not a null/mixed-polluted union.
+                                    let property_info =
+                                        class_info.properties.get(&property_id)?;
+                                    let mut property_type = property_info
+                                        .get_type()
+                                        .cloned()
+                                        .unwrap_or_else(TUnion::mixed);
+                                    // Psalm's getPropertyType expands the stored type
+                                    // at the use site (constant wildcards like
+                                    // VISIBILITY_*, self/static).
+                                    crate::type_expander::expand_union(
+                                        analyzer.codebase,
+                                        analyzer.interner,
+                                        &mut property_type,
+                                        &crate::type_expander::TypeExpansionOptions {
+                                            self_class: Some(*name),
+                                            static_class_type:
+                                                crate::type_expander::StaticClassType::Name(*name),
+                                            ..Default::default()
+                                        },
+                                    );
+                                    Some(property_type)
+                                }
+                            }
+                        }
+                    }
                     TAtomic::TObject => Some(TUnion::mixed()),
                     TAtomic::TMixed | TAtomic::TNonEmptyMixed => Some(TUnion::mixed()),
+                    // Psalm's getValueForKey: a null receiver contributes null
+                    // to the fetched type (`$class_property_type =
+                    // Type::getNull()`), so `$a->b->c !== null` over a
+                    // nullable `$a->b` is not redundant.
+                    TAtomic::TNull => Some(TUnion::new(TAtomic::TNull)),
                     _ => None,
                 };
 
@@ -706,6 +1009,60 @@ fn get_value_for_key(
     Some(base_type)
 }
 
+/// Resolve a `$base->method()` memoization-key part to the method's declared
+/// return type (Psalm's getValueForKey `str_ends_with($property_name, '()')`
+/// branch). Outer `None` fails the whole key (unknown method); the inner option
+/// is the per-atomic candidate.
+fn resolve_method_return_type_from_key(
+    class_id: StrId,
+    method_name: &str,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> Option<Option<TUnion>> {
+    // Unknown classes resolve to mixed (Psalm's classOrInterfaceExists guard).
+    if analyzer.codebase.get_class(class_id).is_none() {
+        return Some(Some(TUnion::mixed()));
+    }
+
+    let method_id = analyzer.interner.intern(method_name);
+    let mut current = Some(class_id);
+    while let Some(current_id) = current {
+        let Some(class_info) = analyzer.codebase.get_class(current_id) else {
+            break;
+        };
+        // Scope keys lowercase method names (PHP is case-insensitive);
+        // the methods map keys by declared casing.
+        let method_entry = class_info.methods.get(&method_id).or_else(|| {
+            class_info.methods.iter().find_map(|(name, info)| {
+                analyzer
+                    .interner
+                    .lookup(*name)
+                    .eq_ignore_ascii_case(method_name)
+                    .then_some(info)
+            })
+        });
+        if let Some(method_info) = method_entry {
+            let return_type = method_info
+                .get_return_type()
+                .map(|return_type| {
+                    crate::type_expander::localize_special_class_type_union(
+                        analyzer.codebase,
+                        analyzer.interner,
+                        return_type,
+                        current_id,
+                        current_id,
+                        class_info.parent_class,
+                    )
+                })
+                .unwrap_or_else(TUnion::mixed);
+            return Some(Some(return_type));
+        }
+        current = class_info.parent_class;
+    }
+
+    // Psalm fails the whole key when the method does not exist.
+    None
+}
+
 fn apply_array_access_to_base_type(
     base_type: &TUnion,
     array_key: &str,
@@ -713,8 +1070,19 @@ fn apply_array_access_to_base_type(
     analyzer: &StatementsAnalyzer<'_>,
     has_isset: bool,
     has_inverted_isset: bool,
+    inside_loop: bool,
     possibly_undefined: &mut bool,
 ) -> Option<TUnion> {
+    // Inside a loop, an isset() check on an unknown slot yields a placeholder
+    // mixed the type combiner can later evict (Psalm's from_loop_isset mixed).
+    let isset_mixed = || {
+        if inside_loop {
+            TUnion::new(TAtomic::TMixedFromLoopIsset)
+        } else {
+            TUnion::mixed()
+        }
+    };
+
     let mut new_type: Option<TUnion> = None;
 
     for atomic in &base_type.types {
@@ -741,7 +1109,7 @@ fn apply_array_access_to_base_type(
                         Some((**fallback).clone())
                     } else if has_isset {
                         *possibly_undefined = true;
-                        Some(TUnion::mixed())
+                        Some(isset_mixed())
                     } else {
                         None
                     }
@@ -758,20 +1126,21 @@ fn apply_array_access_to_base_type(
                     if used_literal_keys {
                         resolved_literal_type
                     } else {
+                        // Psalm uses the keyed array's generic value type for
+                        // variable offsets (TKeyedArray::getGenericValueType):
+                        // the union of every property type plus the fallback.
                         *possibly_undefined = true;
-                        if let Some(fallback) = fallback_value_type {
-                            Some((**fallback).clone())
-                        } else if (*is_list
-                            || properties.keys().all(|key| matches!(key, ArrayKey::Int(_))))
-                            && !properties.is_empty()
-                        {
+                        if !properties.is_empty() || fallback_value_type.is_some() {
                             let mut combined = Vec::new();
                             for prop_type in properties.values() {
                                 combined.extend(prop_type.types.clone());
                             }
+                            if let Some(fallback) = &fallback_value_type {
+                                combined.extend(fallback.types.clone());
+                            }
                             Some(TUnion::from_types(combined))
-                        } else if !properties.is_empty() || has_isset {
-                            Some(TUnion::mixed())
+                        } else if has_isset {
+                            Some(isset_mixed())
                         } else {
                             None
                         }
@@ -789,8 +1158,10 @@ fn apply_array_access_to_base_type(
                             combined.extend(prop_type.types.clone());
                         }
                         Some(TUnion::from_types(combined))
-                    } else if !properties.is_empty() || has_isset {
+                    } else if !properties.is_empty() {
                         Some(TUnion::mixed())
+                    } else if has_isset {
+                        Some(isset_mixed())
                     } else {
                         None
                     }
@@ -798,20 +1169,38 @@ fn apply_array_access_to_base_type(
             }
             TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
                 *possibly_undefined = true;
-                Some((**value_type).clone())
+                if value_type.is_nothing() && has_isset {
+                    Some(isset_mixed())
+                } else {
+                    Some((**value_type).clone())
+                }
             }
             TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
                 *possibly_undefined = true;
-                Some((**value_type).clone())
+                if value_type.is_nothing() && has_isset {
+                    Some(isset_mixed())
+                } else {
+                    Some((**value_type).clone())
+                }
             }
-            TAtomic::TMixed | TAtomic::TNonEmptyMixed => Some(TUnion::mixed()),
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset => {
+                Some(TUnion::mixed())
+            }
             TAtomic::TString | TAtomic::TNonEmptyString | TAtomic::TLiteralString { .. } => {
                 Some(TUnion::string())
+            }
+            // Psalm's getValueForKey: indexing a null/false base member yields
+            // null — the isset reconciliation then strips it, leaving the
+            // array half's entry type undiluted (no mixed pollution).
+            TAtomic::TNull | TAtomic::TFalse => {
+                let mut null_type = TUnion::null();
+                null_type.ignore_nullable_issues = base_type.ignore_nullable_issues;
+                Some(null_type)
             }
             _ => {
                 if has_isset || has_inverted_isset {
                     *possibly_undefined = true;
-                    Some(TUnion::mixed())
+                    Some(isset_mixed())
                 } else {
                     None
                 }
@@ -953,12 +1342,25 @@ fn find_static_property_in_hierarchy(
 
     if let Some(property_info) = class_info.properties.get(&property_id) {
         if property_info.is_static {
-            return Some(
-                property_info
-                    .get_type()
-                    .cloned()
-                    .unwrap_or_else(TUnion::mixed),
+            let mut property_type = property_info
+                .get_type()
+                .cloned()
+                .unwrap_or_else(TUnion::mixed);
+            // Resolve `self`/`static` and class-constant wildcards like
+            // `TaintKind::*` against the declaring class, mirroring the
+            // expansion done by the static property fetch analyzer.
+            crate::type_expander::expand_union(
+                analyzer.codebase,
+                analyzer.interner,
+                &mut property_type,
+                &crate::type_expander::TypeExpansionOptions {
+                    self_class: Some(class_id),
+                    static_class_type: crate::type_expander::StaticClassType::Name(class_id),
+                    parent_class: class_info.parent_class,
+                    ..Default::default()
+                },
             );
+            return Some(property_type);
         }
     }
 
@@ -1041,12 +1443,9 @@ fn resolve_variable_key_type(
     analyzer: &StatementsAnalyzer<'_>,
     possibly_undefined: &mut bool,
 ) -> Option<TUnion> {
-    if let Some(var_id) = analyzer
-        .interner
-        .find(array_key_var)
-        .or_else(|| get_alternate_var_id(analyzer, array_key_var))
-        && let Some(var_type) = context.locals.get(&var_id)
-    {
+    if let Some(var_type) = context.locals.get(array_key_var).or_else(|| {
+        get_alternate_var_id(context, array_key_var).and_then(|alt| context.locals.get(&alt))
+    }) {
         return Some(var_type.clone());
     }
 
@@ -1194,9 +1593,8 @@ fn parse_canonical_int_string(value: &str) -> Option<i64> {
 
 /// Adds nested assertions for isset checks.
 fn add_nested_assertions(
-    assertions: &mut BTreeMap<String, Vec<Assertion>>,
+    assertions: &mut BTreeMap<VarName, Vec<Assertion>>,
     context: &BlockContext,
-    analyzer: &StatementsAnalyzer<'_>,
 ) {
     let original_assertions = assertions.clone();
 
@@ -1211,7 +1609,10 @@ fn add_nested_assertions(
 
         if !matches!(
             first_assertion,
-            Assertion::IsEqualIsset | Assertion::IsIsset | Assertion::NonEmptyCountable(_)
+            Assertion::IsEqualIsset
+                | Assertion::IsIsset
+                | Assertion::NonEmpty
+                | Assertion::NonEmptyCountable(_)
         ) {
             continue;
         }
@@ -1231,15 +1632,14 @@ fn add_nested_assertions(
             base_key.push_str(key_parts.remove(0).as_str());
         }
 
-        let base_is_set = analyzer
-            .interner
-            .find(&base_key)
-            .and_then(|base_var_id| context.locals.get(&base_var_id))
-            .is_some_and(|base_type| !base_type.is_nullable);
+        let base_is_set = context
+            .locals
+            .get(base_key.as_str())
+            .is_some_and(|base_type| !base_type.is_nullable());
 
         if !base_is_set {
             assertions
-                .entry(base_key.clone())
+                .entry(VarName::new(&base_key))
                 .or_default()
                 .push(Assertion::IsEqualIsset);
         }
@@ -1262,7 +1662,7 @@ fn add_nested_assertions(
                     };
 
                     assertions
-                        .entry(base_key.clone())
+                        .entry(VarName::new(&base_key))
                         .or_default()
                         .push(array_access_assertion);
 
@@ -1278,7 +1678,7 @@ fn add_nested_assertions(
                     let new_base_key = format!("{}->{}", base_key, property_name);
 
                     assertions
-                        .entry(base_key.clone())
+                        .entry(VarName::new(&base_key))
                         .or_default()
                         .push(Assertion::IsEqualIsset);
 
@@ -1312,7 +1712,7 @@ fn normalize_array_key_literal(array_key: &str) -> String {
 fn adjust_tkeyed_array_type(
     key_parts: Vec<String>,
     context: &mut BlockContext,
-    changed_var_ids: &mut FxHashSet<StrId>,
+    changed_var_ids: &mut FxHashSet<VarName>,
     result_type: &TUnion,
     analyzer: &StatementsAnalyzer<'_>,
 ) {
@@ -1347,11 +1747,12 @@ fn adjust_tkeyed_array_type(
         return;
     };
 
-    let Some(base_var_id) = analyzer
-        .interner
-        .find(&base_key)
-        .or_else(|| get_alternate_var_id(analyzer, &base_key))
-    else {
+    let base_var_id = VarName::new(&base_key);
+    let base_var_id = if context.locals.contains_key(&base_var_id) {
+        base_var_id
+    } else if let Some(alt) = get_alternate_var_id(context, &base_key) {
+        alt
+    } else {
         return;
     };
 
@@ -1361,9 +1762,7 @@ fn adjust_tkeyed_array_type(
         result_type.possibly_undefined = true;
     }
 
-    let nested_path_id = analyzer
-        .interner
-        .find(&format!("{}[{}]", base_key, array_key));
+    let nested_path_id = VarName::from(format!("{}[{}]", base_key, array_key));
 
     for offset in &array_key_offsets {
         let Some(existing_type) = context.locals.get(&base_var_id).cloned() else {
@@ -1396,13 +1795,17 @@ fn adjust_tkeyed_array_type(
                 TAtomic::TArray {
                     key_type,
                     value_type,
+                }
+                | TAtomic::TNonEmptyArray {
+                    key_type,
+                    value_type,
                 } => {
                     // A plain array becomes a keyed array with the offset known and
                     // the original params as the unsealed fallback.
                     let mut properties = FxHashMap::default();
                     properties.insert(offset.clone(), result_type.clone());
                     Some(TAtomic::TKeyedArray {
-                        properties,
+                        properties: std::sync::Arc::new(properties),
                         is_list: false,
                         sealed: false,
                         fallback_key_type: Some(key_type.clone()),
@@ -1423,12 +1826,14 @@ fn adjust_tkeyed_array_type(
             continue;
         }
 
-        let new_base = TUnion::from_types(new_atomics);
-        changed_var_ids.insert(base_var_id);
-        if let Some(nested_path_id) = nested_path_id {
-            changed_var_ids.insert(nested_path_id);
-        }
-        context.locals.insert(base_var_id, new_base.clone());
+        let mut new_base = TUnion::from_types(new_atomics);
+        // Narrowing an offset must not sever the base array's dataflow —
+        // `if (isset($params['foo'])) { return $params; }` still returns the
+        // tainted parameter (Psalm keeps the union's parent nodes here).
+        new_base.parent_nodes = existing_type.parent_nodes.clone();
+        changed_var_ids.insert(base_var_id.clone());
+        changed_var_ids.insert(nested_path_id.clone());
+        context.locals.insert(base_var_id.clone(), new_base.clone());
 
         // Recurse into the parent for deeper paths, with the updated base type.
         if base_key.ends_with(']') {
@@ -1478,7 +1883,7 @@ fn set_keyed_array_offset(
     }
 
     TAtomic::TKeyedArray {
-        properties: new_properties,
+        properties: std::sync::Arc::new(new_properties),
         is_list: new_is_list,
         sealed,
         fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
@@ -1547,13 +1952,13 @@ pub(crate) fn get_acceptable_type(
     acceptable_types: Vec<TAtomic>,
     did_remove_type: bool,
     existing_var_type: &TUnion,
-    key: Option<&String>,
+    key: Option<&str>,
     negated: bool,
     assertion: &Assertion,
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
 ) -> TUnion {
-    if acceptable_types.is_empty() || !did_remove_type {
+    if acceptable_types.is_empty() || (!did_remove_type && !assertion.has_equality()) {
         if let Some(key) = key {
             trigger_issue_for_impossible(
                 analysis_data,
@@ -1581,6 +1986,9 @@ pub(crate) fn get_acceptable_type(
     result_type.from_calculation = existing_var_type.from_calculation;
     result_type.ignore_nullable_issues = existing_var_type.ignore_nullable_issues;
     result_type.ignore_falsable_issues = existing_var_type.ignore_falsable_issues;
+    // Narrowing only restricts the type — its dataflow continues through it
+    // (Hakana's reconcilers preserve parent nodes everywhere).
+    result_type.parent_nodes = existing_var_type.parent_nodes.clone();
     result_type
 }
 
@@ -1589,12 +1997,36 @@ pub(crate) fn trigger_issue_for_impossible(
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
     existing_var_type: &TUnion,
-    key: &String,
+    key: &str,
     assertion: &Assertion,
     redundant: bool,
     negated: bool,
 ) {
-    let mut assertion_string = assertion.to_string();
+    // Psalm never reports redundancy/contradiction for is_callable checks —
+    // callable-ness of values is only ever partially known statically.
+    if matches!(assertion, Assertion::IsType(TAtomic::TCallable { .. }))
+        || matches!(assertion, Assertion::IsNotType(TAtomic::TCallable { .. }))
+    {
+        return;
+    }
+
+    // Reconciling on an already-impossible value reports nothing more
+    // (Psalm: the contradiction was the narrowing that produced `never`).
+    if existing_var_type.is_nothing() && !existing_var_type.types.is_empty() {
+        return;
+    }
+
+    // Psalm's sub-reconcilers set `$failed_reconciliation = RECONCILIATION_
+    // REDUNDANT` alongside this report; reconcileKeyedTypes folds that into
+    // `$changed_var_ids`, so a redundantly-asserted var's clauses are removed
+    // afterwards (an assert() doesn't re-flag at every subsequent assert).
+    if redundant {
+        analysis_data
+            .redundant_reconciled_vars
+            .insert(VarName::new(key));
+    }
+
+    let mut assertion_string = assertion.to_string(Some(analyzer.interner));
     let mut not = assertion_string.starts_with('!');
     if not {
         assertion_string = assertion_string[1..].to_string();
@@ -1614,7 +2046,16 @@ pub(crate) fn trigger_issue_for_impossible(
     }
 
     let old_var_type_string = existing_var_type.get_id(Some(analyzer.interner));
-    let from_docblock = existing_var_type.from_docblock;
+    // Kind selection: with valid per-atomic provenance, the type counts as
+    // docblock-sourced only if a docblock-sourced member is actually present
+    // (a branch merge of docblock + inferred halves no longer poisons the
+    // whole union's kind). The union flag stays untouched — it participates
+    // in type_changed comparisons that drive clause retention.
+    let from_docblock = if existing_var_type.docblock_bits_valid() {
+        existing_var_type.from_docblock_bits != 0
+    } else {
+        existing_var_type.from_docblock
+    };
 
     let (issue_kind, message) = if is_redundant {
         if from_docblock {
@@ -1671,8 +2112,13 @@ pub(crate) fn trigger_issue_for_impossible(
         }
     };
 
-    let start = analysis_data.current_stmt_start.unwrap_or(0);
-    let end = analysis_data.current_stmt_end.unwrap_or(start);
+    let (start, end) = match analysis_data.current_reconcile_pos {
+        Some(pos) => pos,
+        None => {
+            let start = analysis_data.current_stmt_start.unwrap_or(0);
+            (start, analysis_data.current_stmt_end.unwrap_or(start))
+        }
+    };
 
     if analysis_data.issues.iter().any(|issue| {
         issue.kind == issue_kind
@@ -1683,14 +2129,41 @@ pub(crate) fn trigger_issue_for_impossible(
         return;
     }
 
+    if std::env::var("PZOOM_IMPOSSIBLE_DEBUG").is_ok() {
+        eprintln!(
+            "IMPOSSIBLE {:?} {} @{}..{} reconcile_pos={:?}\n{}",
+            issue_kind,
+            message,
+            start,
+            end,
+            analysis_data.current_reconcile_pos,
+            std::backtrace::Backtrace::force_capture()
+        );
+    }
     let (line, col) = analyzer.get_line_column(start);
-    analysis_data.add_issue(Issue::new(
-        issue_kind,
-        message,
-        analyzer.file_path,
-        start,
-        end,
-        line,
-        col,
-    ));
+    analysis_data.add_issue(
+        Issue::new(
+            issue_kind,
+            message,
+            analyzer.file_path,
+            start,
+            end,
+            line,
+            col,
+        )
+        // Psalm's reconciler issues carry the dupe key
+        // "{old type} {assertion}", deduping against the assertion finder's
+        // per-comparison emission at the same position. Psalm spells Truthy
+        // as "!falsy", so its stripped key matches handleParadoxicalCondition's
+        // "{type} falsy".
+        .with_dupe_key(format!(
+            "{} {}",
+            old_var_type_string,
+            if matches!(assertion, Assertion::Truthy | Assertion::NonEmpty) {
+                "falsy"
+            } else {
+                &assertion_string
+            }
+        )),
+    );
 }

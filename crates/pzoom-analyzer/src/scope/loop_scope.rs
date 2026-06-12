@@ -8,7 +8,7 @@
 //! so the maps here use those types directly.
 
 use pzoom_code_info::TUnion;
-use pzoom_str::StrId;
+use pzoom_code_info::VarName;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::stmt::scope_analyzer::ControlAction;
@@ -20,33 +20,38 @@ pub struct LoopScope {
     pub iteration_count: usize,
 
     /// The locals as they were in the parent context before the loop.
-    pub parent_context_vars: FxHashMap<StrId, TUnion>,
+    pub parent_context_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables definitely redefined on every path through the loop body.
-    pub redefined_loop_vars: FxHashMap<StrId, TUnion>,
+    pub redefined_loop_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables possibly redefined somewhere in the loop body (combined types).
-    pub possibly_redefined_loop_vars: FxHashMap<StrId, TUnion>,
+    pub possibly_redefined_loop_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables possibly redefined that were already present in the parent scope.
-    pub possibly_redefined_loop_parent_vars: FxHashMap<StrId, TUnion>,
+    pub possibly_redefined_loop_parent_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables possibly newly-defined that should be visible (as possibly-defined)
     /// in the parent scope after the loop.
-    pub possibly_defined_loop_parent_vars: FxHashMap<StrId, TUnion>,
+    pub possibly_defined_loop_parent_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables that might be in scope after the loop because a leaving branch
     /// (e.g. `if (...) break;`) inside the body could define them. Mirrors Psalm's
     /// `LoopScope::$vars_possibly_in_scope`; folded into the parent's
     /// possibly-defined set once the loop finishes.
-    pub vars_possibly_in_scope: FxHashSet<StrId>,
+    pub vars_possibly_in_scope: FxHashSet<VarName>,
 
     /// The set of control-flow actions performed by the loop body (break/continue/…).
     pub final_actions: FxHashSet<ControlAction>,
+
+    /// Variables assigned by the loop construct itself (for-init/increment
+    /// counters). A nested foreach reassigning one reports LoopInvalidation
+    /// (Psalm's protected_var_ids).
+    pub protected_var_ids: FxHashSet<VarName>,
 }
 
 impl LoopScope {
-    pub fn new(parent_context_vars: FxHashMap<StrId, TUnion>) -> Self {
+    pub fn new(parent_context_vars: FxHashMap<VarName, TUnion>) -> Self {
         Self {
             iteration_count: 0,
             parent_context_vars,
@@ -56,6 +61,7 @@ impl LoopScope {
             possibly_defined_loop_parent_vars: FxHashMap::default(),
             vars_possibly_in_scope: FxHashSet::default(),
             final_actions: FxHashSet::default(),
+            protected_var_ids: FxHashSet::default(),
         }
     }
 }

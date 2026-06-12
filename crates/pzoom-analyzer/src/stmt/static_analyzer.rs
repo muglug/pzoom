@@ -3,7 +3,7 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::r#static::Static;
 use pzoom_code_info::{Issue, IssueKind, TUnion};
-use pzoom_str::StrId;
+use pzoom_code_info::VarName;
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -38,14 +38,14 @@ pub fn analyze(
     }
 
     for item in static_stmt.items.iter() {
-        let var_id = analyzer.interner.intern(item.variable().name);
-        context.static_var_ids.insert(var_id);
+        let var_id = VarName::new(item.variable().name);
+        context.static_var_ids.insert(var_id.clone());
 
         let default_type = if let Some(default_expr) = item.value() {
             let expr_pos =
                 expression_analyzer::analyze(analyzer, default_expr, analysis_data, context);
             analysis_data
-                .get_expr_type(expr_pos)
+                .expr_types.get(&expr_pos).cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed)
         } else {
@@ -54,7 +54,7 @@ pub fn analyze(
 
         let mut var_type = TUnion::mixed();
         if let Some(annotation_type) =
-            get_static_var_annotation_type(analyzer, stmt_offset as u32, var_id)
+            get_static_var_annotation_type(analyzer, stmt_offset as u32, var_id.as_str())
         {
             if let Some(default_expr) = item.value() {
                 let mut comparison = TypeComparisonResult::new();
@@ -74,7 +74,7 @@ pub fn analyze(
                         IssueKind::ReferenceConstraintViolation,
                         format!(
                             "${} violates a by-reference type constraint",
-                            analyzer.interner.lookup(var_id)
+                            var_id.trim_start_matches('$')
                         ),
                         analyzer.file_path,
                         default_span.start.offset,
@@ -85,24 +85,26 @@ pub fn analyze(
                 }
             }
 
-            context.add_reference_constraint(var_id, annotation_type.clone());
+            context.add_reference_constraint(var_id.clone(), annotation_type.clone());
             var_type = annotation_type;
         }
 
-        context.set_var_type(var_id, var_type);
+        context.set_var_type(var_id.clone(), var_type);
     }
 }
 
 fn get_static_var_annotation_type(
     analyzer: &StatementsAnalyzer<'_>,
     offset: u32,
-    var_id: StrId,
+    var_id: &str,
 ) -> Option<TUnion> {
     let annotations = analyzer.get_inline_var_annotations(offset)?;
 
     for annotation in annotations {
         match annotation.var_name {
-            Some(name) if name == var_id => return Some(annotation.var_type.clone()),
+            Some(name) if analyzer.interner.lookup(name).as_ref() == var_id => {
+                return Some(annotation.var_type.clone());
+            }
             None => return Some(annotation.var_type.clone()),
             _ => {}
         }

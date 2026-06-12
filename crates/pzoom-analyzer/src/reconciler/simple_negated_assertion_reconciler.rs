@@ -16,10 +16,11 @@ use crate::statements_analyzer::StatementsAnalyzer;
 pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: &TUnion,
-    key: Option<&String>,
-    _negated: bool,
-    _analysis_data: &mut FunctionAnalysisData,
-    _analyzer: &StatementsAnalyzer<'_>,
+    key: Option<&str>,
+    negated: bool,
+    possibly_undefined: bool,
+    analysis_data: &mut FunctionAnalysisData,
+    analyzer: &StatementsAnalyzer<'_>,
 ) -> Option<TUnion> {
     let assertion_type = assertion.get_type();
 
@@ -35,7 +36,7 @@ pub fn reconcile(
                 return Some(subtract_resource(existing_var_type));
             }
             TAtomic::TCallable { .. } => {
-                return Some(subtract_callable(existing_var_type));
+                return Some(subtract_callable(existing_var_type, analyzer));
             }
             TAtomic::TBool => {
                 return Some(subtract_bool(existing_var_type));
@@ -56,6 +57,30 @@ pub fn reconcile(
                 return Some(subtract_arraykey(existing_var_type));
             }
             TAtomic::TNull => {
+                // Psalm's SimpleNegatedAssertionReconciler reports a `!null`
+                // reconcile that removes nothing (the variable was never
+                // null); a negated formula flips it into the contradiction
+                // wording ("Docblock-defined type int for $x is never null").
+                // `possibly_undefined` exempts isset-derived `!null`
+                // assertions: the reconcile also asserts definedness, so it
+                // is not redundant (Psalm routes isset through a separate
+                // reconciler that never reports here).
+                if let Some(key) = key
+                    && !possibly_undefined
+                    && !existing_var_type.is_mixed()
+                    && !existing_var_type.is_nullable()
+                    && !assertion.has_equality()
+                {
+                    super::trigger_issue_for_impossible(
+                        analysis_data,
+                        analyzer,
+                        existing_var_type,
+                        key,
+                        assertion,
+                        true,
+                        negated,
+                    );
+                }
                 return Some(subtract_null(existing_var_type));
             }
             TAtomic::TFalse => {
@@ -64,10 +89,26 @@ pub fn reconcile(
             TAtomic::TTrue => {
                 return Some(subtract_true(existing_var_type));
             }
-            TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. } => {
+            // Only the *general* array/list assertion (`!is_array($x)`)
+            // removes every array; a negated specific array
+            // (`@psalm-assert-if-false array<string, string>` negated on the
+            // true path) subtracts just the matching atomics downstream.
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            } if negated_array_param_is_general(value_type)
+                && (matches!(key_type.get_single(), Some(TAtomic::TArrayKey) | None)
+                    || negated_array_param_is_general(key_type)) =>
+            {
                 return Some(subtract_array(existing_var_type));
             }
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => {
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type }
+                if negated_array_param_is_general(value_type) =>
+            {
                 return Some(subtract_list(existing_var_type));
             }
             _ => {}
@@ -75,8 +116,14 @@ pub fn reconcile(
     }
 
     match assertion {
-        Assertion::Falsy => Some(reconcile_falsy(existing_var_type)),
-        Assertion::IsNotIsset => Some(reconcile_not_isset(existing_var_type, key)),
+        Assertion::Falsy | Assertion::Empty => Some(reconcile_falsy(existing_var_type)),
+        Assertion::IsNotIsset => Some(reconcile_not_isset(
+            existing_var_type,
+            possibly_undefined,
+            key,
+            analyzer,
+            analysis_data,
+        )),
         Assertion::EmptyCountable => Some(reconcile_empty_countable(existing_var_type)),
         Assertion::DoesNotHaveAtLeastCount(count) => {
             Some(reconcile_does_not_have_at_least_count(existing_var_type, *count))
@@ -126,7 +173,7 @@ fn subtract_object(existing_var_type: &TUnion) -> TUnion {
                 // A callable is not necessarily an object: it can be a
                 // callable-string or a callable-array. Narrow to those rather
                 // than removing the type entirely. Matches Psalm reconcileObject.
-                acceptable_types.push(TAtomic::TString);
+                acceptable_types.push(TAtomic::TCallableString);
                 acceptable_types.push(TAtomic::TArray {
                     key_type: Box::new(TUnion::array_key()),
                     value_type: Box::new(TUnion::mixed()),
@@ -254,10 +301,9 @@ fn subtract_resource(existing_var_type: &TUnion) -> TUnion {
 
 /// Subtracts callable types from a union (`!callable`). Mirrors Psalm
 /// `reconcileCallable`: remove atomics that are themselves callable types
-/// (`callable`, closures), keeping the rest. (Psalm additionally drops
-/// callmap callable-strings and __invoke objects, which require codebase/
-/// callmap lookups that pzoom does not model in the reconciler.)
-fn subtract_callable(existing_var_type: &TUnion) -> TUnion {
+/// (`callable`, closures) and literal strings naming a known function or
+/// `Class::method`, keeping the rest.
+fn subtract_callable(existing_var_type: &TUnion, analyzer: &StatementsAnalyzer<'_>) -> TUnion {
     let mut acceptable_types = Vec::new();
 
     for atomic in &existing_var_type.types {
@@ -265,9 +311,20 @@ fn subtract_callable(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TCallable { .. } | TAtomic::TClosure { .. } => {
                 // Remove callable types
             }
+            // `Closure` as a named object, and classes declaring __invoke,
+            // are callable too (Psalm's reconcileCallable).
+            TAtomic::TNamedObject { name, .. }
+                if *name == StrId::CLOSURE
+                    || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
+                        class_info.methods.contains_key(&StrId::INVOKE)
+                    }) => {}
+            TAtomic::TLiteralString { value } if literal_string_is_callable(value, analyzer) => {
+                // Psalm removes literal strings found in the callmap (and
+                // `Class::method` strings resolvable to a real method).
+            }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
-                    let subtracted = subtract_callable(as_type);
+                    let subtracted = subtract_callable(as_type, analyzer);
                     push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 } else {
                     acceptable_types.push(atomic.clone());
@@ -284,6 +341,22 @@ fn subtract_callable(existing_var_type: &TUnion) -> TUnion {
     } else {
         TUnion::from_types(acceptable_types)
     }
+}
+
+/// Whether a literal string names a known function (`"strlen"`) or a real
+/// `Class::method` (the lookups behind Psalm's `reconcileCallable`).
+fn literal_string_is_callable(value: &str, analyzer: &StatementsAnalyzer<'_>) -> bool {
+    if let Some((class_name, method_name)) = value.split_once("::") {
+        let class_id = analyzer.interner.intern(class_name.trim_start_matches('\\'));
+        let method_id = analyzer.interner.intern(method_name);
+        return analyzer
+            .codebase
+            .get_class(class_id)
+            .is_some_and(|class_info| class_info.methods.contains_key(&method_id));
+    }
+
+    let function_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+    analyzer.codebase.get_function(function_id).is_some()
 }
 
 /// Subtracts bool types from a union.
@@ -340,9 +413,14 @@ fn subtract_num(existing_var_type: &TUnion) -> TUnion {
             | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
             | TAtomic::TNumeric => {
-                // Remove numeric types
+                // Remove numeric types (Psalm's isNumericType includes
+                // numeric-string and numeric literal strings).
             }
+            TAtomic::TLiteralString { value }
+                if !value.trim().is_empty() && value.trim().parse::<f64>().is_ok() => {}
             TAtomic::TScalar => {
                 // Narrow to non-numeric scalars
                 acceptable_types.push(TAtomic::TString);
@@ -605,8 +683,7 @@ pub fn subtract_null(existing_var_type: &TUnion) -> TUnion {
     if acceptable_types.is_empty() {
         TUnion::nothing()
     } else {
-        let mut result = TUnion::from_types(acceptable_types);
-        result.is_nullable = false;
+        let result = TUnion::from_types(acceptable_types);
         result
     }
 }
@@ -689,9 +766,15 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
                 // Remove array types
             }
             TAtomic::TCallable { .. } => {
-                // callable - array => string|object
-                acceptable_types.push(TAtomic::TString);
-                acceptable_types.push(TAtomic::TObject);
+                // callable - array => callable-string|callable-object: both
+                // remaining halves stay callable (Psalm's TCallableString /
+                // TCallableObject).
+                acceptable_types.push(TAtomic::TCallableString);
+                acceptable_types.push(TAtomic::TObjectWithProperties {
+                    properties: Default::default(),
+                    is_stringable: false,
+                    is_invokable: true,
+                });
             }
             TAtomic::TIterable {
                 key_type,
@@ -759,6 +842,18 @@ fn subtract_list(existing_var_type: &TUnion) -> TUnion {
     } else {
         TUnion::from_types(acceptable_types)
     }
+}
+
+/// Whether a negated array assertion's param is "general": mixed or a bare
+/// template param (is_array() builds its assertion from the existing
+/// iterable's template params). Specific concrete params come from
+/// `@psalm-assert` docblocks and subtract param-aware downstream.
+fn negated_array_param_is_general(param: &TUnion) -> bool {
+    param.is_mixed()
+        || param
+            .types
+            .iter()
+            .all(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
 }
 
 /// Reconciles a falsy assertion (the negation of truthy).
@@ -895,7 +990,12 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(atomic.clone());
             }
             TAtomic::TTemplateParam { as_type, .. } => {
-                if !as_type.is_mixed() {
+                if as_type.is_mixed() {
+                    // A mixed-bounded template can be falsy; keep it as-is
+                    // (Psalm's template reconciliation leniency —
+                    // allowTemplateReconciliation).
+                    acceptable_types.push(atomic.clone());
+                } else {
                     let subtracted = reconcile_falsy(as_type);
                     push_narrowed_template_type(&mut acceptable_types, atomic, subtracted);
                 }
@@ -919,7 +1019,14 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
 /// Reconciles a !isset assertion.
 ///
 /// Returns null type (the variable is not set).
-fn reconcile_not_isset(existing_var_type: &TUnion, key: Option<&String>) -> TUnion {
+fn reconcile_not_isset(
+    existing_var_type: &TUnion,
+    possibly_undefined: bool,
+    key: Option<&str>,
+    _analyzer: &StatementsAnalyzer<'_>,
+    _analysis_data: &mut FunctionAnalysisData,
+) -> TUnion {
+    let _ = possibly_undefined;
     // For nested paths (`$a[0]`, `$obj->prop`), forcing the type to `null` bleeds
     // nullability through branch merges and causes false positives after guarded writes.
     // Keep the existing nested value type and model the unset state through clauses.
@@ -952,14 +1059,36 @@ fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
                     value_type: Box::new(TUnion::nothing()),
                 });
             }
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
-                // Non-empty can't be empty, skip
+            // Psalm's reconcileNotNonEmptyCountable TArray branch covers
+            // TNonEmptyArray too: it silently substitutes array<never, never>
+            // (`$redundant = false`), so `$nonEmptyArray === []` never
+            // reports. Only keyed shapes/lists take the remove-and-report
+            // path.
+            TAtomic::TNonEmptyArray { .. } => {
+                acceptable_types.push(TAtomic::TArray {
+                    key_type: Box::new(TUnion::nothing()),
+                    value_type: Box::new(TUnion::nothing()),
+                });
+            }
+            TAtomic::TNonEmptyList { .. } => {
+                // Non-empty list can't be empty, skip (Psalm's keyed-list
+                // branch removes the type and reports the impossibility).
             }
             TAtomic::TKeyedArray { properties, .. } if properties.is_empty() => {
                 acceptable_types.push(atomic.clone());
             }
+            // All-optional properties mean the shape may be empty (Psalm's
+            // reconcileNotNonEmptyCountable: !isNonEmpty() → empty array).
+            TAtomic::TKeyedArray { properties, .. }
+                if properties.values().all(|prop| prop.possibly_undefined) =>
+            {
+                acceptable_types.push(TAtomic::TArray {
+                    key_type: Box::new(TUnion::nothing()),
+                    value_type: Box::new(TUnion::nothing()),
+                });
+            }
             TAtomic::TKeyedArray { .. } => {
-                // Has properties, can't be empty
+                // Has a required property, can't be empty
             }
             TAtomic::TMixed => {
                 // Could be empty array
@@ -1016,6 +1145,36 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
                     acceptable_types.push(atomic.clone());
                 }
             }
+            // Psalm reshapes a generic list under count($a) < N into a sealed
+            // sized shape: the first element keeps its definedness, the rest
+            // become possibly-undefined (list{0: T, 1?: T} for N = 3).
+            TAtomic::TNonEmptyList { value_type } | TAtomic::TList { value_type } => {
+                // The reshape is capped: a guard like `count($a) > 60_000`
+                // would produce a shape with 60k properties that every
+                // downstream operation re-walks (Psalm's own simplifyCNF
+                // comments on the same cliff). Above the cap the list is
+                // kept verbatim.
+                if count <= 1 || count > 32 {
+                    acceptable_types.push(atomic.clone());
+                    continue;
+                }
+                did_remove_type = true;
+                let mut properties: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion> =
+                    rustc_hash::FxHashMap::default();
+                let first_defined = matches!(atomic, TAtomic::TNonEmptyList { .. });
+                for index in 0..(count - 1) {
+                    let mut property_type = (**value_type).clone();
+                    property_type.possibly_undefined = index > 0 || !first_defined;
+                    properties.insert(pzoom_code_info::ArrayKey::Int(index as i64), property_type);
+                }
+                acceptable_types.push(TAtomic::TKeyedArray {
+                    properties: std::sync::Arc::new(properties),
+                    is_list: true,
+                    sealed: true,
+                    fallback_key_type: None,
+                    fallback_value_type: None,
+                });
+            }
             _ => {
                 acceptable_types.push(atomic.clone());
             }
@@ -1047,11 +1206,11 @@ fn reconcile_no_array_key(existing_var_type: &TUnion, key: &pzoom_code_info::Arr
                 fallback_value_type,
             } => {
                 // Remove the key from known items if it exists
-                let mut new_properties = properties.clone();
+                let mut new_properties = (**properties).clone();
                 new_properties.remove(key);
 
                 result_types.push(TAtomic::TKeyedArray {
-                    properties: new_properties,
+                    properties: std::sync::Arc::new(new_properties),
                     is_list: *is_list,
                     sealed: *sealed,
                     fallback_key_type: fallback_key_type.clone(),

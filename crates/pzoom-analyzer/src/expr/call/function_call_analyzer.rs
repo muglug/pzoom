@@ -6,12 +6,12 @@ use mago_syntax::ast::ast::call::FunctionCall;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::{
-    DataFlowNode, FunctionLikeIdentifier, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
+    FunctionLikeIdentifier, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
 };
+use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
-use crate::data_flow::{add_default_dataflow_paths, make_data_flow_node_position};
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
@@ -20,8 +20,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::template;
 
 pub(crate) use super::callable_validation::{
-    analyze_arguments_with_callable_context, callable_union_is_pure,
-    has_known_literal_function_target, infer_array_map_callable_return_type,
+    analyze_arguments_with_callable_context, callable_union_is_pure, infer_array_map_callable_return_type,
     infer_invokable_object_return_type, maybe_check_builtin_callable_arity,
     resolve_callable_union_for_template_inference, union_contains_non_pure_callable,
     validate_direct_callable_invocation, widen_literal_scalar_union_for_callable,
@@ -36,10 +35,11 @@ pub(crate) use super::function_call_assertion_analyzer::{
     emit_non_mutation_free_magic_property_assertion_issues, narrow_union_to_truthy,
 };
 use super::{
-    argument_analyzer, array_multisort_analyzer, callable_validation,
+    argument_analyzer, callable_validation,
     function_call_return_type_fetcher, named_function_call_handler,
 };
-use crate::template::TemplateMap;
+use pzoom_code_info::TemplateResult;
+use std::rc::Rc;
 
 /// Analyze a function call expression.
 pub fn analyze(
@@ -52,12 +52,26 @@ pub fn analyze(
     let enforce_mutation_free = is_mutation_free_context(analyzer);
 
     // Analyze the callee expression to get the function name
+    // (general use — Hakana's expression_call_analyzer; `$c(22)` uses `$c`).
+    let was_inside_general_use = context.inside_general_use;
+    context.inside_general_use = true;
     let callee_pos =
         expression_analyzer::analyze(analyzer, func_call.function, analysis_data, context);
+    context.inside_general_use = was_inside_general_use;
 
     // Try to get the function name and whether it's fully qualified.
     // We need this before analyzing arguments to predeclare by-ref out variables.
     let (func_name, is_fq, name_offset) = get_function_name(func_call.function);
+
+    // func_get_args() implicitly reads every parameter of the enclosing
+    // function-like (Psalm skips unused-param reporting for such bodies).
+    if func_name.is_some_and(|name| name.eq_ignore_ascii_case("func_get_args"))
+        && let Some(function_info) = analyzer.function_info
+    {
+        analysis_data
+            .func_get_args_functions
+            .insert(function_info.start_offset);
+    }
     let pre_resolved_func_info =
         func_name.and_then(|name| resolve_function(analyzer, name, is_fq, name_offset, context));
     predeclare_by_ref_argument_vars(
@@ -72,31 +86,32 @@ pub fn analyze(
     let arg_positions: Vec<Pos> = args
         .iter()
         .map(|arg| {
-            let span = arg.span();
+            // The VALUE expression's span — a named argument's own span
+            // includes the `name:` prefix, where no type is stored.
+            let span = mago_span::HasSpan::span(arg.value());
             (span.start.offset, span.end.offset)
         })
         .collect();
 
-    // `array_multisort` has a dynamic parameter list that the generic argument
-    // flow cannot validate (see ArrayMultisortParamsProvider). Handle it here and
-    // return early so the generic by-reference / argument checks are skipped.
-    if func_name.is_some_and(array_multisort_analyzer::is_array_multisort)
-        && pre_resolved_func_info.is_some()
-    {
-        array_multisort_analyzer::analyze(
-            analyzer,
-            &args,
-            &arg_positions,
-            analysis_data,
-            context,
-        );
-        analysis_data.set_expr_type(pos, TUnion::bool());
-        return;
+    // `X::class` arguments of the class_exists family (and class_alias, whose
+    // alias name does not exist yet) are exempt from class existence checks —
+    // Psalm's Context::inside_class_exists.
+    let is_class_exists_like_call = func_name.is_some_and(|name| {
+        name.eq_ignore_ascii_case("class_exists")
+            || name.eq_ignore_ascii_case("interface_exists")
+            || name.eq_ignore_ascii_case("enum_exists")
+            || name.eq_ignore_ascii_case("trait_exists")
+            || name.eq_ignore_ascii_case("class_alias")
+    });
+    let was_inside_class_exists = context.inside_class_exists;
+    if is_class_exists_like_call {
+        context.inside_class_exists = true;
     }
 
     if let Some(func_info) = pre_resolved_func_info {
         analyze_arguments_with_callable_context(
             analyzer,
+            Some(func_info.name),
             &args,
             &arg_positions,
             &func_info.params,
@@ -109,6 +124,8 @@ pub fn analyze(
             argument_analyzer::analyze(analyzer, arg, analysis_data, context);
         }
     }
+
+    context.inside_class_exists = was_inside_class_exists;
 
     // Try to look up function return type
     if let Some(name) = func_name {
@@ -130,16 +147,20 @@ pub fn analyze(
                 analyzer,
                 analysis_data,
                 functionlike_id,
+                pre_resolved_func_info,
                 pos,
                 &arg_positions,
                 return_type,
             );
-            analysis_data.set_expr_type(pos, return_type);
+            analysis_data.expr_types.insert(pos, Rc::new(return_type));
             return;
         }
 
         // Resolve the function name considering namespace context
         let func_info = pre_resolved_func_info;
+        // Psalm reports ForbiddenCode but keeps analyzing the call (its
+        // arguments still flow into taint sinks — e.g. var_dump's
+        // `@psalm-taint-sink html` with var_dump in forbiddenFunctions).
         if is_forbidden_function_call(analyzer, name, func_info) {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
@@ -151,23 +172,77 @@ pub fn analyze(
                 line,
                 col,
             ));
-            analysis_data.set_expr_type(pos, TUnion::mixed());
-            return;
         }
 
         if let Some(func_info) = func_info {
+            // Consult the params providers (Psalm's FunctionCallAnalyzer does
+            // the same via `$codebase->functions->params_provider`): some
+            // builtin calls have parameter lists that depend on the call
+            // site, and a provider may also ask for the generic parameter
+            // validation to be skipped entirely.
+            let mut skip_param_validation = false;
+            let mut provider_adjusted_info = None;
+            if let Some(result) = crate::params_provider::dispatch_function_params(
+                &crate::params_provider::FunctionParamsProviderEvent {
+                    analyzer,
+                    function_id: name,
+                    args: &args,
+                    arg_positions: &arg_positions,
+                    context,
+                },
+                analysis_data,
+            ) {
+                match result {
+                    crate::params_provider::FunctionParamsProviderResult::Params(params) => {
+                        let mut adjusted = func_info.clone();
+                        adjusted.params = params;
+                        provider_adjusted_info = Some(adjusted);
+                    }
+                    crate::params_provider::FunctionParamsProviderResult::SkipValidation => {
+                        skip_param_validation = true;
+                    }
+                }
+            }
+            let func_info = provider_adjusted_info.as_ref().unwrap_or(func_info);
+
             let is_class_alias_call = func_info.name == StrId::CLASS_ALIAS;
             apply_function_defined_constants_side_effects(func_info, context);
-            let template_defaults = get_template_defaults(func_info);
-            let template_replacements = infer_function_template_replacements(
+            let mut template_result = get_template_defaults(func_info);
+            infer_function_template_replacements(
                 analyzer,
                 func_call,
                 &arg_positions,
                 func_info,
-                &template_defaults,
+                &mut template_result,
                 analysis_data,
                 context,
             );
+
+            // Psalm's HighOrderFunctionArgHandler: an argument that is itself
+            // a call returning a templated callable (`filter(fn($i) => ...)`
+            // passed to `pipe(...)`) solves its templates against the outer
+            // expectation, and its nested closures re-analyze with the solved
+            // param types — then the outer templates re-infer from the
+            // refined callables.
+            if reanalyze_high_order_call_args(
+                analyzer,
+                &args,
+                func_info,
+                &template_result,
+                analysis_data,
+                context,
+            ) {
+                template_result = get_template_defaults(func_info);
+                infer_function_template_replacements(
+                    analyzer,
+                    func_call,
+                    &arg_positions,
+                    func_info,
+                    &mut template_result,
+                    analysis_data,
+                    context,
+                );
+            }
 
             record_named_function_callsite_argument_types(
                 func_info.name,
@@ -215,7 +290,7 @@ pub fn analyze(
             }
 
             // Verify argument types against function parameters
-            if !is_class_alias_call {
+            if !is_class_alias_call && !skip_param_validation {
                 verify_arguments(
                     analyzer,
                     func_call,
@@ -224,8 +299,8 @@ pub fn analyze(
                     name,
                     analysis_data,
                     context,
-                    &template_defaults,
-                    &template_replacements,
+                    &template_result,
+                    pos,
                 );
             }
 
@@ -237,20 +312,23 @@ pub fn analyze(
                 &arg_positions,
                 analysis_data,
                 context,
-                Some(&template_defaults),
-                Some(&template_replacements),
+                Some(&template_result),
             );
 
-            apply_param_out_types(
-                analyzer,
-                func_info.name,
-                &args,
-                &arg_positions,
-                &func_info.params,
-                context,
-                &template_defaults,
-                &template_replacements,
-            );
+            if !skip_param_validation {
+                apply_param_out_types(
+                    analyzer,
+                    func_info.name,
+                    &func_info.template_types,
+                    &args,
+                    &arg_positions,
+                    &func_info.params,
+                    analysis_data,
+                    context,
+                    &template_result,
+                    pos,
+                );
+            }
 
             apply_assert_builtin_assertions(
                 analyzer,
@@ -259,15 +337,19 @@ pub fn analyze(
                 analysis_data,
                 context,
             );
-            apply_post_call_assertions(
-                analyzer,
-                func_call,
-                func_info,
-                context,
-                &template_defaults,
-                &template_replacements,
-                analysis_data,
-            );
+            // assert() is fully handled by the builtin formula path above;
+            // re-applying its stubbed `@psalm-assert truthy` would re-assert
+            // the already-narrowed type and report a false RedundantCondition.
+            if func_info.name != StrId::ASSERT {
+                apply_post_call_assertions(
+                    analyzer,
+                    func_call,
+                    func_info,
+                    context,
+                    &template_result,
+                    analysis_data,
+                );
+            }
             emit_non_mutation_free_magic_property_assertion_issues(
                 analyzer,
                 func_info,
@@ -285,7 +367,9 @@ pub fn analyze(
                     context,
                 )
             {
-                let (line, col) = analyzer.get_line_column(pos.0);
+                // Psalm points at the function name node.
+                let name_span = func_call.function.span();
+                let (line, col) = analyzer.get_line_column(name_span.start.offset);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::ImpureFunctionCall,
                     format!(
@@ -293,35 +377,69 @@ pub fn analyze(
                         name
                     ),
                     analyzer.file_path,
-                    pos.0,
-                    pos.1,
+                    name_span.start.offset,
+                    name_span.end.offset,
                     line,
                     col,
                 ));
             }
 
+            check_unused_function_call(
+                analyzer,
+                func_info,
+                name,
+                func_call,
+                &args,
+                &arg_positions,
+                analysis_data,
+                context,
+                pos,
+            );
+
+            // A function-like with no declared (or fetchable) return type
+            // still needs call dataflow in whole-program mode: Psalm taints
+            // the call's mixed result so `echo rawinput();` flows.
+            let fetched_return_type = fetched_return_type.or_else(|| {
+                matches!(
+                    analysis_data.data_flow_graph.kind,
+                    pzoom_code_info::GraphKind::WholeProgram(_)
+                )
+                .then(TUnion::mixed)
+            });
+
             if let Some(resolved_return_type) = fetched_return_type {
-                let resolved_return_type = add_function_call_dataflow(
+                let mut resolved_return_type = add_function_call_dataflow(
                     analyzer,
                     analysis_data,
                     FunctionLikeIdentifier::Function(func_info.name),
+                    Some(func_info),
                     pos,
                     &arg_positions,
                     resolved_return_type,
                 );
-                analysis_data.set_expr_type(pos, resolved_return_type);
+                // Psalm marks a pure function call 'pure' when its value is
+                // used; a method called on that value is then pure-compatible
+                // (MethodCallPurityAnalyzer's receiver attribute check).
+                if func_info.is_pure {
+                    resolved_return_type = resolved_return_type.with_reference_free(true);
+                }
+                analysis_data.expr_types.insert(pos, Rc::new(resolved_return_type));
                 return;
             }
         } else {
             // Function not found in codebase
             // Don't emit error for language constructs that look like functions
             if !is_language_construct(name)
-                && !is_function_guarded_by_function_exists(context, analyzer, name)
+                && !is_function_guarded_by_function_exists(context, name)
             {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::UndefinedFunction,
-                    format!("Function {} is not defined", name),
+                    crate::class_casing::undefined_function_message(
+                        analyzer,
+                        name,
+                        context.namespace,
+                    ),
                     analyzer.file_path,
                     pos.0,
                     pos.1,
@@ -331,7 +449,7 @@ pub fn analyze(
             }
         }
     } else {
-        if let Some(callee_type) = analysis_data.get_expr_type(callee_pos) {
+        if let Some(callee_type) = analysis_data.expr_types.get(&callee_pos).cloned() {
             if enforce_mutation_free
                 && (callee_type.is_mixed() || union_contains_non_pure_callable(&callee_type))
             {
@@ -374,8 +492,37 @@ pub fn analyze(
                 pos,
             );
 
+            // A literal-string callee naming a known function gets the same
+            // by-ref / @param-out write-backs as a direct named call — Psalm
+            // resolves literal callables to the named function, so
+            // `$f = "fn"; $f($arr);` widens a by-ref `$arr` identically.
+            if let Some(TAtomic::TLiteralString { value }) = callee_type.get_single() {
+                let resolved = resolve_function(analyzer, value, false, None, context)
+                    .or_else(|| resolve_function(analyzer, value, true, None, context));
+                if let Some(function_info) = resolved
+                    && function_info.params.iter().any(|param| param.by_ref)
+                {
+                    let function_id = function_info.name;
+                    let params = function_info.params.clone();
+                    let functionlike_template_types = function_info.template_types.clone();
+                    let empty_templates = TemplateResult::default();
+                    apply_param_out_types(
+                        analyzer,
+                        function_id,
+                        &functionlike_template_types,
+                        &args,
+                        &arg_positions,
+                        &params,
+                        analysis_data,
+                        context,
+                        &empty_templates,
+                        pos,
+                    );
+                }
+            }
+
             if let Some(return_type) = callable_validation::infer_callee_return_type(&callee_type) {
-                analysis_data.set_expr_type(pos, return_type);
+                analysis_data.expr_types.insert(pos, Rc::new(return_type));
                 return;
             }
 
@@ -387,24 +534,60 @@ pub fn analyze(
                 analysis_data,
                 context,
             ) {
-                analysis_data.set_expr_type(pos, return_type);
+                analysis_data.expr_types.insert(pos, Rc::new(return_type));
                 return;
             }
 
-            if callee_type.has_string()
-                && !callable_validation::union_has_callable(&callee_type)
-                && !has_known_literal_function_target(analyzer, &callee_type, context)
+            // A literal "Class::method" callee resolves like a static call
+            // (Psalm builds a MethodIdentifier and calls methodExists, which
+            // records the reference); other strings are possibly-callable and
+            // produce mixed without complaint.
+            if let Some(TAtomic::TLiteralString { value }) = callee_type.get_single()
+                && let Some((class_part, method_part)) = value.split_once("::")
             {
-                let (line, col) = analyzer.get_line_column(pos.0);
-                analysis_data.add_issue(Issue::new(
-                    IssueKind::MixedAssignment,
-                    "Unable to determine return type of dynamically-invoked function",
-                    analyzer.file_path,
-                    pos.0,
-                    pos.1,
-                    line,
-                    col,
-                ));
+                let class_part = class_part.trim_start_matches('\\');
+                let class_id = analyzer.interner.intern(class_part);
+                if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+                    if analyzer.config.find_unused_code
+                        && context.self_class != Some(class_id)
+                    {
+                        analysis_data.referenced_classes.insert(class_id);
+                    }
+                    if let Some(method_info) = callable_validation::get_method_info(
+                        analyzer,
+                        class_info,
+                        method_part,
+                    ) {
+                        if analyzer.config.find_unused_code {
+                            let method_lc =
+                                analyzer.interner.intern(&method_part.to_lowercase());
+                            analysis_data
+                                .referenced_class_members
+                                .insert((class_id, method_lc));
+                            if let Some(declaring) = method_info.declaring_class {
+                                analysis_data
+                                    .referenced_class_members
+                                    .insert((declaring, method_lc));
+                            }
+                            if context.inside_use() {
+                                analysis_data
+                                    .method_returns_used
+                                    .insert((class_id, method_lc));
+                                if let Some(declaring) = method_info.declaring_class {
+                                    analysis_data
+                                        .method_returns_used
+                                        .insert((declaring, method_lc));
+                                }
+                            }
+                        }
+                        let return_type = method_info
+                            .get_return_type()
+                            .cloned()
+                            .unwrap_or_else(TUnion::mixed);
+                        analysis_data.expr_types.insert(pos, Rc::new(return_type));
+                        return;
+                    }
+                }
             }
         } else if enforce_mutation_free {
             let (line, col) = analyzer.get_line_column(pos.0);
@@ -421,94 +604,86 @@ pub fn analyze(
     }
 
     // Fall back to mixed
-    analysis_data.set_expr_type(pos, TUnion::mixed());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
 }
 
 fn add_function_call_dataflow(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     functionlike_id: FunctionLikeIdentifier,
+    function_info: Option<&pzoom_code_info::FunctionLikeInfo>,
     pos: Pos,
     arg_positions: &[Pos],
-    mut return_type: TUnion,
+    return_type: TUnion,
 ) -> TUnion {
-    let call_node =
-        DataFlowNode::get_for_call(functionlike_id, make_data_flow_node_position(analyzer, pos));
-    analysis_data.data_flow_graph.add_node(call_node.clone());
-
-    for arg_pos in arg_positions {
-        if let Some(arg_type) = analysis_data.get_expr_type(*arg_pos) {
-            add_default_dataflow_paths(
-                &mut analysis_data.data_flow_graph,
-                &arg_type.parent_nodes,
-                &call_node,
-            );
-        }
-    }
-
-    pzoom_code_info::ttype::extend_dataflow_uniquely(
-        &mut return_type.parent_nodes,
-        vec![call_node],
-    );
-
-    return_type
+    function_call_return_type_fetcher::add_dataflow(
+        analyzer,
+        &functionlike_id,
+        function_info,
+        arg_positions,
+        pos,
+        return_type,
+        analysis_data,
+    )
 }
 
 /// Verify argument types against function parameter types.
 pub(crate) fn get_template_defaults(
     func_info: &pzoom_code_info::FunctionLikeInfo,
-) -> TemplateMap {
-    let mut template_defaults = TemplateMap::new();
+) -> TemplateResult {
+    let mut template_result = TemplateResult::default();
 
     for template_type in &func_info.template_types {
-        template_defaults.insert(
+        crate::template::template_types_insert(
+            &mut template_result,
             template_type.name,
             template_type.defining_entity,
             template_type.as_type.clone(),
         );
     }
 
-    template_defaults
+    template_result
 }
 
 pub(crate) fn get_class_template_defaults(
     class_info: &pzoom_code_info::ClassLikeInfo,
-) -> TemplateMap {
-    let mut template_defaults = TemplateMap::new();
+) -> TemplateResult {
+    let mut template_result = TemplateResult::default();
 
     for template_type in &class_info.template_types {
-        template_defaults.insert(
+        crate::template::template_types_insert(
+            &mut template_result,
             template_type.name,
             template_type.defining_entity,
             template_type.as_type.clone(),
         );
     }
 
-    template_defaults
+    template_result
 }
 
 pub(crate) use super::class_template_param_collector::infer_class_template_replacements_from_type_params;
 
+/// Folds a class's `@extends`/`@implements` mappings into `template_result`'s
+/// lower bounds (`[ancestor template][ancestor] -> mapped type`).
 pub(crate) fn infer_class_template_replacements_from_extended_params(
+    template_result: &mut TemplateResult,
     class_info: &pzoom_code_info::ClassLikeInfo,
-) -> TemplateMap {
-    let mut template_replacements = TemplateMap::new();
-
+) {
     for (ancestor_class, template_map) in &class_info.template_extended_params {
         for (template_name, replacement) in template_map {
-            template_replacements.insert_combined(
+            crate::template::lower_bounds_insert_combined(
+                template_result,
                 *template_name,
-                *ancestor_class,
+                pzoom_code_info::GenericParent::ClassLike(*ancestor_class),
                 replacement.clone(),
             );
         }
     }
-
-    template_replacements
 }
 
-pub(crate) fn overlay_template_replacements(target: &mut TemplateMap, incoming: TemplateMap) {
-    target.extend_overlay(incoming);
+pub(crate) fn overlay_template_replacements(target: &mut TemplateResult, incoming: TemplateResult) {
+    crate::template::lower_bounds_extend_overlay(target, incoming);
 }
 
 fn infer_function_template_replacements(
@@ -516,17 +691,17 @@ fn infer_function_template_replacements(
     func_call: &FunctionCall<'_>,
     arg_positions: &[Pos],
     func_info: &pzoom_code_info::FunctionLikeInfo,
-    template_defaults: &TemplateMap,
+    template_result: &mut TemplateResult,
     analysis_data: &FunctionAnalysisData,
     context: &BlockContext,
-) -> TemplateMap {
+) {
     let args: Vec<_> = func_call.argument_list.arguments.iter().collect();
     infer_template_replacements_from_args(
         analyzer,
         &args,
         arg_positions,
         &func_info.params,
-        template_defaults,
+        template_result,
         analysis_data,
         context,
     )
@@ -537,23 +712,50 @@ pub(crate) fn infer_template_replacements_from_args(
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
     arg_positions: &[Pos],
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
-    template_defaults: &TemplateMap,
+    template_result: &mut TemplateResult,
     analysis_data: &FunctionAnalysisData,
     context: &BlockContext,
-) -> TemplateMap {
-    let mut template_replacements = TemplateMap::new();
-    if template_defaults.is_empty() {
-        return template_replacements;
+) {
+    if template_result.template_types.is_empty() {
+        return;
     }
 
-    for (idx, arg) in args.iter().enumerate() {
-        if arg.is_unpacked() {
-            continue;
-        }
+    // Named-callable args carrying their own fn-level templates are deferred
+    // to a second phase: Psalm evaluates the array arg before the callable
+    // (array_map's reversed evaluation + HighOrderFunctionArgHandler), so the
+    // callable's templates can be solved against bounds the plain args bound.
+    let mut deferred_high_order_args: Vec<(
+        Pos,
+        &pzoom_code_info::functionlike_info::ParamInfo,
+        TUnion,
+    )> = Vec::new();
 
+    for (idx, arg) in args.iter().enumerate() {
         let arg_pos = arg_positions.get(idx).copied().unwrap_or((0, 0));
-        let Some(arg_type) = analysis_data.get_expr_type(arg_pos) else {
+        let Some(arg_type) =
+            crate::expr::call::arguments_analyzer::get_argument_value_type(
+                analysis_data,
+                arg,
+                arg_pos,
+            )
+        else {
             continue;
+        };
+
+        // An unpacked variadic arg binds templates through its ELEMENT type
+        // (Psalm's standin replacement over the spread's value type):
+        // `array_merge([], ...$arrays)` binds TKey/TValue from each array in
+        // $arrays, not from the spread list itself.
+        let arg_type = if arg.is_unpacked() {
+            match crate::expr::call::arguments_analyzer::unpacked_element_type_for_templates(
+                analyzer.codebase,
+                &arg_type,
+            ) {
+                Some(element_type) => std::rc::Rc::new(element_type),
+                None => continue,
+            }
+        } else {
+            arg_type
         };
 
         let param = if idx < params.len() {
@@ -562,26 +764,102 @@ pub(crate) fn infer_template_replacements_from_args(
             params.last().filter(|p| p.is_variadic)
         };
 
-        let Some(param_type) = param.and_then(|p| p.get_type()) else {
+        let Some(param) = param else {
+            continue;
+        };
+        let Some(param_type) = param.get_type() else {
             continue;
         };
 
         let arg_type = if callable_validation::union_has_callable(param_type)
             && !callable_validation::union_has_callable(&arg_type)
         {
-            resolve_callable_union_for_template_inference(analyzer, &arg_type, context)
-                .unwrap_or_else(|| (*arg_type).clone())
+            let resolved =
+                resolve_callable_union_for_template_inference(analyzer, &arg_type, context)
+                    .unwrap_or_else(|| (*arg_type).clone());
+            if callable_union_has_own_templates(&resolved) {
+                deferred_high_order_args.push((arg_pos, param, resolved));
+                continue;
+            }
+            resolved
+        } else if callable_validation::union_has_callable(param_type)
+            && callable_union_has_own_templates(&arg_type)
+            // Inline closures stay in the direct pass (Psalm's
+            // getCallableArgInfo covers named/first-class callables only;
+            // closure literals go through handleClosureArg).
+            && !callable_validation::is_closure_like_argument(arg)
+        {
+            // A first-class callable (`id(...)`) carrying its OWN fn-level
+            // templates: solving them against the expected callable first
+            // (Psalm's HighOrderFunctionArgHandler) keeps them from binding
+            // the outer call's templates.
+            deferred_high_order_args.push((arg_pos, param, (*arg_type).clone()));
+            continue;
+        } else if callable_validation::union_has_callable(param_type)
+            && let Some(raw_callable) =
+                high_order_call_arg_raw_callable(analyzer, arg.value(), context)
+        {
+            // `map($xs, id())`: the call's recorded type already collapsed the
+            // unbound templates; the STORAGE return (Closure(T):T) keeps them
+            // solvable (Psalm threads the high-order template result into the
+            // arg's analysis instead).
+            deferred_high_order_args.push((arg_pos, param, raw_callable));
+            continue;
         } else {
             (*arg_type).clone()
         };
+
+        // A type-variable-laden argument (`ArrayIterator<`_0, `_1>`) binds
+        // templates from its accumulated lower bounds, not from the variable
+        // (which template inference would otherwise treat as mixed).
+        let arg_type = crate::template::resolve_type_variables_in_union_deep(
+            &arg_type,
+            &analysis_data.type_variable_bounds,
+        );
 
         crate::template::standin_type_replacer::infer_template_replacements_from_union(
             analyzer,
             param_type,
             &arg_type,
-            template_defaults,
-            &mut template_replacements,
+            template_result,
         );
+    }
+
+    for (arg_pos, param, resolved_callable) in deferred_high_order_args {
+        let Some(param_type) = param.get_type() else {
+            continue;
+        };
+
+        // Solve the callable's own templates against the expected callable
+        // (Psalm's HighOrderFunctionArgHandler::remapLowerBounds with the
+        // bounds collected so far), then bind the callee's templates from the
+        // solved view.
+        let expected_with_bounds = replace_templates_in_union(param_type, template_result);
+        let expected_callables =
+            callable_validation::get_expected_callable_atomics(&expected_with_bounds);
+
+        let mut enhanced_atomics = Vec::with_capacity(resolved_callable.types.len());
+        for atomic in &resolved_callable.types {
+            enhanced_atomics.push(
+                callable_validation::enhance_high_order_callable_atomic(
+                    analyzer,
+                    atomic,
+                    &expected_callables,
+                )
+                .unwrap_or_else(|| atomic.clone()),
+            );
+        }
+        let mut enhanced = resolved_callable.clone();
+        enhanced.types = enhanced_atomics;
+
+        crate::template::standin_type_replacer::infer_template_replacements_from_union(
+            analyzer,
+            param_type,
+            &enhanced,
+            template_result,
+        );
+
+        let _ = arg_pos;
     }
 
     // Infer template replacements from omitted optional args that have known defaults.
@@ -598,30 +876,345 @@ pub(crate) fn infer_template_replacements_from_args(
             analyzer,
             param_type,
             default_type,
-            template_defaults,
-            &mut template_replacements,
+            template_result,
         );
     }
 
-    template_replacements
+    // Psalm ArgumentAnalyzer: templates referenced by a provided argument's
+    // parameter type that are still unbound after argument processing bind to
+    // their upper bound / declared constraint.
+    for (idx, _arg) in args.iter().enumerate() {
+        let param = if idx < params.len() {
+            Some(&params[idx])
+        } else {
+            params.last().filter(|p| p.is_variadic)
+        };
+        let Some(param_type) = param.and_then(|param| param.get_type()) else {
+            continue;
+        };
+        crate::template::bind_unbound_param_templates_to_constraints(param_type, template_result);
+    }
 }
 
-pub(crate) fn replace_templates_in_union(
+/// For `map($xs, id())`-style args: when the arg is a plain function call
+/// whose declared return is a callable carrying the callee's own templates,
+/// return that raw return type (the recorded expr type has already collapsed
+/// the unbound templates). Psalm's HighOrderFunctionArgHandler TYPE_CALLABLE.
+pub(crate) fn high_order_call_arg_raw_callable(
+    analyzer: &StatementsAnalyzer<'_>,
+    arg_expr: &Expression<'_>,
+    context: &BlockContext,
+) -> Option<TUnion> {
+    use mago_syntax::ast::ast::call::Call;
+    use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
+
+    let return_type = match arg_expr.unparenthesized() {
+        Expression::Call(Call::Function(function_call)) => {
+            let Expression::Identifier(function_name) = &function_call.function else {
+                return None;
+            };
+            let function_info = resolve_function(
+                analyzer,
+                function_name.value(),
+                function_name.is_fully_qualified(),
+                Some(function_name.span().start.offset),
+                context,
+            )?;
+            function_info.get_return_type()?.clone()
+        }
+        Expression::Call(Call::Method(method_call)) => {
+            let ClassLikeMemberSelector::Identifier(method_name) = &method_call.method else {
+                return None;
+            };
+            let object_key =
+                crate::expression_identifier::get_expression_var_key(method_call.object)?;
+            let receiver_type = context.locals.get(object_key.as_str())?;
+            let method_info = receiver_type.types.iter().find_map(|atomic| {
+                let pzoom_code_info::TAtomic::TNamedObject { name, .. } = atomic else {
+                    return None;
+                };
+                let class_info = analyzer.codebase.get_class(*name)?;
+                crate::expr::call::atomic_method_call_analyzer::resolve_named_object_instance_method(
+                    analyzer,
+                    class_info,
+                    None,
+                    method_name.value,
+                    None,
+                )
+                .map(|(_, _, method_info)| method_info)
+            })?;
+            method_info.get_return_type()?.clone()
+        }
+        Expression::Call(Call::StaticMethod(static_call)) => {
+            let ClassLikeMemberSelector::Identifier(method_name) = &static_call.method else {
+                return None;
+            };
+            let class_id = match static_call.class.unparenthesized() {
+                Expression::Identifier(class_name) => analyzer
+                    .get_resolved_name(class_name.span().start.offset)
+                    .unwrap_or_else(|| analyzer.interner.intern(class_name.value())),
+                Expression::Self_(_) | Expression::Static(_) => {
+                    analyzer.get_declaring_class()?
+                }
+                _ => return None,
+            };
+            let class_info = analyzer.codebase.get_class(class_id)?;
+            let (_, _, method_info, _) =
+                crate::expr::call::existing_atomic_static_call_analyzer::resolve_named_object_static_method(
+                    analyzer,
+                    class_info,
+                    method_name.value,
+                )?;
+            method_info.get_return_type()?.clone()
+        }
+        _ => return None,
+    };
+
+    (callable_validation::union_has_callable(&return_type)
+        && callable_union_has_own_templates(&return_type))
+    .then_some(return_type)
+}
+
+/// Whether a resolved callable union mentions its *own* function-level
+/// template params (e.g. `"from_other"` resolving to
+/// `callable(ThingType): ThingType|Bar`).
+fn callable_union_has_own_templates(union: &TUnion) -> bool {
+    union.types.iter().any(|atomic| {
+        callable_validation::get_callable_params(atomic).is_some_and(|params| {
+            params.iter().any(|param| {
+                union_mentions_fn_template(&param.param_type)
+            })
+        }) || match atomic {
+            TAtomic::TCallable {
+                return_type: Some(return_type),
+                ..
+            }
+            | TAtomic::TClosure {
+                return_type: Some(return_type),
+                ..
+            } => union_mentions_fn_template(return_type),
+            _ => false,
+        }
+    })
+}
+
+fn union_mentions_fn_template(union: &TUnion) -> bool {
+    union.types.iter().any(|atomic| match atomic {
+        TAtomic::TTemplateParam {
+            defining_entity: pzoom_code_info::GenericParent::FunctionLike(_),
+            ..
+        } => true,
+        TAtomic::TNamedObject {
+            type_params: Some(type_params),
+            ..
+        } => type_params.iter().any(union_mentions_fn_template),
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TIterable {
+            key_type,
+            value_type,
+        } => union_mentions_fn_template(key_type) || union_mentions_fn_template(value_type),
+        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            union_mentions_fn_template(value_type)
+        }
+        _ => false,
+    })
+}
+
+/// Psalm's `HighOrderFunctionArgHandler::remapLowerBounds` + arg re-analysis:
+/// for each argument that is a FUNCTION CALL whose declared return is a
+/// callable carrying the callee's own templates, solve those templates
+/// against the outer param's expectation (with the bounds inferred so far),
+/// seed the inner call's closure arguments with the solved param types, and
+/// re-analyze the argument expression. Returns true when anything was
+/// re-analyzed (the caller re-infers its templates from the new arg types).
+fn reanalyze_high_order_call_args(
+    analyzer: &StatementsAnalyzer<'_>,
+    args: &[&Argument<'_>],
+    func_info: &pzoom_code_info::FunctionLikeInfo,
+    template_result: &TemplateResult,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &mut BlockContext,
+) -> bool {
+    use mago_span::HasSpan;
+    use mago_syntax::ast::ast::call::Call;
+
+    if template_result.template_types.is_empty() {
+        return false;
+    }
+
+    let mut reanalyzed_any = false;
+
+    for (idx, arg) in args.iter().enumerate() {
+        let param = if idx < func_info.params.len() {
+            Some(&func_info.params[idx])
+        } else {
+            func_info.params.last().filter(|p| p.is_variadic)
+        };
+        let Some(param_type) = param.and_then(|param| param.get_type()) else {
+            continue;
+        };
+        if !callable_validation::union_has_callable(param_type) {
+            continue;
+        }
+
+        // The arg must be a plain function call whose STORAGE return is a
+        // callable with the callee's own fn-level templates.
+        let Expression::Call(Call::Function(inner_call)) = arg.value().unparenthesized() else {
+            continue;
+        };
+        let Expression::Identifier(inner_name) = &inner_call.function else {
+            continue;
+        };
+        let Some(inner_info) = resolve_function(
+            analyzer,
+            inner_name.value(),
+            inner_name.is_fully_qualified(),
+            Some(inner_name.span().start.offset),
+            context,
+        ) else {
+            continue;
+        };
+        let Some(raw_return) = inner_info.get_return_type() else {
+            continue;
+        };
+        if !callable_validation::union_has_callable(raw_return)
+            || !callable_union_has_own_templates(raw_return)
+        {
+            continue;
+        }
+
+        // Nested closure arguments to refine.
+        let closure_args: Vec<(usize, u32)> = inner_call
+            .argument_list
+            .arguments
+            .iter()
+            .enumerate()
+            .filter_map(|(inner_idx, inner_arg)| {
+                callable_validation::get_closure_like_argument_offset(inner_arg)
+                    .map(|offset| (inner_idx, offset))
+            })
+            .collect();
+        if closure_args.is_empty() {
+            continue;
+        }
+
+        // Solve the inner callee's templates: each callable in its declared
+        // return matches param-for-param against the outer expectation (with
+        // the outer bounds substituted) — Psalm's remapLowerBounds.
+        let expected_with_bounds = replace_templates_in_union(param_type, template_result);
+        let expected_callables =
+            callable_validation::get_expected_callable_atomics(&expected_with_bounds);
+        let mut inner_result = get_template_defaults(&inner_info);
+        if inner_result.template_types.is_empty() {
+            continue;
+        }
+        let mut solved_any = false;
+        for raw_atomic in &raw_return.types {
+            let (TAtomic::TClosure {
+                params: Some(raw_params),
+                ..
+            }
+            | TAtomic::TCallable {
+                params: Some(raw_params),
+                ..
+            }) = raw_atomic
+            else {
+                continue;
+            };
+            for expected_atomic in &expected_callables {
+                let (TAtomic::TClosure {
+                    params: Some(expected_params),
+                    ..
+                }
+                | TAtomic::TCallable {
+                    params: Some(expected_params),
+                    ..
+                }) = expected_atomic
+                else {
+                    continue;
+                };
+                for (raw_param, expected_param) in raw_params.iter().zip(expected_params.iter()) {
+                    crate::template::standin_type_replacer::infer_template_replacements_from_union(
+                        analyzer,
+                        &raw_param.param_type,
+                        &expected_param.param_type,
+                        &mut inner_result,
+                    );
+                    solved_any = true;
+                }
+            }
+        }
+        if !solved_any || inner_result.lower_bounds.is_empty() {
+            continue;
+        }
+
+        // Seed the inner closures with the solved param types and re-analyze
+        // the whole argument expression; first retract the issues its
+        // unrefined first pass emitted.
+        let mut seeded_offsets = Vec::new();
+        for (inner_idx, closure_offset) in &closure_args {
+            let Some(inner_param_type) = inner_info
+                .params
+                .get(*inner_idx)
+                .and_then(|inner_param| inner_param.get_type())
+            else {
+                continue;
+            };
+            if !callable_validation::union_has_callable(inner_param_type) {
+                continue;
+            }
+            let seeded = replace_templates_in_union(inner_param_type, &inner_result);
+            context
+                .expected_callable_arg_types
+                .insert(*closure_offset, seeded);
+            seeded_offsets.push(*closure_offset);
+        }
+        if seeded_offsets.is_empty() {
+            continue;
+        }
+
+        let arg_span = arg.value().span();
+        analysis_data.issues.retain(|issue| {
+            issue.location.start_offset < arg_span.start.offset
+                || issue.location.start_offset > arg_span.end.offset
+        });
+        crate::expression_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
+        for closure_offset in seeded_offsets {
+            context.expected_callable_arg_types.remove(&closure_offset);
+        }
+        reanalyzed_any = true;
+    }
+
+    reanalyzed_any
+}
+
+pub(crate) fn replace_templates_in_union(union: &TUnion, template_result: &TemplateResult) -> TUnion {
+    replace_templates_in_union_in(None, union, template_result)
+}
+
+
+/// [`replace_templates_in_union`] with a codebase, which lets conditional
+/// types pick a branch (Psalm's TemplateInferredTypeReplacer needs the
+/// codebase for containment checks); without one they fall back to the union
+/// of their branches.
+pub(crate) fn replace_templates_in_union_in(
+    codebase: Option<&pzoom_code_info::CodebaseInfo>,
     union: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> TUnion {
     let standin_replaced = crate::template::standin_type_replacer::substitute_templates_in_union(
         union,
-        template_replacements,
-        template_defaults,
+        template_result,
     );
 
-    template::inferred_type_replacer::replace(
-        &standin_replaced,
-        template_replacements,
-        template_defaults,
-    )
+    template::inferred_type_replacer::replace_in(codebase, &standin_replaced, template_result)
 }
 
 #[derive(Clone)]
@@ -674,7 +1267,7 @@ pub(crate) fn infer_builtin_type_check_return_type(
 
     let Some(arg_type) = arg_positions
         .first()
-        .and_then(|pos| analysis_data.get_expr_type(*pos))
+        .and_then(|pos| analysis_data.expr_types.get(&*pos).cloned())
         .map(|t| (*t).clone())
     else {
         return Some(TUnion::bool());
@@ -775,7 +1368,7 @@ pub(crate) fn is_default_array_filter_callback(
     }
 
     analysis_data
-        .get_expr_type(arg_positions[1])
+        .expr_types.get(&arg_positions[1]).cloned()
         .is_some_and(|callback_type| callback_type.is_null())
 }
 
@@ -805,7 +1398,11 @@ pub(crate) fn infer_array_filter_return_atomic(
                 (**value_type).clone()
             };
 
-            if callback_is_default && filtered_value.is_nothing() {
+            // A custom callback can reject every element, so non-emptiness
+            // never survives (Psalm's ArrayFilterReturnTypeProvider always
+            // returns a plain array). The default callback keeps it only
+            // when every value is provably truthy.
+            if !callback_is_default || !(**value_type).is_always_truthy() {
                 Some(TAtomic::TArray {
                     key_type: key_type.clone(),
                     value_type: Box::new(filtered_value),
@@ -837,27 +1434,85 @@ pub(crate) fn infer_array_filter_return_atomic(
             is_list,
         } => {
             let had_one = properties.len() == 1;
+            // Psalm's ArrayFilterReturnTypeProvider keeps per-property
+            // precision only for the DEFAULT callback (the provider's keyed
+            // path is gated on `!isset($call_args[1])`); a custom callback
+            // degrades the shape to a generic possibly-empty array of the
+            // keys/values, which the truthy/empty reconcilers can then
+            // narrow to non-empty.
+            if !callback_is_default {
+                let mut key_union: Option<TUnion> = None;
+                let mut value_union: Option<TUnion> = None;
+                let mut add_key = |atomic: TAtomic| {
+                    let next = TUnion::new(atomic);
+                    key_union = Some(match key_union.take() {
+                        None => next,
+                        Some(existing) => {
+                            pzoom_code_info::combine_union_types(&existing, &next, false)
+                        }
+                    });
+                };
+                for (key, property_type) in properties.iter() {
+                    match key {
+                        pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
+                            add_key(TAtomic::TLiteralInt { value: *value })
+                        }
+                        pzoom_code_info::t_atomic::ArrayKey::String(value) => {
+                            add_key(TAtomic::TLiteralString {
+                                value: value.clone(),
+                            })
+                        }
+                    }
+                    value_union = Some(match value_union.take() {
+                        None => property_type.clone(),
+                        Some(existing) => pzoom_code_info::combine_union_types(
+                            &existing,
+                            property_type,
+                            false,
+                        ),
+                    });
+                }
+                if let Some(fallback) = fallback_value_type {
+                    value_union = Some(match value_union.take() {
+                        None => (**fallback).clone(),
+                        Some(existing) => {
+                            pzoom_code_info::combine_union_types(&existing, fallback, false)
+                        }
+                    });
+                }
+                if let Some(fallback_key) = fallback_key_type {
+                    let key = key_union.take();
+                    key_union = Some(match key {
+                        None => (**fallback_key).clone(),
+                        Some(existing) => {
+                            pzoom_code_info::combine_union_types(&existing, fallback_key, false)
+                        }
+                    });
+                }
+                let mut value_union = value_union.unwrap_or_else(TUnion::nothing);
+                value_union.possibly_undefined = false;
+                return Some(TAtomic::TArray {
+                    key_type: Box::new(key_union.unwrap_or_else(TUnion::array_key)),
+                    value_type: Box::new(value_union),
+                });
+            }
+
             let mut next_properties = rustc_hash::FxHashMap::default();
 
-            for (key, property_type) in properties {
-                if callback_is_default {
-                    if property_type.is_always_falsy() {
-                        continue;
-                    }
+            for (key, property_type) in properties.iter() {
+                if property_type.is_always_falsy() {
+                    continue;
+                }
 
-                    let narrowed_type = narrow_union_to_truthy(property_type);
+                let narrowed_type = narrow_union_to_truthy(property_type);
 
-                    if property_type.is_always_truthy() {
-                        next_properties.insert(key.clone(), narrowed_type);
-                    } else {
-                        next_properties.insert(
-                            key.clone(),
-                            mark_union_as_possibly_undefined(&narrowed_type),
-                        );
-                    }
+                if property_type.is_always_truthy() {
+                    next_properties.insert(key.clone(), narrowed_type);
                 } else {
-                    next_properties
-                        .insert(key.clone(), mark_union_as_possibly_undefined(property_type));
+                    next_properties.insert(
+                        key.clone(),
+                        mark_union_as_possibly_undefined(&narrowed_type),
+                    );
                 }
             }
 
@@ -875,7 +1530,7 @@ pub(crate) fn infer_array_filter_return_atomic(
             let next_is_list = *is_list && had_one;
 
             Some(TAtomic::TKeyedArray {
-                properties: next_properties,
+                properties: std::sync::Arc::new(next_properties),
                 is_list: next_is_list,
                 sealed: *sealed,
                 fallback_key_type: fallback_key_type.clone(),
@@ -1156,13 +1811,62 @@ pub(crate) fn named_object_is_traversable(analyzer: &StatementsAnalyzer<'_>, nam
     })
 }
 
+/// Port of Psalm's `Reconciler::refineArrayKey`: array-key-compatible atomics
+/// pass through (string/int families and `array-key` itself), a template
+/// param survives with its bound refined recursively, and anything else
+/// (e.g. `mixed`) degrades to `array-key`.
 pub(crate) fn normalize_array_key_union(key_type: &TUnion) -> TUnion {
     if key_type.is_nothing() {
         return TUnion::nothing();
     }
 
-    assertion_reconciler::intersect_union_with_union(key_type, &TUnion::array_key())
-        .unwrap_or_else(TUnion::array_key)
+    let mut refined_types = Vec::with_capacity(key_type.types.len());
+    for atomic in &key_type.types {
+        let refined_atomic = match atomic {
+            TAtomic::TTemplateParam {
+                name,
+                defining_entity,
+                as_type,
+            } => TAtomic::TTemplateParam {
+                name: *name,
+                defining_entity: *defining_entity,
+                as_type: Box::new(normalize_array_key_union(as_type)),
+            },
+            atomic if atomic_is_array_key_compatible(atomic) => atomic.clone(),
+            _ => TAtomic::TArrayKey,
+        };
+        if !refined_types.contains(&refined_atomic) {
+            refined_types.push(refined_atomic);
+        }
+    }
+
+    let mut refined = TUnion::from_types(refined_types);
+    refined.from_docblock = key_type.from_docblock;
+    refined
+}
+
+/// Psalm's refineArrayKey pass-through set: `array-key` plus the TString and
+/// TInt families (including literals).
+fn atomic_is_array_key_compatible(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TArrayKey
+            | TAtomic::TString
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TClassString { .. }
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TDependentGetClass { .. }
+            | TAtomic::TDependentGetType { .. }
+    )
 }
 
 pub(crate) fn get_literal_bool_from_union(union: &TUnion) -> Option<bool> {
@@ -1233,6 +1937,8 @@ pub(crate) fn resolve_function<'a>(
     name_offset: Option<u32>,
     context: &BlockContext,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
+    // Function names resolve case-sensitively (stricter than PHP); a leading
+    // backslash is the only normalization applied.
     if let Some(offset) = name_offset
         && let Some(resolved_name) = analyzer.get_resolved_name(offset)
     {
@@ -1241,10 +1947,12 @@ pub(crate) fn resolve_function<'a>(
         }
 
         let resolved_name = analyzer.interner.lookup(resolved_name);
-        if let Some(func_info) =
-            get_function_case_insensitive(analyzer, resolved_name.trim_start_matches('\\'))
-        {
-            return Some(func_info);
+        let trimmed = resolved_name.trim_start_matches('\\');
+        if trimmed.len() != resolved_name.len() {
+            let func_id = analyzer.interner.intern(trimmed);
+            if let Some(func_info) = analyzer.codebase.get_function(func_id) {
+                return Some(func_info);
+            }
         }
     }
 
@@ -1252,11 +1960,7 @@ pub(crate) fn resolve_function<'a>(
         // Strip leading backslash and look up directly
         let clean_name = name.strip_prefix('\\').unwrap_or(name);
         let func_id = analyzer.interner.intern(clean_name);
-        if let Some(func_info) = analyzer.codebase.get_function(func_id) {
-            return Some(func_info);
-        }
-
-        return get_function_case_insensitive(analyzer, clean_name);
+        return analyzer.codebase.get_function(func_id);
     }
 
     // Try namespace-qualified lookup first
@@ -1267,37 +1971,11 @@ pub(crate) fn resolve_function<'a>(
         if let Some(func_info) = analyzer.codebase.get_function(func_id) {
             return Some(func_info);
         }
-
-        if let Some(func_info) = get_function_case_insensitive(analyzer, &qualified_name) {
-            return Some(func_info);
-        }
     }
 
     // Fall back to global namespace
     let func_id = analyzer.interner.intern(name);
-    if let Some(func_info) = analyzer.codebase.get_function(func_id) {
-        return Some(func_info);
-    }
-
-    get_function_case_insensitive(analyzer, name)
-}
-
-fn get_function_case_insensitive<'a>(
-    analyzer: &'a StatementsAnalyzer<'_>,
-    function_name: &str,
-) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    analyzer
-        .codebase
-        .functionlike_infos
-        .iter()
-        .find_map(|(func_id, func_info)| {
-            analyzer
-                .interner
-                .lookup(*func_id)
-                .trim_start_matches('\\')
-                .eq_ignore_ascii_case(function_name.trim_start_matches('\\'))
-                .then_some(func_info)
-        })
+    analyzer.codebase.get_function(func_id)
 }
 
 /// Extract the function name from a function call expression.
@@ -1331,6 +2009,7 @@ fn function_call_is_mutation_free(
         return true;
     }
 
+
     if is_array_map_function_name(function_info.name) {
         return callback_argument_is_pure(analyzer, args, arg_positions, analysis_data, context, 0);
     }
@@ -1356,6 +2035,30 @@ fn function_call_is_mutation_free(
         return callback_argument_is_pure(analyzer, args, arg_positions, analysis_data, context, 1);
     }
 
+    // Psalm's in_call_map arm: a stub builtin's purity comes from
+    // Functions::isCallMapFunctionPure — anything not in the impure list
+    // (with params, a non-void return and actual args) defaults to PURE;
+    // by-ref builtins like reset()/array_pop() only mutate locals.
+    let is_builtin = function_info.in_call_map
+        || analyzer
+            .codebase
+            .files
+            .get(&function_info.file_path)
+            .is_some_and(|file_info| file_info.is_stub);
+    if is_builtin {
+        let name = analyzer.interner.lookup(function_info.name);
+        let mut must_use = true;
+        return is_call_map_function_pure(
+            analyzer,
+            function_info,
+            &name,
+            args,
+            arg_positions,
+            analysis_data,
+            &mut must_use,
+        );
+    }
+
     false
 }
 
@@ -1373,7 +2076,7 @@ pub(crate) fn callback_argument_is_pure(
     let Some(callback_pos) = arg_positions.get(callback_index).copied() else {
         return true;
     };
-    let Some(callback_type) = analysis_data.get_expr_type(callback_pos) else {
+    let Some(callback_type) = analysis_data.expr_types.get(&callback_pos).cloned() else {
         return false;
     };
 
@@ -1401,7 +2104,6 @@ pub(crate) fn callback_argument_is_pure(
                 saw_callable_candidate = true;
             }
             _ => {
-                saw_non_null_candidate = true;
                 return false;
             }
         }
@@ -1415,26 +2117,10 @@ fn function_is_mutation_free(function_info: &pzoom_code_info::FunctionLikeInfo) 
 }
 
 fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> bool {
-    let Some(function_info) = analyzer.function_info else {
-        return false;
-    };
-
-    if function_info.is_pure || function_info.is_mutation_free {
-        return true;
-    }
-
-    if function_info.is_static {
-        return false;
-    }
-
-    if let Some(class_id) = function_info.declaring_class {
-        return analyzer
-            .codebase
-            .get_class(class_id)
-            .is_some_and(|class_info| class_info.is_immutable);
-    }
-
-    false
+    // One definition of "enforcing purity context" — see
+    // method_call_analyzer::is_mutation_free_context for Psalm's semantics
+    // (a method's own @mutation-free is NOT body-enforced).
+    crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer)
 }
 
 fn record_named_function_callsite_argument_types(
@@ -1443,7 +2129,7 @@ fn record_named_function_callsite_argument_types(
     analysis_data: &mut FunctionAnalysisData,
 ) {
     for (index, arg_pos) in arg_positions.iter().enumerate() {
-        let Some(arg_type) = analysis_data.get_expr_type(*arg_pos) else {
+        let Some(arg_type) = analysis_data.expr_types.get(&*arg_pos).cloned() else {
             continue;
         };
 
@@ -1493,11 +2179,10 @@ pub(crate) fn is_array_map_function_name(function_id: StrId) -> bool {
 
 fn is_function_guarded_by_function_exists(
     context: &BlockContext,
-    analyzer: &StatementsAnalyzer<'_>,
     function_name: &str,
 ) -> bool {
     let key = function_exists_assertion_key(function_name);
-    let key_id = analyzer.interner.intern(&key);
+    let key_id = VarName::new(&key);
 
     context
         .locals
@@ -1510,4 +2195,239 @@ fn function_exists_assertion_key(function_name: &str) -> String {
         "@function_exists({})",
         function_name.trim_start_matches('\\').to_ascii_lowercase()
     )
+}
+
+/// Port of Psalm's `FunctionCallAnalyzer::checkFunctionCallPurity` unused-call
+/// branch: a pure function whose return value is discarded reports
+/// `UnusedFunctionCall` when unused-variable detection is on.
+#[allow(clippy::too_many_arguments)]
+fn check_unused_function_call(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_info: &pzoom_code_info::FunctionLikeInfo,
+    name: &str,
+    func_call: &FunctionCall<'_>,
+    args: &[&Argument<'_>],
+    arg_positions: &[Pos],
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+    pos: Pos,
+) {
+    if !analyzer.config.report_unused
+        || context.inside_conditional
+        || context.inside_unset
+        || context.inside_use()
+    {
+        return;
+    }
+
+    let is_builtin = analyzer
+        .codebase
+        .files
+        .get(&func_info.file_path)
+        .is_some_and(|file_info| file_info.is_stub);
+
+    let mut must_use = true;
+    let is_pure = if is_builtin {
+        // Psalm's in_call_map path: Functions::isCallMapFunctionPure.
+        is_call_map_function_pure(
+            analyzer,
+            func_info,
+            name,
+            args,
+            arg_positions,
+            analysis_data,
+            &mut must_use,
+        )
+    } else {
+        // User-defined: declared @pure with no assertions.
+        func_info.is_pure && func_info.assertions.is_empty()
+    };
+
+    if !is_pure || !must_use {
+        return;
+    }
+
+    // A by-reference argument actually passed means the call has an effect
+    // (Psalm's callUsesByReferenceArguments — positional and named).
+    if call_uses_by_reference_arguments(analyzer, func_info, args) {
+        return;
+    }
+
+    // Pure no-return functions may be called for their exception/exit effect.
+    if func_info
+        .get_return_type()
+        .is_some_and(|return_type| return_type.is_nothing())
+    {
+        return;
+    }
+
+    let name_span = func_call.function.span();
+    let (line, col) = analyzer.get_line_column(name_span.start.offset);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::UnusedFunctionCall,
+        format!("The call to {} is not used", name.to_ascii_lowercase()),
+        analyzer.file_path,
+        name_span.start.offset,
+        name_span.end.offset,
+        line,
+        col,
+    ));
+    let _ = pos;
+}
+
+/// Port of Psalm `Functions::isCallMapFunctionPure` (stub-defined builtins).
+#[allow(clippy::too_many_arguments)]
+fn is_call_map_function_pure(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_info: &pzoom_code_info::FunctionLikeInfo,
+    name: &str,
+    args: &[&Argument<'_>],
+    arg_positions: &[Pos],
+    analysis_data: &FunctionAnalysisData,
+    must_use: &mut bool,
+) -> bool {
+    let function_id = name.trim_start_matches('\\').to_ascii_lowercase();
+
+    if super::impure_functions_list::is_impure_function(&function_id) {
+        return false;
+    }
+
+    if function_id == "serialize"
+        && let Some(arg_pos) = arg_positions.first()
+        && let Some(arg_type) = analysis_data.expr_types.get(&*arg_pos).cloned()
+        && union_can_contain_object(&arg_type)
+    {
+        return false;
+    }
+
+    if function_id.starts_with("image") || function_id.starts_with("readline") {
+        return false;
+    }
+
+    if (function_id == "var_export" || function_id == "print_r") && args.len() < 2 {
+        return false;
+    }
+
+    if function_id == "assert" {
+        *must_use = false;
+        return true;
+    }
+
+    if function_id == "func_num_args" || function_id == "func_get_args" {
+        return true;
+    }
+
+    if (function_id == "count" || function_id == "sizeof")
+        && let Some(arg_pos) = arg_positions.first()
+        && let Some(arg_type) = analysis_data.expr_types.get(&*arg_pos).cloned()
+    {
+        for atomic in &arg_type.types {
+            if let TAtomic::TNamedObject { name: class_id, .. } = atomic
+                && let Some(class_info) = analyzer.codebase.get_class(*class_id)
+                && let Some(method_info) =
+                    callable_validation::get_method_info(analyzer, class_info, "count")
+            {
+                return method_info.is_mutation_free;
+            }
+        }
+    }
+
+    // Psalm: unknown params in the callmap, a zero-argument call, or a void
+    // return type all mean "not reportable as pure".
+    if args.is_empty() {
+        return false;
+    }
+    if func_info
+        .get_return_type()
+        .is_none_or(|return_type| return_type.is_void())
+    {
+        return false;
+    }
+
+    *must_use = function_id != "array_map"
+        || args
+            .first()
+            .is_some_and(|arg| !matches!(arg.value().unparenthesized(), Expression::Closure(_)));
+
+    for (index, param) in func_info.params.iter().enumerate() {
+        if let Some(param_type) = &param.param_type
+            && callable_validation::union_has_callable(param_type)
+            && let Some(arg_pos) = arg_positions.get(index)
+            && let Some(arg_type) = analysis_data.expr_types.get(&*arg_pos).cloned()
+            && !callable_union_is_pure(&arg_type)
+        {
+            return false;
+        }
+
+        if param.by_ref && args.get(index).is_some() {
+            *must_use = false;
+        }
+    }
+
+    true
+}
+
+/// Psalm's `callUsesByReferenceArguments`: whether any actually-passed
+/// argument (positional or named) lands on a by-ref parameter.
+fn call_uses_by_reference_arguments(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_info: &pzoom_code_info::FunctionLikeInfo,
+    args: &[&Argument<'_>],
+) -> bool {
+    if !func_info.params.iter().any(|param| param.by_ref) {
+        return false;
+    }
+
+    for (index, arg) in args.iter().enumerate() {
+        let param = match arg {
+            Argument::Named(named_arg) => func_info.params.iter().find(|param| {
+                super::arguments_analyzer::matches_named_argument(
+                    analyzer,
+                    param,
+                    named_arg.name.value,
+                )
+            }),
+            Argument::Positional(_) => func_info.params.get(index),
+        };
+        if param.is_some_and(|param| param.by_ref) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Approximation of Psalm's `Union::canContainObjectType` for the serialize check.
+fn union_can_contain_object(union: &TUnion) -> bool {
+    union.types.iter().any(|atomic| match atomic {
+        TAtomic::TNamedObject { .. }
+        | TAtomic::TObject
+        | TAtomic::TObjectWithProperties { .. }
+        | TAtomic::TMixed
+        | TAtomic::TNonEmptyMixed
+        | TAtomic::TMixedFromLoopIsset
+        | TAtomic::TTemplateParam { .. }
+        // An iterable may be a Traversable object (and may yield objects);
+        // closures/callables are or may be objects.
+        | TAtomic::TIterable { .. }
+        | TAtomic::TClosure { .. }
+        | TAtomic::TCallable { .. } => true,
+        TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
+            union_can_contain_object(value_type)
+        }
+        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            union_can_contain_object(value_type)
+        }
+        TAtomic::TKeyedArray {
+            properties,
+            fallback_value_type,
+            ..
+        } => {
+            properties.values().any(union_can_contain_object)
+                || fallback_value_type
+                    .as_ref()
+                    .is_some_and(|fallback| union_can_contain_object(fallback))
+        }
+        _ => false,
+    })
 }

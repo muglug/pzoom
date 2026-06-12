@@ -918,6 +918,11 @@ namespace {
     }
 
     /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape sql
+     * @psalm-flow ($connection, $string) -> return
+     *
      * @param PgSql\Connection|string $connection
      */
     function pg_escape_string($connection, string $string = UNKNOWN): string
@@ -925,6 +930,11 @@ namespace {
     }
 
     /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape sql
+     * @psalm-flow ($connection, $string) -> return
+     *
      * @param PgSql\Connection|string $connection
      */
     function pg_escape_bytea($connection, string $string = UNKNOWN): string
@@ -936,6 +946,11 @@ namespace {
     }
 
     /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape sql
+     * @psalm-flow ($connection, $string) -> return
+     *
      * @param PgSql\Connection|string $connection
      */
     function pg_escape_literal($connection, string $string = UNKNOWN): string|false
@@ -943,6 +958,11 @@ namespace {
     }
 
     /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape sql
+     * @psalm-flow ($connection, $string) -> return
+     *
      * @param PgSql\Connection|string $connection
      */
     function pg_escape_identifier($connection, string $string = UNKNOWN): string|false

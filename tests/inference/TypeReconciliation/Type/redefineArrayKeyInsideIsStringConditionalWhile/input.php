@@ -1,0 +1,13 @@
+<?php
+/**
+ * @param string|int $key
+ */
+function get($key, array $arr) : void {
+    if (!isset($arr[$key])) {
+        while (rand(0, 1)) {
+            $key = "p" . $key;
+        }
+
+        if (!isset($arr[$key])) {}
+    }
+}

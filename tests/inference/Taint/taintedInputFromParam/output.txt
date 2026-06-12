@@ -1,0 +1,1 @@
+TaintedSql - input.php:17:20 - Detected tainted SQL in path: $_GET -> $_GET['user_id'] (input.php:4:25) -> return (input.php:4:16) -> call to A::getUserId (input.php:3:35) -> return (input.php:8:16) -> call to A::getAppendedUserId (input.php:7:43) -> $userId (input.php:12:9) -> $userId (input.php:16:49) -> composition (input.php:17:20) -> PDO::exec#1

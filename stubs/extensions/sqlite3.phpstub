@@ -160,6 +160,12 @@ class SQLite3
     ): bool {
     }
 
+    /**
+     * @psalm-pure
+     *
+     * @psalm-taint-escape sql
+     * @psalm-flow ($string) -> return
+     */
     public static function escapeString(string $string): string
     {
     }

@@ -40,7 +40,7 @@ pub fn check_for_paradox(
             && (formula_1_hashes.contains(formula_2_clause)
                 || formula_2_hashes.contains(formula_2_clause))
         {
-            let clause_string = formula_2_clause.to_string();
+            let clause_string = formula_2_clause.to_string(analyzer.interner);
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::RedundantCondition,
@@ -70,7 +70,7 @@ pub fn check_for_paradox(
 
             let mut negated_clause_2_contains_1_possibilities = true;
 
-            'outer: for (key, clause_1_possibilities) in &clause_1.possibilities {
+            'outer: for (key, clause_1_possibilities) in clause_1.possibilities.iter() {
                 if let Some(clause_2_possibilities) = negated_clause_2.possibilities.get(key) {
                     if clause_2_possibilities != clause_1_possibilities {
                         negated_clause_2_contains_1_possibilities = false;
@@ -95,8 +95,8 @@ pub fn check_for_paradox(
                     IssueKind::ParadoxicalCondition,
                     format!(
                         "Condition ({}) contradicts a previously-established condition ({})",
-                        negated_clause_2.to_string(),
-                        clause_1.to_string()
+                        negated_clause_2.to_string(analyzer.interner),
+                        clause_1.to_string(analyzer.interner)
                     ),
                     analyzer.file_path,
                     pos.0,

@@ -1,0 +1,103 @@
+<?php
+
+namespace MaxMind\Db {
+    class Reader
+    {
+        /**
+         * @param string $database the MaxMind DB file to use
+         * @throws \InvalidArgumentException for invalid database path or unknown arguments
+         * @throws InvalidDatabaseException
+         */
+        public function __construct(string $database) {}
+
+        /**
+         * @param string $ipAddress the IP address to look up
+         * @return mixed the record for the IP address
+         * @throws \InvalidArgumentException if something other than a single IP address is passed to the method
+         * @throws InvalidDatabaseException
+         * @throws \BadMethodCallException   if this method is called on a closed database
+         */
+        public function get(string $ipAddress): mixed {}
+
+        /**
+         * @param string $ipAddress the IP address to look up
+         * @return array{0:mixed, 1:int} an array where the first element is the record and the
+         * @throws \InvalidArgumentException if something other than a single IP address is passed to the method
+         * @throws InvalidDatabaseException
+         * @throws \BadMethodCallException   if this method is called on a closed database
+         */
+        public function getWithPrefixLen(string $ipAddress): array {}
+
+        /**
+         * @return Metadata object for the database
+         * @throws \BadMethodCallException   if the database has been closed
+         * @throws \InvalidArgumentException if arguments are passed to the method
+         */
+        public function metadata(): Metadata {}
+
+        /**
+         * @throws \Exception
+         */
+        public function close(): void {}
+    }
+
+    class InvalidDatabaseException extends \Exception {}
+
+    class Metadata
+    {
+        /**
+         * @var int
+         */
+        public int $binaryFormatMajorVersion;
+
+        /**
+         * @var int
+         */
+        public int $binaryFormatMinorVersion;
+
+        /**
+         * @var int
+         */
+        public int $buildEpoch;
+
+        /**
+         * @var string
+         */
+        public string $databaseType;
+
+        /**
+         * @var array
+         */
+        public array $description;
+
+        /**
+         * @var int
+         */
+        public int $ipVersion;
+
+        /**
+         * @var array
+         */
+        public array $languages;
+
+        /**
+         * @var int
+         */
+        public int $nodeByteSize;
+
+        /**
+         * @var int
+         */
+        public int $nodeCount;
+
+        /**
+         * @var int
+         */
+        public int $recordSize;
+
+        /**
+         * @var int
+         */
+        public int $searchTreeSize;
+    }
+}

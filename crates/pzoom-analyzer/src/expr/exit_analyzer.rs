@@ -9,6 +9,7 @@ use crate::expr::call::method_call_analyzer::is_mutation_free_context;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Mirror Psalm's `ExitAnalyzer`: calling `exit`/`die` with a non-integer
 /// argument from a mutation-free (pure) context is impure, because the argument
@@ -24,7 +25,7 @@ fn check_exit_purity(
         return;
     }
 
-    let Some(arg_type) = analysis_data.get_expr_type(arg_pos) else {
+    let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned() else {
         return;
     };
 
@@ -72,11 +73,28 @@ pub fn analyze_exit(
             let arg_pos =
                 expression_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
             check_exit_purity(analyzer, arg_pos, pos, "exit", analysis_data);
+
+            // Psalm `ExitAnalyzer`: exit/die output their argument, with the
+            // same sink kinds as echo.
+            if analyzer.config.taint_analysis
+                && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
+            {
+                crate::expr::echo_analyzer::add_output_call_argument_dataflow(
+                    analyzer,
+                    "exit",
+                    0,
+                    arg_pos,
+                    &arg_type,
+                    pos,
+                    analysis_data,
+                    context,
+                );
+            }
         }
     }
 
     // exit/die returns never (nothing)
-    analysis_data.set_expr_type(pos, TUnion::nothing());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
 }
 
 /// Analyze a die() expression.
@@ -96,9 +114,26 @@ pub fn analyze_die(
             let arg_pos =
                 expression_analyzer::analyze(analyzer, arg.value(), analysis_data, context);
             check_exit_purity(analyzer, arg_pos, pos, "die", analysis_data);
+
+            // Psalm `ExitAnalyzer`: exit/die output their argument, with the
+            // same sink kinds as echo.
+            if analyzer.config.taint_analysis
+                && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
+            {
+                crate::expr::echo_analyzer::add_output_call_argument_dataflow(
+                    analyzer,
+                    "exit",
+                    0,
+                    arg_pos,
+                    &arg_type,
+                    pos,
+                    analysis_data,
+                    context,
+                );
+            }
         }
     }
 
     // exit/die returns never (nothing)
-    analysis_data.set_expr_type(pos, TUnion::nothing());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
 }

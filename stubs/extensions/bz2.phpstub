@@ -1,8 +1,9 @@
 <?php
 
 /**
- * @param string|resource $file
- * @return resource|false
+ * @param resource|string $file
+ * @param string $mode
+ * @return false|resource
  */
 function bzopen($file, string $mode)
 {
@@ -10,6 +11,8 @@ function bzopen($file, string $mode)
 
 /**
  * @param resource $bz
+ * @param int $length
+ * @return false|string
  */
 function bzread($bz, int $length = 1024): string|false
 {
@@ -24,6 +27,7 @@ function bzwrite($bz, string $data, null|int $length = null): int|false
 
 /**
  * @param resource $bz
+ * @return bool
  */
 function bzflush($bz): bool
 {
@@ -31,6 +35,7 @@ function bzflush($bz): bool
 
 /**
  * @param resource $bz
+ * @return bool
  */
 function bzclose($bz): bool
 {
@@ -38,6 +43,7 @@ function bzclose($bz): bool
 
 /**
  * @param resource $bz
+ * @return int
  */
 function bzerrno($bz): int
 {
@@ -45,6 +51,7 @@ function bzerrno($bz): int
 
 /**
  * @param resource $bz
+ * @return string
  */
 function bzerrstr($bz): string
 {
@@ -52,13 +59,18 @@ function bzerrstr($bz): string
 
 /**
  * @param resource $bz
- *
- * @return array<string, int|string>
+ * @return array<array-key, mixed>
  */
 function bzerror($bz): array
 {
 }
 
+/**
+ * @param string $data
+ * @param int $block_size
+ * @param int $work_factor
+ * @return int|string
+ */
 function bzcompress(string $data, int $block_size = 4, int $work_factor = 0): string|int
 {
 }

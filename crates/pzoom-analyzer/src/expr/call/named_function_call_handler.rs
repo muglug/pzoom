@@ -8,6 +8,7 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
+use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -24,6 +25,8 @@ pub(super) fn handle(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Option<TUnion> {
+    // `\get_class(...)`-style fully-qualified calls match too.
+    let function_name = function_name.trim_start_matches('\\');
     if function_name.eq_ignore_ascii_case("get_class")
         || function_name.eq_ignore_ascii_case("gettype")
         || function_name.eq_ignore_ascii_case("get_debug_type")
@@ -48,6 +51,35 @@ pub(super) fn handle(
         return Some(infer_get_parent_class_return_type(analyzer, context));
     }
 
+    if (function_name.eq_ignore_ascii_case("array_walk")
+        || function_name.eq_ignore_ascii_case("array_walk_recursive"))
+        && let Some(first_arg_pos) = arg_positions.first()
+        && let Some(first_arg_type) = analysis_data.expr_types.get(&*first_arg_pos).cloned()
+        && first_arg_type.types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                pzoom_code_info::TAtomic::TNamedObject { .. } | pzoom_code_info::TAtomic::TObject
+            )
+        })
+    {
+        // Psalm's NamedFunctionCallHandler: array_walk over an object iterates
+        // its properties, which is rarely intended.
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            if first_arg_type.is_single() {
+                IssueKind::RawObjectIteration
+            } else {
+                IssueKind::PossibleRawObjectIteration
+            },
+            "Possibly undesired iteration over object properties".to_string(),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
     if function_name.eq_ignore_ascii_case("define") {
         apply_define_side_effect(func_call, arg_positions, analysis_data, context, analyzer);
     }
@@ -65,6 +97,17 @@ pub(super) fn handle(
             .is_some_and(is_php_stream_literal_argument)
     {
         return Some(TUnion::string());
+    }
+
+    if function_name.eq_ignore_ascii_case("compact") {
+        return analyze_compact_call(analyzer, func_call, analysis_data, context);
+    }
+
+    if function_name.eq_ignore_ascii_case("extract") {
+        // Side effects only: the normal call path still runs (return type,
+        // arg checks, the `@psalm-taint-sink extract` sink).
+        analyze_extract_call(func_call, arg_positions, analysis_data, context);
+        return None;
     }
 
     if function_name.eq_ignore_ascii_case("method_exists") {
@@ -91,7 +134,7 @@ fn handle_dependent_type_function(
     function_name: &str,
     func_call: &FunctionCall<'_>,
     arg_positions: &[Pos],
-    analysis_data: &FunctionAnalysisData,
+    analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
 ) -> Option<TUnion> {
     if !function_name.eq_ignore_ascii_case("get_class")
@@ -102,7 +145,7 @@ fn handle_dependent_type_function(
     }
 
     if let Some(first_arg_pos) = arg_positions.first().copied()
-        && let Some(first_arg_type) = analysis_data.get_expr_type(first_arg_pos)
+        && let Some(first_arg_type) = analysis_data.expr_types.get(&first_arg_pos).cloned()
     {
         let first_arg_type = first_arg_type.as_ref().clone();
 
@@ -122,7 +165,7 @@ fn handle_dependent_type_function(
                     first_arg_type.clone()
                 };
                 return Some(TUnion::new(TAtomic::TDependentGetClass {
-                    var_id,
+                    var_id: var_id.clone(),
                     as_type: Box::new(as_type),
                 }));
             }
@@ -146,6 +189,19 @@ fn handle_dependent_type_function(
                 is_static: false, remapped_params: false })),
             }));
         }
+
+        // Psalm: get_class() without arguments only works inside a class.
+        let span = func_call.span();
+        let (line, col) = analyzer.get_line_column(span.start.offset);
+        analysis_data.add_issue(pzoom_code_info::Issue::new(
+            pzoom_code_info::IssueKind::TooFewArguments,
+            "Cannot call get_class() without argument outside of class scope",
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            line,
+            col,
+        ));
 
         return Some(TUnion::new(TAtomic::TClassString { as_type: None }));
     }
@@ -222,7 +278,7 @@ fn apply_define_side_effect(
 
     let const_value_type = arg_positions
         .get(1)
-        .and_then(|pos| analysis_data.get_expr_type(*pos))
+        .and_then(|pos| analysis_data.expr_types.get(&*pos).cloned())
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -348,15 +404,13 @@ fn infer_get_class_return_type(arg_type: &TUnion) -> TUnion {
 
 /// The interned id of the first argument when it is a plain `$var`, else `None`.
 fn dependent_arg_var_id(
-    analyzer: &StatementsAnalyzer<'_>,
+    _analyzer: &StatementsAnalyzer<'_>,
     func_call: &FunctionCall<'_>,
-) -> Option<StrId> {
+) -> Option<VarName> {
     use mago_syntax::ast::ast::variable::Variable;
     let first_arg = func_call.argument_list.arguments.first()?;
     match first_arg.value().unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => {
-            Some(analyzer.interner.intern(direct.name))
-        }
+        Expression::Variable(Variable::Direct(direct)) => Some(VarName::new(direct.name)),
         _ => None,
     }
 }
@@ -438,7 +492,7 @@ fn analyze_method_exists_call(
         return TUnion::bool();
     };
 
-    let Some(target_type) = analysis_data.get_expr_type(target_arg_pos) else {
+    let Some(target_type) = analysis_data.expr_types.get(&target_arg_pos).cloned() else {
         return TUnion::bool();
     };
 
@@ -602,13 +656,14 @@ fn class_has_method_case_insensitive(
     class_info: &pzoom_code_info::ClassLikeInfo,
     method_name: &str,
 ) -> bool {
-    class_info.methods.keys().any(|method_id| {
-        analyzer
-            .interner
-            .lookup(*method_id)
-            .as_ref()
-            .eq_ignore_ascii_case(method_name)
-    }) || class_info.pseudo_methods.keys().any(|method_id| {
+    let method_id = analyzer.interner.intern(method_name);
+    // method_exists() reflects PHP runtime semantics, which are
+    // case-insensitive, regardless of pzoom's case-sensitive resolution.
+    class_info.methods.contains_key(&method_id)
+        || class_info
+            .cased_method_for(analyzer.interner, method_id)
+            .is_some()
+        || class_info.pseudo_methods.keys().any(|method_id| {
         analyzer
             .interner
             .lookup(*method_id)
@@ -637,4 +692,173 @@ fn extract_literal_string_value(expr: &Expression<'_>) -> Option<String> {
     };
 
     Some(string_lit.value?.to_string())
+}
+
+/// Psalm's `compact()` handling (NamedFunctionCallHandler): when every
+/// argument is a literal string, the call reads the named variables — a
+/// missing one reports UndefinedVariable, and the result is the shape of the
+/// in-scope variables.
+/// Psalm's `NamedFunctionCallHandler` extract() handling: a known
+/// keyed-array argument defines (or, under EXTR_SKIP, fills in) the matching
+/// variables; anything less knowable stops undefined-variable checking and
+/// (without EXTR_SKIP) widens every local to mixed.
+fn analyze_extract_call(
+    func_call: &FunctionCall<'_>,
+    arg_positions: &[Pos],
+    analysis_data: &mut FunctionAnalysisData,
+    context: &mut BlockContext,
+) {
+    const EXTR_OVERWRITE: i64 = 0;
+    const EXTR_SKIP: i64 = 1;
+
+    let flag_value = if func_call.argument_list.arguments.len() < 2 {
+        Some(EXTR_OVERWRITE)
+    } else {
+        arg_positions
+            .get(1)
+            .and_then(|flag_pos| analysis_data.expr_types.get(&*flag_pos).cloned())
+            .and_then(|flag_type| match flag_type.get_single() {
+                Some(TAtomic::TLiteralInt { value }) if *value == EXTR_SKIP => Some(EXTR_SKIP),
+                Some(TAtomic::TLiteralInt { value }) if *value == EXTR_OVERWRITE => {
+                    Some(EXTR_OVERWRITE)
+                }
+                _ => None,
+            })
+    };
+
+    let mut is_unsealed = true;
+    let mut validated_var_ids: Vec<pzoom_code_info::VarName> = Vec::new();
+
+    if flag_value.is_some()
+        && let Some(array_pos) = arg_positions.first()
+        && let Some(array_type) = analysis_data.expr_types.get(&*array_pos).cloned()
+        && array_type.types.len() == 1
+    {
+        if let Some(TAtomic::TKeyedArray {
+            properties,
+            fallback_key_type,
+            fallback_value_type,
+            ..
+        }) = array_type.get_single()
+        {
+            for (key, value_type) in properties.iter() {
+                let pzoom_code_info::t_atomic::ArrayKey::String(key) = key else {
+                    continue;
+                };
+                // Variables must start with a letter or underscore.
+                if !key
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                {
+                    continue;
+                }
+
+                let var_id = pzoom_code_info::VarName::from(format!("${}", key));
+                validated_var_ids.push(var_id.clone());
+
+                if context.locals.contains_key(&var_id) && flag_value == Some(EXTR_SKIP) {
+                    continue;
+                }
+
+                let mut assigned_type = value_type.clone();
+                assigned_type.possibly_undefined = false;
+                context.locals.insert(var_id, assigned_type);
+            }
+
+            if fallback_key_type.is_none() && fallback_value_type.is_none() {
+                is_unsealed = false;
+            }
+        }
+    }
+
+    if matches!(flag_value, Some(EXTR_OVERWRITE) | Some(EXTR_SKIP)) && !is_unsealed {
+        return;
+    }
+
+    context.check_variables = false;
+
+    if flag_value == Some(EXTR_SKIP) {
+        return;
+    }
+
+    // Unknown keys may overwrite anything: every plain local becomes mixed.
+    let plain_locals: Vec<pzoom_code_info::VarName> = context
+        .locals
+        .keys()
+        .filter(|var_id| {
+            var_id.as_ref() != "$this"
+                && !var_id.contains('[')
+                && !var_id.contains('>')
+                && !validated_var_ids.contains(var_id)
+        })
+        .cloned()
+        .collect();
+    for var_id in plain_locals {
+        let parent_nodes = context.locals[&var_id].parent_nodes.clone();
+        let mut mixed_type = TUnion::mixed();
+        mixed_type.parent_nodes = parent_nodes;
+        context.locals.insert(var_id, mixed_type);
+    }
+}
+
+fn analyze_compact_call(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_call: &FunctionCall<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) -> Option<TUnion> {
+    use pzoom_code_info::ArrayKey;
+
+    let mut properties = rustc_hash::FxHashMap::default();
+
+    for arg in func_call.argument_list.arguments.iter() {
+        if arg.is_unpacked() {
+            return None;
+        }
+
+        let Expression::Literal(Literal::String(string_literal)) = arg.value().unparenthesized()
+        else {
+            return None;
+        };
+        let Some(var_name) = string_literal.value else {
+            return None;
+        };
+
+        let var_type = context
+            .locals
+            .get(var_name)
+            .or_else(|| context.locals.get(format!("${}", var_name).as_str()));
+
+        if let Some(var_type) = var_type {
+            properties.insert(ArrayKey::String(var_name.to_string()), var_type.clone());
+        } else {
+            let span = arg.span();
+            let (line, col) = analyzer.get_line_column(span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::UndefinedVariable,
+                format!("Cannot find referenced variable ${}", var_name),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                line,
+                col,
+            ));
+        }
+    }
+
+    if properties.is_empty() {
+        return Some(TUnion::new(TAtomic::TArray {
+            key_type: Box::new(TUnion::string()),
+            value_type: Box::new(TUnion::mixed()),
+        }));
+    }
+
+    Some(TUnion::new(TAtomic::TKeyedArray {
+        properties: std::sync::Arc::new(properties),
+        is_list: false,
+        sealed: true,
+        fallback_key_type: None,
+        fallback_value_type: None,
+    }))
 }

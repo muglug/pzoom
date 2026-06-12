@@ -25,10 +25,19 @@ impl Default for StrId {
 ///
 /// Stores strings and assigns each unique string a `StrId`. The same string
 /// will always receive the same ID.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Interner {
     map: RwLock<FxHashMap<Arc<str>, StrId>>,
     vec: RwLock<Vec<Arc<str>>>,
+}
+
+impl Default for Interner {
+    /// Same as [`Interner::new`]: an interner without `PRELOADED_STRINGS`
+    /// would disagree with the generated `StrId` constants, so an "empty"
+    /// default is never sound.
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Interner {
@@ -101,6 +110,65 @@ impl Clone for Interner {
             map: RwLock::new(map.clone()),
             vec: RwLock::new(vec.clone()),
         }
+    }
+}
+
+/// Port of Hakana's `ThreadedInterner`: a per-thread interning handle that
+/// caches resolved ids locally and delegates unseen strings to the shared
+/// parent interner. Ids come from the parent, so every thread's symbols are
+/// "merged" by construction - the local map only exists to keep repeat
+/// interning off the parent's lock.
+///
+/// (Hakana wraps `Arc<Mutex<Interner>>`; pzoom's `Interner` is already
+/// `Sync` via `RwLock`, so the parent is a plain `Arc<Interner>`. The local
+/// cache uses a `RefCell` so `intern` can take `&self` like
+/// `Interner::intern` - the type is deliberately `!Sync`, one per thread.)
+#[derive(Debug)]
+pub struct ThreadedInterner {
+    map: std::cell::RefCell<FxHashMap<Arc<str>, StrId>>,
+    parent: Arc<Interner>,
+}
+
+impl ThreadedInterner {
+    pub fn new(parent: Arc<Interner>) -> Self {
+        ThreadedInterner {
+            map: std::cell::RefCell::new(FxHashMap::default()),
+            parent,
+        }
+    }
+
+    /// Intern a string, returning its globally unique ID.
+    pub fn intern(&self, s: &str) -> StrId {
+        if let Some(&id) = self.map.borrow().get(s) {
+            return id;
+        }
+
+        let id = self.parent.intern(s);
+        // Cache the parent's Arc so the string is stored once.
+        self.map.borrow_mut().insert(self.parent.lookup(id), id);
+        id
+    }
+
+    /// Look up a string by its ID.
+    pub fn lookup(&self, id: StrId) -> Arc<str> {
+        self.parent.lookup(id)
+    }
+
+    /// Look up a string's ID if it is already interned anywhere.
+    pub fn find(&self, s: &str) -> Option<StrId> {
+        if let Some(&id) = self.map.borrow().get(s) {
+            return Some(id);
+        }
+        self.parent.find(s)
+    }
+
+    pub fn parent(&self) -> Arc<Interner> {
+        self.parent.clone()
+    }
+
+    /// Borrow the shared parent interner (for helpers that take `&Interner`).
+    pub fn parent_ref(&self) -> &Interner {
+        &self.parent
     }
 }
 

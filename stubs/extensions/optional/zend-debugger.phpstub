@@ -1,0 +1,43 @@
+<?php
+
+/**
+ * @return mixed
+ */
+function debugger_print()
+{
+}
+
+/**
+ * @return mixed
+ */
+function get_call_stack()
+{
+}
+
+/**
+ * @return mixed
+ */
+function debugger_start_debug()
+{
+}
+
+/**
+ * @return mixed
+ */
+function debugger_connector_pid()
+{
+}
+
+/**
+ * @return mixed
+ */
+function debugger_connect()
+{
+}
+
+/**
+ * @return mixed
+ */
+function debugger_get_server_start_time()
+{
+}

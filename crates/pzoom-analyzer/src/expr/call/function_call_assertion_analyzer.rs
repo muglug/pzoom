@@ -12,6 +12,7 @@ use mago_syntax::ast::ast::call::FunctionCall;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::algebra::{get_truths_from_formula, simplify_cnf};
+use pzoom_code_info::VarName;
 use pzoom_code_info::functionlike_info::AssertionType;
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
@@ -26,20 +27,21 @@ use crate::reconciler::assertion_reconciler;
 use crate::statements_analyzer::StatementsAnalyzer;
 
 use super::function_call_analyzer;
-use crate::template::TemplateMap;
+use pzoom_code_info::TemplateResult;
 
 pub(crate) fn apply_post_call_assertions(
     analyzer: &StatementsAnalyzer<'_>,
     func_call: &FunctionCall<'_>,
     func_info: &pzoom_code_info::FunctionLikeInfo,
     context: &mut BlockContext,
-    template_defaults: &TemplateMap,
-    template_replacements: &TemplateMap,
+    template_result: &TemplateResult,
     analysis_data: &mut FunctionAnalysisData,
 ) {
     if func_info.assertions.is_empty() {
         return;
     }
+
+    let mut type_assertions: BTreeMap<VarName, Vec<Vec<Assertion>>> = BTreeMap::new();
 
     for assertion in &func_info.assertions {
         let Some(param_idx) =
@@ -59,8 +61,7 @@ pub(crate) fn apply_post_call_assertions(
         };
         let resolved_assertion_type = replace_assertion_type_templates(
             &assertion.assertion_type,
-            template_replacements,
-            template_defaults,
+            template_result,
         );
 
         emit_undefined_docblock_class_issues_from_assertion_type(
@@ -90,65 +91,259 @@ pub(crate) fn apply_post_call_assertions(
             continue;
         };
 
-        let var_id = analyzer.interner.intern(&var_key);
-        let existing_type = context
-            .locals
-            .get(&var_id)
-            .cloned()
-            .unwrap_or_else(TUnion::mixed);
-        if let AssertionType::IsType(asserted_type) = &resolved_assertion_type {
-            if !existing_type.is_nothing()
-                && assertion_reconciler::intersect_union_with_union(&existing_type, asserted_type)
-                    .is_none()
-            {
-                let (line, col) = analyzer.get_line_column(argument.span().start.offset);
-                analysis_data.add_issue(Issue::new(
-                    IssueKind::TypeDoesNotContainType,
-                    format!(
-                        "{} does not contain {}",
-                        existing_type.get_id(Some(analyzer.interner)),
-                        asserted_type.get_id(Some(analyzer.interner))
-                    ),
-                    analyzer.file_path,
-                    argument.span().start.offset,
-                    argument.span().end.offset,
-                    line,
-                    col,
-                ));
+        let var_id = VarName::new(&var_key);
+
+        // Mirror Psalm's CallAnalyzer::applyAssertionsToContext. Each atomic
+        // of the assertion's docblock union is a rule (Psalm stores a rule
+        // array); template replacement happens per rule. A rule that stays a
+        // single atomic becomes a reconciler rule; a rule whose template
+        // expanded to a union gets intersect/containment special-casing (with
+        // TypeDoesNotContainType on impossibility); template-expanded
+        // negations are ignored.
+        let mut orred_rules: Vec<Assertion> = Vec::new();
+        match assertion_type_union(&assertion.assertion_type) {
+            // Truthy/Falsy/NotNull-style assertions carry no atomic type.
+            None => {
+                orred_rules =
+                    assertion_finder::convert_functionlike_assertion_type(&resolved_assertion_type);
+            }
+            Some(original_union) => {
+                for original_atomic in &original_union.types {
+                    let replaced = function_call_analyzer::replace_templates_in_union(
+                        &TUnion::new(original_atomic.clone()),
+                        template_result,
+                    );
+
+                    if replaced.types.len() == 1 {
+                        // An unresolved template (replacement produced the
+                        // param's own `as` bound) asserts nothing.
+                        if let TAtomic::TTemplateParam { as_type, .. } = original_atomic
+                            && as_type.get_id(Some(analyzer.interner))
+                                == replaced.get_id(Some(analyzer.interner))
+                        {
+                            continue;
+                        }
+                        let atomic = replaced.types.into_iter().next().unwrap();
+                        orred_rules.push(make_assertion_rule(&assertion.assertion_type, atomic));
+                        continue;
+                    }
+
+                    // Template-expanded union rule.
+                    let Some(existing_type) = context.locals.get(&var_id).cloned() else {
+                        continue;
+                    };
+                    match &assertion.assertion_type {
+                        AssertionType::IsEqual(_) => {
+                            match assertion_reconciler::intersect_union_with_union(
+                                &replaced,
+                                &existing_type,
+                            ) {
+                                None => {
+                                    emit_assertion_type_does_not_contain_type(
+                                        analyzer,
+                                        analysis_data,
+                                        &existing_type,
+                                        &replaced,
+                                        argument.span().start.offset,
+                                        argument.span().end.offset,
+                                    );
+                                    orred_rules.push(Assertion::IsEqual(TAtomic::TNothing));
+                                }
+                                Some(intersection)
+                                    if intersection.get_id(Some(analyzer.interner))
+                                        == existing_type.get_id(Some(analyzer.interner)) => {}
+                                Some(intersection) => {
+                                    orred_rules.extend(
+                                        intersection.types.iter().cloned().map(Assertion::IsEqual),
+                                    );
+                                }
+                            }
+                        }
+                        AssertionType::IsType(_) => {
+                            if !crate::type_comparator::union_type_comparator::can_expression_types_be_identical(
+                                analyzer.codebase,
+                                &replaced,
+                                &existing_type,
+                            ) {
+                                emit_assertion_type_does_not_contain_type(
+                                    analyzer,
+                                    analysis_data,
+                                    &existing_type,
+                                    &replaced,
+                                    argument.span().start.offset,
+                                    argument.span().end.offset,
+                                );
+                            }
+                        }
+                        // Ignore negations and loose assertions expanded to unions.
+                        _ => {}
+                    }
+                }
             }
         }
 
-        let narrowed_type =
-            apply_functionlike_assertion_to_union(&existing_type, &resolved_assertion_type);
-        context.locals.insert(var_id, narrowed_type);
+        if !orred_rules.is_empty() {
+            type_assertions
+                .entry(var_id)
+                .or_default()
+                .push(orred_rules);
+        }
+    }
+
+    // Reconcile all collected assertions at once with everything active, so
+    // the reconciler reports RedundantCondition / TypeDoesNotContainType
+    // exactly as Psalm's Reconciler::reconcileKeyedTypes does here.
+    if !type_assertions.is_empty() {
+        // Asserting an INTERFACE stays silent in Psalm's docblock-assert
+        // application (`@psalm-assert Throwable $p` on null reports
+        // nothing); scalar asserts report as usual.
+        let group_is_interface_assert = |groups: &Vec<Vec<Assertion>>, offset: usize| {
+            groups.get(offset).is_some_and(|group| {
+                group.iter().all(|assertion| {
+                    matches!(
+                        assertion,
+                        Assertion::IsType(TAtomic::TNamedObject { name, .. })
+                            if analyzer.codebase.get_class(*name).is_some_and(|class_info| {
+                                class_info.kind
+                                    == pzoom_code_info::class_like_info::ClassLikeKind::Interface
+                            })
+                    )
+                })
+            })
+        };
+        let active_offsets: BTreeMap<VarName, FxHashSet<usize>> = type_assertions
+            .iter()
+            .map(|(var_id, groups)| {
+                (
+                    var_id.clone(),
+                    (0..groups.len())
+                        .filter(|offset| !group_is_interface_assert(groups, *offset))
+                        .collect(),
+                )
+            })
+            .collect();
+        let mut changed_var_ids = FxHashSet::default();
+        let inside_loop = context.inside_loop;
+        // Psalm's applyAssertionsToContext retracts a MixedAssignment
+        // reported at a variable's first assignment when an assertion
+        // narrows it from a mixed-bearing type.
+        let pre_mixed_vars: FxHashSet<VarName> = type_assertions
+            .keys()
+            .filter(|var_id| {
+                context
+                    .locals
+                    .get(*var_id)
+                    .is_some_and(|var_type| var_type.has_mixed())
+            })
+            .cloned()
+            .collect();
+        reconciler::reconcile_keyed_types(
+            &type_assertions,
+            context,
+            &mut changed_var_ids,
+            analyzer,
+            analysis_data,
+            inside_loop,
+            false,
+            crate::reconciler::EmissionMode::All,
+            Some(&active_offsets),
+        );
+
+        for var_id in &changed_var_ids {
+            if pre_mixed_vars.contains(var_id)
+                && context.locals.contains_key(var_id)
+                && let Some(first_appearance) = analysis_data.first_var_appearances.get(var_id).copied()
+            {
+                analysis_data.remove_issue(IssueKind::MixedAssignment, first_appearance);
+            }
+        }
+
+        // Docblock-assertion narrowings count as docblock-sourced types, so
+        // later redundancies report the *GivenDocblockType kinds (and operand
+        // checks stay quiet) exactly as before.
+        for var_id in type_assertions.keys() {
+            if let Some(narrowed) = context.locals.get_mut(var_id) {
+                narrowed.from_docblock = true;
+            }
+        }
     }
 }
 
-pub(crate) fn replace_assertion_type_templates(
+/// Map an assertion kind plus a (template-replaced) atomic to a reconciler rule.
+fn make_assertion_rule(assertion_type: &AssertionType, atomic: TAtomic) -> Assertion {
+    match assertion_type {
+        AssertionType::IsType(_) => Assertion::IsType(atomic),
+        AssertionType::IsEqual(_) | AssertionType::IsLooselyEqual(_) => Assertion::IsEqual(atomic),
+        AssertionType::IsNotType(_) => Assertion::IsNotType(atomic),
+        AssertionType::IsNotEqual(_) | AssertionType::IsNotLooselyEqual(_) => {
+            Assertion::IsNotEqual(atomic)
+        }
+        AssertionType::Truthy | AssertionType::NotEmpty => Assertion::Truthy,
+        AssertionType::Falsy => Assertion::Falsy,
+        AssertionType::NotNull => Assertion::IsNotType(TAtomic::TNull),
+    }
+}
+
+/// The union carried by an assertion type, if any.
+fn assertion_type_union(assertion_type: &AssertionType) -> Option<&TUnion> {
+    match assertion_type {
+        AssertionType::IsType(union)
+        | AssertionType::IsEqual(union)
+        | AssertionType::IsLooselyEqual(union)
+        | AssertionType::IsNotType(union)
+        | AssertionType::IsNotEqual(union)
+        | AssertionType::IsNotLooselyEqual(union) => Some(union),
+        _ => None,
+    }
+}
+
+fn emit_assertion_type_does_not_contain_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    existing_type: &TUnion,
+    asserted_type: &TUnion,
+    start_offset: u32,
+    end_offset: u32,
+) {
+    let (line, col) = analyzer.get_line_column(start_offset);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::TypeDoesNotContainType,
+        format!(
+            "{} is not contained by {}",
+            existing_type.get_id(Some(analyzer.interner)),
+            asserted_type.get_id(Some(analyzer.interner))
+        ),
+        analyzer.file_path,
+        start_offset,
+        end_offset,
+        line,
+        col,
+    ));
+}
+
+fn replace_assertion_type_templates(
     assertion_type: &AssertionType,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> AssertionType {
     match assertion_type {
         AssertionType::IsType(asserted_type) => AssertionType::IsType(function_call_analyzer::replace_templates_in_union(
             asserted_type,
-            template_replacements,
-            template_defaults,
+            template_result,
         )),
         AssertionType::IsEqual(asserted_type) => AssertionType::IsEqual(
-            function_call_analyzer::replace_templates_in_union(asserted_type, template_replacements, template_defaults),
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
         AssertionType::IsLooselyEqual(asserted_type) => AssertionType::IsLooselyEqual(
-            function_call_analyzer::replace_templates_in_union(asserted_type, template_replacements, template_defaults),
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
         AssertionType::IsNotType(asserted_type) => AssertionType::IsNotType(
-            function_call_analyzer::replace_templates_in_union(asserted_type, template_replacements, template_defaults),
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
         AssertionType::IsNotEqual(asserted_type) => AssertionType::IsNotEqual(
-            function_call_analyzer::replace_templates_in_union(asserted_type, template_replacements, template_defaults),
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
         AssertionType::IsNotLooselyEqual(asserted_type) => AssertionType::IsNotLooselyEqual(
-            function_call_analyzer::replace_templates_in_union(asserted_type, template_replacements, template_defaults),
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
         AssertionType::Truthy => AssertionType::Truthy,
         AssertionType::Falsy => AssertionType::Falsy,
@@ -157,7 +352,7 @@ pub(crate) fn replace_assertion_type_templates(
     }
 }
 
-pub(crate) fn apply_assertion_to_argument_expression(
+fn apply_assertion_to_argument_expression(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     assertion_type: &AssertionType,
@@ -198,27 +393,27 @@ pub(crate) fn apply_assertion_to_argument_expression(
 
     let mut changed_var_ids = FxHashSet::default();
     reconciler::reconcile_keyed_types(
-        &reconciler::to_and_groups(assertion_map),
+        assertion_map,
         context,
         &mut changed_var_ids,
         analyzer,
         analysis_data,
         context.inside_loop,
         false,
-        false,
+        crate::reconciler::EmissionMode::Silent,
         None,
     );
 }
 
-pub(crate) fn is_boolean_true_union(union: &TUnion) -> bool {
+fn is_boolean_true_union(union: &TUnion) -> bool {
     union.is_single() && matches!(union.get_single(), Some(TAtomic::TTrue))
 }
 
-pub(crate) fn is_boolean_false_union(union: &TUnion) -> bool {
+fn is_boolean_false_union(union: &TUnion) -> bool {
     union.is_single() && matches!(union.get_single(), Some(TAtomic::TFalse))
 }
 
-pub(crate) fn emit_undefined_docblock_class_issues_from_assertion_type(
+fn emit_undefined_docblock_class_issues_from_assertion_type(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     assertion_type: &AssertionType,
@@ -349,115 +544,97 @@ pub(crate) fn apply_assert_builtin_assertions(
         return;
     }
 
-    let assertion_result =
-        assertion_finder::get_assertions(analyzer, first_arg.value(), analysis_data);
+    // Port of Psalm's `processAssertFunctionEffects`: build the assert
+    // formula, check it against the context clauses (paradox / "has already
+    // been asserted"), then reconcile the truths of the COMBINED formula with
+    // every truth active, stamping changed vars as docblock-sourced.
+    let assert_conditional_id = (
+        first_arg.value().start_offset() as u32,
+        first_arg.value().end_offset() as u32,
+    );
 
-    // Psalm's `processAssertFunctionEffects` checks the assert formula against
-    // the context clauses before applying it, reporting `RedundantCondition`
-    // ("$x has already been asserted") / `ParadoxicalCondition`.
+    let assert_clauses = crate::formula_generator::get_formula(
+        assert_conditional_id,
+        assert_conditional_id,
+        first_arg.value(),
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
+
     crate::algebra_analyzer::check_for_paradox(
         analyzer,
         &context.clauses,
-        &assertion_result.if_true_clauses,
+        &assert_clauses,
         analysis_data,
-        (
-            first_arg.value().start_offset() as u32,
-            first_arg.value().end_offset() as u32,
-        ),
+        assert_conditional_id,
     );
-
-    let mut prior_truth_var_names: FxHashSet<String> = FxHashSet::default();
-    if !context.clauses.is_empty() {
-        let prior_clause_refs: Vec<_> = context
-            .clauses
-            .iter()
-            .map(|clause| clause.as_ref())
-            .collect();
-        let prior_simplified_clauses = simplify_cnf(prior_clause_refs);
-        let mut prior_cond_referenced_var_ids = FxHashSet::default();
-        let (prior_truths, _) = get_truths_from_formula(
-            prior_simplified_clauses.iter().collect(),
-            None,
-            &mut prior_cond_referenced_var_ids,
-        );
-        prior_truth_var_names.extend(prior_truths.into_keys());
-    }
 
     let mut combined_clauses: Vec<_> = context
         .clauses
         .iter()
         .map(|clause| clause.as_ref())
         .collect();
-    combined_clauses.extend(assertion_result.if_true_clauses.iter());
-
+    combined_clauses.extend(assert_clauses.iter());
     let simplified_clauses = simplify_cnf(combined_clauses);
-    let assert_conditional_id = (
-        first_arg.value().start_offset() as u32,
-        first_arg.value().end_offset() as u32,
-    );
 
     let mut cond_referenced_var_ids = FxHashSet::default();
-    let (truths, active_truths) = get_truths_from_formula(
+    let (truths, _active_truths) = get_truths_from_formula(
         simplified_clauses.iter().collect(),
-        Some(assert_conditional_id),
+        None,
         &mut cond_referenced_var_ids,
     );
 
-    let mut flattened_assertions = assertion_result.if_true.clone();
-    let mut flattened_active_assertion_offsets: BTreeMap<String, FxHashSet<usize>> =
-        BTreeMap::new();
-
-    for (var_name, assertion_lists) in truths {
-        let entry = flattened_assertions.entry(var_name.clone()).or_default();
-
-        for (assertion_list_index, assertion_list) in assertion_lists.into_iter().enumerate() {
-            let is_active = active_truths
-                .get(&var_name)
-                .is_some_and(|offsets| offsets.contains(&assertion_list_index));
-
-            for assertion in assertion_list {
-                let is_truthiness_assertion =
-                    matches!(&assertion, Assertion::Truthy | Assertion::Falsy);
-                let next_offset = entry.len();
-                entry.push(assertion);
-
-                if is_active {
-                    if !is_truthiness_assertion {
-                        continue;
-                    }
-
-                    if !prior_truth_var_names.contains(&var_name) {
-                        continue;
-                    }
-
-                    let should_skip_truthiness_assertion = is_truthiness_assertion
-                        && resolve_assertion_var_id(analyzer, &var_name)
-                            .is_some_and(|var_id| context.is_possibly_assigned(var_id));
-
-                    if !should_skip_truthiness_assertion {
-                        flattened_active_assertion_offsets
-                            .entry(var_name.clone())
-                            .or_default()
-                            .insert(next_offset);
-                    }
-                }
-            }
-        }
-    }
-
     let mut changed_var_ids = FxHashSet::default();
-    if !flattened_assertions.is_empty() {
+    if !truths.is_empty() {
+        // Psalm reconciles every truth as active with the assert's location.
+        // Re-flagging at subsequent asserts is prevented one level down:
+        // redundant reconciles count as changed ($failed_reconciliation), so
+        // their clauses are removed from the context below.
+        let active_offsets: BTreeMap<VarName, FxHashSet<usize>> = truths
+            .iter()
+            .map(|(var_id, groups)| (var_id.clone(), (0..groups.len()).collect()))
+            .collect();
+        // Psalm's processAssertFunctionEffects retracts a MixedAssignment
+        // reported at a variable's first assignment when the assert narrows
+        // it from a mixed-bearing type (IssueBuffer::remove keyed on the
+        // first appearance).
+        let pre_mixed_vars: FxHashSet<VarName> = truths
+            .keys()
+            .filter(|var_id| {
+                context
+                    .locals
+                    .get(*var_id)
+                    .is_some_and(|var_type| var_type.has_mixed())
+            })
+            .cloned()
+            .collect();
         reconciler::reconcile_keyed_types(
-            &reconciler::to_and_groups(&flattened_assertions),
+            &truths,
             context,
             &mut changed_var_ids,
             analyzer,
             analysis_data,
             context.inside_loop,
             false,
-            true,
-            Some(&flattened_active_assertion_offsets),
+            crate::reconciler::EmissionMode::All,
+            Some(&active_offsets),
         );
+
+        // Psalm stamps every changed var as docblock-sourced after an assert.
+        for var_id in &changed_var_ids {
+            if let Some(narrowed) = context.locals.get_mut(var_id) {
+                narrowed.from_docblock = true;
+                narrowed.sync_docblock_bits_from_union_flag();
+            }
+            if pre_mixed_vars.contains(var_id)
+                && context.locals.contains_key(var_id)
+                && let Some(first_appearance) = analysis_data.first_var_appearances.get(var_id).copied()
+            {
+                analysis_data.remove_issue(IssueKind::MixedAssignment, first_appearance);
+            }
+        }
     }
 
     let simplified_clauses: Vec<_> = simplified_clauses
@@ -467,23 +644,11 @@ pub(crate) fn apply_assert_builtin_assertions(
     context.clauses = if !changed_var_ids.is_empty() {
         BlockContext::remove_reconciled_clause_refs(
             &simplified_clauses,
-            &changed_var_ids,
-            analyzer.interner,
-        )
+            &changed_var_ids)
         .0
     } else {
         simplified_clauses
     };
-}
-
-pub(crate) fn resolve_assertion_var_id(analyzer: &StatementsAnalyzer<'_>, var_name: &str) -> Option<StrId> {
-    analyzer.interner.find(var_name).or_else(|| {
-        if let Some(stripped) = var_name.strip_prefix('$') {
-            analyzer.interner.find(stripped)
-        } else {
-            analyzer.interner.find(&format!("${}", var_name))
-        }
-    })
 }
 
 pub(crate) fn find_assertion_param_index(
@@ -539,43 +704,7 @@ pub(crate) fn map_assertion_var_to_argument(
     None
 }
 
-pub(crate) fn apply_functionlike_assertion_to_union(
-    existing_type: &TUnion,
-    assertion_type: &AssertionType,
-) -> TUnion {
-    let mut narrowed = match assertion_type {
-        AssertionType::IsType(asserted_type) => {
-            assertion_reconciler::intersect_union_with_union(existing_type, asserted_type)
-                .unwrap_or_else(|| asserted_type.clone())
-        }
-        AssertionType::IsEqual(asserted_type) => {
-            assertion_reconciler::intersect_union_with_union(existing_type, asserted_type)
-                .unwrap_or_else(|| asserted_type.clone())
-        }
-        AssertionType::IsLooselyEqual(_) => existing_type.clone(),
-        AssertionType::IsNotType(asserted_type) => subtract_union(existing_type, asserted_type),
-        AssertionType::IsNotEqual(asserted_type) => subtract_union(existing_type, asserted_type),
-        AssertionType::IsNotLooselyEqual(_) => existing_type.clone(),
-        AssertionType::Truthy | AssertionType::NotEmpty => narrow_union_to_truthy(existing_type),
-        AssertionType::Falsy => narrow_union_to_falsy(existing_type),
-        AssertionType::NotNull => subtract_union(existing_type, &TUnion::new(TAtomic::TNull)),
-    };
-
-    if matches!(
-        assertion_type,
-        AssertionType::Truthy | AssertionType::NotEmpty
-    ) {
-        narrowed.is_falsable = false;
-        narrowed.is_nullable = false;
-    } else if matches!(assertion_type, AssertionType::NotNull) {
-        narrowed.is_nullable = false;
-    }
-
-    narrowed.from_docblock = true;
-    narrowed
-}
-
-pub(crate) fn get_docblock_class_reference(name: StrId, analyzer: &StatementsAnalyzer<'_>) -> StrId {
+fn get_docblock_class_reference(name: StrId, analyzer: &StatementsAnalyzer<'_>) -> StrId {
     let raw_name = analyzer.interner.lookup(name);
     let trimmed_name = raw_name.trim();
     let class_name = trimmed_name
@@ -597,7 +726,7 @@ pub(crate) fn get_docblock_class_reference(name: StrId, analyzer: &StatementsAna
         .intern(class_name.trim_start_matches('\\'))
 }
 
-pub(crate) fn looks_like_docblock_class_reference(raw_name: &str) -> bool {
+fn looks_like_docblock_class_reference(raw_name: &str) -> bool {
     let trimmed_name = raw_name.trim();
     if trimmed_name.is_empty() {
         return false;
@@ -639,47 +768,3 @@ pub(crate) fn narrow_union_to_truthy(existing_type: &TUnion) -> TUnion {
     }
 }
 
-pub(crate) fn narrow_union_to_falsy(existing_type: &TUnion) -> TUnion {
-    let mut filtered = Vec::new();
-
-    for atomic in &existing_type.types {
-        match atomic {
-            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing => filtered.push(atomic.clone()),
-            TAtomic::TBool => filtered.push(TAtomic::TFalse),
-            TAtomic::TLiteralInt { value } if *value == 0 => filtered.push(atomic.clone()),
-            TAtomic::TLiteralFloat { value } if *value == 0.0 => filtered.push(atomic.clone()),
-            TAtomic::TLiteralString { value } if value.is_empty() || value == "0" => {
-                filtered.push(atomic.clone());
-            }
-            TAtomic::TString
-            | TAtomic::TNonEmptyString
-            | TAtomic::TLowercaseString
-            | TAtomic::TNonEmptyLowercaseString
-            | TAtomic::TTruthyString
-            | TAtomic::TNumericString
-            | TAtomic::TNonEmptyNumericString => filtered.push(atomic.clone()),
-            _ => {}
-        }
-    }
-
-    if filtered.is_empty() {
-        existing_type.clone()
-    } else {
-        TUnion::from_types(filtered)
-    }
-}
-
-pub(crate) fn subtract_union(existing_type: &TUnion, type_to_remove: &TUnion) -> TUnion {
-    let filtered_types: Vec<_> = existing_type
-        .types
-        .iter()
-        .filter(|atomic| !type_to_remove.types.contains(atomic))
-        .cloned()
-        .collect();
-
-    if filtered_types.is_empty() {
-        existing_type.clone()
-    } else {
-        TUnion::from_types(filtered_types)
-    }
-}

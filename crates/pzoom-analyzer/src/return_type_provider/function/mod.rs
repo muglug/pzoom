@@ -8,6 +8,11 @@ mod array_combine;
 mod array_column;
 mod array_fill;
 mod array_merge;
+mod array_reverse;
+mod array_splice;
+mod call_user_func;
+mod parse_url;
+mod trigger_error;
 mod array_filter;
 mod array_key_first_last;
 mod array_keys;
@@ -22,6 +27,10 @@ mod iterator_to_array;
 mod microtime;
 mod preg_replace;
 mod preg_split;
+mod array_rand;
+mod filter_var;
+mod get_object_vars;
+mod min_max;
 mod rand;
 mod range;
 mod simple;
@@ -67,19 +76,20 @@ fn providers() -> &'static [&'static (dyn FunctionReturnTypeProvider + 'static)]
         &type_check::TypeCheckReturnTypeProvider,
         &is_a::IsAReturnTypeProvider,
         &sprintf::SprintfReturnTypeProvider,
+        &get_object_vars::GetObjectVarsReturnTypeProvider,
         &simple::Utf8EncodeReturnTypeProvider,
         &simple::TmpfileReturnTypeProvider,
         &simple::FopenReturnTypeProvider,
-        &simple::GetoptReturnTypeProvider,
-        &simple::FilterInputReturnTypeProvider,
         &simple::FilterInputArrayReturnTypeProvider,
-        &simple::ExplodeReturnTypeProvider,
         &str_replace::StrReplaceReturnTypeProvider,
         &preg_replace::PregReplaceReturnTypeProvider,
         &preg_split::PregSplitReturnTypeProvider,
         &array_keys::ArrayKeysReturnTypeProvider,
         &array_values::ArrayValuesReturnTypeProvider,
         &array_key_first_last::ArrayKeyFirstLastReturnTypeProvider,
+        &array_rand::ArrayRandReturnTypeProvider,
+        &filter_var::FilterVarReturnTypeProvider,
+        &min_max::MinMaxReturnTypeProvider,
         &rand::RandReturnTypeProvider,
         &range::RangeReturnTypeProvider,
         &iterator_to_array::IteratorToArrayReturnTypeProvider,
@@ -90,6 +100,11 @@ fn providers() -> &'static [&'static (dyn FunctionReturnTypeProvider + 'static)]
         &var_export::VarExportReturnTypeProvider,
         &array_combine::ArrayCombineReturnTypeProvider,
         &array_merge::ArrayMergeReturnTypeProvider,
+        &array_reverse::ArrayReverseReturnTypeProvider,
+        &array_splice::ArraySpliceReturnTypeProvider,
+        &call_user_func::CallUserFuncReturnTypeProvider,
+        &parse_url::ParseUrlReturnTypeProvider,
+        &trigger_error::TriggerErrorReturnTypeProvider,
         &microtime::MicrotimeReturnTypeProvider,
         &hrtime::HrtimeReturnTypeProvider,
         &array_pointer::ArrayPointerReturnTypeProvider,

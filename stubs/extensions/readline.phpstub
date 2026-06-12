@@ -1,5 +1,9 @@
 <?php
 
+/**
+ * @param null|string $prompt
+ * @return false|string
+ */
 function readline(null|string $prompt): string|false
 {
 }
@@ -54,18 +58,30 @@ function readline_callback_handler_install(string $prompt, callable $callback): 
 {
 }
 
+/**
+ * @return void
+ */
 function readline_callback_read_char(): void
 {
 }
 
+/**
+ * @return bool
+ */
 function readline_callback_handler_remove(): bool
 {
 }
 
+/**
+ * @return void
+ */
 function readline_redisplay(): void
 {
 }
 
+/**
+ * @return void
+ */
 function readline_on_new_line(): void
 {
 }

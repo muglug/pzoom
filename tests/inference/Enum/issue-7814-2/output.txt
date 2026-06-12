@@ -1,1 +1,2 @@
-InvalidArgument
+InvalidArgument - input.php:30:7 - Argument 1 of withA expects WithState<State::A>, but WithState<State::C> provided
+InvalidTemplateParam - input.php:25:16 - Type State::A is not within the bound State of template param T of WithState

@@ -31,13 +31,6 @@ pub(crate) fn arith_op(operator: &BinaryOperator) -> Option<ArithOp> {
     }
 }
 
-fn is_literal_number(atomic: &TAtomic) -> bool {
-    matches!(
-        atomic,
-        TAtomic::TLiteralInt { .. } | TAtomic::TLiteralFloat { .. }
-    )
-}
-
 fn int_range_of(atomic: &TAtomic) -> Option<(Option<i64>, Option<i64>)> {
     match atomic {
         TAtomic::TInt => Some((None, None)),
@@ -96,11 +89,25 @@ fn r_literal((min, max): (Option<i64>, Option<i64>)) -> Option<i64> {
     }
 }
 
+/// An int range union that never collapses to a literal (loop widening).
+fn int_range_widened(min: Option<i64>, max: Option<i64>) -> TUnion {
+    if min.is_none() && max.is_none() {
+        TUnion::int_from_calculation()
+    } else {
+        TUnion::new(TAtomic::TIntRange { min, max })
+    }
+}
+
 /// Build a `TUnion` for an int range, collapsing a fully-open range to plain
 /// `int` (from calculation), mirroring how Psalm renders `int<min, max>`.
 fn int_range_union(min: Option<i64>, max: Option<i64>) -> TUnion {
     if min.is_none() && max.is_none() {
         TUnion::int_from_calculation()
+    } else if let (Some(min_value), Some(max_value)) = (min, max)
+        && min_value == max_value
+    {
+        // A fully-determined result is Psalm's calculation-derived literal.
+        literal_from_calculation(min_value)
     } else {
         TUnion::new(TAtomic::TIntRange { min, max })
     }
@@ -311,28 +318,40 @@ fn pow_range_result(
 /// Int-range propagation is applied for `+`, `-`, `*`, `%` and `**`, mirroring
 /// Psalm's `ArithmeticOpAnalyzer` (`analyzeOperandsBetweenIntRange` and its
 /// `analyzeMul/Mod/PowBetweenIntRange` helpers). `/` is left to the generic
-/// `int|float` inference. Pure literal+literal folding is intentionally skipped:
-/// although Psalm folds `5 + 3` to `8`, doing so here makes downstream constant
-/// comparisons (`5 + 3 === 8`) evaluate to a literal `true`, which pzoom's
-/// RedundantCondition check then flags even though Psalm does not — a net
-/// fidelity loss until that check is aligned. Returns `None` to fall back to the
-/// generic per-operator inference.
+/// `int|float` inference. Literal+literal operands fold to a literal flagged
+/// `from_calculation` (Psalm's `Type::getInt(true, N)`); the comparison checks
+/// skip calculation-derived operands, so `5 + 3 === 8` stays silent like Psalm.
+/// Returns `None` to fall back to the generic per-operator inference.
 pub(crate) fn infer_precise_arithmetic_result(
     op: ArithOp,
     left: Option<&TUnion>,
     right: Option<&TUnion>,
+    inside_loop: bool,
 ) -> Option<TUnion> {
     let (left, right) = (left?, right?);
     let (left_atomic, right_atomic) = (left.get_single()?, right.get_single()?);
 
-    // Skip pure literal+literal operands (see doc comment).
-    if is_literal_number(left_atomic) && is_literal_number(right_atomic) {
-        return None;
-    }
-
     let (Some(lr), Some(rr)) = (int_range_of(left_atomic), int_range_of(right_atomic)) else {
         return None;
     };
+
+    // Inside a loop, literal +/- literal widens to a half-open range (Psalm's
+    // ArithmeticOpAnalyzer: a loop-carried `$a = $a + 1` must not stay a
+    // literal across iterations).
+    if inside_loop
+        && matches!(left_atomic, TAtomic::TLiteralInt { .. })
+        && matches!(right_atomic, TAtomic::TLiteralInt { .. })
+    {
+        match op {
+            ArithOp::Add => {
+                return Some(int_range_widened(add_opt(lr.0, rr.0), None));
+            }
+            ArithOp::Sub => {
+                return Some(int_range_widened(None, sub_opt(lr.1, rr.0)));
+            }
+            _ => {}
+        }
+    }
 
     match op {
         ArithOp::Add | ArithOp::Sub => Some(add_sub_range_result(op, lr, rr)),
@@ -368,6 +387,19 @@ fn union_has_float(union: &TUnion) -> bool {
 /// forces a `float` result. Mirrors Psalm's ArithmeticOpAnalyzer division
 /// handling.
 pub(crate) fn infer_division_type(left: Option<&TUnion>, right: Option<&TUnion>) -> TUnion {
+    // Psalm divides int literals exactly: an even division stays a literal
+    // int (`67108864 / 1024 / 1024` is 64), otherwise the result is float.
+    if let (Some(lt), Some(rt)) = (left, right)
+        && let Some(TAtomic::TLiteralInt { value: lhs }) = lt.get_single()
+        && let Some(TAtomic::TLiteralInt { value: rhs }) = rt.get_single()
+        && *rhs != 0
+    {
+        return if lhs % rhs == 0 {
+            TUnion::new(TAtomic::TLiteralInt { value: lhs / rhs })
+        } else {
+            TUnion::float()
+        };
+    }
     match (left, right) {
         (Some(lt), Some(rt)) if union_has_float(lt) || union_has_float(rt) => TUnion::float(),
         _ => TUnion::from_types(vec![TAtomic::TInt, TAtomic::TFloat]),

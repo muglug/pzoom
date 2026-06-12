@@ -1,8 +1,9 @@
 //! Call expression analyzers.
 
 pub mod argument_analyzer;
+pub(crate) mod impure_functions_list;
+pub mod array_function_arguments_analyzer;
 pub mod arguments_analyzer;
-pub mod array_multisort_analyzer;
 pub mod atomic_method_call_analyzer;
 pub mod class_template_param_collector;
 pub mod method_call_prohibition_analyzer;

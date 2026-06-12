@@ -37,7 +37,7 @@ pub(crate) fn analyze(
     // Psalm's `$method_pure_compatible`: calling an externally-mutation-free
     // class's method on a reference-free receiver can't mutate external state,
     // so it's allowed even though the method itself isn't mutation-free.
-    if class_info.is_external_mutation_free && receiver_is_pure_compatible {
+    if method_info.is_external_mutation_free && receiver_is_pure_compatible {
         return;
     }
 
@@ -60,9 +60,9 @@ pub(crate) fn analyze(
 
 pub(crate) fn method_is_mutation_free(
     method_info: &pzoom_code_info::FunctionLikeInfo,
-    class_info: &pzoom_code_info::ClassLikeInfo,
+    _class_info: &pzoom_code_info::ClassLikeInfo,
 ) -> bool {
-    method_info.is_pure
-        || method_info.is_mutation_free
-        || (class_info.is_immutable && !method_info.is_static)
+    // Class-level @psalm-immutable already propagated onto eligible methods
+    // in the populator, so the method flags are authoritative here.
+    method_info.is_pure || method_info.is_mutation_free
 }

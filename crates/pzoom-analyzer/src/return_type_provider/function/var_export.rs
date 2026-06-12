@@ -29,7 +29,7 @@ fn infer_var_export_return_type(
         return Some(TUnion::void());
     };
 
-    let return_flag_type = analysis_data.get_expr_type(return_flag_pos)?;
+    let return_flag_type = analysis_data.expr_types.get(&return_flag_pos).cloned()?;
     match fca::get_literal_bool_from_union(&return_flag_type) {
         Some(true) => Some(TUnion::string()),
         Some(false) => Some(TUnion::void()),

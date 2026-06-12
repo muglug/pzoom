@@ -8,9 +8,13 @@
 pub mod analyzer;
 pub mod ast_differ;
 pub mod cache;
+pub mod callmap;
+pub mod extensions;
 pub mod populator;
 pub mod scanner;
 
 pub use analyzer::Analyzer;
-pub use populator::Populator;
+pub use callmap::apply_call_map;
+pub use extensions::resolve_enabled_extensions;
+pub use populator::{Populator, register_global_defined_constants};
 pub use scanner::{ScanResult, Scanner};

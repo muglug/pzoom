@@ -86,16 +86,14 @@ pub(crate) fn analyze(
             analysis_data,
             inside_loop,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             None,
         );
 
         if !changed_var_ids.is_empty() {
             else_context.clauses = BlockContext::remove_reconciled_clause_refs(
                 &else_context.clauses,
-                &changed_var_ids,
-                analyzer.interner,
-            )
+                &changed_var_ids)
             .0;
             // Psalm additionally drops possible references onto array/property
             // offsets of the changed vars; pzoom's reference model is coarser and
@@ -114,6 +112,12 @@ pub(crate) fn analyze(
         analyze_stmts(analyzer, else_stmts, analysis_data, else_context)?;
     }
 
+    // Propagate branch-local clause evictions to the outer context (Psalm's
+    // `parent_remove_vars` loop in ElseAnalyzer).
+    for var_name in else_context.parent_remove_vars.clone() {
+        outer_context.remove_var_name_from_conflicting_clauses(&var_name);
+    }
+
     // new_assigned_var_ids = vars assigned by the else body; restore the
     // pre-existing assignment counts underneath them (Psalm's `+=`).
     let new_assigned_var_ids = else_context.assigned_var_ids.clone();
@@ -125,16 +129,24 @@ pub(crate) fn analyze(
         .possibly_assigned_var_ids
         .extend(pre_possibly_assigned_var_ids);
 
-    // Carry by-ref constraints discovered in the else into the outer context so a
-    // later conflicting binding is still caught (Psalm's byref_constraints merge;
-    // pzoom does not emit ConflictingReferenceConstraint here).
-    for (var_id, constraints) in &else_context.reference_constraints {
-        let entry = outer_context.reference_constraints.entry(*var_id).or_default();
-        for constraint in constraints {
-            if !entry.contains(constraint) {
-                entry.push(constraint.clone());
-            }
-        }
+    // Carry by-ref constraints discovered in the else into the outer context,
+    // reporting conflicts (Psalm's byref_constraints merge).
+    {
+        let else_pos = else_stmts
+            .and_then(|stmts| stmts.first())
+            .map(|stmt| {
+                let span = mago_span::HasSpan::span(stmt);
+                (span.start.offset, span.end.offset)
+            })
+            .unwrap_or((0, 0));
+        let branch_constraints = else_context.clone();
+        crate::stmt::if_else_analyzer::carry_reference_constraints_to_outer(
+            analyzer,
+            analysis_data,
+            outer_context,
+            &branch_constraints,
+            else_pos,
+        );
     }
 
     let final_actions = match else_stmts {
@@ -165,6 +177,7 @@ pub(crate) fn analyze(
             if_scope,
             else_context,
             &original_context,
+            &old_else_context.locals,
             &new_assigned_var_ids,
             &new_possibly_assigned_var_ids,
             &if_cond_changed_var_ids,
@@ -176,8 +189,19 @@ pub(crate) fn analyze(
 
     // Propagate the else branch's narrowing of the (negated) condition variables
     // back into the outer context — Psalm's `$outer_context->update(...)`.
+    // Psalm 6 never assigns `negatable_if_types` (the ElseAnalyzer update is
+    // dead code there); pzoom reuses the field for IfAnalyzer's vars_to_update,
+    // so restrict this propagation to variables the outer context already
+    // tracks — `old_else_context` contains keys freshly created by the negated
+    // reconcile (e.g. `$a->b->c` from clause resolution) that must not be
+    // invented in the outer scope.
     if !if_scope.negatable_if_types.is_empty() {
-        let negatable = if_scope.negatable_if_types.clone();
+        let negatable: FxHashSet<_> = if_scope
+            .negatable_if_types
+            .iter()
+            .filter(|var_id| outer_context.locals.contains_key(*var_id))
+            .cloned()
+            .collect();
         let mut updated_vars = std::mem::take(&mut if_scope.updated_vars);
         outer_context.update(
             &old_else_context,
@@ -193,7 +217,7 @@ pub(crate) fn analyze(
         let vars_possibly_in_scope: FxHashSet<_> = else_context
             .vars_possibly_in_scope
             .difference(&outer_context.vars_possibly_in_scope)
-            .copied()
+            .cloned()
             .collect();
 
         if has_leaving_statements {
@@ -204,7 +228,7 @@ pub(crate) fn analyze(
                     if !has_continue_statement && !has_break_statement {
                         if_scope
                             .new_vars_possibly_in_scope
-                            .extend(vars_possibly_in_scope.iter().copied());
+                            .extend(vars_possibly_in_scope.iter().cloned());
                     }
                     loop_scope
                         .vars_possibly_in_scope

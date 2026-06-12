@@ -12,29 +12,63 @@
 //! are processed before descendants.
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
-use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
+use pzoom_code_info::codebase_info::ConstantInfo;
+use pzoom_code_info::{CodebaseInfo, GlobalDefineValue, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use indexmap::IndexMap;
 
+/// Register every scanned `define()` as a global constant — Psalm's
+/// `addGlobalConstantType` under `allConstantsGlobal`. Runs after populate so
+/// a deferred call value can borrow the callee's declared return type (the
+/// stand-in for the runtime value Psalm-on-itself reads via
+/// `get_defined_constants()`).
+pub fn register_global_defined_constants(codebase: &mut CodebaseInfo) {
+    let defines = std::mem::take(&mut codebase.global_defines);
+    for define in &defines {
+        if codebase.constants.contains_key(&define.name) {
+            continue;
+        }
+        let constant_type = match &define.value {
+            GlobalDefineValue::Resolved(value_type) => value_type.clone(),
+            GlobalDefineValue::FunctionReturn(func_id) => codebase
+                .functionlike_infos
+                .get(func_id)
+                .and_then(|func_info| {
+                    func_info
+                        .return_type
+                        .clone()
+                        .or_else(|| func_info.signature_return_type.clone())
+                })
+                .unwrap_or_else(TUnion::mixed),
+            GlobalDefineValue::MethodReturn(class_id, method_id) => codebase
+                .get_class(*class_id)
+                .and_then(|class_info| class_info.methods.get(method_id))
+                .and_then(|method_info| {
+                    method_info
+                        .return_type
+                        .clone()
+                        .or_else(|| method_info.signature_return_type.clone())
+                })
+                .unwrap_or_else(TUnion::mixed),
+        };
+        codebase.constants.insert(
+            define.name,
+            ConstantInfo {
+                name: define.name,
+                constant_type,
+                file_path: define.file_path,
+                start_offset: define.start_offset,
+                unresolved_initializer: None,
+            },
+        );
+    }
+    codebase.global_defines = defines;
+}
+
 /// Main entry point for the population phase.
 /// Follows hakana's `populate_codebase` function.
 pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
-    // Rebuild case-insensitive classlike lookup used by type comparators.
-    codebase.classlike_name_lookup = codebase
-        .classlike_infos
-        .keys()
-        .map(|classlike_id| {
-            (
-                interner
-                    .lookup(*classlike_id)
-                    .trim_start_matches('\\')
-                    .to_ascii_lowercase(),
-                *classlike_id,
-            )
-        })
-        .collect();
-
     // First, reset population state for classlikes that need repopulation
     let classlike_names: Vec<_> = codebase
         .classlike_infos
@@ -42,6 +76,47 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         .filter(|(_, storage)| !storage.is_populated)
         .map(|(k, _)| *k)
         .collect();
+
+    // Case-insensitive classlike lookup used by type comparators: full build
+    // on the first populate, incremental extension afterwards (a re-populate
+    // only adds the newly scanned symbols — symbols are append-only in-run).
+    if codebase.classlike_name_lookup.is_empty() {
+        codebase.classlike_name_lookup = codebase
+            .classlike_infos
+            .keys()
+            .map(|classlike_id| {
+                (
+                    interner
+                        .lookup(*classlike_id)
+                        .trim_start_matches('\\')
+                        .to_ascii_lowercase(),
+                    *classlike_id,
+                )
+            })
+            .collect();
+    } else {
+        for classlike_id in &classlike_names {
+            codebase.classlike_name_lookup.insert(
+                interner
+                    .lookup(*classlike_id)
+                    .trim_start_matches('\\')
+                    .to_ascii_lowercase(),
+                *classlike_id,
+            );
+        }
+    }
+
+    // Same for top-level functions (rebuilt cheaply each populate: the map is
+    // small and functions are append-only in-run).
+    for function_id in codebase.functionlike_infos.keys() {
+        codebase.functionlike_name_lookup.insert(
+            interner
+                .lookup(*function_id)
+                .trim_start_matches('\\')
+                .to_ascii_lowercase(),
+            *function_id,
+        );
+    }
 
     for name in &classlike_names {
         if let Some(info) = codebase.classlike_infos.get_mut(name) {
@@ -53,22 +128,92 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         }
     }
 
+    // Populate declared property types BEFORE inheritance flattening: the
+    // flattening Arc-shares PropertyInfo into descendants, so the shared
+    // storage must already be fully resolved (populate_union_type is
+    // codebase-independent, so this is order-safe). At this point the Arcs
+    // are freshly scanned (unshared) and make_mut mutates in place.
+    for name in &classlike_names {
+        if let Some(storage) = codebase.classlike_infos.get_mut(name) {
+            for prop_info in storage.properties.values_mut() {
+                let prop_info = std::sync::Arc::make_mut(prop_info);
+                if let Some(ref mut prop_type) = prop_info.property_type {
+                    populate_union_type(prop_type);
+                }
+                if let Some(ref mut sig_type) = prop_info.signature_type {
+                    populate_union_type(sig_type);
+                }
+            }
+        }
+    }
+
     // Populate all classlikes (recursive to handle inheritance order)
     for name in &classlike_names {
         populate_classlike_storage(name, codebase);
     }
 
-    // Populate types in properties
-    for (_, storage) in codebase.classlike_infos.iter_mut() {
-        for (_, prop_info) in storage.properties.iter_mut() {
-            if let Some(ref mut prop_type) = prop_info.property_type {
-                populate_union_type(prop_type);
-            }
-            if let Some(ref mut sig_type) = prop_info.signature_type {
-                populate_union_type(sig_type);
-            }
+    // String property-name lookup for interner-less contexts (object-shape
+    // containment checks resolve `object{foo: ...}` keys against class
+    // properties). Built after inheritance flattening so inherited
+    // properties are included.
+    for classlike_id in &classlike_names {
+        if let Some(storage) = codebase.classlike_infos.get_mut(classlike_id) {
+            let lookup: rustc_hash::FxHashMap<String, pzoom_str::StrId> = storage
+                .properties
+                .keys()
+                .map(|property_id| (interner.lookup(*property_id).to_string(), *property_id))
+                .collect();
+            storage.property_name_lookup = lookup;
         }
+    }
 
+    // Lowercase -> correctly-cased name maps used for casing hints in
+    // Undefined* diagnostics. Incremental like the lookup above: only newly
+    // scanned classlikes/functions contribute on re-populates.
+    for classlike_id in &classlike_names {
+        let name = interner.lookup(*classlike_id);
+        let lc = name.to_ascii_lowercase();
+        if lc != *name {
+            codebase
+                .classlike_lc_names
+                .insert(interner.intern(&lc), *classlike_id);
+        }
+    }
+    let unpopulated_functions: Vec<_> = codebase
+        .functionlike_infos
+        .iter()
+        .filter(|(_, info)| !info.is_populated)
+        .map(|(k, _)| *k)
+        .collect();
+    for function_id in &unpopulated_functions {
+        let name = interner.lookup(*function_id);
+        let lc = name.to_ascii_lowercase();
+        if lc != *name {
+            codebase
+                .functionlike_lc_names
+                .insert(interner.intern(&lc), *function_id);
+        }
+    }
+    for classlike_id in &classlike_names {
+        let Some(storage) = codebase.classlike_infos.get_mut(classlike_id) else {
+            continue;
+        };
+        storage.method_lc_names = storage
+            .methods
+            .keys()
+            .filter_map(|method_id| {
+                let name = interner.lookup(*method_id);
+                let lc = name.to_ascii_lowercase();
+                (lc != *name).then(|| (interner.intern(&lc), *method_id))
+            })
+            .collect();
+    }
+
+    // (Declared property types were populated before inheritance, above.)
+    for name in &classlike_names {
+        let Some(storage) = codebase.classlike_infos.get_mut(name) else {
+            continue;
+        };
         for prop_type in storage.pseudo_property_get_types.values_mut() {
             populate_union_type(prop_type);
         }
@@ -100,8 +245,13 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
         }
     }
 
-    // Populate function/method types
-    for (_, func_info) in codebase.functionlike_infos.iter_mut() {
+    // Populate function/method types (skip already-populated symbols)
+    for (_, func_info) in codebase
+        .functionlike_infos
+        .iter_mut()
+        .filter(|(_, info)| !info.is_populated)
+    {
+        func_info.is_populated = true;
         if let Some(ref mut return_type) = func_info.return_type {
             populate_union_type(return_type);
         }
@@ -122,7 +272,10 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
     }
 
     // Populate pseudo method signatures
-    for (_, storage) in codebase.classlike_infos.iter_mut() {
+    for name in &classlike_names {
+        let Some(storage) = codebase.classlike_infos.get_mut(name) else {
+            continue;
+        };
         for (_, method_info) in storage.pseudo_methods.iter_mut() {
             if let Some(ref mut return_type) = method_info.return_type {
                 populate_union_type(return_type);
@@ -214,7 +367,504 @@ pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
     codebase.all_classlike_descendants = all_classlike_descendants;
     codebase.direct_classlike_descendants = direct_classlike_descendants;
 
-    let _ = interner; // Will be used for filtering HH\\ types in Hack mode
+    // Psalm's ConstantTypeResolver: now that every class is known, evaluate
+    // constant initializers whose cross-class references were deferred at
+    // scan time (UnresolvedConstantComponent).
+    resolve_unresolved_class_constants(codebase, interner);
+}
+
+/// Resolve every class constant carrying an `unresolved_initializer`.
+fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &Interner) {
+    use pzoom_code_info::class_constant_info::{ConstResolutionFailure, UnresolvedConstExpr};
+
+    let pending: Vec<(StrId, StrId)> = codebase
+        .classlike_infos
+        .iter()
+        .flat_map(|(class_id, info)| {
+            info.constants
+                .iter()
+                .filter(|(_, const_info)| const_info.unresolved_initializer.is_some())
+                .map(move |(const_id, _)| (*class_id, *const_id))
+        })
+        .collect();
+
+    let mut resolved: Vec<(StrId, StrId, TUnion, bool, Vec<ConstResolutionFailure>)> =
+        Vec::with_capacity(pending.len());
+    for (class_id, const_id) in &pending {
+        let mut visiting = FxHashSet::default();
+        visiting.insert((*class_id, *const_id));
+        let mut hit_cycle = false;
+        let mut failures = Vec::new();
+        let Some(initializer) = codebase
+            .get_class(*class_id)
+            .and_then(|info| info.constants.get(const_id))
+            .and_then(|const_info| const_info.unresolved_initializer.as_ref())
+        else {
+            continue;
+        };
+        let constant_type = resolve_const_expr(
+            initializer,
+            codebase,
+            interner,
+            &mut visiting,
+            &mut hit_cycle,
+            &mut failures,
+        );
+        resolved.push((*class_id, *const_id, constant_type, hit_cycle, failures));
+    }
+
+    let mut enums_needing_value_rebuild: FxHashSet<StrId> = FxHashSet::default();
+    for (class_id, const_id, constant_type, hit_cycle, failures) in resolved {
+        if let Some(const_info) = codebase
+            .get_class_mut(class_id)
+            .and_then(|info| info.constants.get_mut(&const_id))
+        {
+            if const_info.enum_case_value.is_some() {
+                // An enum case's deferred initializer is its backed VALUE;
+                // the constant type stays the case itself.
+                const_info.enum_case_value = Some(constant_type);
+                const_info.circular = hit_cycle;
+                const_info.resolution_failures = failures;
+                const_info.unresolved_initializer = None;
+                enums_needing_value_rebuild.insert(class_id);
+                continue;
+            }
+            const_info.constant_type = constant_type.clone();
+            if const_info.declared_type.is_none() && !hit_cycle {
+                const_info.declared_type = Some(constant_type);
+            }
+            const_info.circular = hit_cycle;
+            const_info.resolution_failures = failures;
+            const_info.unresolved_initializer = None;
+        }
+    }
+
+    // The `$value` property union was built at scan time with `mixed`
+    // placeholders for deferred case values; rebuild it from the resolved
+    // values.
+    for class_id in enums_needing_value_rebuild {
+        let Some(class_info) = codebase.get_class(class_id) else {
+            continue;
+        };
+        let value_atomics: Vec<TAtomic> = class_info
+            .constants
+            .values()
+            .filter_map(|const_info| const_info.enum_case_value.as_ref())
+            .map(|case_value| {
+                case_value
+                    .get_single()
+                    .cloned()
+                    .unwrap_or(TAtomic::TMixed)
+            })
+            .collect();
+        if value_atomics.is_empty() {
+            continue;
+        }
+        if let Some(class_info) = codebase.get_class_mut(class_id)
+            && let Some(value_property) = class_info.properties.get_mut(&StrId::VALUE)
+        {
+            let mut updated = (**value_property).clone();
+            updated.property_type = Some(TUnion::from_types(value_atomics));
+            *value_property = std::sync::Arc::new(updated);
+        }
+    }
+
+    // GLOBAL constants with deferred initializers
+    // (`const classId = Module::id;`) resolve through the same machinery.
+    let pending_globals: Vec<StrId> = codebase
+        .constants
+        .iter()
+        .filter(|(_, const_info)| const_info.unresolved_initializer.is_some())
+        .map(|(const_id, _)| *const_id)
+        .collect();
+    let mut resolved_globals: Vec<(StrId, TUnion)> = Vec::with_capacity(pending_globals.len());
+    for const_id in &pending_globals {
+        let Some(initializer) = codebase
+            .constants
+            .get(const_id)
+            .and_then(|const_info| const_info.unresolved_initializer.as_ref())
+        else {
+            continue;
+        };
+        let mut visiting = FxHashSet::default();
+        let mut hit_cycle = false;
+        let mut failures = Vec::new();
+        let constant_type = resolve_const_expr(
+            initializer,
+            codebase,
+            interner,
+            &mut visiting,
+            &mut hit_cycle,
+            &mut failures,
+        );
+        resolved_globals.push((*const_id, constant_type));
+    }
+    for (const_id, constant_type) in resolved_globals {
+        if let Some(const_info) = codebase.constants.get_mut(&const_id) {
+            const_info.constant_type = constant_type;
+            const_info.unresolved_initializer = None;
+        }
+    }
+
+    fn resolve_const_expr(
+        expr: &UnresolvedConstExpr,
+        codebase: &CodebaseInfo,
+        interner: &Interner,
+        visiting: &mut FxHashSet<(StrId, StrId)>,
+        hit_cycle: &mut bool,
+        failures: &mut Vec<ConstResolutionFailure>,
+    ) -> TUnion {
+        use pzoom_code_info::t_atomic::ArrayKey;
+        match expr {
+            UnresolvedConstExpr::Resolved(resolved) => resolved.clone(),
+            UnresolvedConstExpr::ClassConstant { class, constant } => {
+                lookup_constant_type(codebase, interner, *class, *constant, visiting, hit_cycle, failures)
+            }
+            UnresolvedConstExpr::EnumCasePropertyFetch {
+                class,
+                case,
+                fetch_name,
+            } => {
+                if *fetch_name {
+                    TUnion::new(TAtomic::string_from_literal(
+                        interner.lookup(*case).to_string(),
+                        pzoom_code_info::t_atomic::DEFAULT_MAX_STRING_LENGTH,
+                    ))
+                } else {
+                    lookup_enum_case_value(
+                        codebase, interner, *class, *case, visiting, hit_cycle, failures,
+                    )
+                }
+            }
+            UnresolvedConstExpr::ArrayLiteral(entries) => {
+                // Mirrors the scan-time inferer's shape assembly.
+                let mut properties = FxHashMap::default();
+                let mut next_int_key = 0i64;
+                let mut is_list = true;
+                for entry in entries {
+                    let value_type = resolve_const_expr(&entry.value, codebase, interner, visiting, hit_cycle, failures);
+                    if entry.is_spread {
+                        // Spreading an empty array contributes nothing.
+                        if matches!(
+                            value_type.get_single(),
+                            Some(TAtomic::TArray { value_type, .. }) if value_type.is_nothing()
+                        ) {
+                            continue;
+                        }
+                        // Inline the spread array's entries (string keys kept,
+                        // int keys renumbered), like PHP's constant evaluation.
+                        let Some(TAtomic::TKeyedArray {
+                            properties: spread_properties,
+                            ..
+                        }) = value_type.get_single()
+                        else {
+                            return TUnion::mixed();
+                        };
+                        let mut spread_entries: Vec<_> = spread_properties
+                            .iter()
+                            .map(|(key, value)| (key.clone(), value.clone()))
+                            .collect();
+                        spread_entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                        for (key, value) in spread_entries {
+                            match key {
+                                ArrayKey::Int(_) => {
+                                    properties.insert(ArrayKey::Int(next_int_key), value);
+                                    next_int_key += 1;
+                                }
+                                ArrayKey::String(_) => {
+                                    is_list = false;
+                                    properties.insert(key, value);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                    match &entry.key {
+                        Some(key_expr) => {
+                            let key_type =
+                                resolve_const_expr(key_expr, codebase, interner, visiting, hit_cycle, failures);
+                            let Some(key) = const_union_to_array_key(&key_type) else {
+                                return TUnion::mixed();
+                            };
+                            if !matches!(key, ArrayKey::Int(value) if value == next_int_key) {
+                                is_list = false;
+                            }
+                            if let ArrayKey::Int(value) = key {
+                                next_int_key = value + 1;
+                                properties.insert(ArrayKey::Int(value), value_type);
+                            } else {
+                                properties.insert(key, value_type);
+                            }
+                        }
+                        None => {
+                            properties.insert(ArrayKey::Int(next_int_key), value_type);
+                            next_int_key += 1;
+                        }
+                    }
+                }
+                if properties.is_empty() {
+                    return TUnion::new(TAtomic::TArray {
+                        key_type: Box::new(TUnion::nothing()),
+                        value_type: Box::new(TUnion::nothing()),
+                    });
+                }
+                TUnion::new(TAtomic::TKeyedArray {
+                    properties: std::sync::Arc::new(properties),
+                    is_list,
+                    sealed: true,
+                    fallback_key_type: None,
+                    fallback_value_type: None,
+                })
+            }
+            UnresolvedConstExpr::Concat(lhs, rhs) => {
+                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                let literal_piece = |union: &TUnion| -> Option<String> {
+                    match union.get_single()? {
+                        TAtomic::TLiteralString { value } => Some(value.clone()),
+                        TAtomic::TLiteralClassString { name } => Some(name.clone()),
+                        _ => None,
+                    }
+                };
+                if let (Some(lhs_value), Some(rhs_value)) =
+                    (literal_piece(&lhs_type), literal_piece(&rhs_type))
+                {
+                    TUnion::new(TAtomic::string_from_literal(
+                        format!("{lhs_value}{rhs_value}"),
+                        pzoom_code_info::t_atomic::DEFAULT_MAX_STRING_LENGTH,
+                    ))
+                } else {
+                    TUnion::string()
+                }
+            }
+            UnresolvedConstExpr::ArrayAccess { array, key } => {
+                let array_type = resolve_const_expr(array, codebase, interner, visiting, hit_cycle, failures);
+                let key_type = resolve_const_expr(key, codebase, interner, visiting, hit_cycle, failures);
+                let (Some(TAtomic::TKeyedArray { properties, .. }), Some(key)) =
+                    (array_type.get_single(), const_union_to_array_key(&key_type))
+                else {
+                    return TUnion::mixed();
+                };
+                properties
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_else(TUnion::mixed)
+            }
+            UnresolvedConstExpr::Plus(lhs, rhs) => {
+                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                match (lhs_type.get_single(), rhs_type.get_single()) {
+                    // PHP's `+` on arrays keeps the left operand's keys.
+                    (
+                        Some(TAtomic::TKeyedArray {
+                            properties: lhs_properties,
+                            is_list: lhs_is_list,
+                            sealed,
+                            fallback_key_type,
+                            fallback_value_type,
+                        }),
+                        Some(TAtomic::TKeyedArray {
+                            properties: rhs_properties,
+                            is_list: rhs_is_list,
+                            ..
+                        }),
+                    ) => {
+                        let mut properties = (**lhs_properties).clone();
+                        for (key, value) in rhs_properties.iter() {
+                            properties.entry(key.clone()).or_insert_with(|| value.clone());
+                        }
+                        TUnion::new(TAtomic::TKeyedArray {
+                            properties: std::sync::Arc::new(properties),
+                            is_list: *lhs_is_list && *rhs_is_list,
+                            sealed: *sealed,
+                            fallback_key_type: fallback_key_type.clone(),
+                            fallback_value_type: fallback_value_type.clone(),
+                        })
+                    }
+                    (Some(TAtomic::TLiteralInt { value: lhs_value }),
+                     Some(TAtomic::TLiteralInt { value: rhs_value })) => {
+                        match lhs_value.checked_add(*rhs_value) {
+                            Some(sum) => TUnion::new(TAtomic::TLiteralInt { value: sum }),
+                            None => TUnion::mixed(),
+                        }
+                    }
+                    _ => TUnion::mixed(),
+                }
+            }
+            UnresolvedConstExpr::GlobalConstant(constant_id) => match codebase
+                .constants
+                .get(constant_id)
+            {
+                Some(constant) => constant.constant_type.clone(),
+                None => {
+                    failures.push(ConstResolutionFailure::MissingGlobalConstant(*constant_id));
+                    TUnion::mixed()
+                }
+            },
+            UnresolvedConstExpr::IntOp { op, lhs, rhs } => {
+                use pzoom_code_info::class_constant_info::UnresolvedIntOp;
+                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                if let (
+                    Some(TAtomic::TLiteralInt { value: lhs_value }),
+                    Some(TAtomic::TLiteralInt { value: rhs_value }),
+                ) = (lhs_type.get_single(), rhs_type.get_single())
+                {
+                    let computed = match op {
+                        UnresolvedIntOp::Sub => lhs_value.checked_sub(*rhs_value),
+                        UnresolvedIntOp::Mul => lhs_value.checked_mul(*rhs_value),
+                        UnresolvedIntOp::Mod => {
+                            if *rhs_value != 0 {
+                                lhs_value.checked_rem(*rhs_value)
+                            } else {
+                                None
+                            }
+                        }
+                        UnresolvedIntOp::BitAnd => Some(lhs_value & rhs_value),
+                        UnresolvedIntOp::BitOr => Some(lhs_value | rhs_value),
+                        UnresolvedIntOp::BitXor => Some(lhs_value ^ rhs_value),
+                        UnresolvedIntOp::Shl => u32::try_from(*rhs_value)
+                            .ok()
+                            .and_then(|shift| lhs_value.checked_shl(shift)),
+                        UnresolvedIntOp::Shr => u32::try_from(*rhs_value)
+                            .ok()
+                            .and_then(|shift| lhs_value.checked_shr(shift)),
+                    };
+                    if let Some(value) = computed {
+                        return TUnion::new(TAtomic::TLiteralInt { value });
+                    }
+                }
+                TUnion::int()
+            }
+        }
+    }
+
+    fn lookup_constant_type(
+        codebase: &CodebaseInfo,
+        interner: &Interner,
+        class_id: StrId,
+        const_id: StrId,
+        visiting: &mut FxHashSet<(StrId, StrId)>,
+        hit_cycle: &mut bool,
+        failures: &mut Vec<ConstResolutionFailure>,
+    ) -> TUnion {
+        // The collect-time FQCN may differ in casing from the declared name.
+        let class_info = codebase.get_class(class_id).or_else(|| {
+            codebase
+                .classlike_name_lookup
+                .get(
+                    &interner
+                        .lookup(class_id)
+                        .trim_start_matches('\\')
+                        .to_ascii_lowercase(),
+                )
+                .and_then(|resolved_id| codebase.get_class(*resolved_id))
+        });
+        let Some(class_info) = class_info else {
+            failures.push(ConstResolutionFailure::MissingClass(class_id));
+            return TUnion::mixed();
+        };
+
+        // Constants are inherited; walk the declaring class then ancestors.
+        let const_info = class_info.constants.get(&const_id).or_else(|| {
+            class_info
+                .all_parent_classes
+                .iter()
+                .chain(class_info.interfaces.iter())
+                .find_map(|ancestor_id| {
+                    codebase
+                        .get_class(*ancestor_id)
+                        .and_then(|ancestor| ancestor.constants.get(&const_id))
+                })
+        });
+        let Some(const_info) = const_info else {
+            failures.push(ConstResolutionFailure::MissingClassConstant(
+                class_info.name,
+                const_id,
+            ));
+            return TUnion::mixed();
+        };
+
+        // An enum case's pending initializer is its backed VALUE; the
+        // constant itself is the case (`Bar::BAR` stays `enum(Bar::BAR)`).
+        if let Some(initializer) = &const_info.unresolved_initializer
+            && const_info.enum_case_value.is_none()
+        {
+            if !visiting.insert((class_info.name, const_id)) {
+                // Initializer cycle — Psalm throws CircularReferenceException.
+                *hit_cycle = true;
+                return TUnion::mixed();
+            }
+            return resolve_const_expr(initializer, codebase, interner, visiting, hit_cycle, failures);
+        }
+
+        const_info.constant_type.clone()
+    }
+
+    /// The backed value of `class::case`, resolving a pending case-value
+    /// initializer in place (Psalm's ConstantTypeResolver EnumValueFetch).
+    fn lookup_enum_case_value(
+        codebase: &CodebaseInfo,
+        interner: &Interner,
+        class_id: StrId,
+        case_id: StrId,
+        visiting: &mut FxHashSet<(StrId, StrId)>,
+        hit_cycle: &mut bool,
+        failures: &mut Vec<ConstResolutionFailure>,
+    ) -> TUnion {
+        let class_info = codebase.get_class(class_id).or_else(|| {
+            codebase
+                .classlike_name_lookup
+                .get(
+                    &interner
+                        .lookup(class_id)
+                        .trim_start_matches('\\')
+                        .to_ascii_lowercase(),
+                )
+                .and_then(|resolved_id| codebase.get_class(*resolved_id))
+        });
+        let Some(class_info) = class_info else {
+            failures.push(ConstResolutionFailure::MissingClass(class_id));
+            return TUnion::mixed();
+        };
+        let Some(const_info) = class_info.constants.get(&case_id) else {
+            failures.push(ConstResolutionFailure::MissingClassConstant(
+                class_info.name,
+                case_id,
+            ));
+            return TUnion::mixed();
+        };
+
+        if let Some(initializer) = &const_info.unresolved_initializer {
+            if !visiting.insert((class_info.name, case_id)) {
+                *hit_cycle = true;
+                return TUnion::mixed();
+            }
+            return resolve_const_expr(initializer, codebase, interner, visiting, hit_cycle, failures);
+        }
+
+        const_info
+            .enum_case_value
+            .clone()
+            .unwrap_or_else(TUnion::mixed)
+    }
+
+    fn const_union_to_array_key(
+        union: &TUnion,
+    ) -> Option<pzoom_code_info::t_atomic::ArrayKey> {
+        use pzoom_code_info::t_atomic::ArrayKey;
+        match union.get_single()? {
+            TAtomic::TLiteralInt { value } => Some(ArrayKey::Int(*value)),
+            TAtomic::TLiteralString { value } => value
+                .parse::<i64>()
+                .ok()
+                .map(ArrayKey::Int)
+                .or_else(|| Some(ArrayKey::String(value.clone()))),
+            TAtomic::TLiteralClassString { name } => Some(ArrayKey::String(name.clone())),
+            TAtomic::TNull => Some(ArrayKey::String(String::new())),
+            _ => None,
+        }
+    }
 }
 
 /// Recursively populate a classlike, ensuring all ancestors are populated first.
@@ -280,6 +930,44 @@ fn populate_classlike_storage(classlike_name: &StrId, codebase: &mut CodebaseInf
         }
     }
 
+    // Psalm's documenting-method inheritance (Populator's
+    // documenting_method_ids + Methods::getMethodReturnType): a method
+    // redeclared without docblock types inherits an overridden method's
+    // docblock return type when it is more specific than the redeclared
+    // signature.
+    inherit_documenting_return_types(&mut storage, codebase);
+
+    // Class-level `@psalm-taint-specialize` (Psalm Populator): every
+    // non-static method's taints are tracked per call site.
+    if storage.specialize_instance {
+        for method_info in storage.methods.values_mut() {
+            if !method_info.is_static {
+                std::sync::Arc::make_mut(method_info).taints.specialize_call = true;
+            }
+        }
+    }
+
+    // Class-level @psalm-immutable / @psalm-external-mutation-free propagate
+    // to non-static methods that don't carry their own
+    // @psalm-external-mutation-free (Psalm Populator) — a method tagged
+    // external-mutation-free in an immutable class keeps mutation_free false,
+    // so its discarded calls aren't UnusedMethodCall.
+    if storage.is_immutable || storage.is_external_mutation_free {
+        for method_info in storage.methods.values_mut() {
+            if !method_info.is_static && !method_info.is_external_mutation_free {
+                let method_info = std::sync::Arc::make_mut(method_info);
+                method_info.is_mutation_free = storage.is_immutable;
+                method_info.is_external_mutation_free = storage.is_external_mutation_free;
+                // Class-declared immutability is not an inference: the
+                // methods memoize like any declared-@psalm-mutation-free
+                // method (Psalm's MethodCallPurityAnalyzer memoizable path).
+                if storage.is_immutable {
+                    method_info.mutation_free_inferred = false;
+                }
+            }
+        }
+    }
+
     // Shrink collections to fit
     storage.all_parent_interfaces.shrink_to_fit();
     storage.all_parent_classes.shrink_to_fit();
@@ -290,6 +978,237 @@ fn populate_classlike_storage(classlike_name: &StrId, codebase: &mut CodebaseInf
 
     storage.is_populated = true;
     codebase.classlike_infos.insert(*classlike_name, storage);
+}
+
+/// Port of Psalm's docblock inheritance for methods: when a method overrides
+/// an ancestor method, declares no docblock types of its own, and the
+/// ancestor's docblock return type is *more specific* than the redeclared
+/// signature, the ancestor's docblock return type becomes the method's
+/// effective return type (Psalm resolves this lazily in
+/// `Methods::getMethodReturnType` via `documenting_method_ids`; pzoom
+/// resolves it here, once, into the stored method).
+///
+/// Types mentioning `self`/`static`/`parent` or template params are skipped —
+/// they need call-site context that a populate-time copy cannot supply.
+fn inherit_documenting_return_types(storage: &mut ClassLikeInfo, codebase: &CodebaseInfo) {
+    use pzoom_analyzer::type_comparator::union_type_comparator;
+
+    let method_names: Vec<StrId> = storage.overridden_method_ids.keys().copied().collect();
+
+    for method_name in method_names {
+        if storage.declaring_method_ids.get(&method_name) != Some(&storage.name) {
+            continue;
+        }
+        let Some(child) = storage.methods.get(&method_name) else {
+            continue;
+        };
+        if child.return_type.is_some()
+            || child
+                .params
+                .iter()
+                .any(|param| param.param_type.is_some())
+        {
+            continue;
+        }
+        let candidate = child.signature_return_type.clone();
+
+        let mut overridden_classes: Vec<StrId> = storage.overridden_method_ids[&method_name]
+            .iter()
+            .copied()
+            .collect();
+        overridden_classes.sort_by_key(|class_id| class_id.0);
+
+        // Conflicting docblocks between unrelated ancestors cancel the
+        // inheritance (Psalm's documenting-method conflict rule unsets the
+        // documenting id when two interfaces disagree).
+        let mut distinct_overridden_ids: Vec<String> = Vec::new();
+        for overridden_class in &overridden_classes {
+            if let Some(parent_storage) = codebase.classlike_infos.get(overridden_class)
+                && let Some(parent_method) = parent_storage.methods.get(&method_name)
+                && let Some(overridden_return) = parent_method.return_type.as_ref()
+            {
+                let id = overridden_return.get_id(None);
+                if !distinct_overridden_ids.contains(&id) {
+                    distinct_overridden_ids.push(id);
+                }
+            }
+        }
+        if distinct_overridden_ids.len() > 1 {
+            continue;
+        }
+
+        // Psalm's Populator marks the method as documenting-inherited whenever
+        // any ancestor declares docblock types and the child declares none —
+        // even when the type itself cannot be copied (e.g. it mentions
+        // templates). The flag suppresses docblock return comparisons against
+        // other ancestors in MethodComparator.
+        let ancestor_documents = overridden_classes.iter().any(|overridden_class| {
+            codebase
+                .classlike_infos
+                .get(overridden_class)
+                .and_then(|parent_storage| parent_storage.methods.get(&method_name))
+                .is_some_and(|parent_method| {
+                    parent_method.return_type.is_some()
+                        || parent_method
+                            .params
+                            .iter()
+                            .any(|param| param.param_type.is_some())
+                })
+        });
+
+        let mut inherited: Option<TUnion> = None;
+        for overridden_class in overridden_classes {
+            let Some(parent_storage) = codebase.classlike_infos.get(&overridden_class) else {
+                continue;
+            };
+            let Some(parent_method) = parent_storage.methods.get(&method_name) else {
+                continue;
+            };
+            let Some(overridden_return) = parent_method.return_type.as_ref() else {
+                continue;
+            };
+            // A `static::CONST` return resolved against the ancestor: the
+            // inheritor's own constant may differ, so the copied value would
+            // be wrong (Psalm resolves these late).
+            if parent_method.return_type_mentions_static_const {
+                continue;
+            }
+            // Templates defined by the ancestor resolve through this class's
+            // extended params (Psalm substitutes them at analysis time via
+            // ClassTemplateParamCollector; pzoom resolves the concrete
+            // @template-extends/@template-implements args here at populate
+            // time). Types still needing analysis context after substitution
+            // (self/static/unresolved templates) cannot be copied.
+            let overridden_return =
+                pzoom_analyzer::stmt::class_analyzer::replace_extended_templates_in_union(
+                    overridden_return,
+                    &storage.template_extended_params,
+                );
+            if union_needs_analysis_context_for(&overridden_return, Some(storage.name)) {
+                continue;
+            }
+
+            match candidate.as_ref() {
+                None => inherited = Some(overridden_return.clone()),
+                Some(candidate) => {
+                    if candidate.get_id(None) == overridden_return.get_id(None) {
+                        break;
+                    }
+                    let mut result_forward = Default::default();
+                    let overridden_in_candidate = union_type_comparator::is_contained_by(
+                        codebase,
+                        &overridden_return,
+                        candidate,
+                        false,
+                        false,
+                        &mut result_forward,
+                    );
+                    let mut result_backward = Default::default();
+                    let candidate_in_overridden = union_type_comparator::is_contained_by(
+                        codebase,
+                        candidate,
+                        &overridden_return,
+                        false,
+                        false,
+                        &mut result_backward,
+                    );
+                    if overridden_in_candidate && !candidate_in_overridden {
+                        inherited = Some(overridden_return.clone());
+                    }
+                }
+            }
+            if inherited.is_some() {
+                break;
+            }
+        }
+
+        if inherited.is_some() || ancestor_documents {
+            if let Some(method_arc) = storage.methods.get_mut(&method_name) {
+                let method = std::sync::Arc::make_mut(method_arc);
+                if let Some(inherited) = inherited {
+                    method.return_type = Some(inherited);
+                }
+                method.inherited_return_type = true;
+            }
+        }
+    }
+}
+
+/// Like [`union_needs_analysis_context`], but template params defined by
+/// `own_class` itself are usable in that class's copied member types (e.g. an
+/// inherited `@return class-string<T>` substituted to the child's own
+/// template via @template-implements) and don't block the copy.
+fn union_needs_analysis_context_for(union: &TUnion, own_class: Option<StrId>) -> bool {
+    fn atomic_needs_context(atomic: &TAtomic, own_class: Option<StrId>) -> bool {
+        match atomic {
+            TAtomic::TTemplateParam {
+                defining_entity, ..
+            } => own_class.map(pzoom_code_info::GenericParent::ClassLike) != Some(*defining_entity),
+            TAtomic::TTemplateKeyOf { .. } => true,
+            TAtomic::TNamedObject {
+                name,
+                type_params,
+                is_static,
+                ..
+            } => {
+                *is_static
+                    || *name == StrId::SELF
+                    || *name == StrId::STATIC
+                    || *name == StrId::PARENT
+                    || type_params.as_ref().is_some_and(|params| {
+                        params
+                            .iter()
+                            .any(|param| union_needs_analysis_context_for(param, own_class))
+                    })
+            }
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            } => {
+                union_needs_analysis_context_for(key_type, own_class)
+                    || union_needs_analysis_context_for(value_type, own_class)
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                union_needs_analysis_context_for(value_type, own_class)
+            }
+            TAtomic::TKeyedArray {
+                properties,
+                fallback_key_type,
+                fallback_value_type,
+                ..
+            } => {
+                properties
+                    .values()
+                    .any(|value| union_needs_analysis_context_for(value, own_class))
+                    || fallback_key_type
+                        .as_deref()
+                        .is_some_and(|key| union_needs_analysis_context_for(key, own_class))
+                    || fallback_value_type
+                        .as_deref()
+                        .is_some_and(|value| union_needs_analysis_context_for(value, own_class))
+            }
+            TAtomic::TIterable {
+                key_type,
+                value_type,
+            } => {
+                union_needs_analysis_context_for(key_type, own_class)
+                    || union_needs_analysis_context_for(value_type, own_class)
+            }
+            TAtomic::TClassString {
+                as_type: Some(inner),
+            } => atomic_needs_context(inner, own_class),
+            _ => false,
+        }
+    }
+
+    union
+        .types
+        .iter()
+        .any(|atomic| atomic_needs_context(atomic, own_class))
 }
 
 /// Populate data from a used trait.
@@ -310,10 +1229,14 @@ fn populate_data_from_trait(
         }
     };
 
-    // Inherit constants from trait
+    // Inherit constants from trait. Trait members are flattened into the
+    // using class, so the constant's visibility scope becomes the class
+    // (a private trait constant is accessible from the class's own code).
     for (const_name, const_info) in &trait_storage.constants {
         if !storage.constants.contains_key(const_name) {
-            storage.constants.insert(*const_name, const_info.clone());
+            let mut const_info = const_info.clone();
+            const_info.declaring_class = storage.name;
+            storage.constants.insert(*const_name, const_info);
         }
     }
 
@@ -335,6 +1258,21 @@ fn populate_data_from_trait(
     // Inherit methods and properties
     let is_trait = storage.kind == ClassLikeKind::Trait;
     inherit_methods_from_parent(storage, trait_storage, is_trait);
+
+    // Psalm scans trait statements in the using class's context, so an
+    // inferred-mutation-free trait getter in a *final* class gets
+    // mutation_free_inferred = false (firm — memoizable). pzoom scans the
+    // trait standalone; recompute the flag against the using class.
+    if storage.is_final {
+        let trait_method_names: Vec<StrId> = trait_storage.methods.keys().copied().collect();
+        for method_name in trait_method_names {
+            if let Some(method_info) = storage.methods.get_mut(&method_name) {
+                if method_info.mutation_free_inferred {
+                    std::sync::Arc::make_mut(method_info).mutation_free_inferred = false;
+                }
+            }
+        }
+    }
     inherit_properties_from_parent(storage, trait_storage, true); // from_trait = true
     inherit_pseudo_members_from_parent(storage, trait_storage);
     inherit_mixin_metadata_from_parent(storage, trait_storage);
@@ -499,6 +1437,20 @@ fn extend_template_params(
     parent_storage: &ClassLikeInfo,
     from_direct_parent: bool,
 ) {
+    // Inherit the promised yield type (Psalm's Populator::extendTemplateParams
+    // head: `$storage->yield ??= $parent_storage->yield` with the declaring
+    // class recorded for template resolution).
+    if parent_storage.yield_type.is_some() && storage.yield_type.is_none() {
+        storage.yield_type = parent_storage.yield_type.clone();
+        if storage.declaring_yield_class.is_none() {
+            storage.declaring_yield_class = Some(
+                parent_storage
+                    .declaring_yield_class
+                    .unwrap_or(parent_storage.name),
+            );
+        }
+    }
+
     if !parent_storage.template_types.is_empty() {
         storage
             .template_extended_params
@@ -509,11 +1461,18 @@ fn extend_template_params(
             for (i, extended_type) in parent_offsets.iter().enumerate() {
                 if let Some(parent_template) = parent_storage.template_types.get(i) {
                     let mapped_name = parent_template.name;
+                    // Explicit `@template-extends`/`@template-implements` args
+                    // are docblock constructs; stamp them so comparisons treat
+                    // an explicit `mixed` arg leniently while a *defaulted*
+                    // slot (the else branch below, from_docblock cleared per
+                    // Psalm) still reports mixed coercions.
+                    let mut stamped_extended_type = extended_type.clone();
+                    stamped_extended_type.from_docblock = true;
                     storage
                         .template_extended_params
                         .entry(parent_storage.name)
                         .or_default()
-                        .insert(mapped_name, extended_type.clone());
+                        .insert(mapped_name, stamped_extended_type);
 
                     if !parent_template.as_type.is_mixed() {
                         for atomic in &extended_type.types {
@@ -523,7 +1482,9 @@ fn extend_template_params(
                                 ..
                             } = atomic
                             {
-                                if *defining_entity == storage.name {
+                                if *defining_entity
+                                    == pzoom_code_info::GenericParent::ClassLike(storage.name)
+                                {
                                     if let Some(storage_template) = storage
                                         .template_types
                                         .iter_mut()
@@ -601,12 +1562,23 @@ fn extend_type(
             ..
         } = atomic_type
         {
-            if let Some(referenced_type) = template_extended_params
-                .get(defining_entity)
+            if let Some(referenced_type) = defining_entity
+                .classlike_name()
+                .and_then(|entity_class| template_extended_params.get(&entity_class))
                 .and_then(|params| params.get(name))
             {
-                changed = true;
-                extended_types.extend(referenced_type.types.clone());
+                // Psalm's extendType only substitutes non-template referenced
+                // atomics; template references keep the original atomic, so
+                // the extends chain stays linked one level at a time (which
+                // getGenericParamForOffset's recursion depends on).
+                for atomic_referenced_type in &referenced_type.types {
+                    if matches!(atomic_referenced_type, TAtomic::TTemplateParam { .. }) {
+                        extended_types.push(atomic_type.clone());
+                    } else {
+                        changed = true;
+                        extended_types.push(atomic_referenced_type.clone());
+                    }
+                }
                 continue;
             }
         }
@@ -750,6 +1722,25 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
         }
 
         let Some(source_method) = storage.methods.get(&alias.original_name).cloned() else {
+            // `use T { CONST_NAME as public ALIAS; }` adapts a trait CONSTANT
+            // (Psalm resolves these through the same adaptation list).
+            if let Some(source_const) = storage.constants.get(&alias.original_name).cloned() {
+                if alias.alias_name == alias.original_name {
+                    if let Some(visibility) = alias.visibility
+                        && let Some(existing_const) =
+                            storage.constants.get_mut(&alias.original_name)
+                    {
+                        existing_const.visibility = visibility;
+                    }
+                } else if !storage.constants.contains_key(&alias.alias_name) {
+                    let mut aliased_const = source_const;
+                    aliased_const.name = alias.alias_name;
+                    if let Some(visibility) = alias.visibility {
+                        aliased_const.visibility = visibility;
+                    }
+                    storage.constants.insert(alias.alias_name, aliased_const);
+                }
+            }
             continue;
         };
 
@@ -758,7 +1749,7 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
             if let Some(visibility) = alias.visibility
                 && let Some(existing_method) = storage.methods.get_mut(&alias.original_name)
             {
-                existing_method.visibility = visibility;
+                std::sync::Arc::make_mut(existing_method).visibility = visibility;
             }
             continue;
         }
@@ -767,14 +1758,16 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
             continue;
         }
 
-        let mut aliased_method = source_method.clone();
+        let mut aliased_method = (*source_method).clone();
         aliased_method.name = alias.alias_name;
 
         if let Some(visibility) = alias.visibility {
             aliased_method.visibility = visibility;
         }
 
-        storage.methods.insert(alias.alias_name, aliased_method);
+        storage
+            .methods
+            .insert(alias.alias_name, std::sync::Arc::new(aliased_method));
 
         if let Some(declaring_class) = storage
             .declaring_method_ids
@@ -802,7 +1795,20 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
 }
 
 fn inherit_pseudo_members_from_parent(storage: &mut ClassLikeInfo, parent_storage: &ClassLikeInfo) {
+    // Psalm's Populator skips a parent pseudo method when the child declares
+    // its OWN real method with that name (the real override wins); a method
+    // merely inherited from elsewhere does not block the annotation.
+    let has_own_real_method = |storage: &ClassLikeInfo, method_name: &pzoom_str::StrId| {
+        storage
+            .methods
+            .get(method_name)
+            .is_some_and(|method_info| method_info.declaring_class == Some(storage.name))
+    };
+
     for (method_name, method_info) in &parent_storage.pseudo_methods {
+        if has_own_real_method(storage, method_name) {
+            continue;
+        }
         storage
             .pseudo_methods
             .entry(*method_name)
@@ -810,6 +1816,9 @@ fn inherit_pseudo_members_from_parent(storage: &mut ClassLikeInfo, parent_storag
     }
 
     for (method_name, method_info) in &parent_storage.pseudo_static_methods {
+        if has_own_real_method(storage, method_name) {
+            continue;
+        }
         storage
             .pseudo_static_methods
             .entry(*method_name)
@@ -958,13 +1967,23 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
             populate_union_type(value_type);
         }
+        TAtomic::TClassStringMap {
+            as_type,
+            value_param,
+            ..
+        } => {
+            if let Some(inner) = as_type {
+                populate_atomic_type(inner);
+            }
+            populate_union_type(value_param);
+        }
         TAtomic::TKeyedArray {
             properties,
             fallback_key_type,
             fallback_value_type,
             ..
         } => {
-            for prop_type in properties.values_mut() {
+            for prop_type in std::sync::Arc::make_mut(properties).values_mut() {
                 populate_union_type(prop_type);
             }
             if let Some(key_type) = fallback_key_type {
@@ -986,7 +2005,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
                 populate_atomic_type(intersection_type);
             }
         }
-        TAtomic::TObjectWithProperties { properties } => {
+        TAtomic::TObjectWithProperties { properties, .. } => {
             for prop_type in properties.values_mut() {
                 populate_union_type(prop_type);
             }
@@ -1042,6 +2061,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         }
         // Simple types that don't contain nested types
         TAtomic::TInt
+        | TAtomic::TNonspecificLiteralInt
         | TAtomic::TFloat
         | TAtomic::TString
         | TAtomic::TBool
@@ -1052,11 +2072,13 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         | TAtomic::TNothing
         | TAtomic::TMixed
         | TAtomic::TNonEmptyMixed
+        | TAtomic::TMixedFromLoopIsset
         | TAtomic::TObject
         | TAtomic::TResource
         | TAtomic::TClosedResource
         | TAtomic::TArrayKey
         | TAtomic::TScalar
+        | TAtomic::TNonEmptyScalar
         | TAtomic::TNumeric
         | TAtomic::TIntRange { .. }
         | TAtomic::TLiteralInt { .. }
@@ -1070,12 +2092,14 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         | TAtomic::TLowercaseString
         | TAtomic::TNonEmptyLowercaseString
         | TAtomic::TTruthyString
+        | TAtomic::TCallableString
         | TAtomic::TEnum { .. }
         | TAtomic::TEnumCase { .. } => {}
         TAtomic::TConditional(conditional) => {
             populate_union_type(&mut conditional.if_true_type);
             populate_union_type(&mut conditional.if_false_type);
         }
+        TAtomic::TTypeVariable { .. } => {}
         TAtomic::TTemplateKeyOf { as_type, .. } | TAtomic::TTemplateValueOf { as_type, .. } => {
             populate_union_type(as_type);
         }

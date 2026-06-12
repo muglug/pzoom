@@ -10,6 +10,7 @@ use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator::is_class_subtype_of;
+use std::rc::Rc;
 
 /// Analyze clone expression.
 pub fn analyze(
@@ -21,10 +22,11 @@ pub fn analyze(
 ) {
     let inner_pos =
         expression_analyzer::analyze(analyzer, clone_expr.object, analysis_data, context);
-    if let Some(inner_type) = analysis_data.get_expr_type(inner_pos) {
+    if let Some(inner_type) = analysis_data.expr_types.get(&inner_pos).cloned() {
         let mut atomic_types = inner_type.types.clone();
         let mut invalid_clones = Vec::new();
         let mut mixed_clone = false;
+        let mut immutable_cloned = false;
         let mut possibly_valid = false;
 
         while let Some(atomic) = atomic_types.pop() {
@@ -46,6 +48,7 @@ pub fn analyze(
                         invalid_clones.push(atomic_id);
                         continue;
                     };
+                    immutable_cloned = true;
 
                     if let Some(clone_method) = class_info.methods.get(&StrId::CLONE) {
                         if !is_clone_method_visible(analyzer, class_info, clone_method) {
@@ -139,7 +142,15 @@ pub fn analyze(
                 ));
             }
         } else {
-            analysis_data.set_expr_type(pos, (*inner_type).clone());
+            let mut result_type = (*inner_type).clone();
+            // Psalm `CloneAnalyzer`: a cloned named object is reference-free
+            // and (re-)mutable — the copy is fresh, so property writes on it
+            // are pure even in mutation-free contexts.
+            if immutable_cloned {
+                result_type.reference_free = true;
+                result_type.allow_mutations = true;
+            }
+            analysis_data.expr_types.insert(pos, Rc::new(result_type));
         }
     }
 }

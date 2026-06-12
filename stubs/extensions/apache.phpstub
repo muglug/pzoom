@@ -8,30 +8,29 @@ function apache_child_terminate()
 }
 
 /**
- * @return array
- *
  * @pure
+ *
+ * @return array<array-key, mixed>
  */
 function apache_get_modules()
 {
 }
 
 /**
- * @return string|false
- *
  * @pure
+ *
+ * @return false|string
  */
 function apache_get_version()
 {
 }
 
 /**
+ * @pure
+ *
  * @param string $variable
  * @param bool $walk_to_top
- *
- * @return string|false
- *
- * @pure
+ * @return false|string
  */
 function apache_getenv($variable, $walk_to_top = false)
 {
@@ -39,7 +38,6 @@ function apache_getenv($variable, $walk_to_top = false)
 
 /**
  * @param string $filename
- *
  * @return object
  */
 function apache_lookup_uri($filename)
@@ -49,8 +47,7 @@ function apache_lookup_uri($filename)
 /**
  * @param string $note_name
  * @param string $note_value
- *
- * @return string|false
+ * @return false|string
  */
 function apache_note($note_name, $note_value = '')
 {
@@ -64,7 +61,7 @@ function apache_reset_timeout()
 }
 
 /**
- * @return array|false
+ * @return array<array-key, mixed>|false
  */
 function apache_response_headers()
 {
@@ -74,7 +71,6 @@ function apache_response_headers()
  * @param string $variable
  * @param string $value
  * @param bool $walk_to_top
- *
  * @return bool
  */
 function apache_setenv($variable, $value, $walk_to_top = false)

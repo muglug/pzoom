@@ -609,6 +609,10 @@ function socket_connect(Socket $socket, string $address, null|int $port = null):
 {
 }
 
+/**
+ * @param int $error_code
+ * @return string
+ */
 function socket_strerror(int $error_code): string
 {
 }
@@ -685,6 +689,12 @@ function socket_import_stream($stream): Socket|false
 {
 }
 
+/**
+ * @param int $level
+ * @param int $type
+ * @param int $num
+ * @return int|null
+ */
 function socket_cmsg_space(int $level, int $type, int $num = 0): null|int
 {
 }

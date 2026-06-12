@@ -27,9 +27,21 @@ fn infer_range_return_type(
     let start_pos = arg_positions.first().copied()?;
     let end_pos = arg_positions.get(1).copied()?;
 
-    let start_type = analysis_data.get_expr_type(start_pos)?;
-    let end_type = analysis_data.get_expr_type(end_pos)?;
+    let start_type = analysis_data.expr_types.get(&start_pos).cloned()?;
+    let end_type = analysis_data.expr_types.get(&end_pos).cloned()?;
     let mut value_type = combine_union_types(&start_type, &end_type, false);
+
+    // A float step yields float elements regardless of the bounds
+    // (Psalm's RangeReturnTypeProvider).
+    if let Some(step_pos) = arg_positions.get(2).copied()
+        && let Some(step_type) = analysis_data.expr_types.get(&step_pos).cloned()
+        && step_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
+    {
+        value_type = combine_union_types(&value_type, &TUnion::float(), false);
+    }
 
     let mut normalized = Vec::new();
     for atomic in &value_type.types {

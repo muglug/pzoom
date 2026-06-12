@@ -1,0 +1,1076 @@
+<?php
+
+// Start of Fann v.1
+
+class FANNConnection
+{
+    /**
+     * @var float
+     */
+    public $weight;
+
+    /**
+     * @var int
+     */
+    public $to_neuron;
+
+    /**
+     * @var int
+     */
+    public $from_neuron;
+
+    /**
+     * @param int $from_neuron
+     * @param int $to_neuron
+     * @param float $weight
+     */
+    public function __construct($from_neuron, $to_neuron, $weight) {}
+
+    /**
+     * @return int The postions of starting neuron.
+     */
+    public function getFromNeuron() {}
+
+    /**
+     * @return int The postions of terminating neuron.
+     */
+    public function getToNeuron() {}
+
+    /**
+     * @return void The connection weight.
+     */
+    public function getWeight() {}
+
+    /**
+     * @param float $weight
+     * @return bool
+     */
+    public function setWeight($weight) {}
+}
+
+/**
+ * @param resource $ann
+ * @param resource $data
+ * @param int $max_neurons
+ * @param int $neurons_between_reports
+ * @param float $desired_error
+ * @return bool
+ */
+function fann_cascadetrain_on_data($ann, $data, $max_neurons, $neurons_between_reports, $desired_error) {}
+
+/**
+ * @param resource $ann
+ * @param string $filename
+ * @param int $max_neurons
+ * @param int $neurons_between_reports
+ * @param float $desired_error
+ * @return bool
+ */
+function fann_cascadetrain_on_file($ann, $filename, $max_neurons, $neurons_between_reports, $desired_error) {}
+
+/**
+ * @param resource $ann
+ * @return bool
+ */
+function fann_clear_scaling_params($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|resource
+ */
+function fann_copy($ann) {}
+
+/**
+ * @param string $configuration_file
+ * @return resource
+ */
+function fann_create_from_file($configuration_file) {}
+
+/**
+ * @param int $num_layers
+ * @param array<array-key, mixed> $layers
+ * @return false|resource
+ */
+function fann_create_shortcut_array($num_layers, $layers) {}
+
+/**
+ * @param int $num_layers
+ * @param int $num_neurons1
+ * @param int $num_neurons2
+ * @param int $_
+ * @return false|resource
+ */
+function fann_create_shortcut($num_layers, $num_neurons1, $num_neurons2, ...$_) {}
+
+/**
+ * @param float $connection_rate
+ * @param int $num_layers
+ * @param array<array-key, mixed> $layers
+ * @return false|resource
+ */
+function fann_create_sparse_array($connection_rate, $num_layers, $layers) {}
+
+/**
+ * @param float $connection_rate
+ * @param int $num_layers
+ * @param int $num_neurons1
+ * @param int $num_neurons2
+ * @param int $_
+ * @return false|resource
+ */
+function fann_create_sparse($connection_rate, $num_layers, $num_neurons1, $num_neurons2, ...$_) {}
+
+/**
+ * @param int $num_layers
+ * @param array<array-key, mixed> $layers
+ * @return false|resource
+ */
+function fann_create_standard_array($num_layers, $layers) {}
+
+/**
+ * @param int $num_layers
+ * @param int $num_neurons1
+ * @param int $num_neurons2
+ * @param int $_
+ * @return false|resource
+ */
+function fann_create_standard($num_layers, $num_neurons1, $num_neurons2, ...$_) {}
+
+/**
+ * @param int $num_data
+ * @param int $num_input
+ * @param int $num_output
+ * @param callable $user_function
+ * @return resource
+ */
+function fann_create_train_from_callback($num_data, $num_input, $num_output, $user_function) {}
+
+/**
+ * @param int $num_data
+ * @param int $num_input
+ * @param int $num_output
+ * @return resource
+ */
+function fann_create_train($num_data, $num_input, $num_output) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $input_vector
+ * @return bool
+ */
+function fann_descale_input($ann, $input_vector) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $output_vector
+ * @return bool
+ */
+function fann_descale_output($ann, $output_vector) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @return bool
+ */
+function fann_descale_train($ann, $train_data) {}
+
+/**
+ * @param resource $ann
+ * @return bool
+ */
+function fann_destroy($ann) {}
+
+/**
+ * @param resource $train_data
+ * @return bool
+ */
+function fann_destroy_train($train_data) {}
+
+/**
+ * @param resource $data
+ * @return resource
+ */
+function fann_duplicate_train_data($data) {}
+
+/**
+ * @param resource $ann
+ * @param int $layer
+ * @param int $neuron
+ * @return false|int
+ */
+function fann_get_activation_function($ann, $layer, $neuron) {}
+
+/**
+ * @param resource $ann
+ * @param int $layer
+ * @param int $neuron
+ * @return false|float
+ */
+function fann_get_activation_steepness($ann, $layer, $neuron) {}
+
+/**
+ * @param resource $ann
+ * @return array<array-key, mixed>
+ */
+function fann_get_bias_array($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_bit_fail_limit($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_bit_fail($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_activation_functions_count($ann) {}
+
+/**
+ * @param resource $ann
+ * @return array<array-key, mixed>|false
+ */
+function fann_get_cascade_activation_functions($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_activation_steepnesses_count($ann) {}
+
+/**
+ * @param resource $ann
+ * @return array<array-key, mixed>|false
+ */
+function fann_get_cascade_activation_steepnesses($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_cascade_candidate_change_fraction($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_cascade_candidate_limit($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_cascade_candidate_stagnation_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_max_cand_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_max_out_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_min_cand_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_min_out_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_num_candidate_groups($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_num_candidates($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_cascade_output_change_fraction($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_cascade_output_stagnation_epochs($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_cascade_weight_multiplier($ann) {}
+
+/**
+ * @param resource $ann
+ * @return array<array-key, mixed>
+ */
+function fann_get_connection_array($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_connection_rate($ann) {}
+
+/**
+ * @param resource $errdat
+ * @return false|int
+ */
+function fann_get_errno($errdat) {}
+
+/**
+ * @param resource $errdat
+ * @return false|string
+ */
+function fann_get_errstr($errdat) {}
+
+/**
+ * @param resource $ann
+ * @return array<array-key, mixed>
+ */
+function fann_get_layer_array($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_learning_momentum($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_learning_rate($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_MSE($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_network_type($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_num_input($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_num_layers($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_num_output($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_quickprop_decay($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_quickprop_mu($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_rprop_decrease_factor($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_rprop_delta_max($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_rprop_delta_min($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_rprop_delta_zero($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_rprop_increase_factor($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_sarprop_step_error_shift($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_sarprop_step_error_threshold_factor($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_sarprop_temperature($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|float
+ */
+function fann_get_sarprop_weight_decay_shift($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_total_connections($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_total_neurons($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_train_error_function($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_training_algorithm($ann) {}
+
+/**
+ * @param resource $ann
+ * @return false|int
+ */
+function fann_get_train_stop_function($ann) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @return bool
+ */
+function fann_init_weights($ann, $train_data) {}
+
+/**
+ * @param resource $data
+ * @return false|int
+ */
+function fann_length_train_data($data) {}
+
+/**
+ * @param resource $data1
+ * @param resource $data2
+ * @return false|resource
+ */
+function fann_merge_train_data($data1, $data2) {}
+
+/**
+ * @param resource $data
+ * @return false|int
+ */
+function fann_num_input_train_data($data) {}
+
+/**
+ * @param resource $data
+ * @return false|int
+ */
+function fann_num_output_train_data($data) {}
+
+/**
+ * @param string $errdat
+ * @return void
+ */
+function fann_print_error($errdat) {}
+
+/**
+ * @param resource $ann
+ * @param float $min_weight
+ * @param float $max_weight
+ * @return bool
+ */
+function fann_randomize_weights($ann, $min_weight, $max_weight) {}
+
+/**
+ * @param string $filename
+ * @return resource
+ */
+function fann_read_train_from_file($filename) {}
+
+/**
+ * @param resource $errdat
+ * @return void
+ */
+function fann_reset_errno($errdat) {}
+
+/**
+ * @param resource $errdat
+ * @return void
+ */
+function fann_reset_errstr($errdat) {}
+
+/**
+ * @param string $ann
+ * @return bool
+ */
+function fann_reset_MSE($ann) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $input
+ * @return array<array-key, mixed>|false
+ */
+function fann_run($ann, $input) {}
+
+/**
+ * @param resource $ann
+ * @param string $configuration_file
+ * @return bool
+ */
+function fann_save($ann, $configuration_file) {}
+
+/**
+ * @param resource $data
+ * @param string $file_name
+ * @return bool
+ */
+function fann_save_train($data, $file_name) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $input_vector
+ * @return bool
+ */
+function fann_scale_input($ann, $input_vector) {}
+
+/**
+ * @param resource $train_data
+ * @param float $new_min
+ * @param float $new_max
+ * @return bool
+ */
+function fann_scale_input_train_data($train_data, $new_min, $new_max) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $output_vector
+ * @return bool
+ */
+function fann_scale_output($ann, $output_vector) {}
+
+/**
+ * @param resource $train_data
+ * @param float $new_min
+ * @param float $new_max
+ * @return bool
+ */
+function fann_scale_output_train_data($train_data, $new_min, $new_max) {}
+
+/**
+ * @param resource $train_data
+ * @param float $new_min
+ * @param float $new_max
+ * @return bool
+ */
+function fann_scale_train_data($train_data, $new_min, $new_max) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @return bool
+ */
+function fann_scale_train($ann, $train_data) {}
+
+/**
+ * @param resource $ann
+ * @param int $activation_function
+ * @return bool
+ */
+function fann_set_activation_function_hidden($ann, $activation_function) {}
+
+/**
+ * @param resource $ann
+ * @param int $activation_function
+ * @param int $layer
+ * @return bool
+ */
+function fann_set_activation_function_layer($ann, $activation_function, $layer) {}
+
+/**
+ * @param resource $ann
+ * @param int $activation_function
+ * @return bool
+ */
+function fann_set_activation_function_output($ann, $activation_function) {}
+
+/**
+ * @param resource $ann
+ * @param int $activation_function
+ * @param int $layer
+ * @param int $neuron
+ * @return bool
+ */
+function fann_set_activation_function($ann, $activation_function, $layer, $neuron) {}
+
+/**
+ * @param resource $ann
+ * @param float $activation_steepness
+ * @return bool
+ */
+function fann_set_activation_steepness_hidden($ann, $activation_steepness) {}
+
+/**
+ * @param resource $ann
+ * @param float $activation_steepness
+ * @param int $layer
+ * @return bool
+ */
+function fann_set_activation_steepness_layer($ann, $activation_steepness, $layer) {}
+
+/**
+ * @param resource $ann
+ * @param float $activation_steepness
+ * @return bool
+ */
+function fann_set_activation_steepness_output($ann, $activation_steepness) {}
+
+/**
+ * @param resource $ann
+ * @param float $activation_steepness
+ * @param int $layer
+ * @param int $neuron
+ * @return bool
+ */
+function fann_set_activation_steepness($ann, $activation_steepness, $layer, $neuron) {}
+
+/**
+ * @param resource $ann
+ * @param float $bit_fail_limit
+ * @return bool
+ */
+function fann_set_bit_fail_limit($ann, $bit_fail_limit) {}
+
+/**
+ * @param resource $ann
+ * @param callable $callback
+ * @return bool
+ */
+function fann_set_callback($ann, $callback) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $cascade_activation_functions
+ * @return bool
+ */
+function fann_set_cascade_activation_functions($ann, $cascade_activation_functions) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $cascade_activation_steepnesses_count
+ * @return bool
+ */
+function fann_set_cascade_activation_steepnesses($ann, $cascade_activation_steepnesses_count) {}
+
+/**
+ * @param resource $ann
+ * @param float $cascade_candidate_change_fraction
+ * @return bool
+ */
+function fann_set_cascade_candidate_change_fraction($ann, $cascade_candidate_change_fraction) {}
+
+/**
+ * @param resource $ann
+ * @param float $cascade_candidate_limit
+ * @return bool
+ */
+function fann_set_cascade_candidate_limit($ann, $cascade_candidate_limit) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_candidate_stagnation_epochs
+ * @return bool
+ */
+function fann_set_cascade_candidate_stagnation_epochs($ann, $cascade_candidate_stagnation_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_max_cand_epochs
+ * @return bool
+ */
+function fann_set_cascade_max_cand_epochs($ann, $cascade_max_cand_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_max_out_epochs
+ * @return bool
+ */
+function fann_set_cascade_max_out_epochs($ann, $cascade_max_out_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_min_cand_epochs
+ * @return bool
+ */
+function fann_set_cascade_min_cand_epochs($ann, $cascade_min_cand_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_min_out_epochs
+ * @return bool
+ */
+function fann_set_cascade_min_out_epochs($ann, $cascade_min_out_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_num_candidate_groups
+ * @return bool
+ */
+function fann_set_cascade_num_candidate_groups($ann, $cascade_num_candidate_groups) {}
+
+/**
+ * @param resource $ann
+ * @param float $cascade_output_change_fraction
+ * @return bool
+ */
+function fann_set_cascade_output_change_fraction($ann, $cascade_output_change_fraction) {}
+
+/**
+ * @param resource $ann
+ * @param int $cascade_output_stagnation_epochs
+ * @return bool
+ */
+function fann_set_cascade_output_stagnation_epochs($ann, $cascade_output_stagnation_epochs) {}
+
+/**
+ * @param resource $ann
+ * @param float $cascade_weight_multiplier
+ * @return bool
+ */
+function fann_set_cascade_weight_multiplier($ann, $cascade_weight_multiplier) {}
+
+/**
+ * @param resource $errdat
+ * @param string $log_file
+ * @return void
+ */
+function fann_set_error_log($errdat, $log_file) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @param float $new_input_min
+ * @param float $new_input_max
+ * @return bool
+ */
+function fann_set_input_scaling_params($ann, $train_data, $new_input_min, $new_input_max) {}
+
+/**
+ * @param resource $ann
+ * @param float $learning_momentum
+ * @return bool
+ */
+function fann_set_learning_momentum($ann, $learning_momentum) {}
+
+/**
+ * @param resource $ann
+ * @param float $learning_rate
+ * @return bool
+ */
+function fann_set_learning_rate($ann, $learning_rate) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @param float $new_output_min
+ * @param float $new_output_max
+ * @return bool
+ */
+function fann_set_output_scaling_params($ann, $train_data, $new_output_min, $new_output_max) {}
+
+/**
+ * @param resource $ann
+ * @param float $quickprop_decay
+ * @return bool
+ */
+function fann_set_quickprop_decay($ann, $quickprop_decay) {}
+
+/**
+ * @param resource $ann
+ * @param float $quickprop_mu
+ * @return bool
+ */
+function fann_set_quickprop_mu($ann, $quickprop_mu) {}
+
+/**
+ * @param resource $ann
+ * @param float $rprop_decrease_factor
+ * @return bool
+ */
+function fann_set_rprop_decrease_factor($ann, $rprop_decrease_factor) {}
+
+/**
+ * @param resource $ann
+ * @param float $rprop_delta_max
+ * @return bool
+ */
+function fann_set_rprop_delta_max($ann, $rprop_delta_max) {}
+
+/**
+ * @param resource $ann
+ * @param float $rprop_delta_min
+ * @return bool
+ */
+function fann_set_rprop_delta_min($ann, $rprop_delta_min) {}
+
+/**
+ * @param resource $ann
+ * @param float $rprop_delta_zero
+ * @return bool
+ */
+function fann_set_rprop_delta_zero($ann, $rprop_delta_zero) {}
+
+/**
+ * @param resource $ann
+ * @param float $rprop_increase_factor
+ * @return bool
+ */
+function fann_set_rprop_increase_factor($ann, $rprop_increase_factor) {}
+
+/**
+ * @param resource $ann
+ * @param float $sarprop_step_error_shift
+ * @return bool
+ */
+function fann_set_sarprop_step_error_shift($ann, $sarprop_step_error_shift) {}
+
+/**
+ * @param resource $ann
+ * @param float $sarprop_step_error_threshold_factor
+ * @return bool
+ */
+function fann_set_sarprop_step_error_threshold_factor($ann, $sarprop_step_error_threshold_factor) {}
+
+/**
+ * @param resource $ann
+ * @param float $sarprop_temperature
+ * @return bool
+ */
+function fann_set_sarprop_temperature($ann, $sarprop_temperature) {}
+
+/**
+ * @param resource $ann
+ * @param float $sarprop_weight_decay_shift
+ * @return bool
+ */
+function fann_set_sarprop_weight_decay_shift($ann, $sarprop_weight_decay_shift) {}
+
+/**
+ * @param resource $ann
+ * @param resource $train_data
+ * @param float $new_input_min
+ * @param float $new_input_max
+ * @param float $new_output_min
+ * @param float $new_output_max
+ * @return bool
+ */
+function fann_set_scaling_params($ann, $train_data, $new_input_min, $new_input_max, $new_output_min, $new_output_max) {}
+
+/**
+ * @param resource $ann
+ * @param int $error_function
+ * @return bool
+ */
+function fann_set_train_error_function($ann, $error_function) {}
+
+/**
+ * @param resource $ann
+ * @param int $training_algorithm
+ * @return bool
+ */
+function fann_set_training_algorithm($ann, $training_algorithm) {}
+
+/**
+ * @param resource $ann
+ * @param int $stop_function
+ * @return bool
+ */
+function fann_set_train_stop_function($ann, $stop_function) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $connections
+ * @return bool
+ */
+function fann_set_weight_array($ann, $connections) {}
+
+/**
+ * @param resource $ann
+ * @param int $from_neuron
+ * @param int $to_neuron
+ * @param float $weight
+ * @return bool
+ */
+function fann_set_weight($ann, $from_neuron, $to_neuron, $weight) {}
+
+/**
+ * @param resource $train_data
+ * @return bool
+ */
+function fann_shuffle_train_data($train_data) {}
+
+/**
+ * @param resource $data
+ * @param int $pos
+ * @param int $length
+ * @return resource
+ */
+function fann_subset_train_data($data, $pos, $length) {}
+
+/**
+ * @param resource $ann
+ * @param resource $data
+ * @return false|float
+ */
+function fann_test_data($ann, $data) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $input
+ * @param array<array-key, mixed> $desired_output
+ * @return bool
+ */
+function fann_test($ann, $input, $desired_output) {}
+
+/**
+ * @param resource $ann
+ * @param resource $data
+ * @return false|float
+ */
+function fann_train_epoch($ann, $data) {}
+
+/**
+ * @param resource $ann
+ * @param resource $data
+ * @param int $max_epochs
+ * @param int $epochs_between_reports
+ * @param float $desired_error
+ * @return bool
+ */
+function fann_train_on_data($ann, $data, $max_epochs, $epochs_between_reports, $desired_error) {}
+
+/**
+ * @param resource $ann
+ * @param string $filename
+ * @param int $max_epochs
+ * @param int $epochs_between_reports
+ * @param float $desired_error
+ * @return bool
+ */
+function fann_train_on_file($ann, $filename, $max_epochs, $epochs_between_reports, $desired_error) {}
+
+/**
+ * @param resource $ann
+ * @param array<array-key, mixed> $input
+ * @param array<array-key, mixed> $desired_output
+ * @return bool
+ */
+function fann_train($ann, $input, $desired_output) {}
+
+define('FANN_TRAIN_INCREMENTAL', 0);
+define('FANN_TRAIN_BATCH', 1);
+define('FANN_TRAIN_RPROP', 2);
+define('FANN_TRAIN_QUICKPROP', 3);
+define('FANN_TRAIN_SARPROP', 4);
+define('FANN_LINEAR', 0);
+define('FANN_THRESHOLD', 1);
+define('FANN_THRESHOLD_SYMMETRIC', 2);
+define('FANN_SIGMOID', 3);
+define('FANN_SIGMOID_STEPWISE', 4);
+define('FANN_SIGMOID_SYMMETRIC', 5);
+define('FANN_SIGMOID_SYMMETRIC_STEPWISE', 6);
+define('FANN_GAUSSIAN', 7);
+define('FANN_GAUSSIAN_SYMMETRIC', 8);
+define('FANN_GAUSSIAN_STEPWISE', 9);
+define('FANN_ELLIOT', 10);
+define('FANN_ELLIOT_SYMMETRIC', 11);
+define('FANN_LINEAR_PIECE', 12);
+define('FANN_LINEAR_PIECE_SYMMETRIC', 13);
+define('FANN_SIN_SYMMETRIC', 14);
+define('FANN_COS_SYMMETRIC', 15);
+define('FANN_SIN', 16);
+define('FANN_COS', 17);
+define('FANN_ERRORFUNC_LINEAR', 0);
+define('FANN_ERRORFUNC_TANH', 1);
+define('FANN_STOPFUNC_MSE', 0);
+define('FANN_STOPFUNC_BIT', 1);
+define('FANN_NETTYPE_LAYER', 0);
+define('FANN_NETTYPE_SHORTCUT', 1);
+define('FANN_E_NO_ERROR', 0);
+define('FANN_E_CANT_OPEN_CONFIG_R', 1);
+define('FANN_E_CANT_OPEN_CONFIG_W', 2);
+define('FANN_E_WRONG_CONFIG_VERSION', 3);
+define('FANN_E_CANT_READ_CONFIG', 4);
+define('FANN_E_CANT_READ_NEURON', 5);
+define('FANN_E_CANT_READ_CONNECTIONS', 6);
+define('FANN_E_WRONG_NUM_CONNECTIONS', 7);
+define('FANN_E_CANT_OPEN_TD_W', 8);
+define('FANN_E_CANT_OPEN_TD_R', 9);
+define('FANN_E_CANT_READ_TD', 10);
+define('FANN_E_CANT_ALLOCATE_MEM', 11);
+define('FANN_E_CANT_TRAIN_ACTIVATION', 12);
+define('FANN_E_CANT_USE_ACTIVATION', 13);
+define('FANN_E_TRAIN_DATA_MISMATCH', 14);
+define('FANN_E_CANT_USE_TRAIN_ALG', 15);
+define('FANN_E_TRAIN_DATA_SUBSET', 16);
+define('FANN_E_INDEX_OUT_OF_BOUND', 17);
+define('FANN_E_SCALE_NOT_PRESENT', 18);
+define('FANN_E_INPUT_NO_MATCH', 19);
+define('FANN_E_OUTPUT_NO_MATCH', 20);
+
+define('FANN_VERSION', '2.2');
+// End of Fann v.1.0

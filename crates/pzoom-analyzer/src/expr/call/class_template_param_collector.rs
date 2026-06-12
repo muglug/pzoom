@@ -14,13 +14,32 @@
 //! [`collect`] is wired into the method-call template context the same way
 //! Hakana wires it from the existing-method-call analyzer.
 
-use rustc_hash::FxHashMap;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, TemplateType};
-use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
+use pzoom_code_info::{CodebaseInfo, GenericParent, TAtomic, TUnion, TemplateBound, TemplateResult};
 use pzoom_str::StrId;
-use crate::template::TemplateMap;
 use indexmap::IndexMap;
+use rustc_hash::FxHashMap;
+
+/// The shape of `TemplateResult::lower_bounds` (Hakana's `collect` returns the
+/// map that seeds it).
+pub(crate) type LowerBounds = IndexMap<StrId, FxHashMap<GenericParent, Vec<TemplateBound>>>;
+
+fn bounds_insert(bounds: &mut LowerBounds, name: StrId, entity: GenericParent, union: TUnion) {
+    bounds
+        .entry(name)
+        .or_default()
+        .insert(entity, vec![TemplateBound::new(union, 0, None, None)]);
+}
+
+fn bounds_insert_combined(bounds: &mut LowerBounds, name: StrId, entity: GenericParent, union: TUnion) {
+    bounds
+        .entry(name)
+        .or_default()
+        .entry(entity)
+        .or_default()
+        .push(TemplateBound::new(union, 0, None, None));
+}
 
 /// Collect a class's template-parameter replacement map for a call, combining
 /// the receiver's supplied type params with any `@extends`/`@implements`
@@ -31,12 +50,12 @@ pub(crate) fn collect(
     static_class_storage: &ClassLikeInfo,
     lhs_type_part: Option<&TAtomic>,
     self_call: bool,
-) -> Option<TemplateMap> {
+) -> Option<LowerBounds> {
     if class_storage.template_types.is_empty() {
         return None;
     }
 
-    let mut class_template_params = TemplateMap::new();
+    let mut class_template_params = LowerBounds::default();
 
     let e = &static_class_storage.template_extended_params;
 
@@ -55,7 +74,12 @@ pub(crate) fn collect(
                 &static_class_storage.template_types,
             ));
 
-            class_template_params.insert_combined(*template_name, *declaring_entity, expanded);
+            bounds_insert_combined(
+                &mut class_template_params,
+                *template_name,
+                GenericParent::ClassLike(*declaring_entity),
+                expanded,
+            );
         }
     }
 
@@ -73,9 +97,10 @@ pub(crate) fn collect(
             // (these override the extended mappings).
             for (i, template_type) in class_storage.template_types.iter().enumerate() {
                 if let Some(type_param) = lhs_type_params.get(i) {
-                    class_template_params.insert(
+                    bounds_insert(
+                        &mut class_template_params,
                         template_type.name,
-                        class_storage.name,
+                        GenericParent::ClassLike(class_storage.name),
                         type_param.clone(),
                     );
                 }
@@ -94,9 +119,10 @@ pub(crate) fn collect(
                         static_class_storage,
                         lhs_type_params,
                     ) {
-                        class_template_params.insert(
+                        bounds_insert(
+                            &mut class_template_params,
                             template_type.name,
-                            class_storage.name,
+                            GenericParent::ClassLike(class_storage.name),
                             output_type_extends,
                         );
                     }
@@ -113,10 +139,11 @@ pub(crate) fn collect(
         for template_type in &class_storage.template_types {
             // Name-level guard, matching Psalm's
             // `!isset($class_template_params[$type_name])`.
-            if !class_template_params.contains_name(template_type.name) {
-                class_template_params.insert(
+            if !class_template_params.contains_key(&template_type.name) {
+                bounds_insert(
+                    &mut class_template_params,
                     template_type.name,
-                    class_storage.name,
+                    GenericParent::ClassLike(class_storage.name),
                     template_type.as_type.clone(),
                 );
             }
@@ -129,7 +156,7 @@ pub(crate) fn collect(
 /// Resolve a template's `@extends` type against the static class's supplied
 /// type params, recursing through nested template references. Mirrors Hakana's
 /// `resolve_template_param`.
-pub(crate) fn resolve_template_param(
+fn resolve_template_param(
     codebase: &CodebaseInfo,
     input_type_extends: &TUnion,
     static_class_storage: &ClassLikeInfo,
@@ -140,7 +167,7 @@ pub(crate) fn resolve_template_param(
     for type_extends_atomic in &input_type_extends.types {
         if let TAtomic::TTemplateParam {
             name: param_name,
-            defining_entity,
+            defining_entity: GenericParent::ClassLike(defining_entity),
             ..
         } = type_extends_atomic
         {
@@ -184,7 +211,7 @@ pub(crate) fn resolve_template_param(
 /// Expand a template's `@extends` type, following nested template references
 /// through the extended-params map (except those defined by the static class
 /// itself). Mirrors Hakana's `expand_type`.
-pub(crate) fn expand_type(
+fn expand_type(
     input_type_extends: &TUnion,
     e: &IndexMap<StrId, IndexMap<StrId, TUnion>>,
     static_classlike_name: &StrId,
@@ -195,7 +222,7 @@ pub(crate) fn expand_type(
     for type_extends_atomic in &input_type_extends.types {
         let extended_type = if let TAtomic::TTemplateParam {
             name: param_name,
-            defining_entity,
+            defining_entity: GenericParent::ClassLike(defining_entity),
             ..
         } = type_extends_atomic
         {
@@ -240,8 +267,8 @@ fn add_optional_union_type(new_type: &TUnion, existing: Option<&TUnion>) -> TUni
 pub(crate) fn infer_class_template_replacements_from_type_params(
     class_info: &ClassLikeInfo,
     type_params: Option<&[TUnion]>,
-) -> TemplateMap {
-    let mut class_template_params = TemplateMap::new();
+) -> TemplateResult {
+    let mut class_template_params = TemplateResult::default();
 
     let Some(type_params) = type_params else {
         return class_template_params;
@@ -249,7 +276,12 @@ pub(crate) fn infer_class_template_replacements_from_type_params(
 
     for (i, template_type) in class_info.template_types.iter().enumerate() {
         if let Some(type_param) = type_params.get(i) {
-            class_template_params.insert(template_type.name, class_info.name, type_param.clone());
+            crate::template::lower_bounds_insert(
+                &mut class_template_params,
+                template_type.name,
+                GenericParent::ClassLike(class_info.name),
+                type_param.clone(),
+            );
         }
     }
 

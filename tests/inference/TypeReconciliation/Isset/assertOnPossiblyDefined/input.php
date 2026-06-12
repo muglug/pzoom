@@ -4,7 +4,7 @@ function crashes(): void {
         $dt = new \DateTime;
     }
     /**
-     * @psalm-suppress UndefinedVariable
+     * @psalm-suppress PossiblyUndefinedVariable
      * @psalm-suppress MixedArgument
      */
     assert($dt);

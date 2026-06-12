@@ -1,0 +1,491 @@
+<?php
+
+namespace Elastic\Apm {
+    final class ElasticApm
+    {
+        public const VERSION = '1.3.1';
+
+        private function __construct() {}
+
+        /**
+         * @param string      $name                      New transaction's name
+         * @param string      $type                      New transaction's type
+         * @param float|null  $timestamp                 Start time of the new transaction
+         * @param string|null $serializedDistTracingData - DEPRECATED since version 1.3 -
+         * @return TransactionInterface New transaction
+         */
+        public static function beginCurrentTransaction(
+            string $name,
+            string $type,
+            ?float $timestamp = null,
+            ?string $serializedDistTracingData = null
+        ): TransactionInterface {}
+
+        /**
+         * @param string      $name      New transaction's name
+         * @param string      $type      New transaction's type
+         * @param \Closure     $callback  Callback to execute as the new transaction
+         * @param float|null  $timestamp Start time of the new transaction
+         * @param string|null $serializedDistTracingData - DEPRECATED since version 1.3 -
+         * @return mixed The return value of $callback
+         */
+        public static function captureCurrentTransaction(
+            string $name,
+            string $type,
+            \Closure $callback,
+            ?float $timestamp = null,
+            ?string $serializedDistTracingData = null
+        ) {}
+
+        /**
+         * @return TransactionInterface The current transaction
+         */
+        public static function getCurrentTransaction(): TransactionInterface {}
+
+        /**
+         * @return ExecutionSegmentInterface The current execution segment
+         */
+        public static function getCurrentExecutionSegment(): ExecutionSegmentInterface {}
+
+        /**
+         * @param string      $name      New transaction's name
+         * @param string      $type      New transaction's type
+         * @param float|null  $timestamp Start time of the new transaction
+         * @param string|null $serializedDistTracingData - DEPRECATED since version 1.3 -
+         * @return TransactionInterface New transaction
+         */
+        public static function beginTransaction(
+            string $name,
+            string $type,
+            ?float $timestamp = null,
+            ?string $serializedDistTracingData = null
+        ): TransactionInterface {}
+
+        /**
+         * @param string      $name      New transaction's name
+         * @param string      $type      New transaction's type
+         * @param \Closure     $callback  Callback to execute as the new transaction
+         * @param float|null  $timestamp Start time of the new transaction
+         * @param string|null $serializedDistTracingData - DEPRECATED since version 1.3 -
+         * @return mixed The return value of $callback
+         */
+        public static function captureTransaction(
+            string $name,
+            string $type,
+            \Closure $callback,
+            ?float $timestamp = null,
+            ?string $serializedDistTracingData = null
+        ) {}
+
+        /**
+         * @param string $name New transaction's name
+         * @param string $type New transaction's type
+         * @return TransactionBuilderInterface New transaction builder
+         */
+        public static function newTransaction(string $name, string $type): TransactionBuilderInterface {}
+
+        /**
+         * @param \Throwable $throwable
+         * @return string|null ID of the reported error event or null if no event was reported
+         */
+        public static function createErrorFromThrowable(\Throwable $throwable): ?string {}
+
+        /**
+         * @param CustomErrorData $customErrorData
+         * @return string|null ID of the reported error event or null if no event was reported
+         */
+        public static function createCustomError(CustomErrorData $customErrorData): ?string {}
+
+            public static function pauseRecording(): void {}
+
+            public static function resumeRecording(): void {}
+
+        /**
+         * @deprecated      Deprecated since version 1.3 - use injectDistributedTracingHeaders() instead
+         */
+        public static function getSerializedCurrentDistributedTracingData(): string {}
+    }
+
+    interface TransactionBuilderInterface
+    {
+        /**
+         * @return TransactionBuilderInterface
+         */
+        public function asCurrent(): self;
+
+        /**
+         * @param float $timestamp
+         * @return TransactionBuilderInterface
+         */
+        public function timestamp(float $timestamp): self;
+
+        /**
+         * @param \Closure $headerExtractor
+         * @return TransactionBuilderInterface
+         */
+        public function distributedTracingHeaderExtractor(\Closure $headerExtractor): self;
+
+        /**
+         * @return TransactionInterface New transaction
+         */
+        public function begin(): TransactionInterface;
+
+        /**
+         * @param \Closure $callback
+         * @return mixed The return value of $callback
+         */
+        public function capture(\Closure $callback);
+    }
+
+    interface TransactionInterface extends ExecutionSegmentInterface
+    {
+            public function isSampled(): bool;
+
+            public function getParentId(): ?string;
+
+        /**
+         * @param string      $name      New span's name.
+         * @param string      $type      New span's type
+         * @param string|null $subtype   New span's subtype
+         * @param string|null $action    New span's action
+         * @param float|null  $timestamp Start time of the new span
+         * @return SpanInterface New span
+         */
+        public function beginCurrentSpan(
+            string $name,
+            string $type,
+            ?string $subtype = null,
+            ?string $action = null,
+            ?float $timestamp = null
+        ): SpanInterface;
+
+        /**
+         * @param string      $name      New span's name
+         * @param string      $type      New span's type
+         * @param \Closure     $callback  Callback to execute as the new span
+         * @param string|null $subtype   New span's subtype
+         * @param string|null $action    New span's action
+         * @param float|null  $timestamp Start time of the new span
+         * @return mixed The return value of $callback
+         */
+        public function captureCurrentSpan(
+            string $name,
+            string $type,
+            \Closure $callback,
+            ?string $subtype = null,
+            ?string $action = null,
+            ?float $timestamp = null
+        );
+
+        /**
+         * @return SpanInterface The current span
+         */
+        public function getCurrentSpan(): SpanInterface;
+
+            public function context(): TransactionContextInterface;
+
+        /**
+         * @param string|null $result
+         * @return void
+         */
+        public function setResult(?string $result): void;
+
+            public function getResult(): ?string;
+
+        /**
+         * @return string
+         */
+        public function ensureParentId(): string;
+    }
+
+    interface SpanInterface extends ExecutionSegmentInterface
+    {
+            public function getTransactionId(): string;
+
+            public function getParentId(): string;
+
+        /**
+         * @param string|null $action
+         * @return void
+         */
+        public function setAction(?string $action): void;
+
+        /**
+         * @param string|null $subtype
+         */
+        public function setSubtype(?string $subtype): void;
+
+            public function context(): SpanContextInterface;
+
+        /**
+         * @param int        $numberOfStackFramesToSkip Number of stack frames to skip when capturing stack trace.
+         * @param float|null $duration                  In milliseconds with 3 decimal points.
+         */
+        public function endSpanEx(int $numberOfStackFramesToSkip, ?float $duration = null): void;
+    }
+
+    interface SpanContextInterface extends ExecutionSegmentContextInterface
+    {
+            public function db(): SpanContextDbInterface;
+
+            public function http(): SpanContextHttpInterface;
+
+            public function destination(): SpanContextDestinationInterface;
+    }
+
+    interface SpanContextDbInterface
+    {
+        /**
+         * @param string|null $statement
+         * @return void
+         */
+        public function setStatement(?string $statement): void;
+    }
+
+    interface SpanContextHttpInterface
+    {
+        /**
+         * @param string|null $url
+         * @return void
+         */
+        public function setUrl(?string $url): void;
+
+        /**
+         * @param int|null $statusCode
+         * @return void
+         */
+        public function setStatusCode(?int $statusCode): void;
+
+        /**
+         * @param string|null $method
+         * @return void
+         */
+        public function setMethod(?string $method): void;
+    }
+
+    interface SpanContextDestinationInterface
+    {
+        /**
+         * @param string $name
+         * @param string $resource
+         * @param string $type
+         */
+        public function setService(string $name, string $resource, string $type): void;
+    }
+
+    interface ExecutionSegmentInterface
+    {
+            public function getId(): string;
+
+            public function getTraceId(): string;
+
+            public function getTimestamp(): float;
+
+        /**
+         * @param string      $name      New span's name
+         * @param string      $type      New span's type
+         * @param string|null $subtype   New span's subtype
+         * @param string|null $action    New span's action
+         * @param float|null  $timestamp Start time of the new span
+         * @return SpanInterface New span
+         */
+        public function beginChildSpan(
+            string $name,
+            string $type,
+            ?string $subtype = null,
+            ?string $action = null,
+            ?float $timestamp = null
+        ): SpanInterface;
+
+        /**
+         * @param string      $name      New span's name
+         * @param string      $type      New span's type
+         * @param \Closure     $callback  Callback to execute as the new span
+         * @param string|null $subtype   New span's subtype
+         * @param string|null $action    New span's action
+         * @param float|null  $timestamp Start time of the new span
+         * @return mixed The return value of $callback
+         */
+        public function captureChildSpan(
+            string $name,
+            string $type,
+            \Closure $callback,
+            ?string $subtype = null,
+            ?string $action = null,
+            ?float $timestamp = null
+        );
+
+        /**
+         * @param string $name
+         */
+        public function setName(string $name): void;
+
+        /**
+         * @param string $type
+         */
+        public function setType(string $type): void;
+
+        /**
+         * @deprecated      Deprecated since version 1.3 - use injectDistributedTracingHeaders() instead
+         */
+        public function getDistributedTracingData(): ?DistributedTracingData;
+
+        /**
+         * @param \Closure $headerInjector Callback that actually injects header(s) for the underlying transport
+         */
+        public function injectDistributedTracingHeaders(\Closure $headerInjector): void;
+
+        /**
+         * @param float|null $duration In milliseconds with 3 decimal points.
+         */
+        public function end(?float $duration = null): void;
+
+            public function hasEnded(): bool;
+
+        /**
+         * @param \Throwable $throwable
+         * @return string|null ID of the reported error event or null if no event was reported
+         */
+        public function createErrorFromThrowable(\Throwable $throwable): ?string;
+
+        /**
+         * @param CustomErrorData $customErrorData
+         * @return string|null ID of the reported error event or null if no event was reported
+         */
+        public function createCustomError(CustomErrorData $customErrorData): ?string;
+
+        /**
+         * @param string|null $outcome
+         * @return void
+         */
+        public function setOutcome(?string $outcome): void;
+
+            public function getOutcome(): ?string;
+
+            public function isNoop(): bool;
+
+            public function discard(): void;
+    }
+
+    final class DistributedTracingData
+    {
+        /**
+         * @var string
+         */
+        public $traceId;
+
+        /**
+         * @var string
+         */
+        public $parentId;
+
+        /**
+         * @var bool
+         */
+        public $isSampled;
+
+        /**
+         * @deprecated Deprecated since version 1.3 - use injectHeaders() instead
+         */
+        public function serializeToString(): string {}
+
+        /**
+         * @param \Closure $headerInjector Callback that actually injects header(s) for the underlying transport
+         */
+        public function injectHeaders(\Closure $headerInjector): void {}
+    }
+
+    class CustomErrorData
+    {
+        /**
+         * @var int|string|null
+         */
+        public $code = null;
+
+        /**
+         * @var string|null
+         */
+        public $message = null;
+
+        /**
+         * @var string|null
+         */
+        public $module = null;
+
+        /**
+         * @var string|null
+         */
+        public $type = null;
+    }
+
+    interface TransactionContextInterface extends ExecutionSegmentContextInterface
+    {
+            public function request(): TransactionContextRequestInterface;
+    }
+
+    interface ExecutionSegmentContextInterface
+    {
+        /**
+         * @param string                     $key
+         * @param string|bool|int|float|null $value
+         * @return void
+         */
+        public function setLabel(string $key, $value): void;
+    }
+
+    interface TransactionContextRequestInterface
+    {
+        /**
+         * @param string $method
+         * @return void
+         */
+        public function setMethod(string $method): void;
+
+            public function url(): TransactionContextRequestUrlInterface;
+    }
+
+    interface TransactionContextRequestUrlInterface
+    {
+        /**
+         * @param ?string $domain
+         * @return void
+         */
+        public function setDomain(?string $domain): void;
+
+        /**
+         * @param ?string $full
+         * @return void
+         */
+        public function setFull(?string $full): void;
+
+        /**
+         * @param ?string $original
+         * @return void
+         */
+        public function setOriginal(?string $original): void;
+
+        /**
+         * @param ?string $path
+         * @return void
+         */
+        public function setPath(?string $path): void;
+
+        /**
+         * @param ?int $port
+         * @return void
+         */
+        public function setPort(?int $port): void;
+
+        /**
+         * @param ?string $protocol
+         * @return void
+         */
+        public function setProtocol(?string $protocol): void;
+
+        /**
+         * @param ?string $query
+         * @return void
+         */
+        public function setQuery(?string $query): void;
+    }
+}

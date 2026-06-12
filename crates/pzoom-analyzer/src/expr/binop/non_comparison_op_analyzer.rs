@@ -1,11 +1,9 @@
 //! Non-comparison binary operator analyzer (Psalm `NonComparisonOpAnalyzer` equivalent).
 
 use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 
-use crate::context::BlockContext;
 use crate::expr::binop::{arithmetic_op_analyzer, concat_analyzer};
 use crate::expr::binop_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
@@ -14,13 +12,11 @@ use crate::statements_analyzer::StatementsAnalyzer;
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
     operator: &BinaryOperator,
-    _left_expr: &Expression<'_>,
-    right_expr: &Expression<'_>,
     left_type: Option<&TUnion>,
     right_type: Option<&TUnion>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
-    context: &BlockContext,
+    inside_loop: bool,
 ) -> TUnion {
     let addition_is_array_union = matches!(operator, BinaryOperator::Addition(_))
         && left_type.is_some_and(union_is_array_like)
@@ -99,8 +95,12 @@ pub fn analyze(
     // ArithmeticOpAnalyzer), falling back to the generic per-operator result.
     if !addition_is_array_union
         && let Some(op) = arithmetic_op_analyzer::arith_op(operator)
-        && let Some(precise) =
-            arithmetic_op_analyzer::infer_precise_arithmetic_result(op, left_type, right_type)
+        && let Some(precise) = arithmetic_op_analyzer::infer_precise_arithmetic_result(
+            op,
+            left_type,
+            right_type,
+            inside_loop,
+        )
     {
         return precise;
     }
@@ -109,8 +109,40 @@ pub fn analyze(
         BinaryOperator::LowXor(_) => TUnion::bool(),
         BinaryOperator::Addition(_) => {
             if addition_is_array_union {
+                // Psalm's pre-atomic operand checks still flag a nullable
+                // operand of an array `+` (its own config suppresses the
+                // issue repo-wide).
+                for operand in [left_type, right_type].into_iter().flatten() {
+                    if operand.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull))
+                        && !operand.ignore_nullable_issues
+                    {
+                        let (line, col) = analyzer.get_line_column(pos.0);
+                        analysis_data.add_issue(Issue::new(
+                            IssueKind::PossiblyNullOperand,
+                            format!(
+                                "Cannot use arithmetic on possibly null type {}",
+                                operand.get_id(Some(analyzer.interner))
+                            ),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
+                }
                 match (left_type, right_type) {
-                    (Some(lt), Some(rt)) => combine_union_types(lt, rt, true),
+                    (Some(lt), Some(rt)) => {
+                        let left_operand = array_union_operand(lt);
+                        let right_operand = array_union_operand(rt);
+                        if let Some(merged) =
+                            keyed_array_plus(&left_operand, &right_operand)
+                        {
+                            merged
+                        } else {
+                            combine_union_types(&left_operand, &right_operand, true)
+                        }
+                    }
                     (Some(lt), None) => lt.clone(),
                     (None, Some(rt)) => rt.clone(),
                     (None, None) => TUnion::new(TAtomic::TArray {
@@ -140,34 +172,27 @@ pub fn analyze(
             binop_analyzer::infer_bitwise_type(operator, left_type, right_type)
         }
         BinaryOperator::StringConcat(_) => {
+            // Psalm's ConcatAnalyzer: stringifying an object operand in a
+            // mutation-free context flags a non-mutation-free __toString.
+            if crate::expr::call::method_call_analyzer::is_mutation_free_context(analyzer) {
+                for operand_type in [left_type, right_type].into_iter().flatten() {
+                    binop_analyzer::emit_impure_to_string_for_union(
+                        analyzer,
+                        operand_type,
+                        pos,
+                        analysis_data,
+                    );
+                }
+            }
+
             concat_analyzer::infer_concat_type(analyzer, left_type, right_type)
         }
         BinaryOperator::Instanceof(_) => {
-            if let Some(left_union) = left_type
-                && let Some(asserted_class_id) =
-                    binop_analyzer::resolve_instanceof_class_id(analyzer, right_expr)
-            {
-                let (can_be_instance, always_instance) =
-                    binop_analyzer::evaluate_instanceof_possibility(
-                        analyzer,
-                        left_union,
-                        asserted_class_id,
-                    );
-
-                let rhs_is_explicit_class = matches!(right_expr.unparenthesized(), Expression::Identifier(_));
-
-                if always_instance && rhs_is_explicit_class && !context.inside_loop {
-                    let mut result = TUnion::new(TAtomic::TTrue);
-                    result.from_docblock = left_union.from_docblock;
-                    result
-                } else if can_be_instance {
-                    TUnion::bool()
-                } else {
-                    TUnion::bool()
-                }
-            } else {
-                TUnion::bool()
-            }
+            // Psalm types an `instanceof` expression as plain bool even when
+            // it is statically certain; the always-true/always-false verdict
+            // is the reconciler's to report ("Type X for $e is always Y").
+            // Folding to `true` here double-reported as a truthy operand.
+            TUnion::bool()
         }
         BinaryOperator::NullCoalesce(_) => match (left_type, right_type) {
             (Some(lt), Some(rt)) => {
@@ -192,17 +217,114 @@ pub fn analyze(
     }
 }
 
-/// Infer the result type of an arithmetic operation.
+/// Whether `+` on this operand is the array-union `+`. Psalm's
+/// ArithmeticOpAnalyzer analyzes per-atomic and skips null/false atomics
+/// (they only feed the Possibly{Null,False}Operand checks), so
+/// `array|null + array` still array-unions rather than collapsing to
+/// numeric addition.
 fn union_is_array_like(t: &TUnion) -> bool {
-    !t.types.is_empty()
-        && t.types.iter().all(|atomic| {
-            matches!(
+    let mut has_array = false;
+    for atomic in &t.types {
+        match atomic {
+            TAtomic::TArray { .. }
+            | TAtomic::TNonEmptyArray { .. }
+            | TAtomic::TList { .. }
+            | TAtomic::TNonEmptyList { .. }
+            | TAtomic::TKeyedArray { .. } => has_array = true,
+            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing => {}
+            _ => return false,
+        }
+    }
+    has_array
+}
+
+/// The array atomics of an operand already vetted by
+/// [`union_is_array_like`]: null/false members are dropped from the
+/// array-union result (Psalm skips those atomics).
+/// Psalm's ArithmeticOpAnalyzer `+` over two keyed shapes: left's properties
+/// win; right-only keys are added; a left key that is possibly undefined but
+/// defined on the right combines both types and takes the right's
+/// definedness.
+fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
+    let (
+        TAtomic::TKeyedArray {
+            properties: left_properties,
+            is_list: left_is_list,
+            sealed: left_sealed,
+            fallback_key_type: left_fallback_key,
+            fallback_value_type: left_fallback_value,
+        },
+        TAtomic::TKeyedArray {
+            properties: right_properties,
+            is_list: right_is_list,
+            sealed: right_sealed,
+            fallback_key_type: right_fallback_key,
+            fallback_value_type: right_fallback_value,
+        },
+    ) = (left.get_single()?, right.get_single()?)
+    else {
+        return None;
+    };
+
+    let mut properties = (**left_properties).clone();
+    for (key, right_property) in right_properties.iter() {
+        match properties.get(key) {
+            None => {
+                // A left side with fallback params may already hold the key
+                // with any value, so a right-only key combines with mixed
+                // (Psalm's definitely_existing_mixed_right_properties).
+                if left_fallback_value.is_some() {
+                    properties.insert(
+                        key.clone(),
+                        combine_union_types(&TUnion::mixed(), right_property, false),
+                    );
+                } else {
+                    properties.insert(key.clone(), right_property.clone());
+                }
+            }
+            Some(left_property) if left_property.possibly_undefined => {
+                let mut combined = combine_union_types(left_property, right_property, false);
+                combined.possibly_undefined = right_property.possibly_undefined;
+                properties.insert(key.clone(), combined);
+            }
+            _ => {}
+        }
+    }
+
+    let combine_fallback = |left_fb: &Option<Box<TUnion>>, right_fb: &Option<Box<TUnion>>| match (
+        left_fb, right_fb,
+    ) {
+        (None, None) => None,
+        (Some(left_fb), Some(right_fb)) => {
+            Some(Box::new(combine_union_types(left_fb, right_fb, false)))
+        }
+        (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
+    };
+
+    Some(TUnion::new(TAtomic::TKeyedArray {
+        properties: std::sync::Arc::new(properties),
+        is_list: *left_is_list && *right_is_list,
+        sealed: *left_sealed && *right_sealed,
+        fallback_key_type: combine_fallback(left_fallback_key, right_fallback_key),
+        fallback_value_type: combine_fallback(left_fallback_value, right_fallback_value),
+    }))
+}
+
+fn array_union_operand(t: &TUnion) -> TUnion {
+    let arrays: Vec<TAtomic> = t
+        .types
+        .iter()
+        .filter(|atomic| {
+            !matches!(
                 atomic,
-                TAtomic::TArray { .. }
-                    | TAtomic::TNonEmptyArray { .. }
-                    | TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { .. }
+                TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing
             )
         })
+        .cloned()
+        .collect();
+    if arrays.is_empty() {
+        t.clone()
+    } else {
+        TUnion::from_types(arrays)
+    }
 }

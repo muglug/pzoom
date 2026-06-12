@@ -1,0 +1,2 @@
+RedundantCondition - input.php:18:9 - Type ScalarAtomic for $input is always ScalarAtomic
+RedundantCondition - input.php:28:9 - Type ScalarAtomic for $input is always ScalarAtomic

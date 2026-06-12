@@ -24,6 +24,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use pzoom_code_info::algebra::{
     Clause, ClauseKey, combine_ored_clauses, get_truths_from_formula, negate_formula, simplify_cnf,
 };
+use pzoom_code_info::VarName;
 
 use pzoom_code_info::{TAtomic, TUnion};
 
@@ -55,16 +56,41 @@ pub(crate) fn analyze(
 ) -> Result<(), AnalysisError> {
     let pre_conditional_context = else_context.clone();
 
-    // Analyze the elseif condition in the running fallthrough context. The shared
-    // body context becomes the truthy branch we narrow into.
+    // Psalm's IfConditionalAnalyzer ("used when evaluating elseifs") narrows a
+    // local clone of the fallthrough context by the accumulated negated truths
+    // before analyzing the elseif condition, so e.g. `if ($x === null) {}
+    // elseif (foo($x))` sees `$x` non-null inside the condition. The running
+    // `else_context` itself stays un-reconciled (its redefinition baseline must
+    // keep the pre-narrowing types). Clauses about the changed vars are
+    // filtered out of the entry clauses below.
+    let mut entry_context = else_context.clone();
+    let mut entry_changed_var_ids = FxHashSet::default();
+    if !if_scope.negated_clauses.is_empty() && !if_scope.negated_types.is_empty() {
+        let negated_types = if_scope.negated_types.clone();
+        let inside_loop = entry_context.inside_loop;
+        reconciler::reconcile_keyed_types(
+            &negated_types,
+            &mut entry_context,
+            &mut entry_changed_var_ids,
+            analyzer,
+            analysis_data,
+            inside_loop,
+            false,
+            crate::reconciler::EmissionMode::Silent,
+            None,
+        );
+    }
+
+    // Analyze the elseif condition in the (negation-narrowed) fallthrough
+    // context. The shared body context becomes the truthy branch we narrow into.
     let if_conditional_scope =
-        if_conditional_analyzer::analyze(analyzer, elseif_cond, analysis_data, else_context);
+        if_conditional_analyzer::analyze(analyzer, elseif_cond, analysis_data, &entry_context);
     let mut elseif_context = if_conditional_scope.if_body_context;
     let post_cond_context = if_conditional_scope.post_if_context;
 
     // Reconstruct `assigned_in_conditional_var_ids`: anything whose assignment
     // count grew while analysing the condition.
-    let assigned_in_conditional_var_ids: FxHashMap<pzoom_str::StrId, usize> = post_cond_context
+    let assigned_in_conditional_var_ids: FxHashMap<VarName, usize> = post_cond_context
         .assigned_var_ids
         .iter()
         .filter(|(var_id, count)| {
@@ -73,7 +99,7 @@ pub(crate) fn analyze(
                 .get(*var_id)
                 .map_or(true, |pre| *count > pre)
         })
-        .map(|(var_id, count)| (*var_id, *count))
+        .map(|(var_id, count)| (var_id.clone(), *count))
         .collect();
 
     // pzoom's conditional analyzer takes the outer context immutably, so condition
@@ -82,10 +108,10 @@ pub(crate) fn analyze(
     // them, mirroring Psalm passing `else_context` by reference.
     for var_id in assigned_in_conditional_var_ids.keys() {
         if let Some(ty) = post_cond_context.locals.get(var_id) {
-            else_context.locals.insert(*var_id, ty.clone());
+            else_context.locals.insert(var_id.clone(), ty.clone());
         }
         if let Some(count) = post_cond_context.assigned_var_ids.get(var_id) {
-            else_context.assigned_var_ids.insert(*var_id, *count);
+            else_context.assigned_var_ids.insert(var_id.clone(), *count);
         }
     }
 
@@ -100,7 +126,7 @@ pub(crate) fn analyze(
         .locals
         .iter()
         .filter(|(_, ty)| ty.has_mixed())
-        .map(|(var_id, _)| analyzer.interner.lookup(*var_id).to_string())
+        .map(|(var_id, _)| var_id.to_string())
         .collect();
 
     let mut elseif_clauses = formula_generator::get_formula(
@@ -144,13 +170,29 @@ pub(crate) fn analyze(
 
     // entry_clauses: the clauses on entry to the elseif, with any clause that
     // references a variable assigned during the condition invalidated to a wedge.
+    // Single-variable clauses about a var the negated-truths reconcile above
+    // changed are dropped entirely (Psalm's IfConditionalAnalyzer entry-clause
+    // filter) — they have been consumed by that narrowing.
     let mut entry_clauses: Vec<Clause> = Vec::new();
     for clause in pre_conditional_context.clauses.iter() {
+        if !entry_changed_var_ids.is_empty()
+            && !clause.wedge
+            && clause.possibilities.len() == 1
+            && clause
+                .possibilities
+                .keys()
+                .next()
+                .and_then(clause_key_name)
+                .is_some_and(|name| entry_changed_var_ids.contains(name))
+        {
+            continue;
+        }
+
         let references_assigned = clause.possibilities.keys().any(|key| {
             clause_key_name(key).is_some_and(|name| {
                 assigned_in_conditional_var_ids.keys().any(|assigned_id| {
-                    let assigned = analyzer.interner.lookup(*assigned_id);
-                    name == &*assigned || key_has_root_offset(name, &assigned)
+                    let assigned = assigned_id.as_str();
+                    name == assigned || key_has_root_offset(name, assigned)
                 })
             })
         });
@@ -177,14 +219,11 @@ pub(crate) fn analyze(
             &elseif_assertion_result,
         );
         if let Some(is_truthy) = condition_is_always {
-            analysis_data.set_expr_type(
-                elseif_cond_id,
-                if is_truthy {
+            analysis_data.expr_types.insert(elseif_cond_id, Rc::new(if is_truthy {
                     TUnion::new(TAtomic::TTrue)
                 } else {
                     TUnion::new(TAtomic::TFalse)
-                },
-            );
+                }));
         }
     }
     if !condition_has_assignments(elseif_cond) {
@@ -282,6 +321,9 @@ pub(crate) fn analyze(
     let mut newly_reconciled_var_ids = FxHashSet::default();
     if !reconcilable_elseif_types.is_empty() {
         let inside_loop = elseif_context.inside_loop;
+        // Psalm's reconciler issues point at the elseif condition expression.
+        let previous_reconcile_pos = analysis_data.current_reconcile_pos;
+        analysis_data.current_reconcile_pos = Some(elseif_cond_id);
         reconciler::reconcile_keyed_types(
             &reconcilable_elseif_types,
             &mut elseif_context,
@@ -290,16 +332,15 @@ pub(crate) fn analyze(
             analysis_data,
             inside_loop,
             false,
-            true,
+            crate::reconciler::EmissionMode::All,
             Some(&active_elseif_types),
         );
+        analysis_data.current_reconcile_pos = previous_reconcile_pos;
 
         if !newly_reconciled_var_ids.is_empty() {
             elseif_context.clauses = BlockContext::remove_reconciled_clause_refs(
                 &elseif_context.clauses,
-                &newly_reconciled_var_ids,
-                analyzer.interner,
-            )
+                &newly_reconciled_var_ids)
             .0;
         }
     }
@@ -308,7 +349,16 @@ pub(crate) fn analyze(
     let pre_stmts_possibly_assigned_var_ids =
         std::mem::take(&mut elseif_context.possibly_assigned_var_ids);
 
+    // Baseline for body-removed vars (see update_if_scope).
+    let post_condition_locals = elseif_context.locals.clone();
+
     analyze_stmts(analyzer, elseif_stmts, analysis_data, &mut elseif_context)?;
+
+    // Propagate branch-local clause evictions to the outer context (Psalm's
+    // `parent_remove_vars` loop).
+    for var_name in elseif_context.parent_remove_vars.clone() {
+        outer_context.remove_var_name_from_conflicting_clauses(&var_name);
+    }
 
     let new_stmts_assigned_var_ids = elseif_context.assigned_var_ids.clone();
     for (var_id, count) in pre_stmts_assigned_var_ids {
@@ -319,15 +369,19 @@ pub(crate) fn analyze(
         .possibly_assigned_var_ids
         .extend(pre_stmts_possibly_assigned_var_ids);
 
-    // Carry by-ref constraints into the outer context (Psalm's byref_constraints
-    // merge; pzoom does not emit ConflictingReferenceConstraint here).
-    for (var_id, constraints) in &elseif_context.reference_constraints {
-        let entry = outer_context.reference_constraints.entry(*var_id).or_default();
-        for constraint in constraints {
-            if !entry.contains(constraint) {
-                entry.push(constraint.clone());
-            }
-        }
+    // Carry by-ref constraints discovered in the elseif into the outer context,
+    // reporting conflicts (Psalm's byref_constraints merge).
+    {
+        let elseif_span = mago_span::HasSpan::span(elseif_cond);
+        let elseif_pos = (elseif_span.start.offset, elseif_span.end.offset);
+        let branch_constraints = elseif_context.clone();
+        crate::stmt::if_else_analyzer::carry_reference_constraints_to_outer(
+            analyzer,
+            analysis_data,
+            outer_context,
+            &branch_constraints,
+            elseif_pos,
+        );
     }
 
     let final_actions = scope_analyzer::get_control_actions(elseif_stmts, analysis_data, &[], true);
@@ -345,7 +399,7 @@ pub(crate) fn analyze(
     if !has_leaving_statements {
         let mut merged_assigned = new_stmts_assigned_var_ids.clone();
         for (var_id, count) in &assigned_in_conditional_var_ids {
-            merged_assigned.entry(*var_id).or_insert(*count);
+            merged_assigned.entry(var_id.clone()).or_insert(*count);
         }
 
         update_if_scope(
@@ -353,6 +407,7 @@ pub(crate) fn analyze(
             if_scope,
             &elseif_context,
             outer_context,
+            &post_condition_locals,
             &merged_assigned,
             &new_stmts_possibly_assigned_var_ids,
             &newly_reconciled_var_ids,
@@ -395,7 +450,7 @@ pub(crate) fn analyze(
             analysis_data,
             inside_loop,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             None,
         );
     }
@@ -404,7 +459,7 @@ pub(crate) fn analyze(
         let vars_possibly_in_scope: FxHashSet<_> = elseif_context
             .vars_possibly_in_scope
             .difference(&outer_context.vars_possibly_in_scope)
-            .copied()
+            .cloned()
             .collect();
 
         if has_leaving_statements && elseif_context.inside_loop {
@@ -412,10 +467,10 @@ pub(crate) fn analyze(
                 if !has_continue_statement && !has_break_statement {
                     if_scope
                         .new_vars_possibly_in_scope
-                        .extend(vars_possibly_in_scope.iter().copied());
+                        .extend(vars_possibly_in_scope.iter().cloned());
                     if_scope
                         .possibly_assigned_var_ids
-                        .extend(new_stmts_possibly_assigned_var_ids.iter().copied());
+                        .extend(new_stmts_possibly_assigned_var_ids.iter().cloned());
                 }
                 loop_scope
                     .vars_possibly_in_scope

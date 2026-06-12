@@ -1,0 +1,17 @@
+<?php
+
+/**
+ * @param resource $connection
+ * @param 0|1      $value
+ *
+ * @return (func_num_args() > 1 ? bool : (0|1))
+ */
+function db2_autocommit($connection, int $value = null): int|bool {}
+
+/**
+ * @psalm-pure
+ *
+ * @psalm-taint-escape sql
+ * @psalm-flow ($string) -> return
+ */
+function db2_escape_string($string) {}

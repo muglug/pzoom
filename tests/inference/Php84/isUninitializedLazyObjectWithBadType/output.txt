@@ -1,1 +1,1 @@
-Argument 1 of ReflectionClass::isUninitializedLazyObject expects Foo, but Bar provided
+IncompatibleTypeParameters - input.php:5:45 - Type Bar should be a subtype of Foo

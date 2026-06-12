@@ -1,0 +1,3910 @@
+<?php
+
+namespace {
+    /**
+     * @author Vasyl Sovyak
+     */
+}
+
+namespace {
+            final class Cassandra
+        {
+                    public const CONSISTENCY_ANY = 0;
+
+                    public const CONSISTENCY_ONE = 1;
+
+                    public const CONSISTENCY_TWO = 2;
+
+                    public const CONSISTENCY_THREE = 3;
+
+                    public const CONSISTENCY_QUORUM = 4;
+
+                    public const CONSISTENCY_ALL = 5;
+
+                    public const CONSISTENCY_LOCAL_QUORUM = 6;
+
+                    public const CONSISTENCY_EACH_QUORUM = 7;
+
+                    public const CONSISTENCY_SERIAL = 8;
+
+                    public const CONSISTENCY_LOCAL_SERIAL = 9;
+
+                    public const CONSISTENCY_LOCAL_ONE = 10;
+
+                    public const VERIFY_NONE = 0;
+
+                    public const VERIFY_PEER_CERT = 1;
+
+                    public const VERIFY_PEER_IDENTITY = 2;
+
+                    public const BATCH_LOGGED = 0;
+
+                    public const BATCH_UNLOGGED = 1;
+
+                    public const BATCH_COUNTER = 2;
+
+                    public const LOG_DISABLED = 0;
+
+                    public const LOG_CRITICAL = 1;
+
+                    public const LOG_ERROR = 2;
+
+                    public const LOG_WARN = 3;
+
+                    public const LOG_INFO = 4;
+
+                    public const LOG_DEBUG = 5;
+
+                    public const LOG_TRACE = 6;
+
+                    public const TYPE_TEXT = 'text';
+
+                    public const TYPE_ASCII = 'ascii';
+
+                    public const TYPE_VARCHAR = 'varchar';
+
+                    public const TYPE_BIGINT = 'bigint';
+
+                    public const TYPE_SMALLINT = 'smallint';
+
+                    public const TYPE_TINYINT = 'tinyint';
+
+                    public const TYPE_BLOB = 'blob';
+
+                    public const TYPE_BOOLEAN = 'boolean';
+
+                    public const TYPE_COUNTER = 'counter';
+
+                    public const TYPE_DECIMAL = 'decimal';
+
+                    public const TYPE_DOUBLE = 'double';
+
+                    public const TYPE_FLOAT = 'float';
+
+                    public const TYPE_INT = 'int';
+
+                    public const TYPE_TIMESTAMP = 'timestamp';
+
+                    public const TYPE_UUID = 'uuid';
+
+                    public const TYPE_VARINT = 'varint';
+
+                    public const TYPE_TIMEUUID = 'timeuuid';
+
+                    public const TYPE_INET = 'inet';
+
+                    public const VERSION = '1.3.2';
+
+                    public const CPP_DRIVER_VERSION = '2.13.0';
+
+            /**
+             * @return \Cassandra\Cluster\Builder A cluster builder object with default settings
+             */
+            public static function cluster() {}
+
+            /**
+             * @return \Cassandra\SSLOptions\Builder A SSL options builder with default settings
+             */
+            public static function ssl() {}
+        }
+}
+
+namespace Cassandra {
+        
+            interface Column
+        {
+            /**
+             * @return string Name of the column or null
+             */
+            public function name();
+
+            /**
+             * @return \Cassandra\Type Type of the column
+             */
+            public function type();
+
+            /**
+             * @return bool Whether the column is stored in descending order.
+             */
+            public function isReversed();
+
+            /**
+             * @return bool Whether the column is static
+             */
+            public function isStatic();
+
+            /**
+             * @return bool Whether the column is frozen
+             */
+            public function isFrozen();
+
+            /**
+             * @return string Name of the index if defined or null
+             */
+            public function indexName();
+
+            /**
+             * @return string Index options if present or null
+             */
+            public function indexOptions();
+        }
+
+            interface Session
+        {
+            /**
+             * @param string|\Cassandra\Statement $statement string or statement to be executed.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control execution of the query.
+             * @return \Cassandra\Rows A collection of rows.
+             * @throws \Cassandra\Exception
+             */
+            public function execute($statement, $options);
+
+            /**
+             * @param string|\Cassandra\Statement $statement string or statement to be executed.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control execution of the query.
+             * @return \Cassandra\FutureRows A future that can be used to retrieve the result.
+             */
+            public function executeAsync($statement, $options);
+
+            /**
+             * @param string $cql The query to be prepared.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control preparing the query.
+             * @return \Cassandra\PreparedStatement A prepared statement that can be bound with parameters and executed.
+             * @throws \Cassandra\Exception
+             */
+            public function prepare($cql, $options);
+
+            /**
+             * @param string $cql The query to be prepared.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control preparing the query.
+             * @return \Cassandra\FuturePreparedStatement A future that can be used to retrieve the prepared statement.
+             */
+            public function prepareAsync($cql, $options);
+
+            /**
+             * @param float $timeout The amount of time in seconds to wait for the session to close.
+             * @return null Nothing.
+             * @throws \Cassandra\Exception
+             */
+            public function close($timeout);
+
+            /**
+             * @return \Cassandra\FutureClose A future that can be waited on.
+             */
+            public function closeAsync();
+
+            /**
+             * @return array Performance/Diagnostic metrics.
+             */
+            public function metrics();
+
+            /**
+             * @return \Cassandra\Schema A snapshot of the cluster's schema.
+             */
+            public function schema();
+        }
+
+            interface Table
+        {
+            /**
+             * @return string Name of the table
+             */
+            public function name();
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            public function option($name);
+
+            /**
+             * @return array A dictionary of `string` and `Value` pairs of the table's options.
+             */
+            public function options();
+
+            /**
+             * @return string Table description or null
+             */
+            public function comment();
+
+            /**
+             * @return float Read repair chance
+             */
+            public function readRepairChance();
+
+            /**
+             * @return float Local read repair chance
+             */
+            public function localReadRepairChance();
+
+            /**
+             * @return int GC grace seconds
+             */
+            public function gcGraceSeconds();
+
+            /**
+             * @return string Caching options
+             */
+            public function caching();
+
+            /**
+             * @return float Bloom filter FP chance
+             */
+            public function bloomFilterFPChance();
+
+            /**
+             * @return int Memtable flush period in milliseconds
+             */
+            public function memtableFlushPeriodMs();
+
+            /**
+             * @return int Default TTL.
+             */
+            public function defaultTTL();
+
+            /**
+             * @return string Speculative retry.
+             */
+            public function speculativeRetry();
+
+            /**
+             * @return int Index interval
+             */
+            public function indexInterval();
+
+            /**
+             * @return string Compaction strategy class name
+             */
+            public function compactionStrategyClassName();
+
+            /**
+             * @return \Cassandra\Map Compaction strategy options
+             */
+            public function compactionStrategyOptions();
+
+            /**
+             * @return \Cassandra\Map Compression parameters
+             */
+            public function compressionParameters();
+
+            /**
+             * @return bool Value of `populate_io_cache_on_flush` or null
+             */
+            public function populateIOCacheOnFlush();
+
+            /**
+             * @return bool Value of `replicate_on_write` or null
+             */
+            public function replicateOnWrite();
+
+            /**
+             * @return int Value of `max_index_interval` or null
+             */
+            public function maxIndexInterval();
+
+            /**
+             * @return int Value of `min_index_interval` or null
+             */
+            public function minIndexInterval();
+
+            /**
+             * @param string $name Name of the column
+             * @return \Cassandra\Column Column instance
+             */
+            public function column($name);
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function columns();
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function partitionKey();
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function primaryKey();
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function clusteringKey();
+
+            /**
+             * @return array A list of cluster column orders ('asc' and 'desc')
+             */
+            public function clusteringOrder();
+        }
+
+            interface RetryPolicy {}
+
+            interface TimestampGenerator {}
+
+            interface Exception {}
+
+            interface Function_
+        {
+            /**
+             * @return string Full name of the function including name and types
+             */
+            public function name();
+
+            /**
+             * @return string Simple name of the function
+             */
+            public function simpleName();
+
+            /**
+             * @return array Arguments of the function
+             */
+            public function arguments();
+
+            /**
+             * @return \Cassandra\Type Return type of the function
+             */
+            public function returnType();
+
+            /**
+             * @return string Signature of the function (same as name())
+             */
+            public function signature();
+
+            /**
+             * @return string Language used by the function
+             */
+            public function language();
+
+            /**
+             * @return string Body of the function
+             */
+            public function body();
+
+            /**
+             * @return bool Returns whether the function is called when the input columns are null
+             */
+            public function isCalledOnNullInput();
+        }
+
+            interface UuidInterface
+        {
+            /**
+             * @return string uuid as string
+             */
+            public function uuid();
+
+            /**
+             * @return int version of this uuid
+             */
+            public function version();
+        }
+
+            interface Index
+        {
+            /**
+             * @return string Name of the index
+             */
+            public function name();
+
+            /**
+             * @return string Kind of the index
+             */
+            public function kind();
+
+            /**
+             * @return string Target column name of the index
+             */
+            public function target();
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            public function option($name);
+
+            /**
+             * @return array A dictionary of `string` and `Value` pairs of the index's options.
+             */
+            public function options();
+
+            /**
+             * @return string Class name of a custom index
+             */
+            public function className();
+
+            /**
+             * @return bool true if a custom index
+             */
+            public function isCustom();
+        }
+
+            interface Cluster
+        {
+            /**
+             * @param string $keyspace Optional keyspace name
+             * @return \Cassandra\Session Session instance
+             */
+            public function connect($keyspace);
+
+            /**
+             * @param string $keyspace Optional keyspace name
+             * @return \Cassandra\Future A Future Session instance
+             */
+            public function connectAsync($keyspace);
+        }
+
+            interface Numeric
+        {
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num);
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num);
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num);
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num);
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num);
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs();
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg();
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt();
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt();
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble();
+        }
+
+            interface Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return mixed a value that the future has been resolved with
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout);
+        }
+
+            interface Keyspace
+        {
+            /**
+             * @return string Name
+             */
+            public function name();
+
+            /**
+             * @return string Replication class
+             */
+            public function replicationClassName();
+
+            /**
+             * @return \Cassandra\Map Replication options
+             */
+            public function replicationOptions();
+
+            /**
+             * @return string Whether durable writes are enabled
+             */
+            public function hasDurableWrites();
+
+            /**
+             * @param string $name Table name
+             * @return \Cassandra\Table|null Table instance or null
+             */
+            public function table($name);
+
+            /**
+             * @return array An array of `Table` instances
+             */
+            public function tables();
+
+            /**
+             * @param string $name User type name
+             * @return \Cassandra\Type\UserType|null A user type or null
+             */
+            public function userType($name);
+
+            /**
+             * @return array An array of user types
+             */
+            public function userTypes();
+
+            /**
+             * @param string $name Materialized view name
+             * @return \Cassandra\MaterializedView|null A materialized view or null
+             */
+            public function materializedView($name);
+
+            /**
+             * @return array An array of materialized views
+             */
+            public function materializedViews();
+
+            /**
+             * @param string $name Function name
+             * @param string|\Cassandra\Type $params Function arguments
+             * @return \Cassandra\Function_|null A function or null
+             */
+            public function function_($name, ...$params);
+
+            /**
+             * @return array An array of functions
+             */
+            public function functions();
+
+            /**
+             * @param string $name Aggregate name
+             * @param string|\Cassandra\Type $params Aggregate arguments
+             * @return \Cassandra\Aggregate|null An aggregate or null
+             */
+            public function aggregate($name, ...$params);
+
+            /**
+             * @return array An array of aggregates
+             */
+            public function aggregates();
+        }
+
+            interface Value
+        {
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type();
+        }
+
+            interface Aggregate
+        {
+            /**
+             * @return string Full name of the aggregate including name and types
+             */
+            public function name();
+
+            /**
+             * @return string Simple name of the aggregate
+             */
+            public function simpleName();
+
+            /**
+             * @return array Argument types of the aggregate
+             */
+            public function argumentTypes();
+
+            /**
+             * @return \Cassandra\Function_ Final function of the aggregate
+             */
+            public function finalFunction();
+
+            /**
+             * @return \Cassandra\Function_ State function of the aggregate
+             */
+            public function stateFunction();
+
+            /**
+             * @return \Cassandra\Value Initial condition of the aggregate
+             */
+            public function initialCondition();
+
+            /**
+             * @return \Cassandra\Type Return type of the aggregate
+             */
+            public function returnType();
+
+            /**
+             * @return \Cassandra\Type State type of the aggregate
+             */
+            public function stateType();
+
+            /**
+             * @return string Signature of the aggregate (same as name())
+             */
+            public function signature();
+        }
+
+            interface Statement {}
+
+            interface Schema
+        {
+            /**
+             * @param string $name Name of the keyspace to get
+             * @return \Cassandra\Keyspace Keyspace instance or null
+             */
+            public function keyspace($name);
+
+            /**
+             * @return array An array of Keyspace instances.
+             */
+            public function keyspaces();
+        }
+
+            final class Rows implements \Iterator, \ArrayAccess
+        {
+                    public function __construct() {}
+
+            /**
+             * @return int number of rows
+             */
+            public function count() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+
+            /**
+             * @return array current row
+             */
+            public function current() {}
+
+            /**
+             * @return int index
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool whether there are more rows available for iteration
+             */
+            public function valid() {}
+
+            /**
+             * @param int $offset row index
+             * @return bool whether a row at a given index exists
+             */
+            public function offsetExists($offset) {}
+
+            /**
+             * @param int $offset row index
+             * @return array|null row at a given index
+             */
+            public function offsetGet($offset) {}
+
+            /**
+             * @param int $offset row index
+             * @param array $value row value
+             * @return void
+             * @throws \Cassandra\Exception\DomainException
+             */
+            public function offsetSet($offset, $value) {}
+
+            /**
+             * @param int $offset row index
+             * @return void
+             * @throws \Cassandra\Exception\DomainException
+             */
+            public function offsetUnset($offset) {}
+
+            /**
+             * @return bool whether this is the last page or not
+             */
+            public function isLastPage() {}
+
+            /**
+             * @param float|null $timeout
+             * @return \Cassandra\Rows|null loads and returns next result page
+             */
+            public function nextPage($timeout) {}
+
+            /**
+             * @return \Cassandra\Future returns future of the next result page
+             */
+            public function nextPageAsync() {}
+
+            /**
+             * @return string
+             */
+            public function pagingStateToken() {}
+
+            /**
+             * @return array|null returns first row if any
+             */
+            public function first() {}
+        }
+
+            final class DefaultCluster implements Cluster
+        {
+            /**
+             * @param string $keyspace Optional keyspace name
+             * @param int $timeout Optional timeout
+             * @return \Cassandra\Session Session instance
+             */
+            public function connect($keyspace, $timeout) {}
+
+            /**
+             * @param string $keyspace Optional keyspace name
+             * @return \Cassandra\Future A Future Session instance
+             */
+            public function connectAsync($keyspace) {}
+        }
+
+            final class DefaultFunction implements Function_
+        {
+            /**
+             * @return string Full name of the function including name and types
+             */
+            public function name() {}
+
+            /**
+             * @return string Simple name of the function
+             */
+            public function simpleName() {}
+
+            /**
+             * @return array Arguments of the function
+             */
+            public function arguments() {}
+
+            /**
+             * @return \Cassandra\Type Return type of the function
+             */
+            public function returnType() {}
+
+            /**
+             * @return string Signature of the function (same as name())
+             */
+            public function signature() {}
+
+            /**
+             * @return string Language used by the function
+             */
+            public function language() {}
+
+            /**
+             * @return string Body of the function
+             */
+            public function body() {}
+
+            /**
+             * @return bool Returns whether the function is called when the input columns are null
+             */
+            public function isCalledOnNullInput() {}
+        }
+
+            final class SimpleStatement implements Statement
+        {
+            /**
+             * @param string $cql CQL string for this simple statement
+             */
+            public function __construct($cql) {}
+        }
+
+            final class Tuple implements Value, \Countable, \Iterator
+        {
+            /**
+             * @param array $types Array of types
+             */
+            public function __construct($types) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return array values
+             */
+            public function values() {}
+
+            /**
+             * @param mixed $value A value or null
+             * @return void
+             */
+            public function set($value) {}
+
+            /**
+             * @param int $index Index
+             * @return mixed A value or null
+             */
+            public function get($index) {}
+
+            /**
+             * @return int count
+             */
+            public function count() {}
+
+            /**
+             * @return mixed current element
+             */
+            public function current() {}
+
+            /**
+             * @return int current key
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool
+             */
+            public function valid() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+        }
+
+            final class Smallint implements Value, Numeric
+        {
+            /**
+             * @param int|float|string $value The value as an integer, double or string
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return \Cassandra\Smallint minimum value
+             */
+            public static function min() {}
+
+            /**
+             * @return \Cassandra\Smallint maximum value
+             */
+            public static function max() {}
+
+            /**
+             * @return string
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return int integer value
+             */
+            public function value() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class FuturePreparedStatement implements Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return \Cassandra\PreparedStatement A prepared statement
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout) {}
+        }
+
+            final class DefaultSchema implements Schema
+        {
+            /**
+             * @param string $name Name of the keyspace to get
+             * @return \Cassandra\Keyspace Keyspace instance or null
+             */
+            public function keyspace($name) {}
+
+            /**
+             * @return array An array of `Keyspace` instances.
+             */
+            public function keyspaces() {}
+
+            /**
+             * @return int Version of the schema.
+             */
+            public function version() {}
+        }
+
+            final class BatchStatement implements Statement
+        {
+            /**
+             * @param int $type must be one of Cassandra::BATCH_* (default: Cassandra::BATCH_LOGGED).
+             */
+            public function __construct($type) {}
+
+            /**
+             * @param string|\Cassandra\Statement $statement string or statement to add
+             * @param array|null $arguments positional or named arguments (optional)
+             * @return \Cassandra\BatchStatement self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function add($statement, $arguments) {}
+        }
+
+            final class Collection implements Value, \Countable, \Iterator
+        {
+            /**
+             * @param \Cassandra\Type $type
+             */
+            public function __construct($type) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return array values
+             */
+            public function values() {}
+
+            /**
+             * @param mixed ...$value one or more values to add
+             * @return int total number of values in this collection
+             */
+            public function add(...$value) {}
+
+            /**
+             * @param int $index Index
+             * @return mixed Value or null
+             */
+            public function get($index) {}
+
+            /**
+             * @param mixed $value Value
+             * @return int Index or null
+             */
+            public function find($value) {}
+
+            /**
+             * @return int count
+             */
+            public function count() {}
+
+            /**
+             * @return mixed current element
+             */
+            public function current() {}
+
+            /**
+             * @return int current key
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool
+             */
+            public function valid() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+
+            /**
+             * @param int $index Index
+             * @return bool Whether the value at a given index is correctly removed
+             */
+            public function remove($index) {}
+        }
+
+            final class FutureRows implements Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return \Cassandra\Rows|null The result set
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout) {}
+        }
+
+            final class DefaultMaterializedView extends MaterializedView
+        {
+            /**
+             * @return string Name of the view
+             */
+            public function name() {}
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            public function option($name) {}
+
+            /**
+             * @return array A dictionary of string and Value pairs of the
+             */
+            public function options() {}
+
+            /**
+             * @return string Table description or null
+             */
+            public function comment() {}
+
+            /**
+             * @return float Read repair chance
+             */
+            public function readRepairChance() {}
+
+            /**
+             * @return float Local read repair chance
+             */
+            public function localReadRepairChance() {}
+
+            /**
+             * @return int GC grace seconds
+             */
+            public function gcGraceSeconds() {}
+
+            /**
+             * @return string Caching options
+             */
+            public function caching() {}
+
+            /**
+             * @return float Bloom filter FP chance
+             */
+            public function bloomFilterFPChance() {}
+
+            /**
+             * @return int Memtable flush period in milliseconds
+             */
+            public function memtableFlushPeriodMs() {}
+
+            /**
+             * @return int Default TTL.
+             */
+            public function defaultTTL() {}
+
+            /**
+             * @return string Speculative retry.
+             */
+            public function speculativeRetry() {}
+
+            /**
+             * @return int Index interval
+             */
+            public function indexInterval() {}
+
+            /**
+             * @return string Compaction strategy class name
+             */
+            public function compactionStrategyClassName() {}
+
+            /**
+             * @return \Cassandra\Map Compaction strategy options
+             */
+            public function compactionStrategyOptions() {}
+
+            /**
+             * @return \Cassandra\Map Compression parameters
+             */
+            public function compressionParameters() {}
+
+            /**
+             * @return bool Value of `populate_io_cache_on_flush` or null
+             */
+            public function populateIOCacheOnFlush() {}
+
+            /**
+             * @return bool Value of `replicate_on_write` or null
+             */
+            public function replicateOnWrite() {}
+
+            /**
+             * @return int Value of `max_index_interval` or null
+             */
+            public function maxIndexInterval() {}
+
+            /**
+             * @return int Value of `min_index_interval` or null
+             */
+            public function minIndexInterval() {}
+
+            /**
+             * @param string $name Name of the column
+             * @return \Cassandra\Column Column instance
+             */
+            public function column($name) {}
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function columns() {}
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function partitionKey() {}
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function primaryKey() {}
+
+            /**
+             * @return array A list of Column instances
+             */
+            public function clusteringKey() {}
+
+            /**
+             * @return array A list of cluster column orders ('asc' and 'desc')
+             */
+            public function clusteringOrder() {}
+
+            /**
+             * @return \Cassandra\Table Base table of the view
+             */
+            public function baseTable() {}
+        }
+
+            final class SSLOptions {}
+
+            final class Bigint implements Value, Numeric
+        {
+            /**
+             * @param string $value integer value as a string
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return \Cassandra\Bigint minimum value
+             */
+            public static function min() {}
+
+            /**
+             * @return \Cassandra\Bigint maximum value
+             */
+            public static function max() {}
+
+            /**
+             * @return string integer value
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string integer value
+             */
+            public function value() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class FutureSession implements Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return \Cassandra\Session A connected session
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout) {}
+        }
+
+            final class Set implements Value, \Countable, \Iterator
+        {
+            /**
+             * @param \Cassandra\Type $type
+             */
+            public function __construct($type) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return array values
+             */
+            public function values() {}
+
+            /**
+             * @param mixed $value Value
+             * @return bool whether the value has been added
+             */
+            public function add($value) {}
+
+            /**
+             * @param mixed $value Value
+             * @return bool whether the value is in the set
+             */
+            public function has($value) {}
+
+            /**
+             * @param mixed $value Value
+             * @return bool whether the value has been removed
+             */
+            public function remove($value) {}
+
+            /**
+             * @return int count
+             */
+            public function count() {}
+
+            /**
+             * @return mixed current element
+             */
+            public function current() {}
+
+            /**
+             * @return int current key
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool
+             */
+            public function valid() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+        }
+
+            final class DefaultIndex implements Index
+        {
+            /**
+             * @return string Name of the index
+             */
+            public function name() {}
+
+            /**
+             * @return string Kind of the index
+             */
+            public function kind() {}
+
+            /**
+             * @return string Target column name of the index
+             */
+            public function target() {}
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            public function option($name) {}
+
+            /**
+             * @return array A dictionary of `string` and `Value` pairs of the index's options.
+             */
+            public function options() {}
+
+            /**
+             * @return string Class name of a custom index
+             */
+            public function className() {}
+
+            /**
+             * @return bool true if a custom index
+             */
+            public function isCustom() {}
+        }
+
+            final class DefaultAggregate implements Aggregate
+        {
+            /**
+             * @return string Full name of the aggregate including name and types
+             */
+            public function name() {}
+
+            /**
+             * @return string Simple name of the aggregate
+             */
+            public function simpleName() {}
+
+            /**
+             * @return array Argument types of the aggregate
+             */
+            public function argumentTypes() {}
+
+            /**
+             * @return \Cassandra\Function_ State public function of the aggregate
+             */
+            public function stateFunction() {}
+
+            /**
+             * @return \Cassandra\Function_ Final public function of the aggregate
+             */
+            public function finalFunction() {}
+
+            /**
+             * @return \Cassandra\Value Initial condition of the aggregate
+             */
+            public function initialCondition() {}
+
+            /**
+             * @return \Cassandra\Type State type of the aggregate
+             */
+            public function stateType() {}
+
+            /**
+             * @return \Cassandra\Type Return type of the aggregate
+             */
+            public function returnType() {}
+
+            /**
+             * @return string Signature of the aggregate (same as name())
+             */
+            public function signature() {}
+        }
+
+            final class Timestamp implements Value
+        {
+            /**
+             * @param int $seconds The number of seconds
+             * @param int $microseconds The number of microseconds
+             */
+            public function __construct($seconds, $microseconds) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return int seconds
+             */
+            public function time() {}
+
+            /**
+             * @param bool $get_as_float Whether to get this value as float
+             * @return float|string Float or string representation
+             */
+            public function microtime($get_as_float) {}
+
+            /**
+             * @return \DateTime PHP representation
+             */
+            public function toDateTime() {}
+
+            /**
+             * @return string timestamp
+             */
+            public function __toString() {}
+        }
+
+            final class Tinyint implements Value, Numeric
+        {
+            /**
+             * @param int|float|string $value The value as an integer, float or string
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return \Cassandra\Tinyint minimum value
+             */
+            public static function min() {}
+
+            /**
+             * @return \Cassandra\Tinyint maximum value
+             */
+            public static function max() {}
+
+            /**
+             * @return string
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return int integer value
+             */
+            public function value() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class Timeuuid implements Value, UuidInterface
+        {
+            /**
+             * @param int $timestamp Unix timestamp
+             */
+            public function __construct($timestamp) {}
+
+            /**
+             * @return string timeuuid
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string timeuuid
+             */
+            public function uuid() {}
+
+            /**
+             * @return int version of this timeuuid
+             */
+            public function version() {}
+
+            /**
+             * @return int seconds
+             */
+            public function time() {}
+
+            /**
+             * @return \DateTime PHP representation
+             */
+            public function toDateTime() {}
+        }
+
+            final class DefaultSession implements Session
+        {
+            /**
+             * @param string|\Cassandra\Statement $statement string or statement to be executed.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control execution of the query.
+             * @return \Cassandra\Rows A collection of rows.
+             * @throws \Cassandra\Exception
+             */
+            public function execute($statement, $options) {}
+
+            /**
+             * @param string|\Cassandra\Statement $statement string or statement to be executed.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control execution of the query.
+             * @return \Cassandra\FutureRows A future that can be used to retrieve the result.
+             */
+            public function executeAsync($statement, $options) {}
+
+            /**
+             * @param string $cql The query to be prepared.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control preparing the query.
+             * @return \Cassandra\PreparedStatement A prepared statement that can be bound with parameters and executed.
+             * @throws \Cassandra\Exception
+             */
+            public function prepare($cql, $options) {}
+
+            /**
+             * @param string $cql The query to be prepared.
+             * @param array|\Cassandra\ExecutionOptions|null $options Options to control preparing the query.
+             * @return \Cassandra\FuturePreparedStatement A future that can be used to retrieve the prepared statement.
+             */
+            public function prepareAsync($cql, $options) {}
+
+            /**
+             * @param float $timeout The amount of time in seconds to wait for the session to close.
+             * @return null Nothing.
+             * @throws \Cassandra\Exception
+             */
+            public function close($timeout) {}
+
+            /**
+             * @return \Cassandra\FutureClose A future that can be waited on.
+             */
+            public function closeAsync() {}
+
+            /**
+             * @return array Performance/Diagnostic metrics.
+             */
+            public function metrics() {}
+
+            /**
+             * @return \Cassandra\Schema A snapshot of the cluster's schema.
+             */
+            public function schema() {}
+        }
+
+            abstract class Custom implements Value
+        {
+            /**
+             * @return \Cassandra\Type\Custom
+             */
+            abstract public function type();
+        }
+
+            abstract class MaterializedView implements Table
+        {
+            /**
+             * @return \Cassandra\Table Base table of the view
+             */
+            abstract public function baseTable();
+
+            /**
+             * @return string Name of the view
+             */
+            abstract public function name();
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            abstract public function option($name);
+
+            /**
+             * @return array A dictionary of string and Value pairs of the
+             */
+            abstract public function options();
+
+            /**
+             * @return string View description or null
+             */
+            abstract public function comment();
+
+            /**
+             * @return float Read repair chance
+             */
+            abstract public function readRepairChance();
+
+            /**
+             * @return float Local read repair chance
+             */
+            abstract public function localReadRepairChance();
+
+            /**
+             * @return int GC grace seconds
+             */
+            abstract public function gcGraceSeconds();
+
+            /**
+             * @return string Caching options
+             */
+            abstract public function caching();
+
+            /**
+             * @return float Bloom filter FP chance
+             */
+            abstract public function bloomFilterFPChance();
+
+            /**
+             * @return int Memtable flush period in milliseconds
+             */
+            abstract public function memtableFlushPeriodMs();
+
+            /**
+             * @return int Default TTL.
+             */
+            abstract public function defaultTTL();
+
+            /**
+             * @return string Speculative retry.
+             */
+            abstract public function speculativeRetry();
+
+            /**
+             * @return int Index interval
+             */
+            abstract public function indexInterval();
+
+            /**
+             * @return string Compaction strategy class name
+             */
+            abstract public function compactionStrategyClassName();
+
+            /**
+             * @return \Cassandra\Map Compaction strategy options
+             */
+            abstract public function compactionStrategyOptions();
+
+            /**
+             * @return \Cassandra\Map Compression parameters
+             */
+            abstract public function compressionParameters();
+
+            /**
+             * @return bool Value of `populate_io_cache_on_flush` or null
+             */
+            abstract public function populateIOCacheOnFlush();
+
+            /**
+             * @return bool Value of `replicate_on_write` or null
+             */
+            abstract public function replicateOnWrite();
+
+            /**
+             * @return int Value of `max_index_interval` or null
+             */
+            abstract public function maxIndexInterval();
+
+            /**
+             * @return int Value of `min_index_interval` or null
+             */
+            abstract public function minIndexInterval();
+
+            /**
+             * @param string $name Name of the column
+             * @return \Cassandra\Column Column instance
+             */
+            abstract public function column($name);
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            abstract public function columns();
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            abstract public function partitionKey();
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            abstract public function primaryKey();
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            abstract public function clusteringKey();
+
+            /**
+             * @return array A list of cluster column orders ('asc' and 'desc')
+             */
+            abstract public function clusteringOrder();
+        }
+
+            final class Time implements Value
+        {
+            /**
+             * @param int|string $nanoseconds Number of nanoseconds since last microsecond
+             */
+            public function __construct($nanoseconds) {}
+
+            /**
+             * @param \DateTime $datetime
+             * @return \Cassandra\Time
+             */
+            public static function fromDateTime($datetime) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return int
+             */
+            public function seconds() {}
+
+            /**
+             * @return string this date in string format: Time(nanoseconds=$nanoseconds)
+             */
+            public function __toString() {}
+        }
+
+            abstract class Type
+        {
+            /**
+             * @return \Cassandra\Type ascii type
+             */
+            final public static function ascii() {}
+
+            /**
+             * @return \Cassandra\Type bigint type
+             */
+            final public static function bigint() {}
+
+            /**
+             * @return \Cassandra\Type smallint type
+             */
+            final public static function smallint() {}
+
+            /**
+             * @return \Cassandra\Type tinyint type
+             */
+            final public static function tinyint() {}
+
+            /**
+             * @return \Cassandra\Type blob type
+             */
+            final public static function blob() {}
+
+            /**
+             * @return \Cassandra\Type boolean type
+             */
+            final public static function boolean() {}
+
+            /**
+             * @return \Cassandra\Type counter type
+             */
+            final public static function counter() {}
+
+            /**
+             * @return \Cassandra\Type decimal type
+             */
+            final public static function decimal() {}
+
+            /**
+             * @return \Cassandra\Type double type
+             */
+            final public static function double() {}
+
+            /**
+             * @return \Cassandra\Type duration type
+             */
+            final public static function duration() {}
+
+            /**
+             * @return \Cassandra\Type float type
+             */
+            final public static function float() {}
+
+            /**
+             * @return \Cassandra\Type int type
+             */
+            final public static function int() {}
+
+            /**
+             * @return \Cassandra\Type text type
+             */
+            final public static function text() {}
+
+            /**
+             * @return \Cassandra\Type timestamp type
+             */
+            final public static function timestamp() {}
+
+            /**
+             * @return \Cassandra\Type date type
+             */
+            final public static function date() {}
+
+            /**
+             * @return \Cassandra\Type time type
+             */
+            final public static function time() {}
+
+            /**
+             * @return \Cassandra\Type uuid type
+             */
+            final public static function uuid() {}
+
+            /**
+             * @return \Cassandra\Type varchar type
+             */
+            final public static function varchar() {}
+
+            /**
+             * @return \Cassandra\Type varint type
+             */
+            final public static function varint() {}
+
+            /**
+             * @return \Cassandra\Type timeuuid type
+             */
+            final public static function timeuuid() {}
+
+            /**
+             * @return \Cassandra\Type inet type
+             */
+            final public static function inet() {}
+
+            /**
+             * @param \Cassandra\Type $type The type of values
+             * @return \Cassandra\Type The collection type
+             */
+            final public static function collection($type) {}
+
+            /**
+             * @param \Cassandra\Type $type The types of values
+             * @return \Cassandra\Type The set type
+             */
+            final public static function set($type) {}
+
+            /**
+             * @param \Cassandra\Type $keyType The type of keys
+             * @param \Cassandra\Type $valueType The type of values
+             * @return \Cassandra\Type The map type
+             */
+            final public static function map($keyType, $valueType) {}
+
+            /**
+             * @param \Cassandra\Type $types A variadic list of types
+             * @return \Cassandra\Type The tuple type
+             */
+            final public static function tuple($types) {}
+
+            /**
+             * @param \Cassandra\Type $types A variadic list of name/type pairs
+             * @return \Cassandra\Type The user type
+             */
+            final public static function userType($types) {}
+
+            /**
+             * @return string Name of this type
+             */
+            abstract public function name();
+
+            /**
+             * @return string String representation of this type
+             */
+            abstract public function __toString();
+        }
+
+            final class Varint implements Value, Numeric
+        {
+            /**
+             * @param string $value integer value as a string
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return string integer value
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string integer value
+             */
+            public function value() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class Map implements Value, \Countable, \Iterator, \ArrayAccess
+        {
+            /**
+             * @param \Cassandra\Type $keyType
+             * @param \Cassandra\Type $valueType
+             */
+            public function __construct($keyType, $valueType) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return array keys
+             */
+            public function keys() {}
+
+            /**
+             * @return array values
+             */
+            public function values() {}
+
+            /**
+             * @param mixed $key key
+             * @param mixed $value value
+             * @return mixed
+             */
+            public function set($key, $value) {}
+
+            /**
+             * @param mixed $key Key
+             * @return mixed Value or null
+             */
+            public function get($key) {}
+
+            /**
+             * @param mixed $key Key
+             * @return bool Whether the key was removed or not, e.g. didn't exist
+             */
+            public function remove($key) {}
+
+            /**
+             * @param mixed $key Key
+             * @return bool Whether the key is in the map or not
+             */
+            public function has($key) {}
+
+            /**
+             * @return int count
+             */
+            public function count() {}
+
+            /**
+             * @return mixed current value
+             */
+            public function current() {}
+
+            /**
+             * @return int current key
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool
+             */
+            public function valid() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+
+            /**
+             * @param mixed $key Key to use.
+             * @param mixed $value Value to set.
+             * @return void
+             * @throws \Cassandra\Exception\InvalidArgumentException when the type of key or value is wrong
+             */
+            public function offsetSet($key, $value) {}
+
+            /**
+             * @param mixed $key Key to use.
+             * @return mixed Value or `null`
+             * @throws \Cassandra\Exception\InvalidArgumentException when the type of key is wrong
+             */
+            public function offsetGet($key) {}
+
+            /**
+             * @param mixed $key Key to use.
+             * @return void
+             * @throws \Cassandra\Exception\InvalidArgumentException when the type of key is wrong
+             */
+            public function offsetUnset($key) {}
+
+            /**
+             * @param mixed $key Key to use.
+             * @return bool Whether the value at a given key is present
+             * @throws \Cassandra\Exception\InvalidArgumentException when the type of key is wrong
+             */
+            public function offsetExists($key) {}
+        }
+
+            final class Uuid implements Value, UuidInterface
+        {
+            /**
+             * @param string $uuid A uuid string
+             */
+            public function __construct($uuid) {}
+
+            /**
+             * @return string uuid
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string uuid
+             */
+            public function uuid() {}
+
+            /**
+             * @return int version of this uuid
+             */
+            public function version() {}
+        }
+
+            final class Float_ implements Value, Numeric
+        {
+            /**
+             * @param float|int|string|\Cassandra\Float_ $value A float value as a string, number or Float
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return \Cassandra\Float_ minimum value
+             */
+            public static function min() {}
+
+            /**
+             * @return \Cassandra\Float_ maximum value
+             */
+            public static function max() {}
+
+            /**
+             * @return string float value
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return float float value
+             */
+            public function value() {}
+
+            /**
+             * @return bool
+             */
+            public function isInfinite() {}
+
+            /**
+             * @return bool
+             */
+            public function isFinite() {}
+
+            /**
+             * @return bool
+             */
+            public function isNaN() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class Duration implements Value
+        {
+            /**
+             * @param int|float|string|\Cassandra\Bigint $months Months attribute of the duration.
+             * @param int|float|string|\Cassandra\Bigint $days Days attribute of the duration.
+             * @param int|float|string|\Cassandra\Bigint $nanos Nanos attribute of the duration.
+             */
+            public function __construct($months, $days, $nanos) {}
+
+            /**
+             * @return \Cassandra\Type the Cassandra type for Duration
+             */
+            public function type() {}
+
+            /**
+             * @return string the months attribute of this Duration
+             */
+            public function months() {}
+
+            /**
+             * @return string the days attribute of this Duration
+             */
+            public function days() {}
+
+            /**
+             * @return string the nanoseconds attribute of this Duration
+             */
+            public function nanos() {}
+
+            /**
+             * @return string string representation of this Duration; may be used as a literal parameter in CQL queries.
+             */
+            public function __toString() {}
+        }
+
+            final class DefaultKeyspace implements Keyspace
+        {
+            /**
+             * @return string Name
+             */
+            public function name() {}
+
+            /**
+             * @return string Replication class
+             */
+            public function replicationClassName() {}
+
+            /**
+             * @return \Cassandra\Map Replication options
+             */
+            public function replicationOptions() {}
+
+            /**
+             * @return string Whether durable writes are enabled
+             */
+            public function hasDurableWrites() {}
+
+            /**
+             * @param string $name Table name
+             * @return \Cassandra\Table
+             */
+            public function table($name) {}
+
+            /**
+             * @return array An array of `Table` instances
+             */
+            public function tables() {}
+
+            /**
+             * @param string $name User type name
+             * @return \Cassandra\Type\UserType|null A user type or null
+             */
+            public function userType($name) {}
+
+            /**
+             * @return array An array of user types
+             */
+            public function userTypes() {}
+
+            /**
+             * @param string $name Materialized view name
+             * @return \Cassandra\MaterializedView|null A materialized view or null
+             */
+            public function materializedView($name) {}
+
+            /**
+             * @return array An array of materialized views
+             */
+            public function materializedViews() {}
+
+            /**
+             * @param string $name Function name
+             * @param string|\Cassandra\Type $params Function arguments
+             * @return \Cassandra\Function_|null A function or null
+             */
+            public function function_($name, ...$params) {}
+
+            /**
+             * @return array An array of functions
+             */
+            public function functions() {}
+
+            /**
+             * @param string $name Aggregate name
+             * @param string|\Cassandra\Type $params Aggregate arguments
+             * @return \Cassandra\Aggregate|null An aggregate or null
+             */
+            public function aggregate($name, ...$params) {}
+
+            /**
+             * @return array An array of aggregates
+             */
+            public function aggregates() {}
+        }
+
+            final class Inet implements Value
+        {
+            /**
+             * @param string $address any IPv4 or IPv6 address
+             */
+            public function __construct($address) {}
+
+            /**
+             * @return string address
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string address
+             */
+            public function address() {}
+        }
+
+            final class Date implements Value
+        {
+            /**
+             * @param int $seconds Absolute seconds from epoch (1970, 1, 1), can be negative, defaults to current time.
+             */
+            public function __construct($seconds) {}
+
+            /**
+             * @param \DateTime $datetime A \DateTime object to convert.
+             * @return \DateTime PHP representation
+             */
+            public static function fromDateTime($datetime) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return int Absolute seconds from epoch (1970, 1, 1), can be negative
+             */
+            public function seconds() {}
+
+            /**
+             * @param \Cassandra\Time $time An optional Time object that is added to the DateTime object.
+             * @return \DateTime PHP representation
+             */
+            public function toDateTime($time) {}
+
+            /**
+             * @return string this date in string format: Date(seconds=$seconds)
+             */
+            public function __toString() {}
+        }
+
+            final class DefaultColumn implements Column
+        {
+            /**
+             * @return string Name of the column or null
+             */
+            public function name() {}
+
+            /**
+             * @return \Cassandra\Type Type of the column
+             */
+            public function type() {}
+
+            /**
+             * @return bool Whether the column is stored in descending order.
+             */
+            public function isReversed() {}
+
+            /**
+             * @return bool Whether the column is static
+             */
+            public function isStatic() {}
+
+            /**
+             * @return bool Whether the column is frozen
+             */
+            public function isFrozen() {}
+
+            /**
+             * @return string Name of the index if defined or null
+             */
+            public function indexName() {}
+
+            /**
+             * @return string Index options if present or null
+             */
+            public function indexOptions() {}
+        }
+
+            final class Blob implements Value
+        {
+            /**
+             * @param string $bytes any bytes
+             */
+            public function __construct($bytes) {}
+
+            /**
+             * @return string bytes as hexadecimal string
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string bytes as hexadecimal string
+             */
+            public function bytes() {}
+
+            /**
+             * @return string bytes as binary string
+             */
+            public function toBinaryString() {}
+        }
+
+            final class DefaultTable implements Table
+        {
+            /**
+             * @return string Name of the table
+             */
+            public function name() {}
+
+            /**
+             * @param string $name The name of the option
+             * @return \Cassandra\Value Value of an option by name
+             */
+            public function option($name) {}
+
+            /**
+             * @return array A dictionary of `string` and `Value` pairs of the table's options.
+             */
+            public function options() {}
+
+            /**
+             * @return string Table description or null
+             */
+            public function comment() {}
+
+            /**
+             * @return float Read repair chance
+             */
+            public function readRepairChance() {}
+
+            /**
+             * @return float Local read repair chance
+             */
+            public function localReadRepairChance() {}
+
+            /**
+             * @return int GC grace seconds
+             */
+            public function gcGraceSeconds() {}
+
+            /**
+             * @return string Caching options
+             */
+            public function caching() {}
+
+            /**
+             * @return float Bloom filter FP chance
+             */
+            public function bloomFilterFPChance() {}
+
+            /**
+             * @return int Memtable flush period in milliseconds
+             */
+            public function memtableFlushPeriodMs() {}
+
+            /**
+             * @return int Default TTL.
+             */
+            public function defaultTTL() {}
+
+            /**
+             * @return string Speculative retry.
+             */
+            public function speculativeRetry() {}
+
+            /**
+             * @return int Index interval
+             */
+            public function indexInterval() {}
+
+            /**
+             * @return string Compaction strategy class name
+             */
+            public function compactionStrategyClassName() {}
+
+            /**
+             * @return \Cassandra\Map Compaction strategy options
+             */
+            public function compactionStrategyOptions() {}
+
+            /**
+             * @return \Cassandra\Map Compression parameters
+             */
+            public function compressionParameters() {}
+
+            /**
+             * @return bool Value of `populate_io_cache_on_flush` or null
+             */
+            public function populateIOCacheOnFlush() {}
+
+            /**
+             * @return bool Value of `replicate_on_write` or null
+             */
+            public function replicateOnWrite() {}
+
+            /**
+             * @return int Value of `max_index_interval` or null
+             */
+            public function maxIndexInterval() {}
+
+            /**
+             * @return int Value of `min_index_interval` or null
+             */
+            public function minIndexInterval() {}
+
+            /**
+             * @param string $name Name of the column
+             * @return \Cassandra\Column Column instance
+             */
+            public function column($name) {}
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            public function columns() {}
+
+            /**
+             * @return array A list of `Column` instance
+             */
+            public function partitionKey() {}
+
+            /**
+             * @return array A list of `Column` instance
+             */
+            public function primaryKey() {}
+
+            /**
+             * @return array A list of `Column` instances
+             */
+            public function clusteringKey() {}
+
+            /**
+             * @return array A list of cluster column orders ('asc' and 'desc')
+             */
+            public function clusteringOrder() {}
+
+            /**
+             * @param string $name Index name
+             * @return \Cassandra\Index|null An index or null
+             */
+            public function index($name) {}
+
+            /**
+             * @return array An array of indexes
+             */
+            public function indexes() {}
+
+            /**
+             * @param string $name Materialized view name
+             * @return \Cassandra\MaterializedView|null A materialized view or null
+             */
+            public function materializedView($name) {}
+
+            /**
+             * @return array An array of materialized views
+             */
+            public function materializedViews() {}
+        }
+
+            final class FutureValue implements Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return mixed A value
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout) {}
+        }
+
+            final class Decimal implements Value, Numeric
+        {
+            /**
+             * @param string $value Any decimal string
+             */
+            public function __construct($value) {}
+
+            /**
+             * @return string Decimal value
+             */
+            public function __toString() {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return string Numeric value
+             */
+            public function value() {}
+
+            /**
+             * @return int Scale
+             */
+            public function scale() {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to add to this one
+             * @return \Cassandra\Numeric sum
+             */
+            public function add($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to subtract from this one
+             * @return \Cassandra\Numeric difference
+             */
+            public function sub($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to multiply this one by
+             * @return \Cassandra\Numeric product
+             */
+            public function mul($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric quotient
+             */
+            public function div($num) {}
+
+            /**
+             * @param \Cassandra\Numeric $num a number to divide this one by
+             * @return \Cassandra\Numeric remainder
+             */
+            public function mod($num) {}
+
+            /**
+             * @return \Cassandra\Numeric absolute value
+             */
+            public function abs() {}
+
+            /**
+             * @return \Cassandra\Numeric negative value
+             */
+            public function neg() {}
+
+            /**
+             * @return \Cassandra\Numeric square root
+             */
+            public function sqrt() {}
+
+            /**
+             * @return int this number as int
+             */
+            public function toInt() {}
+
+            /**
+             * @return float this number as float
+             */
+            public function toDouble() {}
+        }
+
+            final class FutureClose implements Future
+        {
+            /**
+             * @param int|float|null $timeout A timeout in seconds
+             * @return null Nothing
+             * @throws \Cassandra\Exception\TimeoutException
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function get($timeout) {}
+        }
+
+            final class PreparedStatement implements Statement
+        {
+            private function __construct() {}
+        }
+
+                /**
+                 * @deprecated Use an array of options instead of creating an instance of this class.
+                 */
+                final class ExecutionOptions
+        {
+            /**
+             * @param array $options various execution options
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function __construct($options) {}
+
+            /**
+             * @param mixed $name
+             * @return mixed
+             */
+            public function __get($name) {}
+        }
+
+            final class UserTypeValue implements Value, \Countable, \Iterator
+        {
+            /**
+             * @param array $types Array of types
+             */
+            public function __construct($types) {}
+
+            /**
+             * @return \Cassandra\Type
+             */
+            public function type() {}
+
+            /**
+             * @return array values
+             */
+            public function values() {}
+
+            /**
+             * @param mixed $value A value or null
+             * @return void
+             */
+            public function set($value) {}
+
+            /**
+             * @param string $name String of the field name
+             * @return mixed A value or null
+             */
+            public function get($name) {}
+
+            /**
+             * @return int count
+             */
+            public function count() {}
+
+            /**
+             * @return mixed The current element
+             */
+            public function current() {}
+
+            /**
+             * @return int current key
+             */
+            public function key() {}
+
+            /**
+             * @return void
+             */
+            public function next() {}
+
+            /**
+             * @return bool
+             */
+            public function valid() {}
+
+            /**
+             * @return void
+             */
+            public function rewind() {}
+        }
+}
+
+namespace Cassandra\Cluster {
+            final class Builder
+        {
+            /**
+             * @return \Cassandra\Cluster Cluster instance
+             */
+            public function build() {}
+
+            /**
+             * @param int $consistency A consistency level, must be one of Cassandra::CONSISTENCY_* values
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withDefaultConsistency($consistency) {}
+
+            /**
+             * @param int|null $pageSize default page size
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withDefaultPageSize($pageSize) {}
+
+            /**
+             * @param float|null $timeout Timeout value in seconds, can be fractional
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withDefaultTimeout($timeout) {}
+
+            /**
+             * @param string ...$host one or more ip addresses or hostnames
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withContactPoints(...$host) {}
+
+            /**
+             * @param int $port a number between 1 and 65535
+             * @return \Cassandra\Cluster\Builder self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function withPort($port) {}
+
+            /**
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withRoundRobinLoadBalancingPolicy() {}
+
+            /**
+             * @param string $localDatacenter Name of the local datacenter
+             * @param int $hostPerRemoteDatacenter Maximum number of hosts to try in remote datacenters
+             * @param bool $useRemoteDatacenterForLocalConsistencies Allow using hosts from remote datacenters to execute statements with local consistencies
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withDatacenterAwareRoundRobinLoadBalancingPolicy($localDatacenter, $hostPerRemoteDatacenter, $useRemoteDatacenterForLocalConsistencies) {}
+
+            /**
+             * @param string $hosts A comma delimited list of addresses.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withBlackListHosts($hosts) {}
+
+            /**
+             * @param string $hosts A comma delimited list of addresses.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withWhiteListHosts($hosts) {}
+
+            /**
+             * @param string $dcs A comma delimited list of datacenters.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withBlackListDCs($dcs) {}
+
+            /**
+             * @param string $dcs A comma delimited list of datacenters.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withWhiteListDCs($dcs) {}
+
+            /**
+             * @param bool $enabled Whether to enable token aware routing (optional)
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withTokenAwareRouting($enabled) {}
+
+            /**
+             * @param string $username Username
+             * @param string $password Password
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withCredentials($username, $password) {}
+
+            /**
+             * @param float $timeout Timeout value in seconds, can be fractional
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withConnectTimeout($timeout) {}
+
+            /**
+             * @param float $timeout Timeout value in seconds, can be fractional
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withRequestTimeout($timeout) {}
+
+            /**
+             * @param \Cassandra\SSLOptions $options a preconfigured ssl context
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withSSL($options) {}
+
+            /**
+             * @param bool $enabled whether to enable persistent sessions and clusters
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withPersistentSessions($enabled) {}
+
+            /**
+             * @param int $version The protocol version
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withProtocolVersion($version) {}
+
+            /**
+             * @param int $count total number of threads.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withIOThreads($count) {}
+
+            /**
+             * @param int $core minimum connections to keep open to any given host
+             * @param int $max maximum connections to keep open to any given host
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withConnectionsPerHost($core, $max) {}
+
+            /**
+             * @param float $interval interval in seconds
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withReconnectInterval($interval) {}
+
+            /**
+             * @param bool $enabled whether to actually enable or disable the routing.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withLatencyAwareRouting($enabled) {}
+
+            /**
+             * @param bool $enabled whether to actually enable or disable nodelay.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withTCPNodelay($enabled) {}
+
+            /**
+             * @param float|null $delay The period of inactivity in seconds, after
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withTCPKeepalive($delay) {}
+
+            /**
+             * @param \Cassandra\RetryPolicy $policy the retry policy to use.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withRetryPolicy($policy) {}
+
+            /**
+             * @param \Cassandra\TimestampGenerator $generator A timestamp generator that will be used
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withTimestampGenerator($generator) {}
+
+            /**
+             * @param bool $enabled whether the driver fetches and maintains schema metadata.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withSchemaMetadata($enabled) {}
+
+            /**
+             * @param bool $enabled whether the driver uses hostname resolution.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withHostnameResolution($enabled) {}
+
+            /**
+             * @param bool $enabled whether the driver uses randomized contact points.
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withRandomizedContactPoints($enabled) {}
+
+            /**
+             * @param float $interval interval in seconds (0 to disable heartbeat).
+             * @return \Cassandra\Cluster\Builder self
+             */
+            public function withConnectionHeartbeatInterval($interval) {}
+        }
+}
+
+namespace Cassandra\TimestampGenerator {
+            final class ServerSide implements \Cassandra\TimestampGenerator {}
+
+            final class Monotonic implements \Cassandra\TimestampGenerator {}
+}
+
+namespace Cassandra\RetryPolicy {
+            final class DefaultPolicy implements \Cassandra\RetryPolicy {}
+
+            final class DowngradingConsistency implements \Cassandra\RetryPolicy {}
+
+            final class Fallthrough implements \Cassandra\RetryPolicy {}
+
+            final class Logging implements \Cassandra\RetryPolicy
+        {
+            /**
+             * @param \Cassandra\RetryPolicy $childPolicy Any retry policy other than Logging
+             */
+            public function __construct($childPolicy) {}
+        }
+}
+
+namespace Cassandra\Type {
+            final class Tuple extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string "tuple"
+             */
+            public function name() {}
+
+            /**
+             * @return string Type representation in CQL
+             */
+            public function __toString() {}
+
+            /**
+             * @return array An array of types
+             */
+            public function types() {}
+
+            /**
+             * @param mixed ...$values One or more values to be added to the tuple.
+             * @return \Cassandra\Tuple A tuple with given values.
+             * @throws \Cassandra\Exception\InvalidArgumentException when values given are of a
+             */
+            public function create(...$values) {}
+        }
+
+            final class Collection extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string "list"
+             */
+            public function name() {}
+
+            /**
+             * @return \Cassandra\Type Type of values
+             */
+            public function valueType() {}
+
+            /**
+             * @return string Type representation in CQL
+             */
+            public function __toString() {}
+
+            /**
+             * @param mixed ...$value One or more values to be added to the list.
+             * @return \Cassandra\Collection A list with given values.
+             * @throws \Cassandra\Exception\InvalidArgumentException when values given are of a
+             */
+            public function create(...$value) {}
+        }
+
+            final class Set extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string "set"
+             */
+            public function name() {}
+
+            /**
+             * @return \Cassandra\Type Type of values
+             */
+            public function valueType() {}
+
+            /**
+             * @return string Type representation in CQL
+             */
+            public function __toString() {}
+
+            /**
+             * @param mixed ...$value One or more values to be added to the set. When no values are given, creates an empty set.
+             * @return \Cassandra\Set A set with given values.
+             * @throws \Cassandra\Exception\InvalidArgumentException when values given are of a
+             */
+            public function create(...$value) {}
+        }
+
+            final class Custom extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string The name of this type
+             */
+            public function name() {}
+
+            /**
+             * @return string String representation of this type
+             */
+            public function __toString() {}
+
+            /**
+             * @param mixed $value
+             * @return mixed
+             */
+            public function create($value) {}
+        }
+
+            final class UserType extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @param string $name Name of the user type.
+             * @return null Nothing.
+             */
+            public function withName($name) {}
+
+            /**
+             * @return string Name of this type
+             */
+            public function name() {}
+
+            /**
+             * @param string $keyspace Keyspace that contains the user type.
+             * @return null Nothing.
+             */
+            public function withKeyspace($keyspace) {}
+
+            /**
+             * @return string
+             */
+            public function keyspace() {}
+
+            /**
+             * @return string Type representation in CQL
+             */
+            public function __toString() {}
+
+            /**
+             * @return array An array of types
+             */
+            public function types() {}
+
+            /**
+             * @param mixed ...$value One or more name/value pairs to be added to the user type.
+             * @return \Cassandra\UserTypeValue A user type value with given name/value pairs.
+             * @throws \Cassandra\Exception\InvalidArgumentException when values given are of a
+             */
+            public function create(...$value) {}
+        }
+
+            final class Map extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string "map"
+             */
+            public function name() {}
+
+            /**
+             * @return \Cassandra\Type Type of keys
+             */
+            public function keyType() {}
+
+            /**
+             * @return \Cassandra\Type Type of values
+             */
+            public function valueType() {}
+
+            /**
+             * @return string Type representation in CQL
+             */
+            public function __toString() {}
+
+            /**
+             * @param mixed ...$value An even number of values, where each odd value
+             * @return \Cassandra\Map A set with given values.
+             * @throws \Cassandra\Exception\InvalidArgumentException when keys or values given are
+             */
+            public function create(...$value) {}
+        }
+
+            final class Scalar extends \Cassandra\Type
+        {
+            private function __construct() {}
+
+            /**
+             * @return string Name of this type
+             */
+            public function name() {}
+
+            /**
+             * @return string String representation of this type
+             */
+            public function __toString() {}
+
+            /**
+             * @param mixed $value
+             * @return mixed
+             */
+            public function create($value) {}
+        }
+}
+
+namespace Cassandra\SSLOptions {
+            final class Builder
+        {
+            /**
+             * @return \Cassandra\SSLOptions ssl options configured accordingly.
+             */
+            public function build() {}
+
+            /**
+             * @param string ...$path one or more paths to files containing a PEM formatted certificate.
+             * @return \Cassandra\Cluster\Builder self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function withTrustedCerts(...$path) {}
+
+            /**
+             * @param int $flags
+             * @return \Cassandra\Cluster\Builder self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function withVerifyFlags($flags) {}
+
+            /**
+             * @param string $path path to a file containing a PEM formatted certificate.
+             * @return \Cassandra\Cluster\Builder self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function withClientCert($path) {}
+
+            /**
+             * @param string $path Path to the private key file
+             * @param string|null $passphrase Passphrase for the private key, if any
+             * @return \Cassandra\Cluster\Builder self
+             * @throws \Cassandra\Exception\InvalidArgumentException
+             */
+            public function withPrivateKey($path, $passphrase) {}
+        }
+}
+
+namespace Cassandra\Exception {
+        
+            class ConfigurationException extends ValidationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class DomainException extends \DomainException implements \Cassandra\Exception
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message = '', $code = 0, $previous = null) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class InvalidQueryException extends ValidationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class UnpreparedException extends ValidationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class InvalidArgumentException extends \InvalidArgumentException implements \Cassandra\Exception
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message = '', $code = 0, $previous = null) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class ServerException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class RangeException extends \RangeException implements \Cassandra\Exception
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message = '', $code = 0, $previous = null) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class UnauthorizedException extends ValidationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class LogicException extends \LogicException implements \Cassandra\Exception
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message = '', $code = 0, $previous = null) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class UnavailableException extends ExecutionException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class AuthenticationException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class OverloadedException extends ServerException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class ReadTimeoutException extends ExecutionException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class IsBootstrappingException extends ServerException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class ProtocolException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class ExecutionException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class InvalidSyntaxException extends ValidationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class RuntimeException extends \RuntimeException implements \Cassandra\Exception
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message = '', $code = 0, $previous = null) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class TimeoutException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class ValidationException extends RuntimeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class TruncateException extends ExecutionException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class AlreadyExistsException extends ConfigurationException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class DivideByZeroException extends RangeException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+
+            class WriteTimeoutException extends ExecutionException
+        {
+            /**
+             * @param mixed $message
+             * @param mixed $code
+             * @param mixed $previous
+             */
+            #[Pure]
+            public function __construct($message, $code, $previous) {}
+
+            /**
+             * @return mixed
+             */
+            public function __wakeup() {}
+
+            /**
+             * @return mixed
+             */
+            public function __toString() {}
+        }
+}

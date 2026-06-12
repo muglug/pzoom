@@ -1,0 +1,2 @@
+MixedAssignment - input.php:33:1 - Unable to determine the type that $id is being assigned to
+UndefinedMethod - input.php:33:7 - Method AppUser::getId does not exist (incorrect casing of getID)

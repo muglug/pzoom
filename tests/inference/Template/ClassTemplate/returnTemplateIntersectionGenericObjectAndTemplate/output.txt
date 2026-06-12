@@ -1,0 +1,2 @@
+InvalidReturnStatement - input.php:22:12 - The type @anonymous-class:input.php:352 does not match the declared return type I<T:makeConcrete as object>&T:makeConcrete as object
+InvalidReturnType - input.php:15:18 - The declared return type 'I<T:makeConcrete as object>&T:makeConcrete as object' for makeConcrete is incorrect, got '@anonymous-class:input.php:352'

@@ -275,6 +275,9 @@ final class GdFont
 {
 }
 
+/**
+ * @return array<array-key, mixed>
+ */
 function gd_info(): array
 {
 }
@@ -376,6 +379,9 @@ function imagecreate(int $width, int $height): GdImage|false
 {
 }
 
+/**
+ * @return int
+ */
 function imagetypes(): int
 {
 }
@@ -621,10 +627,18 @@ function imagefilledpolygon(GdImage $image, array $points, int $num_points_or_co
 {
 }
 
+/**
+ * @param int $font
+ * @return int
+ */
 function imagefontwidth(GdFont|int $font): int
 {
 }
 
+/**
+ * @param int $font
+ * @return int
+ */
 function imagefontheight(GdFont|int $font): int
 {
 }

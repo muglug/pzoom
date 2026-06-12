@@ -386,11 +386,15 @@ namespace {
 
         public string $textContent;
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function appendChild(DOMNode $node)
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function C14N(
             bool $exclusive = false,
             bool $withComments = false,
@@ -399,6 +403,7 @@ namespace {
         ): string|false {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function C14NFile(
             string $uri,
             bool $exclusive = false,
@@ -408,7 +413,10 @@ namespace {
         ): int|false {
         }
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function cloneNode(bool $deep = false)
         {
         }
@@ -429,7 +437,10 @@ namespace {
         {
         }
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function insertBefore(DOMNode $node, null|DOMNode $child = null)
         {
         }
@@ -462,12 +473,18 @@ namespace {
         {
         }
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function removeChild(DOMNode $child)
         {
         }
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function replaceChild(DOMNode $node, DOMNode $child)
         {
         }
@@ -564,11 +581,15 @@ namespace {
         {
         }
 
-        /** @return DOMDocumentType|false */
+        /**
+         * @return DOMDocumentType|false
+         * @psalm-ignore-falsable-return
+         */
         public function createDocumentType(string $qualifiedName, string $publicId = '', string $systemId = '')
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function createDocument(
             null|string $namespace = null,
             string $qualifiedName = '',
@@ -676,7 +697,10 @@ namespace {
         {
         }
 
-        /** @return string|false */
+        /**
+         * @return string|false
+         * @psalm-ignore-falsable-return
+         */
         public function substringData(int $offset, int $count)
         {
         }
@@ -727,6 +751,12 @@ namespace {
         public string $name;
 
         /**
+         * Inherited from DOMNode, but always non-null
+         * @readonly
+         */
+        public string $localName;
+
+        /**
          * @readonly
          */
         public bool $specified = true;
@@ -756,6 +786,20 @@ namespace {
          * @readonly
          */
         public string $tagName;
+
+        /**
+         * Inherited from DOMNode, but always non-null.
+         *
+         * @readonly
+         * @var DOMNamedNodeMap<DOMAttr>
+         */
+        public DOMNamedNodeMap $attributes;
+
+        /**
+         * Inherited from DOMNode, but always non-null
+         * @readonly
+         */
+        public string $localName;
 
         public string $className;
 
@@ -805,12 +849,18 @@ namespace {
         {
         }
 
-        /** @return DOMAttr|DOMNameSpaceNode|false */
+        /**
+         * @return DOMAttr|DOMNameSpaceNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function getAttributeNode(string $qualifiedName)
         {
         }
 
-        /** @return DOMAttr|DOMNameSpaceNode|null */
+        /**
+         * @return DOMAttr|DOMNameSpaceNode|null
+         * @psalm-ignore-falsable-return
+         */
         public function getAttributeNodeNS(null|string $namespace, string $localName)
         {
         }
@@ -845,12 +895,18 @@ namespace {
         {
         }
 
-        /** @return DOMAttr|false */
+        /**
+         * @return DOMAttr|false
+         * @psalm-ignore-falsable-return
+         */
         public function removeAttributeNode(DOMAttr $attr)
         {
         }
 
-        /** @return DOMAttr|bool */
+        /**
+         * @return DOMAttr|bool
+         * @psalm-ignore-falsable-return
+         */
         public function setAttribute(string $qualifiedName, string $value)
         {
         }
@@ -859,12 +915,18 @@ namespace {
         {
         }
 
-        /** @return DOMAttr|null|false */
+        /**
+         * @return DOMAttr|null|false
+         * @psalm-ignore-falsable-return
+         */
         public function setAttributeNode(DOMAttr $attr)
         {
         }
 
-        /** @return DOMAttr|null|false */
+        /**
+         * @return DOMAttr|null|false
+         * @psalm-ignore-falsable-return
+         */
         public function setAttributeNodeNS(DOMAttr $attr)
         {
         }
@@ -1005,49 +1067,73 @@ namespace {
 
         public function __construct(string $version = '1.0', string $encoding = '') {}
 
-        /** @return DOMAttr|false */
+        /**
+         * @return DOMAttr|false
+         * @psalm-ignore-falsable-return
+         */
         public function createAttribute(string $localName)
         {
         }
 
-        /** @return DOMAttr|false */
+        /**
+         * @return DOMAttr|false
+         * @psalm-ignore-falsable-return
+         */
         public function createAttributeNS(null|string $namespace, string $qualifiedName)
         {
         }
 
-        /** @return DOMCdataSection|false */
+        /**
+         * @return DOMCdataSection|false
+         * @psalm-ignore-falsable-return
+         */
         public function createCDATASection(string $data)
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function createComment(string $data): DOMComment
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function createDocumentFragment(): DOMDocumentFragment
         {
         }
 
-        /** @return DOMElement|false */
+        /**
+         * @return DOMElement|false
+         * @psalm-ignore-falsable-return
+         */
         public function createElement(string $localName, string $value = '')
         {
         }
 
-        /** @return DOMElement|false */
+        /**
+         * @return DOMElement|false
+         * @psalm-ignore-falsable-return
+         */
         public function createElementNS(null|string $namespace, string $qualifiedName, string $value = '')
         {
         }
 
-        /** @return DOMEntityReference|false */
+        /**
+         * @return DOMEntityReference|false
+         * @psalm-ignore-falsable-return
+         */
         public function createEntityReference(string $name)
         {
         }
 
-        /** @return DOMProcessingInstruction|false */
+        /**
+         * @return DOMProcessingInstruction|false
+         * @psalm-ignore-falsable-return
+         */
         public function createProcessingInstruction(string $target, string $data = '')
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function createTextNode(string $data): DOMText
         {
         }
@@ -1070,15 +1156,20 @@ namespace {
         {
         }
 
-        /** @return DOMNode|false */
+        /**
+         * @return DOMNode|false
+         * @psalm-ignore-falsable-return
+         */
         public function importNode(DOMNode $node, bool $deep = false)
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function load(string $filename, int $options = 0): bool
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function loadXML(string $source, int $options = 0): bool
         {
         }
@@ -1091,6 +1182,7 @@ namespace {
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function save(string $filename, int $options = 0): int|false
         {
         }
@@ -1103,14 +1195,17 @@ namespace {
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function saveHTML(null|DOMNode $node = null): string|false
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function saveHTMLFile(string $filename): int|false
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function saveXML(null|DOMNode $node = null, int $options = 0): string|false
         {
         }
@@ -1135,10 +1230,12 @@ namespace {
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function xinclude(int $options = 0): int|false
         {
         }
 
+        /** @psalm-ignore-falsable-return */
         public function adoptNode(DOMNode $node): DOMNode|false
         {
         }
@@ -1188,7 +1285,10 @@ namespace {
         {
         }
 
-        /** @return DOMText|false */
+        /**
+         * @return DOMText|false
+         * @psalm-ignore-falsable-return
+         */
         public function splitText(int $offset)
         {
         }
@@ -1309,6 +1409,9 @@ namespace {
 
         public function __construct(DOMDocument $document, bool $registerNodeNS = true) {}
 
+        /**
+         * @psalm-taint-sink xpath $expression
+         */
         public function evaluate(
             string $expression,
             null|DOMNode $contextNode = null,
@@ -1316,6 +1419,9 @@ namespace {
         ): mixed {
         }
 
+        /**
+         * @psalm-taint-sink xpath $expression
+         */
         public function query(string $expression, null|DOMNode $contextNode = null, bool $registerNodeNS = true): mixed
         {
         }

@@ -15,6 +15,7 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
 use mago_syntax::ast::ast::variable::Variable;
 use pzoom_code_info::algebra::{Clause, combine_ored_clauses, negate_formula, simplify_cnf};
+use pzoom_code_info::VarName;
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 
@@ -98,8 +99,8 @@ pub(crate) fn analyze(
     switch_expr_type: &TUnion,
     original_switch_type: &TUnion,
     switch_is_true: bool,
-    gettype_origin: Option<StrId>,
-    class_string_origin: Option<StrId>,
+    gettype_origin: Option<(VarName, bool)>,
+    class_string_origin: Option<VarName>,
     can_track_remaining: bool,
     inside_loop: bool,
     is_last: bool,
@@ -133,7 +134,7 @@ pub(crate) fn analyze(
             case_condition_context.inside_conditional = was_inside_conditional;
             case_context = case_condition_context;
             case_type = analysis_data
-                .get_expr_type(case_expr_pos)
+                .expr_types.get(&case_expr_pos).cloned()
                 .map(|t| (*t).clone());
             let mut effective_case_type = case_type.clone();
 
@@ -169,16 +170,25 @@ pub(crate) fn analyze(
                     analysis_data,
                 );
                 merge_assertion_maps(&mut scope.accumulated_false_assertions, &assertions.if_false);
-            } else if let Some(origin_var_id) = gettype_origin {
-                if let Some(case_label) = get_case_string_literal(expr_case.expression) {
-                    if let Some(asserted_type) = get_gettype_case_type(&case_label) {
-                        narrow_var_to_type(
-                            analyzer,
-                            &mut case_context,
-                            origin_var_id,
-                            &asserted_type,
-                        );
-                    } else {
+            } else if let Some((origin_var_id, is_debug_type)) = gettype_origin {
+                let case_type = if is_debug_type {
+                    // get_debug_type() labels: scalar spellings or class
+                    // names (Psalm's TDependentGetDebugType narrowing).
+                    get_case_string_literal(expr_case.expression)
+                        .and_then(|label| get_debug_type_case_type(analyzer, &label))
+                        .or_else(|| {
+                            get_case_class_id(analyzer, expr_case.expression).map(|class_id| {
+                                TUnion::new(TAtomic::TNamedObject {
+                                    name: class_id,
+                                    type_params: None,
+                                    is_static: false,
+                                    remapped_params: false,
+                                })
+                            })
+                        })
+                } else if let Some(case_label) = get_case_string_literal(expr_case.expression) {
+                    let asserted = get_gettype_case_type(&case_label);
+                    if asserted.is_none() {
                         emit_issue(
                             analyzer,
                             analysis_data,
@@ -188,6 +198,17 @@ pub(crate) fn analyze(
                             format!("Invalid gettype() case label {}", case_label),
                         );
                     }
+                    asserted
+                } else {
+                    None
+                };
+                if let Some(asserted_type) = case_type {
+                    narrow_var_to_type(
+                        analyzer,
+                        &mut case_context,
+                        origin_var_id,
+                        &asserted_type,
+                    );
                 }
             } else if let Some(origin_var_id) = class_string_origin {
                 if let Some(case_class_id) = get_case_class_id(analyzer, expr_case.expression) {
@@ -219,11 +240,11 @@ pub(crate) fn analyze(
                                 analyzer,
                             )
                             .unwrap_or_else(|| TUnion::new(asserted_atomic.clone()));
-                            case_context.locals.insert(origin_var_id, narrowed);
+                            case_context.locals.insert(origin_var_id.clone(), narrowed);
                         } else {
                             case_context
                                 .locals
-                                .insert(origin_var_id, TUnion::new(asserted_atomic));
+                                .insert(origin_var_id.clone(), TUnion::new(asserted_atomic));
                         }
                     }
                 } else if get_case_string_literal(expr_case.expression).is_some()
@@ -291,6 +312,23 @@ pub(crate) fn analyze(
             // Mirrors Psalm `$case_context->break_types[] = 'switch'`: a `break`
             // in the case body leaves the switch, not an enclosing loop. Popped
             // afterwards so it does not leak into the post-switch merge context.
+            // A preceding case that can fall through arrives here too. Vars the
+            // fallthrough introduced (absent on the direct entry path) are
+            // possibly undefined in this case — Psalm gets this by replaying
+            // the previous case's statements under the previous case's
+            // condition, so `isset($x)` after a fallthrough assignment keeps
+            // its isset semantics.
+            if let Some(fallthrough_context) = scope.fallthrough_entry.take() {
+                let vars_before_fallthrough: rustc_hash::FxHashSet<VarName> =
+                    case_context.locals.keys().cloned().collect();
+                case_context.merge(&fallthrough_context);
+                for (var_id, var_type) in case_context.locals.iter_mut() {
+                    if !vars_before_fallthrough.contains(var_id) {
+                        var_type.possibly_undefined = true;
+                    }
+                }
+            }
+
             case_context.break_types.push(BreakContext::Switch);
             stmt_analyzer::analyze_stmts(
                 analyzer,
@@ -319,6 +357,11 @@ pub(crate) fn analyze(
                 analysis_data,
             );
 
+            // A preceding case that can fall through arrives here too.
+            if let Some(fallthrough_context) = scope.fallthrough_entry.take() {
+                case_context.merge(&fallthrough_context);
+            }
+
             case_context.break_types.push(BreakContext::Switch);
             stmt_analyzer::analyze_stmts(
                 analyzer,
@@ -330,6 +373,10 @@ pub(crate) fn analyze(
         }
     }
 
+    let case_has_statements = match case {
+        SwitchCase::Expression(expr_case) => !expr_case.statements.is_empty(),
+        SwitchCase::Default(default_case) => !default_case.statements.is_empty(),
+    };
     handle_non_returning_case(
         analyzer,
         analysis_data,
@@ -340,6 +387,8 @@ pub(crate) fn analyze(
         case_exit_type,
         can_track_remaining,
         inside_loop,
+        is_last,
+        case_has_statements,
         case_context,
         scope,
     );
@@ -436,7 +485,13 @@ fn apply_case_equality_clauses(
 
     // Narrow from the case clauses. RedundantCondition reporting is suppressed
     // here, matching Psalm's switch-case reconciliation.
-    apply_clauses_to_context(analyzer, case_context, analysis_data, Some(id), false);
+    apply_clauses_to_context(
+        analyzer,
+        case_context,
+        analysis_data,
+        Some(id),
+        crate::reconciler::EmissionMode::Silent,
+    );
 
     if !case_clauses.is_empty() {
         let negated = negate_formula(case_clauses.clone()).unwrap_or_else(|_| {
@@ -456,6 +511,7 @@ fn apply_case_equality_clauses(
 /// already matched) and a `continue` used outside a loop, then contributes the
 /// case's post-analysis context to the set of branches merged after the switch.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn handle_non_returning_case(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
@@ -466,6 +522,8 @@ fn handle_non_returning_case(
     case_exit_type: CaseExitType,
     can_track_remaining: bool,
     inside_loop: bool,
+    is_last: bool,
+    case_has_statements: bool,
     case_context: BlockContext,
     scope: &mut SwitchScope,
 ) {
@@ -476,6 +534,7 @@ fn handle_non_returning_case(
         && !case_actions.contains(&ControlAction::Return)
         && !crate::issue_suppression::is_issue_suppressed_at(
             analyzer,
+            analysis_data,
             case_start,
             "ParadoxicalCondition",
         )
@@ -503,6 +562,16 @@ fn handle_non_returning_case(
                 "Continue called when not in loop",
             );
         }
+    } else if !is_last && case_has_statements && case_actions.contains(&ControlAction::None) {
+        // The body can fall through into the next case: its end context is
+        // that case's (additional) entry, not a post-switch merge source
+        // (break-exit paths inside the body were already captured into the
+        // per-switch break frame).
+        scope.fallthrough_entry = Some(case_context);
+    } else if !is_last && !case_has_statements {
+        // An empty case (`case "a":` falling into `case "b":`) is part of the
+        // next case's group: Psalm merges its statements/condition into that
+        // case, so it never contributes its own post-switch context.
     } else if matches!(case_exit_type, CaseExitType::Break | CaseExitType::Hybrid) {
         scope.continuing_contexts.push(case_context);
     }
@@ -529,20 +598,20 @@ pub(crate) fn emit_issue(
 }
 
 pub(crate) fn merge_assertion_maps(
-    target: &mut BTreeMap<String, Vec<Assertion>>,
-    source: &BTreeMap<String, Vec<Assertion>>,
+    target: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    source: &BTreeMap<VarName, Vec<Vec<Assertion>>>,
 ) {
-    for (var_name, assertions) in source {
+    for (var_name, groups) in source {
         target
             .entry(var_name.clone())
             .or_default()
-            .extend(assertions.iter().cloned());
+            .extend(groups.iter().cloned());
     }
 }
 
-pub(crate) fn apply_assertion_map(
+fn apply_assertion_map(
     analyzer: &StatementsAnalyzer<'_>,
-    assertions: &BTreeMap<String, Vec<Assertion>>,
+    assertions: &BTreeMap<VarName, Vec<Vec<Assertion>>>,
     context: &mut BlockContext,
     analysis_data: &mut FunctionAnalysisData,
 ) {
@@ -552,49 +621,49 @@ pub(crate) fn apply_assertion_map(
 
     let mut changed_var_ids = FxHashSet::default();
     reconciler::reconcile_keyed_types(
-        &reconciler::to_and_groups(assertions),
+        assertions,
         context,
         &mut changed_var_ids,
         analyzer,
         analysis_data,
         context.inside_loop,
         false,
-        false,
+        crate::reconciler::EmissionMode::Silent,
         None,
     );
 }
 
-pub(crate) fn narrow_var_to_type(
+fn narrow_var_to_type(
     analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
-    var_id: StrId,
+    var_id: VarName,
     asserted_type: &TUnion,
 ) {
     let Some(asserted_atomic) = asserted_type.get_single().cloned() else {
-        if let Some(existing_type) = context.locals.get(&var_id).cloned() {
+        if let Some(existing_type) = context.locals.get(var_id.as_str()).cloned() {
             if let Some(intersection) =
                 assertion_reconciler::intersect_union_with_union(&existing_type, asserted_type)
             {
-                context.locals.insert(var_id, intersection);
+                context.locals.insert(var_id.clone(), intersection);
             }
         }
         return;
     };
 
-    if let Some(existing_type) = context.locals.get(&var_id).cloned() {
+    if let Some(existing_type) = context.locals.get(var_id.as_str()).cloned() {
         let narrowed = assertion_reconciler::intersect_union_with_atomic(
             &existing_type,
             &asserted_atomic,
             analyzer,
         )
         .unwrap_or_else(|| TUnion::new(asserted_atomic.clone()));
-        context.locals.insert(var_id, narrowed);
+        context.locals.insert(var_id.clone(), narrowed);
     } else {
-        context.locals.insert(var_id, TUnion::new(asserted_atomic));
+        context.locals.insert(var_id.clone(), TUnion::new(asserted_atomic));
     }
 }
 
-pub(crate) fn subtract_union_types(
+fn subtract_union_types(
     analyzer: &StatementsAnalyzer<'_>,
     left: &TUnion,
     right: &TUnion,
@@ -648,7 +717,7 @@ pub(crate) fn union_all_literals(union: &TUnion) -> bool {
     !union.types.is_empty() && union.types.iter().all(TAtomic::is_literal)
 }
 
-pub(crate) fn get_case_string_literal(expr: &Expression<'_>) -> Option<String> {
+fn get_case_string_literal(expr: &Expression<'_>) -> Option<String> {
     let Expression::Literal(Literal::String(string_lit)) = expr.unparenthesized() else {
         return None;
     };
@@ -656,7 +725,36 @@ pub(crate) fn get_case_string_literal(expr: &Expression<'_>) -> Option<String> {
     string_lit.value.map(|value| value.to_string())
 }
 
-pub(crate) fn get_gettype_case_type(case_label: &str) -> Option<TUnion> {
+/// get_debug_type() label resolution: PHP type spellings, or a class name.
+fn get_debug_type_case_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    case_label: &str,
+) -> Option<TUnion> {
+    match case_label {
+        "string" => Some(TUnion::new(TAtomic::TString)),
+        "int" => Some(TUnion::new(TAtomic::TInt)),
+        "float" => Some(TUnion::new(TAtomic::TFloat)),
+        "bool" => Some(TUnion::new(TAtomic::TBool)),
+        "null" => Some(TUnion::null()),
+        "array" => Some(TUnion::new(TAtomic::TArray {
+            key_type: Box::new(TUnion::array_key()),
+            value_type: Box::new(TUnion::mixed()),
+        })),
+        other => {
+            let class_id = analyzer.interner.intern(other.trim_start_matches('\\'));
+            analyzer.codebase.get_class(class_id).map(|_| {
+                TUnion::new(TAtomic::TNamedObject {
+                    name: class_id,
+                    type_params: None,
+                    is_static: false,
+                    remapped_params: false,
+                })
+            })
+        }
+    }
+}
+
+fn get_gettype_case_type(case_label: &str) -> Option<TUnion> {
     match case_label.to_ascii_lowercase().as_str() {
         "boolean" => Some(TUnion::new(TAtomic::TBool)),
         "integer" => Some(TUnion::new(TAtomic::TInt)),
@@ -669,12 +767,13 @@ pub(crate) fn get_gettype_case_type(case_label: &str) -> Option<TUnion> {
         "object" => Some(TUnion::new(TAtomic::TObject)),
         "null" => Some(TUnion::new(TAtomic::TNull)),
         "resource" => Some(TUnion::new(TAtomic::TResource)),
+        "resource (closed)" => Some(TUnion::new(TAtomic::TClosedResource)),
         "unknown type" => Some(TUnion::mixed()),
         _ => None,
     }
 }
 
-pub(crate) fn union_is_class_string(union: &TUnion) -> bool {
+fn union_is_class_string(union: &TUnion) -> bool {
     !union.types.is_empty()
         && union.types.iter().all(|atomic| {
             matches!(
@@ -687,9 +786,8 @@ pub(crate) fn union_is_class_string(union: &TUnion) -> bool {
 }
 
 pub(crate) fn get_switch_class_string_origin(
-    analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
-) -> Option<StrId> {
+) -> Option<VarName> {
     match expr.unparenthesized() {
         Expression::Call(Call::Function(function_call)) => {
             let Expression::Identifier(function_name) = function_call.function.unparenthesized()
@@ -704,7 +802,7 @@ pub(crate) fn get_switch_class_string_origin(
             else {
                 return None;
             };
-            Some(analyzer.interner.intern(direct.name))
+            Some(VarName::new(direct.name))
         }
         _ => None,
     }
@@ -712,26 +810,25 @@ pub(crate) fn get_switch_class_string_origin(
 
 /// The dependent variable of a switch subject typed as `get_class($x)`
 /// (`TDependentGetClass`), used to drive class-string case narrowing on `$x`.
-pub(crate) fn switch_dependent_class_var(switch_expr_type: &TUnion) -> Option<StrId> {
+pub(crate) fn switch_dependent_class_var(switch_expr_type: &TUnion) -> Option<VarName> {
     match switch_expr_type.get_single() {
-        Some(TAtomic::TDependentGetClass { var_id, .. }) => Some(*var_id),
+        Some(TAtomic::TDependentGetClass { var_id, .. }) => Some(var_id.clone()),
         _ => None,
     }
 }
 
 /// The dependent variable of a switch subject typed as `gettype($x)`
 /// (`TDependentGetType`), used to drive gettype case narrowing on `$x`.
-pub(crate) fn switch_dependent_type_var(switch_expr_type: &TUnion) -> Option<StrId> {
+pub(crate) fn switch_dependent_type_var(switch_expr_type: &TUnion) -> Option<VarName> {
     match switch_expr_type.get_single() {
-        Some(TAtomic::TDependentGetType { var_id }) => Some(*var_id),
+        Some(TAtomic::TDependentGetType { var_id }) => Some(var_id.clone()),
         _ => None,
     }
 }
 
 pub(crate) fn get_switch_gettype_origin(
-    analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
-) -> Option<StrId> {
+) -> Option<(VarName, bool)> {
     let Expression::Call(Call::Function(function_call)) = expr.unparenthesized() else {
         return None;
     };
@@ -740,7 +837,8 @@ pub(crate) fn get_switch_gettype_origin(
         return None;
     };
 
-    if !function_name.value().eq_ignore_ascii_case("gettype") {
+    let is_debug_type = function_name.value().eq_ignore_ascii_case("get_debug_type");
+    if !is_debug_type && !function_name.value().eq_ignore_ascii_case("gettype") {
         return None;
     }
 
@@ -749,10 +847,10 @@ pub(crate) fn get_switch_gettype_origin(
         return None;
     };
 
-    Some(analyzer.interner.intern(direct.name))
+    Some((VarName::new(direct.name), is_debug_type))
 }
 
-pub(crate) fn get_case_class_id(analyzer: &StatementsAnalyzer<'_>, expr: &Expression<'_>) -> Option<StrId> {
+fn get_case_class_id(analyzer: &StatementsAnalyzer<'_>, expr: &Expression<'_>) -> Option<StrId> {
     let Expression::Access(Access::ClassConstant(ClassConstantAccess {
         class,
         constant: ClassLikeConstantSelector::Identifier(constant),

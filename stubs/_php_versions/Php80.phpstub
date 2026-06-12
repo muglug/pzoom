@@ -1,0 +1,33 @@
+<?php
+
+/**
+ * Version overlay (analysis PHP >= 8.0), mirroring Psalm's per-version
+ * CallMaps: DateTime-family format() stopped returning false in PHP 8.0.
+ * Class shells mirror the base stubs exactly; only format() is declared so
+ * every other member (and all class-level metadata) merges in from the base.
+ */
+interface DateTimeInterface
+{
+    public function format(string $format): string;
+}
+
+class DateTime implements DateTimeInterface
+{
+    public function format(string $format): string
+    {
+    }
+}
+
+class DateTimeImmutable implements DateTimeInterface
+{
+    /**
+     * @psalm-mutation-free
+     *
+     * @param string $format
+     *
+     * @return ($format is non-empty-string ? non-empty-string : string)
+     */
+    public function format(string $format): string
+    {
+    }
+}

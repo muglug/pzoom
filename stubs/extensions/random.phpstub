@@ -3,6 +3,8 @@
 namespace {
     /**
      * @deprecated
+     *
+     * @return float
      */
     function lcg_value(): float
     {
@@ -25,18 +27,18 @@ namespace {
     }
 
     /**
-     * @return int<2147483647, max>
-     *
      * @pure
+     *
+     * @return int<1, max>
      */
     function mt_getrandmax(): int
     {
     }
 
     /**
-     * @return int<2147483647, max>
-     *
      * @pure
+     *
+     * @return int<1, max>
      */
     function getrandmax(): int
     {
@@ -44,6 +46,9 @@ namespace {
 
     /**
      * @throws Random\RandomException
+     *
+     * @param int<1, max> $length
+     * @return non-empty-string
      */
     function random_bytes(int $length): string
     {

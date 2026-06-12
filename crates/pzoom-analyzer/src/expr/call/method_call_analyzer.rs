@@ -9,6 +9,7 @@ use mago_syntax::ast::ast::expression::Expression;
 use pzoom_code_info::{
     Issue, IssueKind, TAtomic, TUnion,
 };
+use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -22,6 +23,7 @@ use super::{
 };
 
 use super::atomic_method_call_analyzer::*;
+use std::rc::Rc;
 
 /// Analyze a method call expression ($obj->method()).
 pub fn analyze(
@@ -34,9 +36,12 @@ pub fn analyze(
     let enforce_mutation_free = is_mutation_free_context(analyzer);
 
     // Analyze the object expression
+    let was_inside_general_use = context.inside_general_use;
+    context.inside_general_use = true;
     let obj_pos =
         expression_analyzer::analyze(analyzer, method_call.object, analysis_data, context);
-    let obj_type = analysis_data.get_expr_type(obj_pos);
+    context.inside_general_use = was_inside_general_use;
+    let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
 
     let args: Vec<_> = method_call.argument_list.arguments.iter().collect();
     let arg_positions: Vec<Pos> = args
@@ -46,15 +51,72 @@ pub fn analyze(
             (span.start.offset, span.end.offset)
         })
         .collect();
+
+    // Get the method name
+    let method_name = get_method_name(&method_call.method);
+    // Dynamic method selectors (`$obj->$m()`) consume their inner expression
+    // (general use).
+    analyze_dynamic_selector(analyzer, &method_call.method, analysis_data, context);
+
+    // Predeclare by-ref out-params (`$obj->m(..., &$out)`) before analyzing
+    // the argument expressions, mirroring the function-call path.
+    let resolved_method_info = method_name.and_then(|method_name| {
+        pre_resolve_instance_method_info(analyzer, obj_type.as_deref(), method_name)
+    });
+    if let Some(method_info) = resolved_method_info {
+        super::arguments_analyzer::predeclare_by_ref_argument_vars(
+            analyzer,
+            Some("instance-method"),
+            Some(method_info),
+            &method_call.argument_list.arguments,
+            context,
+        );
+    }
+
+    // Psalm's evaluateArbitraryParam: when the method is unknown, an
+    // undefined direct-variable argument might be passed by reference —
+    // report PossiblyUndefinedVariable and seed it as mixed instead of
+    // treating it as undefined.
+    if resolved_method_info.is_none() {
+        for arg in &args {
+            let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+                arg.value().unparenthesized()
+            else {
+                continue;
+            };
+            let var_id = VarName::new(direct.name);
+            if context.locals.contains_key(&var_id) {
+                continue;
+            }
+            if context.check_variables {
+                let span = arg.value().span();
+                let (line, col) = analyzer.get_line_column(span.start.offset);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::PossiblyUndefinedVariable,
+                    format!(
+                        "Variable {} must be defined prior to use within an unknown function or method",
+                        direct.name
+                    ),
+                    analyzer.file_path,
+                    span.start.offset,
+                    span.end.offset,
+                    line,
+                    col,
+                ));
+            }
+            // we don't know if it exists, assume it's passed by reference
+            let mut placeholder = TUnion::mixed();
+            placeholder.from_undefined_by_ref = true;
+            context.set_var_type(var_id, placeholder);
+        }
+    }
+
     for arg in &args {
         if is_closure_like_argument(arg) {
             continue;
         }
         argument_analyzer::analyze(analyzer, arg, analysis_data, context);
     }
-
-    // Get the method name
-    let method_name = get_method_name(&method_call.method);
 
     // Try to look up method return type from each atomic type in the union
     if let (Some(obj_t), Some(method_name)) = (obj_type.as_ref(), method_name) {
@@ -64,15 +126,19 @@ pub fn analyze(
             &obj_t,
             method_name,
             pos,
+            {
+                let span = method_call.method.span();
+                (span.start.offset, span.end.offset)
+            },
             &args,
             &arg_positions,
             enforce_mutation_free,
-            false,
+            has_nullsafe(method_call.object),
             analysis_data,
             context,
         );
         if let Some(return_type) = return_type {
-            analysis_data.set_expr_type(pos, return_type);
+            analysis_data.expr_types.insert(pos, Rc::new(return_type));
             return;
         }
     } else if let Some(obj_t) = obj_type.as_ref() {
@@ -84,7 +150,24 @@ pub fn analyze(
     analyze_closure_args_without_context(analyzer, &args, analysis_data, context);
 
     // Fall back to mixed
-    analysis_data.set_expr_type(pos, TUnion::mixed());
+    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+}
+
+/// Whether the receiver chain contains a null-safe operator (Psalm's
+/// `MethodCallAnalyzer::hasNullsafe`). PHP's `?->` short-circuits the whole
+/// remaining chain, so the null introduced by an upstream `?->` never reaches
+/// this call — Psalm suppresses PossiblyNullReference in that case.
+pub(crate) fn has_nullsafe(expr: &Expression<'_>) -> bool {
+    use mago_syntax::ast::ast::access::Access;
+    use mago_syntax::ast::ast::call::Call;
+
+    match expr.unparenthesized() {
+        Expression::Call(Call::Method(method_call)) => has_nullsafe(method_call.object),
+        Expression::Access(Access::Property(prop_access)) => has_nullsafe(prop_access.object),
+        Expression::Call(Call::NullSafeMethod(_))
+        | Expression::Access(Access::NullSafeProperty(_)) => true,
+        _ => false,
+    }
 }
 
 /// Analyze a null-safe method call expression ($obj?->method()).
@@ -98,9 +181,12 @@ pub fn analyze_nullsafe(
     let enforce_mutation_free = is_mutation_free_context(analyzer);
 
     // Analyze the object expression
+    let was_inside_general_use = context.inside_general_use;
+    context.inside_general_use = true;
     let obj_pos =
         expression_analyzer::analyze(analyzer, method_call.object, analysis_data, context);
-    let obj_type = analysis_data.get_expr_type(obj_pos);
+    context.inside_general_use = was_inside_general_use;
+    let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
 
     let args: Vec<_> = method_call.argument_list.arguments.iter().collect();
     let arg_positions: Vec<Pos> = args
@@ -110,15 +196,34 @@ pub fn analyze_nullsafe(
             (span.start.offset, span.end.offset)
         })
         .collect();
+
+    // Get the method name
+    let method_name = get_method_name(&method_call.method);
+    // Dynamic method selectors (`$obj->$m()`) consume their inner expression
+    // (general use).
+    analyze_dynamic_selector(analyzer, &method_call.method, analysis_data, context);
+
+    // Predeclare by-ref out-params (`$obj->m(..., &$out)`) before analyzing
+    // the argument expressions, mirroring the function-call path.
+    if let Some(method_name) = method_name
+        && let Some(method_info) =
+            pre_resolve_instance_method_info(analyzer, obj_type.as_deref(), method_name)
+    {
+        super::arguments_analyzer::predeclare_by_ref_argument_vars(
+            analyzer,
+            Some("instance-method"),
+            Some(method_info),
+            &method_call.argument_list.arguments,
+            context,
+        );
+    }
+
     for arg in &args {
         if is_closure_like_argument(arg) {
             continue;
         }
         argument_analyzer::analyze(analyzer, arg, analysis_data, context);
     }
-
-    // Get the method name
-    let method_name = get_method_name(&method_call.method);
 
     // Try to look up method return type
     if let (Some(obj_t), Some(method_name)) = (obj_type.as_ref(), method_name) {
@@ -129,6 +234,10 @@ pub fn analyze_nullsafe(
             &obj_t,
             method_name,
             pos,
+            {
+                let span = method_call.method.span();
+                (span.start.offset, span.end.offset)
+            },
             &args,
             &arg_positions,
             enforce_mutation_free,
@@ -138,12 +247,12 @@ pub fn analyze_nullsafe(
         ) {
             // If the object could be null, the result could be null
             let object_type_for_nullsafe =
-                get_reconciled_receiver_type_for_expression(analyzer, context, method_call.object)
+                get_reconciled_receiver_type_for_expression( context, method_call.object)
                     .unwrap_or_else(|| (**obj_t).clone());
-            if object_type_for_nullsafe.is_nullable {
+            if object_type_for_nullsafe.is_nullable() {
                 return_type.add_type(TAtomic::TNull);
             }
-            analysis_data.set_expr_type(pos, return_type);
+            analysis_data.expr_types.insert(pos, Rc::new(return_type));
             return;
         }
     } else if let Some(obj_t) = obj_type.as_ref() {
@@ -157,7 +266,39 @@ pub fn analyze_nullsafe(
     // Fall back to mixed|null
     let mut result = TUnion::mixed();
     result.add_type(TAtomic::TNull);
-    analysis_data.set_expr_type(pos, result);
+    analysis_data.expr_types.insert(pos, Rc::new(result));
+}
+
+/// Analyze a non-identifier member selector's inner expression under
+/// general use (`$obj->$m()` uses `$m`).
+fn analyze_dynamic_selector(
+    analyzer: &StatementsAnalyzer<'_>,
+    selector: &ClassLikeMemberSelector<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &mut BlockContext,
+) {
+    let was_inside_general_use = context.inside_general_use;
+    context.inside_general_use = true;
+    match selector {
+        ClassLikeMemberSelector::Identifier(_) => {}
+        ClassLikeMemberSelector::Variable(var) => {
+            let _ = crate::expression_analyzer::analyze(
+                analyzer,
+                &mago_syntax::ast::ast::expression::Expression::Variable(var.clone()),
+                analysis_data,
+                context,
+            );
+        }
+        ClassLikeMemberSelector::Expression(expr) => {
+            let _ = crate::expression_analyzer::analyze(
+                analyzer,
+                expr.expression,
+                analysis_data,
+                context,
+            );
+        }
+    }
+    context.inside_general_use = was_inside_general_use;
 }
 
 /// Get the method name from a method selector.
@@ -168,7 +309,7 @@ pub(crate) fn get_method_name<'a>(selector: &'a ClassLikeMemberSelector<'a>) -> 
     }
 }
 
-pub(crate) fn emit_invalid_dynamic_method_name_issues(
+fn emit_invalid_dynamic_method_name_issues(
     analyzer: &StatementsAnalyzer<'_>,
     obj_type: &TUnion,
     pos: Pos,
@@ -257,7 +398,7 @@ pub(crate) fn get_closure_like_argument_offset(
     }
 }
 
-pub(crate) fn analyze_closure_args_without_context(
+fn analyze_closure_args_without_context(
     analyzer: &StatementsAnalyzer<'_>,
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
     analysis_data: &mut FunctionAnalysisData,
@@ -270,29 +411,7 @@ pub(crate) fn analyze_closure_args_without_context(
     }
 }
 
-pub(crate) fn get_no_arg_method_call_var_id(
-    analyzer: &StatementsAnalyzer<'_>,
-    object_expr: &Expression<'_>,
-    method: &ClassLikeMemberSelector<'_>,
-    arg_count: usize,
-) -> Option<StrId> {
-    if arg_count != 0 {
-        return None;
-    }
-
-    let object_key = expression_identifier::get_expression_var_key(object_expr)?;
-    let method_name = match method {
-        ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
-        _ => return None,
-    };
-
-    analyzer
-        .interner
-        .find(&format!("{}->{}()", object_key, method_name))
-}
-
 pub(crate) fn get_cached_no_arg_method_call_type(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
     object_expr: &Expression<'_>,
     method_name: &str,
@@ -303,20 +422,18 @@ pub(crate) fn get_cached_no_arg_method_call_type(
     }
 
     let object_key = expression_identifier::get_expression_var_key(object_expr)?;
-    let var_id = analyzer
-        .interner
-        .find(&format!("{}->{}()", object_key, method_name))?;
-    context.locals.get(&var_id).cloned()
+    context
+        .locals
+        .get(format!("{}->{}()", object_key, method_name.to_ascii_lowercase()).as_str())
+        .cloned()
 }
 
 pub(crate) fn get_reconciled_receiver_type_for_expression(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
     object_expr: &Expression<'_>,
 ) -> Option<TUnion> {
     let object_key = expression_identifier::get_expression_var_key(object_expr)?;
-    let object_id = analyzer.interner.find(&object_key)?;
-    context.locals.get(&object_id).cloned()
+    context.locals.get(object_key.as_str()).cloned()
 }
 
 /// Look up the return type of a method on a type.
@@ -324,7 +441,6 @@ pub(crate) fn get_reconciled_receiver_type_for_expression(
 /// current call, so the method is known to exist at runtime. Mirrors the
 /// `@method_exists(...)` assertion recorded by the assertion finder.
 pub(crate) fn is_method_guarded_by_method_exists(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
     object_expr: &Expression<'_>,
     method_name: &str,
@@ -333,7 +449,7 @@ pub(crate) fn is_method_guarded_by_method_exists(
         return false;
     };
     let key = crate::assertion_finder::method_exists_assertion_key(&object_key, method_name);
-    let key_id = analyzer.interner.intern(&key);
+    let key_id = VarName::new(&key);
     context
         .locals
         .get(&key_id)
@@ -360,13 +476,22 @@ pub(crate) fn analyze_pending_closure_args_for_method(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(method_info));
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    for template_type in &method_info.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
 
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
+    );
     function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
+        &mut template_result,
         function_call_analyzer::infer_class_template_replacements_from_type_params(
             class_info,
             object_type_params,
@@ -379,7 +504,7 @@ pub(crate) fn analyze_pending_closure_args_for_method(
         };
 
         let arg_pos = arg_positions.get(idx).copied().unwrap_or((0, 0));
-        if analysis_data.get_expr_type(arg_pos).is_some() {
+        if analysis_data.expr_types.get(&arg_pos).cloned().is_some() {
             continue;
         }
 
@@ -391,13 +516,12 @@ pub(crate) fn analyze_pending_closure_args_for_method(
 
         let expected_param_type = param.and_then(|param| param.get_type()).map(|param_type| {
             let replaced_param_type =
-                if template_defaults.is_empty() && template_replacements.is_empty() {
+                if crate::template::template_result_is_empty(&template_result) {
                     param_type.clone()
                 } else {
                     function_call_analyzer::replace_templates_in_union(
                         param_type,
-                        &template_replacements,
-                        &template_defaults,
+                        &template_result,
                     )
                 };
 
@@ -423,7 +547,6 @@ pub(crate) fn analyze_pending_closure_args_for_method(
 }
 
 pub(crate) fn invalidate_property_narrowings_after_mutation(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
 ) {
     // Mirror Psalm's default config (`remember_property_assignments_after_call = true`):
@@ -433,9 +556,9 @@ pub(crate) fn invalidate_property_narrowings_after_mutation(
     let keys_to_remove: Vec<_> = context
         .locals
         .keys()
-        .copied()
+        .cloned()
         .filter(|var_id| {
-            let var_name = analyzer.interner.lookup(*var_id);
+            let var_name = var_id.as_str();
             (var_name.contains("->") || var_name.contains("::")) && var_name.contains("()")
         })
         .collect();
@@ -450,7 +573,21 @@ pub(crate) fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> boo
         return false;
     };
 
-    if function_info.is_pure || function_info.is_mutation_free {
+    // Psalm enforces purity in the body for `@psalm-pure` functions,
+    // `@psalm-mutation-free` methods, and methods of `@psalm-immutable` /
+    // `@psalm-external-mutation-free` classes. (Bare `@mutation-free` is not
+    // a Psalm tag and is dropped at scan.) Constructors are exempt:
+    // FunctionLikeAnalyzer skips `__construct` when setting
+    // `$context->mutation_free` — initialization may call impure code.
+    if function_info.is_pure {
+        return true;
+    }
+
+    if function_info.name == pzoom_str::StrId::CONSTRUCT {
+        return false;
+    }
+
+    if function_info.is_mutation_free {
         return true;
     }
 
@@ -459,11 +596,39 @@ pub(crate) fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> boo
     }
 
     if let Some(class_id) = function_info.declaring_class {
-        return analyzer
-            .codebase
-            .get_class(class_id)
-            .is_some_and(|class_info| class_info.is_immutable);
+        return analyzer.codebase.get_class(class_id).is_some_and(|class_info| {
+            class_info.is_immutable || class_info.is_external_mutation_free
+        });
     }
 
     false
+}
+
+/// Best-effort early resolution of an instance call's method storage (per
+/// receiver atomic, class hierarchy walk) so by-ref out-params can be
+/// predeclared before argument analysis.
+fn pre_resolve_instance_method_info<'a>(
+    analyzer: &'a StatementsAnalyzer<'_>,
+    obj_type: Option<&pzoom_code_info::TUnion>,
+    method_name: &str,
+) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
+    let method_id = analyzer.interner.intern(method_name);
+
+    for atomic in &obj_type?.types {
+        let pzoom_code_info::TAtomic::TNamedObject { name, .. } = atomic else {
+            continue;
+        };
+        let mut current = Some(*name);
+        while let Some(current_id) = current {
+            let Some(class_info) = analyzer.codebase.get_class(current_id) else {
+                break;
+            };
+            if let Some(method_info) = class_info.methods.get(&method_id) {
+                return Some(method_info);
+            }
+            current = class_info.parent_class;
+        }
+    }
+
+    None
 }

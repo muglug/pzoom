@@ -7,6 +7,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::code_location::CodeLocation;
 
+/// A supporting location for an issue: somewhere else in the source that
+/// explains or contributes to the problem (e.g. the declaration a return
+/// statement violates, or the origin of a mixed value), with its own message.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SecondaryLocation {
+    pub location: CodeLocation,
+    pub message: String,
+}
+
+impl SecondaryLocation {
+    pub fn new(location: CodeLocation, message: impl Into<String>) -> Self {
+        Self {
+            location,
+            message: message.into(),
+        }
+    }
+}
+
 /// An issue detected during analysis.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Issue {
@@ -14,6 +32,31 @@ pub struct Issue {
     pub message: String,
     /// Where in the source the issue points (file + byte/line/column span).
     pub location: CodeLocation,
+    /// Supporting locations displayed under the primary message, each with
+    /// its own explanatory message.
+    #[serde(default)]
+    pub secondary_locations: Vec<SecondaryLocation>,
+    /// For Tainted* issues: the source-to-sink node chain (Psalm's
+    /// `IssueData::$taint_trace`), rendered as labelled snippets by the
+    /// console reporter. The message still embeds the Hakana-style
+    /// `in path: ...` summary.
+    #[serde(default)]
+    pub taint_trace: Vec<TraceNode>,
+    /// Psalm's `CodeIssue::$dupe_key`: when set, same-kind issues at the same
+    /// line and column with an equal dupe key collapse to one, even when the
+    /// human-readable messages differ (e.g. the reconciler's "Docblock-defined
+    /// type int for $x is never null" vs the assertion finder's "int does not
+    /// contain null" both carry the key "int null").
+    #[serde(default)]
+    pub dupe_key: Option<String>,
+}
+
+/// One step of a taint trace: a label plus the position it occurred at, if
+/// known (`$_GET` and other synthetic sources have none).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TraceNode {
+    pub label: String,
+    pub location: Option<CodeLocation>,
 }
 
 /// Categories of issues that can be detected.
@@ -28,6 +71,8 @@ pub enum IssueKind {
     InvalidReturnStatement,
     InvalidPropertyAssignmentValue,
     InvalidArrayAccess,
+    /// Fetch from a provably-empty array (Psalm shortcode 100, level -1).
+    EmptyArrayAccess,
     InvalidFunctionCall,
     InvalidMethodCall,
     InvalidStaticMethodCall,
@@ -45,6 +90,7 @@ pub enum IssueKind {
 
     // Possibly invalid (nullable/optional concerns)
     PossiblyInvalidArgument,
+    PossiblyInvalidFunctionCall,
     PossiblyInvalidMethodCall,
     PossiblyInvalidPropertyFetch,
     PossiblyInvalidArrayAccess,
@@ -57,6 +103,10 @@ pub enum IssueKind {
     PossiblyNullArrayAccess,
     PossiblyNullFunctionCall,
     PossiblyUndefinedArrayOffset,
+    /// A variable assigned on some but not all paths to its use.
+    PossiblyUndefinedVariable,
+    /// A global-scope variable assigned on some but not all paths to its use.
+    PossiblyUndefinedGlobalVariable,
 
     // Array access issues
     NullArrayAccess,
@@ -109,6 +159,30 @@ pub enum IssueKind {
     UnusedClass,
     UnusedFunction,
     UnusedClosureParam,
+    /// A `@psalm-suppress` annotation that never suppressed anything
+    /// (Psalm's findUnusedPsalmSuppress feature).
+    UnusedPsalmSuppress,
+    /// A foreach value variable that is never referenced in the loop body.
+    UnusedForeachValue,
+    /// An inline `@var` annotation matching the inferred type exactly.
+    UnnecessaryVarAnnotation,
+    /// A pure function's return value discarded (Psalm find_unused_code).
+    UnusedFunctionCall,
+    /// A mutation-free method's return value discarded (Psalm find_unused_code).
+    UnusedMethodCall,
+    /// A public/protected method never referenced inside the codebase.
+    PossiblyUnusedMethod,
+    /// A public/protected property never referenced inside the codebase.
+    PossiblyUnusedProperty,
+    /// A parameter never referenced in any call site.
+    PossiblyUnusedParam,
+    /// A non-void method whose return value is never used at any call site.
+    PossiblyUnusedReturnValue,
+    /// A docblock `@param` for a parameter that does not exist.
+    UnusedDocblockParam,
+    /// A class with no descendants that Psalm requires to be final
+    /// (find_unused_code's ClassMustBeFinal).
+    ClassMustBeFinal,
 
     // Redundant code
     RedundantCondition,
@@ -144,6 +218,7 @@ pub enum IssueKind {
     PossiblyInvalidDocblockTag,
     InvalidDocblockParamName,
     MismatchingDocblockParamType,
+    MismatchingDocblockPropertyType,
     MismatchingDocblockReturnType,
 
     // Deprecated code
@@ -173,6 +248,16 @@ pub enum IssueKind {
     TaintedInclude,
     TaintedEval,
     TaintedUnserialize,
+    TaintedCallable,
+    TaintedCookie,
+    TaintedExtract,
+    TaintedLdap,
+    TaintedSleep,
+    TaintedSSRF,
+    TaintedXpath,
+    TaintedTextWithQuotes,
+    TaintedUserSecret,
+    TaintedSystemSecret,
 
     // Comparison issues
     TypeDoesNotContainType,
@@ -187,6 +272,8 @@ pub enum IssueKind {
     /// Iterating over a concrete object that does not implement `Traversable`
     /// (PHP iterates its public properties). Mirrors Psalm's `RawObjectIteration`.
     RawObjectIteration,
+    /// Like `RawObjectIteration` but the value is only possibly an object.
+    PossibleRawObjectIteration,
 
     // Return issues
     InvalidReturnNull,
@@ -225,18 +312,26 @@ pub enum IssueKind {
     // Class issues
     AbstractInstantiation,
     InterfaceInstantiation,
+    UnsafeInstantiation,
+    UnsafeGenericInstantiation,
     UnimplementedAbstractMethod,
     UnimplementedInterfaceMethod,
     DuplicateClass,
     DuplicateMethod,
     DuplicateFunction,
     DuplicateParam,
+    AssignmentToVoid,
+    InvalidParent,
     MissingTemplateParam,
     CircularReference,
     InvalidExtendClass,
     InvalidImplements,
     InvalidInterfaceImplementation,
     InvalidAttribute,
+    InheritorViolation,
+    PrivateFinalMethod,
+    ConstantDeclarationInTrait,
+    InvalidTypeImport,
     InvalidTraversableImplementation,
     InvalidEnumBackingType,
     InvalidEnumCaseValue,
@@ -248,16 +343,31 @@ pub enum IssueKind {
 
     // Method signature issues
     InvalidOverride,
+    MissingOverrideAttribute,
     MethodSignatureMismatch,
     TraitMethodSignatureMismatch,
     MethodSignatureMustOmitReturnType,
+    MethodSignatureMustProvideReturnType,
     ParamNameMismatch,
     ConstructorSignatureMismatch,
     OverriddenMethodAccess,
     MoreSpecificImplementedParamType,
     LessSpecificImplementedParamType,
 
+    // Include issues
+    UnresolvableInclude,
+
+    // Constant issues
+    AmbiguousConstantInheritance,
+    InvalidConstantAssignmentValue,
+    UnresolvableConstant,
+    InvalidClassConstantType,
+    LessSpecificClassConstantType,
+    OverriddenFinalConstant,
+    OverriddenInterfaceConstant,
+
     // Property issues
+    DuplicateConstant,
     DuplicateProperty,
     PropertyNotSetInConstructor,
     UninitializedProperty,
@@ -317,6 +427,7 @@ pub enum IssueKind {
     MutableDependency,
     IfThisIsMismatch,
     Trace,
+    UndefinedTrace,
     CheckType,
 
     // Argument count issues
@@ -333,6 +444,9 @@ pub enum IssueKind {
     InvalidLiteralArgument,
     /// A docblock template parameter that does not satisfy its constraint.
     InvalidTemplateParam,
+    /// Type-variable bounds that cannot be reconciled (Hakana's
+    /// `IncompatibleTypeParameters`, raised at the end of function analysis).
+    IncompatibleTypeParameters,
     TooManyTemplateParams,
     MixedOperand,
     MixedFunctionCall,
@@ -370,7 +484,17 @@ impl Issue {
                 start_line,
                 start_column,
             ),
+            secondary_locations: Vec::new(),
+            taint_trace: Vec::new(),
+            dupe_key: None,
         }
+    }
+
+    /// Psalm's dupe-key (builder-style): same-kind issues at the same
+    /// position with an equal key collapse to one.
+    pub fn with_dupe_key(mut self, dupe_key: impl Into<String>) -> Self {
+        self.dupe_key = Some(dupe_key.into());
+        self
     }
 
     /// Construct an issue from a pre-built [`CodeLocation`].
@@ -379,7 +503,30 @@ impl Issue {
             kind,
             message: message.into(),
             location,
+            secondary_locations: Vec::new(),
+            taint_trace: Vec::new(),
+            dupe_key: None,
         }
+    }
+
+    /// Attach a supporting location (builder-style).
+    pub fn with_secondary(
+        mut self,
+        location: CodeLocation,
+        message: impl Into<String>,
+    ) -> Self {
+        self.secondary_locations
+            .push(SecondaryLocation::new(location, message));
+        self
+    }
+
+    /// Attach an optional supporting location (builder-style); `None` is a
+    /// no-op so call sites can thread `Option`s without branching.
+    pub fn with_secondary_opt(mut self, secondary: Option<SecondaryLocation>) -> Self {
+        if let Some(secondary) = secondary {
+            self.secondary_locations.push(secondary);
+        }
+        self
     }
 
     /// Get the severity level of this issue.

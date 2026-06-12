@@ -1,0 +1,7 @@
+<?php
+$list = [];
+
+if (rand(0,1) && rand(0,1)) {
+    array_merge($list, []);
+};
+

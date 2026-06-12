@@ -4,7 +4,7 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
 use mago_syntax::ast::ast::statement::Statement;
 use mago_syntax::ast::node::{Node, NodeKind};
-use pzoom_code_info::{Issue, IssueKind, TUnion};
+use pzoom_code_info::{Issue, IssueKind};
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -56,6 +56,12 @@ pub fn analyze_stmts(
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     for stmt in stmts {
+        // `__halt_compiler()` ends the program text: everything after it is
+        // raw data, never code (Psalm's parser produces nothing past it).
+        if matches!(stmt, Statement::HaltCompiler(_)) {
+            break;
+        }
+
         // Check if control flow has already returned (unreachable code)
         // Skip certain statements that are allowed after return (like function/class declarations)
         if context.has_returned {
@@ -69,7 +75,24 @@ pub fn analyze_stmts(
                     // These are allowed after return
                 }
                 _ => {
-                    // Unreachable code - skip but don't break (allow analyzing further)
+                    // Unreachable code - skip but don't break (allow analyzing further).
+                    // Psalm's StatementsAnalyzer reports it when unused-variable
+                    // detection is on ("Expressions after return/throw/continue").
+                    if analyzer.config.report_unused {
+                        let span = stmt.span();
+                        let (line, col) = analyzer.get_line_column(span.start.offset);
+                        analysis_data.add_issue(
+                            pzoom_code_info::issue::Issue::new(
+                                pzoom_code_info::issue::IssueKind::UnevaluatedCode,
+                                "Expressions after return/throw/continue",
+                                analyzer.file_path,
+                                span.start.offset,
+                                span.end.offset,
+                                line,
+                                col,
+                            ),
+                        );
+                    }
                     continue;
                 }
             }
@@ -91,19 +114,15 @@ pub fn analyze_stmt(
     let span = stmt.span();
     analysis_data.current_stmt_start = Some(span.start.offset);
     analysis_data.current_stmt_end = Some(span.end.offset);
-    emit_inline_trace_annotations(
-        analyzer,
-        span.start.offset,
-        span.end.offset,
-        analysis_data,
-        context,
-    );
-    emit_invalid_inline_var_annotation_issues(
-        analyzer,
-        span.start.offset,
-        span.end.offset,
-        analysis_data,
-    );
+    emit_invalid_inline_var_annotation_issues(analyzer, span.start.offset, analysis_data);
+    apply_statement_var_annotations(analyzer, stmt, span.start.offset, analysis_data, context);
+    apply_statement_scope_this_annotation(analyzer, span.start.offset, analysis_data, context);
+
+    // Psalm's StatementsAnalyzer registers a statement docblock's
+    // `@psalm-suppress` issues for the duration of the statement's analysis
+    // (nested statements included). Record the docblock + statement spans so
+    // the file-level filter can apply them to any issue inside the statement.
+    record_stmt_docblock_suppressions(analyzer, span, analysis_data);
 
     let stmt_result = match stmt {
         // Control flow statements
@@ -183,12 +202,12 @@ pub fn analyze_stmt(
         Statement::Declare(_) => Ok(()),
         Statement::Goto(_) => Ok(()),
         Statement::Label(_) => Ok(()),
-        Statement::Continue(_) => {
-            continue_analyzer::analyze(analyzer, analysis_data, context);
+        Statement::Continue(continue_stmt) => {
+            continue_analyzer::analyze(analyzer, continue_stmt, analysis_data, context);
             Ok(())
         }
-        Statement::Break(_) => {
-            break_analyzer::analyze(analyzer, analysis_data, context);
+        Statement::Break(break_stmt) => {
+            break_analyzer::analyze(analyzer, break_stmt, analysis_data, context);
             Ok(())
         }
         Statement::Global(global_stmt) => {
@@ -220,13 +239,47 @@ pub fn analyze_stmt(
         context,
     );
 
+    // `@psalm-trace` likewise reports the variable state *after* the annotated
+    // statement (Psalm's StatementsAnalyzer emits traces post-analysis).
+    emit_inline_trace_annotations(analyzer, span.start.offset, analysis_data, context);
+
     stmt_result
+}
+
+/// Record the spans of a `@psalm-suppress` docblock immediately preceding
+/// `stmt_span`, so the file-level issue filter suppresses matching issues
+/// anywhere within the statement (Psalm's addSuppressedIssues /
+/// removeSuppressedIssues around statement analysis).
+fn record_stmt_docblock_suppressions(
+    analyzer: &StatementsAnalyzer<'_>,
+    stmt_span: mago_span::Span,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let source = analyzer.source;
+    let stmt_start = (stmt_span.start.offset as usize).min(source.len());
+    let Some((docblock_start, docblock)) =
+        crate::issue_suppression::preceding_docblock(&source[..stmt_start])
+    else {
+        return;
+    };
+    if !docblock.contains("@psalm-suppress") && !docblock.contains("@psalm-fixme") {
+        return;
+    }
+    let entry = (
+        docblock_start as u32,
+        (docblock_start + docblock.len()) as u32,
+        stmt_span.start.offset,
+        stmt_span.end.offset,
+    );
+    // Loop fixpoints re-analyze the same statement; record each span once.
+    if !analysis_data.stmt_suppression_ranges.contains(&entry) {
+        analysis_data.stmt_suppression_ranges.push(entry);
+    }
 }
 
 fn emit_invalid_inline_var_annotation_issues(
     analyzer: &StatementsAnalyzer<'_>,
     start_offset: u32,
-    end_offset: u32,
     analysis_data: &mut FunctionAnalysisData,
 ) {
     let Some(file_info) = analyzer.codebase.files.get(&analyzer.file_path) else {
@@ -234,31 +287,49 @@ fn emit_invalid_inline_var_annotation_issues(
     };
 
     for (annotation_offset, annotations) in &file_info.inline_annotations.var_annotations {
-        if *annotation_offset < start_offset || *annotation_offset > end_offset {
-            continue;
-        }
-
-        if !annotations.iter().any(|annotation| annotation.is_invalid) {
+        // Match the annotation's target statement exactly (see
+        // emit_inline_trace_annotations) so enclosing compound statements
+        // don't re-report it.
+        if *annotation_offset != start_offset {
             continue;
         }
 
         let (line, col) = analyzer.get_line_column(*annotation_offset);
-        analysis_data.add_issue(Issue::new(
-            IssueKind::InvalidDocblock,
-            "Invalid docblock type",
-            analyzer.file_path,
-            *annotation_offset,
-            *annotation_offset,
-            line,
-            col,
-        ));
+
+        // Psalm's name-first `@var $x Type` form: IncorrectDocblockException
+        // ("Misplaced variable") surfaces as MissingDocblockType.
+        if annotations
+            .iter()
+            .any(|annotation| annotation.is_misplaced_variable)
+        {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::MissingDocblockType,
+                "Misplaced variable",
+                analyzer.file_path,
+                *annotation_offset,
+                *annotation_offset,
+                line,
+                col,
+            ));
+        }
+
+        if annotations.iter().any(|annotation| annotation.is_invalid) {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::InvalidDocblock,
+                "Invalid docblock type",
+                analyzer.file_path,
+                *annotation_offset,
+                *annotation_offset,
+                line,
+                col,
+            ));
+        }
     }
 }
 
 fn emit_inline_trace_annotations(
     analyzer: &StatementsAnalyzer<'_>,
     start_offset: u32,
-    end_offset: u32,
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
 ) {
@@ -267,7 +338,12 @@ fn emit_inline_trace_annotations(
     };
 
     for (annotation_offset, annotations) in &file_info.inline_annotations.trace_annotations {
-        if *annotation_offset < start_offset || *annotation_offset > end_offset {
+        // An annotation's recorded offset is the start of the statement the
+        // docblock precedes (its attachment target). Matching by exact start —
+        // rather than span containment — keeps enclosing compound statements
+        // (functions, ifs, loops) from re-emitting the trace with their own,
+        // wider scope (Psalm attaches trace docblocks to a single statement).
+        if *annotation_offset != start_offset {
             continue;
         }
 
@@ -275,10 +351,22 @@ fn emit_inline_trace_annotations(
             for var_id in &annotation.var_names {
                 let (line, col) = analyzer.get_line_column(*annotation_offset);
                 let var_name = analyzer.interner.lookup(*var_id);
-                let var_type = context
-                    .get_var_type(*var_id)
-                    .map(|t| t.get_id(Some(analyzer.interner)))
-                    .unwrap_or_else(|| TUnion::mixed().get_id(Some(analyzer.interner)));
+
+                // Psalm reports `UndefinedTrace` when the traced variable is
+                // not in scope after the statement.
+                let Some(var_type) = context.get_var_type(var_name.as_ref()) else {
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::UndefinedTrace,
+                        format!("Attempt to trace undefined variable {var_name}"),
+                        analyzer.file_path,
+                        *annotation_offset,
+                        *annotation_offset,
+                        line,
+                        col,
+                    ));
+                    continue;
+                };
+                let var_type = var_type.get_id(Some(analyzer.interner));
 
                 analysis_data.add_issue(Issue::new(
                     IssueKind::Trace,
@@ -330,7 +418,7 @@ fn emit_check_type_annotations(
             let (line, col) = analyzer.get_line_column(*annotation_offset);
             let var_name = analyzer.interner.lookup(var_id);
 
-            let Some(checked_type) = context.get_var_type(var_id) else {
+            let Some(checked_type) = context.get_var_type(&var_name) else {
                 analysis_data.add_issue(Issue::new(
                     IssueKind::InvalidDocblock,
                     format!("Attempt to check undefined variable {var_name}"),
@@ -486,4 +574,118 @@ fn analyze_namespace(
     context.namespace = outer_namespace;
 
     Ok(())
+}
+
+
+/// Psalm's StatementsAnalyzer: a statement-level `@var` docblock assigns the
+/// commented types into the context ONCE, before the statement is analyzed —
+/// narrowing inside the statement then proceeds from there (an `instanceof`
+/// in an if-condition is not clobbered by re-application at each fetch).
+/// Plain-assignment, foreach, and return statements are excluded: their
+/// analyzers consume the docblock with their own semantics (Psalm's
+/// `!($stmt instanceof Expression && $stmt->expr instanceof Assign) &&
+/// !Foreach_ && !Return_` guard). For a plain assignment, annotations naming
+/// *other* variables still apply (Psalm's AssignmentAnalyzer does the same
+/// for non-target var comments).
+/// Psalm's StatementsAnalyzer `psalm-scope-this` handling: from the annotated
+/// statement on, `$this` is an instance of the named class. An unknown class
+/// reports UndefinedDocblockClass instead.
+fn apply_statement_scope_this_annotation(
+    analyzer: &StatementsAnalyzer<'_>,
+    offset: u32,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &mut BlockContext,
+) {
+    let Some(class_id) = analyzer.get_inline_scope_this_annotation(offset) else {
+        return;
+    };
+
+    if analyzer.codebase.get_class(class_id).is_none() {
+        let (line, col) = analyzer.get_line_column(offset);
+        analysis_data.add_issue(pzoom_code_info::Issue::new(
+            pzoom_code_info::IssueKind::UndefinedDocblockClass,
+            format!(
+                "Scope class {} does not exist",
+                analyzer.interner.lookup(class_id)
+            ),
+            analyzer.file_path,
+            offset,
+            offset.saturating_add(1),
+            line,
+            col,
+        ));
+        return;
+    }
+
+    context.set_var_type(
+        pzoom_code_info::VarName::new("$this"),
+        pzoom_code_info::TUnion::new(pzoom_code_info::TAtomic::TNamedObject {
+            name: class_id,
+            type_params: None,
+            is_static: false,
+            remapped_params: false,
+        }),
+    );
+}
+
+fn apply_statement_var_annotations(
+    analyzer: &StatementsAnalyzer<'_>,
+    stmt: &Statement<'_>,
+    offset: u32,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &mut BlockContext,
+) {
+    use mago_syntax::ast::ast::expression::Expression;
+
+    let mut excluded_assignment_target: Option<pzoom_str::StrId> = None;
+    match stmt {
+        Statement::Foreach(_) | Statement::Return(_) => return,
+        Statement::Expression(expr_stmt) => {
+            if let Expression::Assignment(assignment) = expr_stmt.expression {
+                if let Expression::Variable(
+                    mago_syntax::ast::ast::variable::Variable::Direct(direct),
+                ) = assignment.lhs.unparenthesized()
+                {
+                    excluded_assignment_target = Some(analyzer.interner.intern(direct.name));
+                }
+                // Assignment to a non-variable target (property/array path):
+                // the assignment analyzer consumes path-shaped annotations,
+                // but named annotations for regular variables still apply
+                // here (Psalm's AssignmentAnalyzer sets non-target var
+                // comments into scope the same way).
+            }
+        }
+        _ => {}
+    }
+
+    let Some(annotations) = analyzer.get_inline_var_annotations(offset) else {
+        return;
+    };
+
+    let annotations = annotations.clone();
+    for annotation in &annotations {
+        let Some(var_name) = annotation.var_name else {
+            continue;
+        };
+        if excluded_assignment_target == Some(var_name) {
+            continue;
+        }
+
+        crate::expr::variable_fetch_analyzer::emit_undefined_docblock_classes_in_annotation(
+            analyzer,
+            &annotation.var_type,
+            (offset, offset),
+            analysis_data,
+        );
+        // Psalm keeps the existing type's dataflow parents on the comment
+        // type (`$comment_type->parent_nodes = $existing_var_type->parent_nodes`)
+        // so a loop-carried assignment re-pinned by `@var` still counts as
+        // used by next-iteration reads.
+        let var_key = pzoom_code_info::VarName::new(analyzer.interner.lookup(var_name));
+        let mut annotation_type = annotation.var_type.clone();
+        if let Some(existing_type) = context.get_var_type(&var_key) {
+            annotation_type.parent_nodes = existing_type.parent_nodes.clone();
+        }
+        context.set_var_type(var_key, annotation_type);
+    }
 }

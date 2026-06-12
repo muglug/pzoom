@@ -1,0 +1,1 @@
+MixedAssignment - input.php:3:5 - Unable to determine the type that $name is being assigned to

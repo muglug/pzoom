@@ -8,7 +8,24 @@ function filter_input(int $type, string $var_name, int $filter = FILTER_DEFAULT,
 }
 
 /**
- * @pure
+ * @psalm-pure
+ *
+ * 257 is FILTER_VALIDATE_INT
+ * @psalm-taint-escape ($filter is 257 ? 'input_except_sleep' : null)
+ *
+ * 258 is FILTER_VALIDATE_BOOLEAN
+ * @psalm-taint-escape ($filter is 258 ? 'input' : null)
+ *
+ * 259 is FILTER_VALIDATE_FLOAT
+ * @psalm-taint-escape ($filter is 259 ? 'input_except_sleep' : null)
+ *
+ * 519 is FILTER_SANITIZE_NUMBER_INT
+ * @psalm-taint-escape ($filter is 519 ? 'input_except_sleep' : null)
+ *
+ * 520 is FILTER_SANITIZE_NUMBER_FLOAT
+ * @psalm-taint-escape ($filter is 520 ? 'input_except_sleep' : null)
+ *
+ * @psalm-flow ($value, $filter, $options) -> return
  */
 function filter_var(mixed $value, int $filter = FILTER_DEFAULT, array|int $options = 0): mixed
 {
@@ -29,9 +46,9 @@ function filter_var_array(array $array, array|int $options = FILTER_DEFAULT, boo
 }
 
 /**
- * @return array<array-key, string>
- *
  * @pure
+ *
+ * @return non-empty-list<non-falsy-string>
  */
 function filter_list(): array
 {

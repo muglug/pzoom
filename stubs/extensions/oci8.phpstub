@@ -1,0 +1,1323 @@
+<?php
+
+// Start of oci8 v.2.0.7
+
+/**
+ * @removed 8.0
+ */
+class OCI_Lob
+{
+    /**
+     * @return string|false The contents of the object, or FALSE on errors.
+     */
+    public function load() {}
+
+    /**
+     * @return int|false Current position of a LOB's internal pointer or FALSE if an
+     */
+    public function tell() {}
+
+    /**
+     * @param int $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function truncate($length = 0) {}
+
+    /**
+     * @param int $offset [optional]
+     * @param int $length [optional]
+     * @return int|false The actual number of characters/bytes erased or FALSE on failure.
+     */
+    public function erase($offset = null, $length = null) {}
+
+    /**
+     * @param int $flag [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function flush($flag = null) {}
+
+    /**
+     * @param bool $on_off
+     * @return bool TRUE on success or FALSE on failure. Repeated calls to this method with the same flag will
+     */
+    public function setbuffering($on_off) {}
+
+    /**
+     * @return bool FALSE if buffering for the large object is off and TRUE if
+     */
+    public function getbuffering() {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function rewind() {}
+
+    /**
+     * @param int $length
+     * @return string|false The contents as a string, or FALSE on failure.
+     */
+    public function read($length) {}
+
+    /**
+     * @return bool TRUE if internal pointer of large object is at the end of LOB.
+     */
+    public function eof() {}
+
+    /**
+     * @param int $offset
+     * @param int $whence [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function seek($offset, $whence = OCI_SEEK_SET) {}
+
+    /**
+     * @param string $data
+     * @param int $length [optional]
+     * @return int|false The number of bytes written or FALSE on failure.
+     */
+    public function write($data, $length = null) {}
+
+    /**
+     * @param OCI_Lob $lob_from
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function append(OCILob $lob_from) {}
+
+    /**
+     * @return int|false Length of large object value or FALSE on failure.
+     */
+    public function size() {}
+
+    /**
+     * @param $filename
+     * @param $start [optional]
+     * @param $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function writetofile($filename, $start, $length) {}
+
+    /**
+     * @param string $filename
+     * @param int $start [optional]
+     * @param int $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function export($filename, $start = null, $length = null) {}
+
+    /**
+     * @param string $filename
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function import($filename) {}
+
+    /**
+     * @param string $data
+     * @param int $lob_type [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function writeTemporary($data, $lob_type = OCI_TEMP_CLOB) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function close() {}
+
+    /**
+     * @param string $data
+     * @param int $offset [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function save($data, $offset = null) {}
+
+    /**
+     * @param $filename
+     * @return bool Return true on success and false on failure
+     */
+    public function savefile($filename) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function free() {}
+}
+
+/**
+ * @removed 8.0
+ */
+class OCI_Collection
+{
+    /**
+     * @param mixed $value
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function append($value) {}
+
+    /**
+     * @param int $index
+     * @return mixed FALSE if such element doesn't exist; NULL if element is NULL;
+     */
+    public function getelem($index) {}
+
+    /**
+     * @param int $index
+     * @param mixed $value
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function assignelem($index, $value) {}
+
+    /**
+     * @param OCI_Collection $from
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function assign(OCICollection $from) {}
+
+    /**
+     * @return int|false The number of elements in the collection or FALSE on error.
+     */
+    public function size() {}
+
+    /**
+     * @return int|false The maximum number as an integer, or FALSE on errors.
+     */
+    public function max() {}
+
+    /**
+     * @param int $num
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function trim($num) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function free() {}
+}
+
+/**
+ * @param resource $connection
+ * @param mixed $callbackFn [optional]
+ * @return bool TRUE on success or FALSE on failure.
+ * @since 7.2
+ */
+function oci_register_taf_callback($connection, $callbackFn) {}
+
+/**
+ * @param resource $connection
+ * @return bool TRUE on success or FALSE on failure.
+ * @since 7.2
+ */
+function oci_unregister_taf_callback($connection) {}
+
+/**
+ * @param resource $statement
+ * @param string $column_name
+ * @param mixed $variable
+ * @param int $type
+ * @return bool
+ */
+function oci_define_by_name($statement, $column_name, &$variable, $type = SQLT_CHR) {}
+
+/**
+ * @param resource $statement
+ * @param string $bv_name
+ * @param mixed $variable
+ * @param int $maxlength
+ * @param int $type
+ * @return bool
+ */
+function oci_bind_by_name($statement, $bv_name, &$variable, $maxlength = -1, $type = SQLT_CHR) {}
+
+/**
+ * @param resource $statement
+ * @param string $name
+ * @param array<array-key, mixed> $var_array
+ * @param int $max_table_length
+ * @param int $max_item_length
+ * @param int $type
+ * @return bool
+ */
+function oci_bind_array_by_name($statement, $name, array &$var_array, $max_table_length, $max_item_length = -1, $type = SQLT_AFC) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return bool
+ */
+function oci_field_is_null($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|string
+ */
+function oci_field_name($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|int
+ */
+function oci_field_size($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|int
+ */
+function oci_field_scale($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|int
+ */
+function oci_field_precision($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|mixed
+ */
+function oci_field_type($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|int
+ */
+function oci_field_type_raw($statement, $field) {}
+
+/**
+ * @param resource $statement
+ * @param int $mode
+ * @return bool
+ */
+function oci_execute($statement, $mode = OCI_COMMIT_ON_SUCCESS) {}
+
+/**
+ * @param resource $statement
+ * @return bool
+ */
+function oci_cancel($statement) {}
+
+/**
+ * @param resource $statement
+ * @return bool
+ */
+function oci_fetch($statement) {}
+
+/**
+ * @param resource $statement
+ * @return false|object
+ */
+function oci_fetch_object($statement) {}
+
+/**
+ * @param resource $statement
+ * @return array<array-key, mixed>|false
+ */
+function oci_fetch_row($statement) {}
+
+/**
+ * @param resource $statement
+ * @return array<array-key, mixed>|false
+ */
+function oci_fetch_assoc($statement) {}
+
+/**
+ * @param resource $statement
+ * @param int $mode
+ * @return array<array-key, mixed>|false
+ */
+function oci_fetch_array($statement, $mode = null) {}
+
+/**
+ * @deprecated 5.4
+ *
+ * @param resource $statement_resource
+ * @param array<array-key, mixed> $result
+ * @param int $mode
+ * @return bool|int
+ */
+function ocifetchinto($statement_resource, &$result, $mode = null) {}
+
+/**
+ * @param resource $statement
+ * @param array<array-key, mixed> $output
+ * @param int $skip
+ * @param int $maxrows
+ * @param int $flags
+ * @return false|int
+ */
+function oci_fetch_all($statement, array &$output, $skip = 0, $maxrows = -1, $flags = OCI_FETCHSTATEMENT_BY_COLUMN|OCI_ASSOC) {}
+
+/**
+ * @param resource $statement
+ * @return bool
+ */
+function oci_free_statement($statement) {}
+
+/**
+ * @removed 8.0
+ *
+ * @param bool $onoff
+ * @return void
+ */
+function oci_internal_debug($onoff) {}
+
+/**
+ * @param resource $statement
+ * @return false|int
+ */
+function oci_num_fields($statement) {}
+
+/**
+ * @param resource $connection
+ * @param string $sql_text
+ * @return false|resource
+ */
+function oci_parse($connection, $sql_text) {}
+
+/**
+ * @param resource $statement
+ * @return false|resource
+ */
+function oci_get_implicit_resultset($statement) {}
+
+/**
+ * @param resource $connection
+ * @return false|resource
+ */
+function oci_new_cursor($connection) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $field
+ * @return false|mixed
+ */
+function oci_result($statement, $field) {}
+
+/**
+ * @return string
+ */
+function oci_client_version() {}
+
+/**
+ * @param resource $connection
+ * @return false|string
+ */
+function oci_server_version($connection) {}
+
+/**
+ * @param resource $statement
+ * @return false|string
+ */
+function oci_statement_type($statement) {}
+
+/**
+ * @param resource $statement
+ * @return false|int
+ */
+function oci_num_rows($statement) {}
+
+/**
+ * @param resource $connection
+ * @return bool
+ */
+function oci_close($connection) {}
+
+/**
+ * @param string $username
+ * @param string $password
+ * @param string $connection_string
+ * @param string $character_set
+ * @param int $session_mode
+ * @return false|resource
+ */
+function oci_connect($username, $password, $connection_string = null, $character_set = null, $session_mode = null) {}
+
+/**
+ * @param string $username
+ * @param string $password
+ * @param string $connection_string
+ * @param string $character_set
+ * @param int $session_mode
+ * @return false|resource
+ */
+function oci_new_connect($username, $password, $connection_string = null, $character_set = null, $session_mode = null) {}
+
+/**
+ * @param string $username
+ * @param string $password
+ * @param string $connection_string
+ * @param string $encoding
+ * @param int $session_mode
+ * @return false|resource
+ */
+function oci_pconnect($username, $password, $connection_string = null, $encoding = '', $session_mode = null) {}
+
+/**
+ * @param resource $resource
+ * @return array<array-key, mixed>|false
+ */
+function oci_error($resource = null) {}
+
+/**
+ * @return bool
+ */
+function oci_free_descriptor($descriptor) {}
+
+/**
+ * @param OCILob $lob1
+ * @param OCILob $lob2
+ * @return bool
+ */
+function oci_lob_is_equal(
+    OCILob $lob1,
+    OCILob $lob2
+) {}
+
+/**
+ * @param OCILob $lob_to
+ * @param OCILob $lob_from
+ * @param int $length
+ * @return bool
+ */
+function oci_lob_copy(
+    OCILob $lob_to,
+    OCILob $lob_from,
+    $length = 0
+) {}
+
+/**
+ * @param resource $connection
+ * @return bool
+ */
+function oci_commit($connection) {}
+
+/**
+ * @param resource $connection
+ * @return bool
+ */
+function oci_rollback($connection) {}
+
+/**
+ * @param resource $connection
+ * @param int $type
+ * @return OCILob|false
+ */
+function oci_new_descriptor($connection, $type = OCI_DTYPE_LOB) {}
+
+/**
+ * @param resource $statement
+ * @param int $rows
+ * @return bool
+ */
+function oci_set_prefetch($statement, $rows) {}
+
+/**
+ * @param resource $connection
+ * @param string $client_identifier
+ * @return bool
+ */
+function oci_set_client_identifier($connection, $client_identifier) {}
+
+/**
+ * @param string $edition
+ * @return bool
+ */
+function oci_set_edition($edition) {}
+
+/**
+ * @param resource $connection
+ * @param string $module_name
+ * @return bool
+ */
+function oci_set_module_name($connection, $module_name) {}
+
+/**
+ * @param resource $connection
+ * @param string $action_name
+ * @return bool
+ */
+function oci_set_action($connection, $action_name) {}
+
+/**
+ * @param resource $connection
+ * @param string $client_info
+ * @return bool
+ */
+function oci_set_client_info($connection, $client_info) {}
+
+/**
+ * @param resource $connection
+ * @param string $username
+ * @param string $old_password
+ * @param string $new_password
+ * @return bool
+ */
+function oci_password_change($connection, $username, $old_password, $new_password) {}
+
+/**
+ * @param resource $connection
+ * @param string $tdo
+ * @param string $schema
+ * @return OCICollection|false
+ */
+function oci_new_collection($connection, $tdo, $schema = null) {}
+
+/**
+ * @param resource $statement_resource
+ * @return bool
+ */
+function oci_free_cursor($statement_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @return bool TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocifreecursor($statement_resource) {}
+
+/**
+ * @param resource $statement
+ * @param string $column_name
+ * @param mixed &$variable
+ * @param int $maximum_length [optional]
+ * @param int $type [optional]
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocibindbyname($statement, $column_name, &$variable, $maximum_length = -1, $type = SQLT_CHR) {}
+
+/**
+ * @param resource $statement A valid OCI8 statement identifier created by {@see oci_parse()} and executed by {@see oci_execute()}, or a REF CURSOR statement identifier.
+ * @param string $column_name The column name used in the query. Use uppercase for Oracle's default, non-case sensitive column names. Use the exact column name case for case-sensitive column names.
+ * @param mixed &$variable The PHP variable that will contain the returned column value.
+ * @param int $type [optional] The data type to be returned. Generally not needed. Note that Oracle-style data conversions are not performed. For example, SQLT_INT will be ignored and the returned data type will still be SQLT_CHR.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocidefinebyname($statement, $column_name, &$variable, $type = SQLT_CHR) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $column_number_or_name
+ * @return bool Returns TRUE if field is NULL, FALSE otherwise.
+ * @deprecated 5.4
+ */
+function ocicolumnisnull($statement, $column_number_or_name) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $column_number
+ * @return string|false Returns the name as a string, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumnname($statement, $column_number) {}
+
+/**
+ * @param resource $statement
+ * @param mixed $column_number_or_name
+ * @return int|false Returns the size of a field in bytes, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumnsize($statement, $column_number_or_name) {}
+
+/**
+ * @param resource $statement_resource
+ * @param $column_number
+ * @return int|false Returns the scale as an integer, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumnscale($statement_resource, $column_number) {}
+
+/**
+ * @param resource $statement_resource
+ * @param string|int $column_number
+ * @return int|false Returns the precision  as an integer, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumnprecision($statement_resource, $column_number) {}
+
+/**
+ * @param resource $statement_resource
+ * @param string|int $column_number
+ * @return mixed|false Returns the field data type as a string, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumntype($statement_resource, $column_number) {}
+
+/**
+ * @param resource $statement_resource
+ * @param string|int $column_number
+ * @return int|false Returns Oracle's raw data type as a number, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicolumntyperaw($statement_resource, $column_number) {}
+
+/**
+ * @param $statement_resource
+ * @param $mode [optional]
+ * @return bool Returns TRUE on success or FALSE on failure
+ * @deprecated 5.4
+ */
+function ociexecute($statement_resource, $mode = OCI_COMMIT_ON_SUCCESS) {}
+
+/**
+ * @param resource $statement_resource
+ * @return bool Returns TRUE on success or FALSE on failure
+ * @deprecated 5.4
+ */
+function ocicancel($statement_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @return bool Returns TRUE on success or FALSE if there are no more rows in the statement.
+ * @deprecated 5.4
+ */
+function ocifetch($statement_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @param array &$output
+ * @param int $skip [optional]
+ * @param int $maximum_rows [optional]
+ * @param int $flags [optional]
+ * @return int|false Returns the number of rows in output, which may be 0 or more, or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocifetchstatement($statement_resource, &$output, $skip, $maximum_rows, $flags) {}
+
+/**
+ * @param resource $statement_resource
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocifreestatement($statement_resource) {}
+
+/**
+ * @param bool $mode
+ * @removed 8.0
+ * @deprecated 5.4
+ */
+function ociinternaldebug($mode) {}
+
+/**
+ * @param resource $statement_resource
+ * @return int|false Returns the number of columns as an integer, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocinumcols($statement_resource) {}
+
+/**
+ * @param resource $connection_resource
+ * @param string $sql_text
+ * @return resource|false Returns a statement handle on success, or FALSE on error.
+ * @deprecated 5.4
+ */
+function ociparse($connection_resource, $sql_text) {}
+
+/**
+ * @param resource $connection_resource
+ * @return resource|false Returns a new statement handle, or FALSE on error.
+ * @deprecated 5.4
+ */
+function ocinewcursor($connection_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @param $column_number_or_name
+ * @return false|mixed Returns everything as strings except for abstract types (ROWIDs, LOBs and FILEs). Returns FALSE on error.
+ * @deprecated 5.4
+ */
+function ociresult($statement_resource, $column_number_or_name) {}
+
+/**
+ * @param $connection_resource
+ * @return string|false Returns the version information as a string or FALSE on error.
+ * @deprecated 5.4
+ */
+function ociserverversion($connection_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @return string|false Returns everything as strings except for abstract types (ROWIDs, LOBs and FILEs). Returns FALSE on error.
+ * @deprecated 5.4
+ */
+function ocistatementtype($statement_resource) {}
+
+/**
+ * @param resource $statement_resource
+ * @return int|false Returns the number of rows affected as an integer, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocirowcount($statement_resource) {}
+
+/**
+ * @param resource $connection_resource
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocilogoff($connection_resource) {}
+
+/**
+ * @param string $username
+ * @param string $password
+ * @param string $connection_string [optional]
+ * @param string $character_set [optional]
+ * @param int $session_mode [optional]
+ * @return resource|false Returns a connection identifier or FALSE on error.
+ * @deprecated 5.4
+ */
+function ocilogon($username, $password, $connection_string, $character_set, $session_mode) {}
+
+/**
+ * @param $username
+ * @param $password
+ * @param $connection_string [optional]
+ * @param $character_set [optional]
+ * @param $session_mode [optional]
+ * @return resource|false Returns a connection identifier or FALSE on error.
+ * @deprecated 5.4
+ */
+function ocinlogon($username, $password, $connection_string, $character_set, $session_mode) {}
+
+/**
+ * @param string $username The Oracle user name.
+ * @param string $password  The password for username
+ * @param $connection_string [optional]
+ * @param $character_set [optional]
+ * @param $session_mode [optional]
+ * @return resource|false Returns a connection identifier or FALSE on error.
+ * @deprecated 5.4
+ */
+function ociplogon($username, $password, $connection_string, $character_set, $session_mode) {}
+
+/**
+ * @param resource $connection_or_statement_resource [optional] For most errors, resource is the resource handle that was passed to the failing function call.
+ * @return array|false If no error is found, oci_error() returns FALSE. Otherwise, oci_error() returns the error information as an associative array.
+ * @deprecated 5.4
+ */
+function ocierror($connection_or_statement_resource) {}
+
+/**
+ * @param $lob_descriptor
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocifreedesc($lob_descriptor) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @param string $data
+ * @param int $offset [optional]
+ * @return bool
+ * @deprecated 5.4
+ */
+function ocisavelob(OCILob $lob_descriptor, $data, $offset) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @param string $filename
+ * @return bool
+ * @deprecated 5.4
+ */
+function ocisavelobfile(OCILob $lob_descriptor, $filename) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @param string $filename Path to the file.
+ * @param int $start [optional] Indicates from where to start exporting.
+ * @param int $length [optional] Indicates the length of data to be exported.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ociwritelobtofile(
+    OCILob $lob_descriptor,
+    $filename,
+    $start,
+    $length
+) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @return string|false Returns the contents of the object, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ociloadlob(OCILob $lob_descriptor) {}
+
+/**
+ * @param $connection_resource
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicommit($connection_resource) {}
+
+/**
+ * @param resource $connection_resource
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocirollback($connection_resource) {}
+
+/**
+ * @param resource $connection_resource
+ * @param $type [optional] Valid values for type are: OCI_DTYPE_FILE, OCI_DTYPE_LOB and OCI_DTYPE_ROWID.
+ * @return OCI_LOB|false Returns a new LOB or FILE descriptor on success, FALSE on error.
+ * @deprecated 5.4
+ */
+function ocinewdescriptor($connection_resource, $type = OCI_DTYPE_LOB) {}
+
+/**
+ * @param resource $statement_resource A valid OCI8 statement
+ * @param $number_of_rows
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocisetprefetch($statement_resource, $number_of_rows) {}
+
+/**
+ * @param resource|string $connection_resource_or_connection_string_or_dbname An Oracle connection identifier, returned by
+ * @param string $username The Oracle user name.
+ * @param string $old_password The new password to be set.
+ * @param string $new_password The new password to be set.
+ * @return resource|bool Returns TRUE on success or FALSE on failure or resource, depending on the function parameters.
+ */
+function ocipasswordchange($connection_resource_or_connection_string_or_dbname, $username, $old_password, $new_password) {}
+
+/**
+ * @param OCI_Collection|OCICollection $collection
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocifreecollection(OCICollection $collection) {}
+
+/**
+ * @param $connection_resource
+ * @param $tdo Should be a valid named type (uppercase).
+ * @param $schema Should point to the scheme, where the named type was created. The name of the current user is the default value.
+ * @return OCI_Collection|false Returns a new OCI_Collection object or FALSE on error.
+ * @deprecated 5.4
+ */
+function ocinewcollection($connection_resource, $tdo, $schema = null) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @param mixed $value The value to be added to the collection. Can be a string or a number.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicollappend(OCICollection $collection, $value) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @param int $index The element index. First index is 0.
+ * @return mixed Returns FALSE if such element doesn't exist; NULL if element is NULL; string if element is column of a string datatype or number if element is numeric field.
+ * @deprecated 5.4
+ */
+function ocicollgetelem(OCICollection $collection, $index) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @param $index The element index. First index is 0.
+ * @param $value Can be a string or a number.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicollassignelem(OCICollection $collection, $index, $value) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @return int|false Returns the number of elements in the collection or FALSE on error.
+ * @deprecated 5.4
+ */
+function ocicollsize(OCICollection $collection) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @return int|false  Returns the maximum number as an integer, or FALSE on errors.
+ * @deprecated 5.4
+ */
+function ocicollmax(OCICollection $collection) {}
+
+/**
+ * @param OCI_Collection $collection
+ * @param int|float $number
+ * @return bool Returns TRUE or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicolltrim(OCICollection $collection, $number) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @param string $data The data to write.
+ * @param int $lob_type
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ociwritetemporarylob(
+    OCILob $lob_descriptor,
+    $data,
+    $lob_type = OCI_TEMP_CLOB
+) {}
+
+/**
+ * @param OCI_Lob|OCILob $lob_descriptor
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicloselob(OCILob $lob_descriptor) {}
+
+/**
+ * @param OCI_Collection $to
+ * @param OCI_Collection $from An instance of OCI-Collection.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @deprecated 5.4
+ */
+function ocicollassign(
+    OCICollection $to,
+    OCICollection $from
+) {}
+define('OCI_DEFAULT', 0);
+
+define('OCI_SYSOPER', 4);
+
+define('OCI_SYSDBA', 2);
+
+define('OCI_CRED_EXT', -2147483648);
+
+define('OCI_DESCRIBE_ONLY', 16);
+
+define('OCI_COMMIT_ON_SUCCESS', 32);
+
+define('OCI_NO_AUTO_COMMIT', 0);
+
+define('OCI_EXACT_FETCH', 2);
+
+define('OCI_SEEK_SET', 0);
+
+define('OCI_SEEK_CUR', 1);
+
+define('OCI_SEEK_END', 2);
+
+define('OCI_LOB_BUFFER_FREE', 1);
+
+define('SQLT_BFILEE', 114);
+
+define('SQLT_CFILEE', 115);
+
+define('SQLT_CLOB', 112);
+
+define('SQLT_BLOB', 113);
+
+define('SQLT_RDD', 104);
+
+define('SQLT_INT', 3);
+
+define('SQLT_NUM', 2);
+
+define('SQLT_RSET', 116);
+
+define('SQLT_AFC', 96);
+
+define('SQLT_CHR', 1);
+
+define('SQLT_VCS', 9);
+
+define('SQLT_AVC', 97);
+
+define('SQLT_STR', 5);
+
+define('SQLT_LVC', 94);
+
+define('SQLT_FLT', 4);
+
+define('SQLT_UIN', 68);
+
+define('SQLT_LNG', 8);
+
+define('SQLT_LBI', 24);
+
+define('SQLT_BIN', 23);
+
+define('SQLT_ODT', 156);
+
+define('SQLT_BDOUBLE', 22);
+
+define('SQLT_BFLOAT', 21);
+
+define('OCI_B_NTY', 108);
+
+define('SQLT_NTY', 108);
+
+define('OCI_SYSDATE', "SYSDATE");
+
+define('OCI_B_BFILE', 114);
+
+define('OCI_B_CFILEE', 115);
+
+define('OCI_B_CLOB', 112);
+
+define('OCI_B_BLOB', 113);
+
+define('OCI_B_ROWID', 104);
+
+define('OCI_B_CURSOR', 116);
+
+define('OCI_B_BIN', 23);
+
+define('OCI_B_INT', 3);
+
+define('OCI_B_NUM', 2);
+
+define('OCI_FETCHSTATEMENT_BY_COLUMN', 16);
+
+define('OCI_FETCHSTATEMENT_BY_ROW', 32);
+
+define('OCI_ASSOC', 1);
+
+define('OCI_NUM', 2);
+
+define('OCI_BOTH', 3);
+
+define('OCI_RETURN_NULLS', 4);
+
+define('OCI_RETURN_LOBS', 8);
+
+define('OCI_DTYPE_FILE', 56);
+
+define('OCI_DTYPE_LOB', 50);
+
+define('OCI_DTYPE_ROWID', 54);
+
+define('OCI_D_FILE', 56);
+
+define('OCI_D_LOB', 50);
+
+define('OCI_D_ROWID', 54);
+
+define('OCI_TEMP_CLOB', 2);
+
+define('OCI_TEMP_BLOB', 1);
+
+define('SQLT_BOL', 252);
+
+define('OCI_B_BOL', 252);
+
+// End of oci8 v.2.0.7
+
+// Start of oci8 v.3
+
+/**
+ * @since 8.0
+ */
+class OCILob
+{
+    /**
+     * @return string|false The contents of the object, or FALSE on errors.
+     */
+    public function load() {}
+
+    /**
+     * @return int|false Current position of a LOB's internal pointer or FALSE if an
+     */
+    public function tell() {}
+
+    /**
+     * @param int $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function truncate($length = 0) {}
+
+    /**
+     * @param int $offset [optional]
+     * @param int $length [optional]
+     * @return int|false The actual number of characters/bytes erased or FALSE on failure.
+     */
+    public function erase($offset = null, $length = null) {}
+
+    /**
+     * @param int $flag [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function flush($flag = null) {}
+
+    /**
+     * @param bool $on_off
+     * @return bool TRUE on success or FALSE on failure. Repeated calls to this method with the same flag will
+     */
+    public function setbuffering($on_off) {}
+
+    /**
+     * @return bool FALSE if buffering for the large object is off and TRUE if
+     */
+    public function getbuffering() {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function rewind() {}
+
+    /**
+     * @param int $length
+     * @return string|false The contents as a string, or FALSE on failure.
+     */
+    public function read($length) {}
+
+    /**
+     * @return bool TRUE if internal pointer of large object is at the end of LOB.
+     */
+    public function eof() {}
+
+    /**
+     * @param int $offset
+     * @param int $whence [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function seek($offset, $whence = OCI_SEEK_SET) {}
+
+    /**
+     * @param string $data
+     * @param int $length [optional]
+     * @return int|false The number of bytes written or FALSE on failure.
+     */
+    public function write($data, $length = null) {}
+
+    /**
+     * @param OCILob $lob_from
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function append(OCILob $lob_from) {}
+
+    /**
+     * @return int|false Length of large object value or FALSE on failure.
+     */
+    public function size() {}
+
+    /**
+     * @param $filename
+     * @param $start [optional]
+     * @param $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function writetofile($filename, $start, $length) {}
+
+    /**
+     * @param string $filename
+     * @param int $start [optional]
+     * @param int $length [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function export($filename, $start = null, $length = null) {}
+
+    /**
+     * @param string $filename
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function import($filename) {}
+
+    /**
+     * @param string $data
+     * @param int $lob_type [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function writeTemporary($data, $lob_type = OCI_TEMP_CLOB) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function close() {}
+
+    /**
+     * @param string $data
+     * @param int $offset [optional]
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function save($data, $offset = null) {}
+
+    /**
+     * @param $filename
+     * @return bool Return true on success and false on failure
+     */
+    public function savefile($filename) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function free() {}
+}
+
+/**
+ * @since 8.0
+ */
+class OCICollection
+{
+    /**
+     * @param mixed $value
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function append($value) {}
+
+    /**
+     * @param int $index
+     * @return mixed FALSE if such element doesn't exist; NULL if element is NULL;
+     */
+    public function getelem($index) {}
+
+    /**
+     * @param int $index
+     * @param mixed $value
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function assignelem($index, $value) {}
+
+    /**
+     * @param OCICollection $from
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function assign(OCICollection $from) {}
+
+    /**
+     * @return int|false The number of elements in the collection or FALSE on error.
+     */
+    public function size() {}
+
+    /**
+     * @return int|false The maximum number as an integer, or FALSE on errors.
+     */
+    public function max() {}
+
+    /**
+     * @param int $num
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function trim($num) {}
+
+    /**
+     * @return bool TRUE on success or FALSE on failure.
+     */
+    public function free() {}
+}
+
+/**
+ * @param resource $connection
+ * @param int $time_out
+ * @return bool
+ */
+function oci_set_call_timeout($connection, int $time_out) {}
+
+/**
+ * @param resource $connection
+ * @param string $dbop
+ * @return bool
+ */
+function oci_set_db_operation($connection, string $dbop) {}
+
+/**
+ * @param resource $statement The OCI8 statement resource.
+ * @param int $prefetch_lob_size The size of the LOB column, in bytes, to be prefetched.
+ * @return bool Returns TRUE on success or FALSE on failure.
+ * @since 8.2
+ */
+function oci_set_prefetch_lob($statement, int $prefetch_lob_size): bool {}

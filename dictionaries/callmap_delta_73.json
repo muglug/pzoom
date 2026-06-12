@@ -1,0 +1,2097 @@
+{
+    "set": {
+        "amqpbasicproperties::getappid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getclusterid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getcontentencoding": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getcontenttype": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getcorrelationid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getexpiration": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getmessageid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getreplyto": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::gettimestamp": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::gettype": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpbasicproperties::getuserid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpchannel::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "amqp_connection",
+                "AMQPConnection"
+            ]
+        ],
+        "amqpchannel::basicrecover": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "requeue=",
+                "bool"
+            ]
+        ],
+        "amqpchannel::close": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::committransaction": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpchannel::confirmselect": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::getglobalprefetchcount": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::getglobalprefetchsize": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::qos": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "size",
+                "int"
+            ],
+            [
+                "count",
+                "int"
+            ],
+            [
+                "global=",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::rollbacktransaction": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpchannel::setconfirmcallback": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "ack_callback",
+                "callable|null"
+            ],
+            [
+                "nack_callback=",
+                "callable|null"
+            ]
+        ],
+        "amqpchannel::setglobalprefetchcount": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "count",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::setglobalprefetchsize": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "size",
+                "mixed"
+            ]
+        ],
+        "amqpchannel::setprefetchcount": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "count",
+                "int"
+            ]
+        ],
+        "amqpchannel::setprefetchsize": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "size",
+                "int"
+            ]
+        ],
+        "amqpchannel::setreturncallback": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "return_callback",
+                "callable|null"
+            ]
+        ],
+        "amqpchannel::starttransaction": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpchannel::waitforbasicreturn": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "timeout=",
+                "float"
+            ]
+        ],
+        "amqpchannel::waitforconfirm": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "timeout=",
+                "float"
+            ]
+        ],
+        "amqpconnection::connect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::disconnect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::getcacert": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpconnection::getcert": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpconnection::getconnectionname": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::getkey": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpconnection::getmaxchannels": [
+            [
+                "",
+                "int|null"
+            ]
+        ],
+        "amqpconnection::getrpctimeout": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::getsaslmethod": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::ispersistent": [
+            [
+                "",
+                "bool|null"
+            ]
+        ],
+        "amqpconnection::pconnect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::pdisconnect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::preconnect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::reconnect": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpconnection::setcacert": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "cacert",
+                "string"
+            ]
+        ],
+        "amqpconnection::setcert": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "cert",
+                "string"
+            ]
+        ],
+        "amqpconnection::setconnectionname": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "connection_name",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::sethost": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "host",
+                "string"
+            ]
+        ],
+        "amqpconnection::setkey": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "key",
+                "string"
+            ]
+        ],
+        "amqpconnection::setlogin": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "login",
+                "string"
+            ]
+        ],
+        "amqpconnection::setpassword": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "password",
+                "string"
+            ]
+        ],
+        "amqpconnection::setport": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "port",
+                "int"
+            ]
+        ],
+        "amqpconnection::setreadtimeout": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "timeout",
+                "int"
+            ]
+        ],
+        "amqpconnection::setrpctimeout": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "timeout",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::setsaslmethod": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "sasl_method",
+                "mixed"
+            ]
+        ],
+        "amqpconnection::settimeout": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "timeout",
+                "int"
+            ]
+        ],
+        "amqpconnection::setverify": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "verify",
+                "bool"
+            ]
+        ],
+        "amqpconnection::setvhost": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "vhost",
+                "string"
+            ]
+        ],
+        "amqpconnection::setwritetimeout": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "timeout",
+                "int"
+            ]
+        ],
+        "amqpdecimal::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "exponent",
+                "mixed"
+            ],
+            [
+                "significand",
+                "mixed"
+            ]
+        ],
+        "amqpenvelope::getappid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getclusterid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getconsumertag": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getcontentencoding": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getcontenttype": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getcorrelationid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getdeliverytag": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getexchangename": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getexpiration": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getheader": [
+            [
+                "",
+                "false|string"
+            ],
+            [
+                "name",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getmessageid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getreplyto": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::gettimestamp": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::gettype": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::getuserid": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpenvelope::hasheader": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "name",
+                "string"
+            ]
+        ],
+        "amqpexchange::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "amqp_channel",
+                "AMQPChannel"
+            ]
+        ],
+        "amqpexchange::bind": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name",
+                "string"
+            ],
+            [
+                "routing_key",
+                "string"
+            ],
+            [
+                "flags=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpexchange::declare": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpexchange::declareexchange": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpexchange::delete": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name=",
+                "string"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpexchange::getargument": [
+            [
+                "",
+                "false|int|string"
+            ],
+            [
+                "argument",
+                "string"
+            ]
+        ],
+        "amqpexchange::getname": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpexchange::gettype": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpexchange::hasargument": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "argument",
+                "string"
+            ]
+        ],
+        "amqpexchange::publish": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "message",
+                "string"
+            ],
+            [
+                "routing_key=",
+                "string"
+            ],
+            [
+                "flags=",
+                "int"
+            ],
+            [
+                "headers=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpexchange::setargument": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "key",
+                "string"
+            ],
+            [
+                "value",
+                "int|string"
+            ]
+        ],
+        "amqpexchange::setarguments": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "arguments",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpexchange::setflags": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "flags",
+                "int"
+            ]
+        ],
+        "amqpexchange::setname": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name",
+                "string"
+            ]
+        ],
+        "amqpexchange::settype": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_type",
+                "string"
+            ]
+        ],
+        "amqpexchange::unbind": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name",
+                "string"
+            ],
+            [
+                "routing_key",
+                "string"
+            ],
+            [
+                "flags=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpqueue::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "amqp_channel",
+                "AMQPChannel"
+            ]
+        ],
+        "amqpqueue::ack": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "delivery_tag",
+                "string"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpqueue::bind": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name",
+                "string"
+            ],
+            [
+                "routing_key=",
+                "string"
+            ],
+            [
+                "arguments=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpqueue::cancel": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "consumer_tag=",
+                "string"
+            ]
+        ],
+        "amqpqueue::consume": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "callback",
+                "callable|null"
+            ],
+            [
+                "flags=",
+                "int"
+            ],
+            [
+                "consumer_tag=",
+                "string"
+            ]
+        ],
+        "amqpqueue::declare": [
+            [
+                "",
+                "mixed"
+            ]
+        ],
+        "amqpqueue::delete": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpqueue::get": [
+            [
+                "",
+                "AMQPEnvelope|false"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpqueue::getargument": [
+            [
+                "",
+                "false|int|string"
+            ],
+            [
+                "argument",
+                "string"
+            ]
+        ],
+        "amqpqueue::getname": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "amqpqueue::hasargument": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "key",
+                "string"
+            ]
+        ],
+        "amqpqueue::nack": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "delivery_tag",
+                "string"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpqueue::purge": [
+            [
+                "",
+                "bool"
+            ]
+        ],
+        "amqpqueue::reject": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "delivery_tag",
+                "string"
+            ],
+            [
+                "flags=",
+                "int"
+            ]
+        ],
+        "amqpqueue::setargument": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "key",
+                "string"
+            ],
+            [
+                "value",
+                "mixed"
+            ]
+        ],
+        "amqpqueue::setarguments": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "arguments",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqpqueue::setflags": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "flags",
+                "int"
+            ]
+        ],
+        "amqpqueue::setname": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "queue_name",
+                "string"
+            ]
+        ],
+        "amqpqueue::unbind": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "exchange_name",
+                "string"
+            ],
+            [
+                "routing_key=",
+                "string"
+            ],
+            [
+                "arguments=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "amqptimestamp::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "timestamp=",
+                "string"
+            ]
+        ],
+        "amqptimestamp::gettimestamp": [
+            [
+                "",
+                "string"
+            ]
+        ],
+        "array_merge": [
+            [
+                "",
+                "array<array-key, mixed>"
+            ],
+            [
+                "arr1",
+                "array<array-key, mixed>"
+            ],
+            [
+                "...arrays=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "array_merge_recursive": [
+            [
+                "",
+                "array<array-key, mixed>"
+            ],
+            [
+                "arr1",
+                "array<array-key, mixed>"
+            ],
+            [
+                "...arrays=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "arrayiterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "array<array-key, mixed>|object"
+            ],
+            [
+                "ar_flags=",
+                "int"
+            ]
+        ],
+        "arrayobject::exchangearray": [
+            [
+                "",
+                "array<array-key, mixed>"
+            ],
+            [
+                "array",
+                "array<array-key, mixed>|object"
+            ]
+        ],
+        "co\\context::exchangearray": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "array",
+                "mixed"
+            ]
+        ],
+        "co\\iterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "mixed"
+            ],
+            [
+                "ar_flags=",
+                "mixed"
+            ]
+        ],
+        "domdocument::createprocessinginstruction": [
+            [
+                "",
+                "DOMProcessingInstruction|false"
+            ],
+            [
+                "target",
+                "string"
+            ],
+            [
+                "data",
+                "string"
+            ]
+        ],
+        "domdocument::importnode": [
+            [
+                "",
+                "DOMNode|false"
+            ],
+            [
+                "importedNode",
+                "DOMNode"
+            ],
+            [
+                "deep",
+                "bool"
+            ]
+        ],
+        "domimplementation::createdocument": [
+            [
+                "",
+                "DOMDocument|false"
+            ],
+            [
+                "namespaceURI",
+                "string"
+            ],
+            [
+                "qualifiedName",
+                "string"
+            ],
+            [
+                "docType",
+                "DOMDocumentType"
+            ]
+        ],
+        "gzread": [
+            [
+                "",
+                "0|string"
+            ],
+            [
+                "fp",
+                "resource"
+            ],
+            [
+                "length",
+                "int"
+            ]
+        ],
+        "imagecopymerge": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "src_im",
+                "resource"
+            ],
+            [
+                "dst_im",
+                "resource"
+            ],
+            [
+                "dst_x",
+                "int"
+            ],
+            [
+                "dst_y",
+                "int"
+            ],
+            [
+                "src_x",
+                "int"
+            ],
+            [
+                "src_y",
+                "int"
+            ],
+            [
+                "src_w",
+                "int"
+            ],
+            [
+                "src_h",
+                "int"
+            ],
+            [
+                "pct",
+                "int"
+            ]
+        ],
+        "imagecopymergegray": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "src_im",
+                "resource"
+            ],
+            [
+                "dst_im",
+                "resource"
+            ],
+            [
+                "dst_x",
+                "int"
+            ],
+            [
+                "dst_y",
+                "int"
+            ],
+            [
+                "src_x",
+                "int"
+            ],
+            [
+                "src_y",
+                "int"
+            ],
+            [
+                "src_w",
+                "int"
+            ],
+            [
+                "src_h",
+                "int"
+            ],
+            [
+                "pct",
+                "int"
+            ]
+        ],
+        "locale::lookup": [
+            [
+                "",
+                "null|string"
+            ],
+            [
+                "langtag",
+                "array<array-key, mixed>"
+            ],
+            [
+                "locale",
+                "string"
+            ],
+            [
+                "canonicalize=",
+                "bool"
+            ],
+            [
+                "default=",
+                "string"
+            ]
+        ],
+        "locale_lookup": [
+            [
+                "",
+                "null|string"
+            ],
+            [
+                "langtag",
+                "array<array-key, mixed>"
+            ],
+            [
+                "locale",
+                "string"
+            ],
+            [
+                "canonicalize=",
+                "bool"
+            ],
+            [
+                "def=",
+                "string"
+            ]
+        ],
+        "mongodb\\bson\\iterator::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\bulkwrite::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\clientencryption::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\command::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\cursor::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\cursor::getid": [
+            [
+                "",
+                "MongoDB\\Driver\\CursorId"
+            ]
+        ],
+        "mongodb\\driver\\manager::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\commandfailedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\commandstartedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\commandsucceededevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serverchangedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serverclosedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serverheartbeatfailedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serverheartbeatstartedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serverheartbeatsucceededevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\serveropeningevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\topologychangedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\topologyclosedevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\monitoring\\topologyopeningevent::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\query::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\server::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\serverdescription::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\session::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\topologydescription::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\writeconcernerror::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\writeerror::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "mongodb\\driver\\writeresult::__wakeup": [
+            [
+                "",
+                "void"
+            ]
+        ],
+        "openssl_random_pseudo_bytes": [
+            [
+                "",
+                "false|string"
+            ],
+            [
+                "length",
+                "int"
+            ],
+            [
+                "&w result_is_strong=",
+                "bool"
+            ]
+        ],
+        "pack": [
+            [
+                "",
+                "false|string"
+            ],
+            [
+                "format",
+                "string"
+            ],
+            [
+                "...args",
+                "mixed"
+            ]
+        ],
+        "password_hash": [
+            [
+                "",
+                "false|string"
+            ],
+            [
+                "password",
+                "string"
+            ],
+            [
+                "algo",
+                "int"
+            ],
+            [
+                "options=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "password_needs_rehash": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "hash",
+                "string"
+            ],
+            [
+                "algo",
+                "int"
+            ],
+            [
+                "options=",
+                "array<array-key, mixed>"
+            ]
+        ],
+        "preg_replace_callback": [
+            [
+                "",
+                "null|string"
+            ],
+            [
+                "regex",
+                "array<array-key, mixed>|string"
+            ],
+            [
+                "callback",
+                "callable(array<array-key, string>):string"
+            ],
+            [
+                "subject",
+                "string"
+            ],
+            [
+                "limit=",
+                "int"
+            ],
+            [
+                "&w count=",
+                "int"
+            ]
+        ],
+        "preg_replace_callback'1": [
+            [
+                "",
+                "array<array-key, string>|null"
+            ],
+            [
+                "pattern",
+                "array<array-key, mixed>|string"
+            ],
+            [
+                "callback",
+                "callable(array<array-key, string>):string"
+            ],
+            [
+                "subject",
+                "array<array-key, string>"
+            ],
+            [
+                "limit=",
+                "int"
+            ],
+            [
+                "&w count=",
+                "int"
+            ]
+        ],
+        "preg_replace_callback_array": [
+            [
+                "",
+                "null|string"
+            ],
+            [
+                "pattern",
+                "array<string, callable(array<array-key, mixed>):string>"
+            ],
+            [
+                "subject",
+                "string"
+            ],
+            [
+                "limit=",
+                "int"
+            ],
+            [
+                "&w count=",
+                "int"
+            ]
+        ],
+        "preg_replace_callback_array'1": [
+            [
+                "",
+                "array<array-key, string>|null"
+            ],
+            [
+                "pattern",
+                "array<string, callable(array<array-key, mixed>):string>"
+            ],
+            [
+                "subject",
+                "array<array-key, string>"
+            ],
+            [
+                "limit=",
+                "int"
+            ],
+            [
+                "&w count=",
+                "int"
+            ]
+        ],
+        "proc_open": [
+            [
+                "",
+                "false|resource"
+            ],
+            [
+                "command",
+                "string"
+            ],
+            [
+                "descriptorspec",
+                "array<array-key, mixed>"
+            ],
+            [
+                "&pipes",
+                "array<array-key, resource>"
+            ],
+            [
+                "cwd=",
+                "null|string"
+            ],
+            [
+                "env=",
+                "array<array-key, mixed>|null"
+            ],
+            [
+                "other_options=",
+                "array<array-key, mixed>|null"
+            ]
+        ],
+        "recursivearrayiterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "array<array-key, mixed>|object"
+            ],
+            [
+                "ar_flags=",
+                "int"
+            ]
+        ],
+        "redis::hset": [
+            [
+                "",
+                "false|int"
+            ],
+            [
+                "key",
+                "string"
+            ],
+            [
+                "member",
+                "string"
+            ],
+            [
+                "value",
+                "string"
+            ]
+        ],
+        "reflectionmethod::getclosure": [
+            [
+                "",
+                "Closure|null"
+            ],
+            [
+                "object",
+                "object"
+            ]
+        ],
+        "spldoublylinkedlist::setiteratormode": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "flags",
+                "int"
+            ]
+        ],
+        "splfileobject::fwrite": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "str",
+                "string"
+            ],
+            [
+                "length=",
+                "int"
+            ]
+        ],
+        "splfixedarray::fromarray": [
+            [
+                "",
+                "SplFixedArray"
+            ],
+            [
+                "data",
+                "array<array-key, mixed>"
+            ],
+            [
+                "save_indexes=",
+                "bool"
+            ]
+        ],
+        "splmaxheap::compare": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "a",
+                "mixed"
+            ],
+            [
+                "b",
+                "mixed"
+            ]
+        ],
+        "splminheap::compare": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "a",
+                "mixed"
+            ],
+            [
+                "b",
+                "mixed"
+            ]
+        ],
+        "splobjectstorage::attach": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "object",
+                "object"
+            ],
+            [
+                "inf=",
+                "mixed"
+            ]
+        ],
+        "splobjectstorage::offsetset": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "object",
+                "object"
+            ],
+            [
+                "inf=",
+                "mixed"
+            ]
+        ],
+        "splpriorityqueue::compare": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "a",
+                "mixed"
+            ],
+            [
+                "b",
+                "mixed"
+            ]
+        ],
+        "splqueue::setiteratormode": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "flags",
+                "int"
+            ]
+        ],
+        "splstack::setiteratormode": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "flags",
+                "int"
+            ]
+        ],
+        "spltempfileobject::fwrite": [
+            [
+                "",
+                "int"
+            ],
+            [
+                "str",
+                "string"
+            ],
+            [
+                "length=",
+                "int"
+            ]
+        ],
+        "stream_context_set_option": [
+            [
+                "",
+                "bool"
+            ],
+            [
+                "stream_or_context",
+                "mixed"
+            ],
+            [
+                "wrappername",
+                "string"
+            ],
+            [
+                "optionname",
+                "string"
+            ],
+            [
+                "value",
+                "mixed"
+            ]
+        ],
+        "strip_tags": [
+            [
+                "",
+                "string"
+            ],
+            [
+                "str",
+                "string"
+            ],
+            [
+                "allowable_tags=",
+                "string"
+            ]
+        ],
+        "swoole\\coroutine\\context::exchangearray": [
+            [
+                "",
+                "mixed"
+            ],
+            [
+                "array",
+                "mixed"
+            ]
+        ],
+        "swoole\\coroutine\\iterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "mixed"
+            ],
+            [
+                "ar_flags=",
+                "mixed"
+            ]
+        ],
+        "swoole\\timer\\iterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "mixed"
+            ],
+            [
+                "ar_flags=",
+                "mixed"
+            ]
+        ],
+        "swoole_timer_iterator::__construct": [
+            [
+                "",
+                "void"
+            ],
+            [
+                "array=",
+                "mixed"
+            ],
+            [
+                "ar_flags=",
+                "mixed"
+            ]
+        ]
+    },
+    "remove": [
+        "amqpconnection::getconnecttimeout",
+        "amqpdecimal::toamqpvalue",
+        "amqpenvelopeexception::getenvelope",
+        "amqpexchange::removeargument",
+        "amqpqueue::recover",
+        "amqpqueue::removeargument",
+        "amqptimestamp::toamqpvalue",
+        "arrayiterator::__debuginfo",
+        "arrayiterator::__serialize",
+        "arrayiterator::__unserialize",
+        "arrayobject::__debuginfo",
+        "arrayobject::__serialize",
+        "arrayobject::__unserialize",
+        "co\\context::__debuginfo",
+        "co\\context::__serialize",
+        "co\\context::__unserialize",
+        "co\\iterator::__debuginfo",
+        "co\\iterator::__serialize",
+        "co\\iterator::__unserialize",
+        "directoryiterator::__debuginfo",
+        "ffi::addr",
+        "ffi::alignof",
+        "ffi::arraytype",
+        "ffi::cast",
+        "ffi::cdef",
+        "ffi::free",
+        "ffi::isnull",
+        "ffi::load",
+        "ffi::memcmp",
+        "ffi::memcpy",
+        "ffi::memset",
+        "ffi::new",
+        "ffi::scope",
+        "ffi::sizeof",
+        "ffi::string",
+        "ffi::type",
+        "ffi::typeof",
+        "ffi\\exception::__clone",
+        "ffi\\exception::__construct",
+        "ffi\\exception::__tostring",
+        "ffi\\exception::__wakeup",
+        "ffi\\exception::getcode",
+        "ffi\\exception::getfile",
+        "ffi\\exception::getline",
+        "ffi\\exception::getmessage",
+        "ffi\\exception::getprevious",
+        "ffi\\exception::gettrace",
+        "ffi\\exception::gettraceasstring",
+        "ffi\\parserexception::__clone",
+        "ffi\\parserexception::__construct",
+        "ffi\\parserexception::__tostring",
+        "ffi\\parserexception::__wakeup",
+        "ffi\\parserexception::getcode",
+        "ffi\\parserexception::getfile",
+        "ffi\\parserexception::getline",
+        "ffi\\parserexception::getmessage",
+        "ffi\\parserexception::getprevious",
+        "ffi\\parserexception::gettrace",
+        "ffi\\parserexception::gettraceasstring",
+        "filesystemiterator::__debuginfo",
+        "get_mangled_object_vars",
+        "globiterator::__debuginfo",
+        "imagecreatefromtga",
+        "mb_str_split",
+        "mongodb\\bson\\document::offsetexists",
+        "mongodb\\bson\\document::offsetget",
+        "mongodb\\bson\\document::offsetset",
+        "mongodb\\bson\\document::offsetunset",
+        "mongodb\\bson\\packedarray::fromjson",
+        "mongodb\\bson\\packedarray::offsetexists",
+        "mongodb\\bson\\packedarray::offsetget",
+        "mongodb\\bson\\packedarray::offsetset",
+        "mongodb\\bson\\packedarray::offsetunset",
+        "mongodb\\bson\\packedarray::tocanonicalextendedjson",
+        "mongodb\\bson\\packedarray::torelaxedextendedjson",
+        "mongodb\\bson\\utcdatetime::todatetimeimmutable",
+        "mongodb\\driver\\monitoring\\commandfailedevent::getdatabasename",
+        "mongodb\\driver\\monitoring\\commandfailedevent::gethost",
+        "mongodb\\driver\\monitoring\\commandfailedevent::getport",
+        "mongodb\\driver\\monitoring\\commandstartedevent::gethost",
+        "mongodb\\driver\\monitoring\\commandstartedevent::getport",
+        "mongodb\\driver\\monitoring\\commandsucceededevent::getdatabasename",
+        "mongodb\\driver\\monitoring\\commandsucceededevent::gethost",
+        "mongodb\\driver\\monitoring\\commandsucceededevent::getport",
+        "mongodb\\driver\\monitoring\\mongoc_log",
+        "multipleiterator::__debuginfo",
+        "openssl_x509_verify",
+        "password_algos",
+        "pcntl_unshare",
+        "phar::__debuginfo",
+        "phardata::__debuginfo",
+        "pharfileinfo::__debuginfo",
+        "recursivearrayiterator::__debuginfo",
+        "recursivearrayiterator::__serialize",
+        "recursivearrayiterator::__unserialize",
+        "recursivedirectoryiterator::__debuginfo",
+        "redis::delifeq",
+        "redis::expiremember",
+        "redis::expirememberat",
+        "redis::getwithmeta",
+        "redis::hexpire",
+        "redis::hexpireat",
+        "redis::hexpiretime",
+        "redis::hgetdel",
+        "redis::hgetex",
+        "redis::hgetwithmeta",
+        "redis::hpersist",
+        "redis::hpexpire",
+        "redis::hpexpireat",
+        "redis::hpexpiretime",
+        "redis::hpttl",
+        "redis::hsetex",
+        "redis::httl",
+        "redis::servername",
+        "redis::serverversion",
+        "redis::vadd",
+        "redis::vcard",
+        "redis::vdim",
+        "redis::vemb",
+        "redis::vgetattr",
+        "redis::vinfo",
+        "redis::vismember",
+        "redis::vlinks",
+        "redis::vrandmember",
+        "redis::vrange",
+        "redis::vrem",
+        "redis::vsetattr",
+        "redis::vsim",
+        "redis::waitaof",
+        "rediscluster::delifeq",
+        "rediscluster::expiremember",
+        "rediscluster::expirememberat",
+        "rediscluster::getdel",
+        "rediscluster::getex",
+        "rediscluster::getwithmeta",
+        "rediscluster::hexpire",
+        "rediscluster::hexpireat",
+        "rediscluster::hexpiretime",
+        "rediscluster::hgetdel",
+        "rediscluster::hgetex",
+        "rediscluster::hgetwithmeta",
+        "rediscluster::hpersist",
+        "rediscluster::hpexpire",
+        "rediscluster::hpexpireat",
+        "rediscluster::hpexpiretime",
+        "rediscluster::hpttl",
+        "rediscluster::hsetex",
+        "rediscluster::httl",
+        "rediscluster::vadd",
+        "rediscluster::vcard",
+        "rediscluster::vdim",
+        "rediscluster::vemb",
+        "rediscluster::vgetattr",
+        "rediscluster::vinfo",
+        "rediscluster::vismember",
+        "rediscluster::vlinks",
+        "rediscluster::vrandmember",
+        "rediscluster::vrange",
+        "rediscluster::vrem",
+        "rediscluster::vsetattr",
+        "rediscluster::vsim",
+        "rediscluster::waitaof",
+        "reflectionproperty::gettype",
+        "reflectionproperty::hastype",
+        "reflectionproperty::isinitialized",
+        "reflectionreference::__clone",
+        "reflectionreference::__construct",
+        "reflectionreference::fromarrayelement",
+        "reflectionreference::getid",
+        "spldoublylinkedlist::__debuginfo",
+        "spldoublylinkedlist::__serialize",
+        "spldoublylinkedlist::__unserialize",
+        "splfileinfo::__debuginfo",
+        "splfileobject::__debuginfo",
+        "splheap::__debuginfo",
+        "splmaxheap::__debuginfo",
+        "splminheap::__debuginfo",
+        "splobjectstorage::__debuginfo",
+        "splobjectstorage::__serialize",
+        "splobjectstorage::__unserialize",
+        "splpriorityqueue::__debuginfo",
+        "splqueue::__debuginfo",
+        "splqueue::__serialize",
+        "splqueue::__unserialize",
+        "splstack::__debuginfo",
+        "splstack::__serialize",
+        "splstack::__unserialize",
+        "spltempfileobject::__debuginfo",
+        "sqlite3::backup",
+        "sqlite3::enableextendedresultcodes",
+        "sqlite3::lastextendederrorcode",
+        "sqlite3stmt::getsql",
+        "swoole\\coroutine\\context::__debuginfo",
+        "swoole\\coroutine\\context::__serialize",
+        "swoole\\coroutine\\context::__unserialize",
+        "swoole\\coroutine\\iterator::__debuginfo",
+        "swoole\\coroutine\\iterator::__serialize",
+        "swoole\\coroutine\\iterator::__unserialize",
+        "swoole\\timer\\iterator::__debuginfo",
+        "swoole\\timer\\iterator::__serialize",
+        "swoole\\timer\\iterator::__unserialize",
+        "swoole_timer_iterator::__debuginfo",
+        "swoole_timer_iterator::__serialize",
+        "swoole_timer_iterator::__unserialize",
+        "weakreference::__construct",
+        "weakreference::create",
+        "weakreference::get"
+    ]
+}

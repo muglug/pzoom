@@ -1,0 +1,31 @@
+<?php
+
+const EXP_GLOB = 1;
+
+const EXP_EXACT = 2;
+
+const EXP_REGEXP = 3;
+
+const EXP_EOF = -11;
+
+const EXP_TIMEOUT = -2;
+
+const EXP_FULLBUFFER = -5;
+
+/**
+ * @param string $command
+ * @return false|resource
+ */
+function expect_popen(string $command)
+{
+}
+
+/**
+ * @param resource $expect
+ * @param array<array-key, mixed> $cases
+ * @param array<array-key, mixed> $match
+ * @return int
+ */
+function expect_expectl($expect, array $cases, array &$match = []): int
+{
+}

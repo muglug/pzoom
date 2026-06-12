@@ -12,7 +12,7 @@ use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
+use crate::stmt::scope_analyzer::BreakContext;
 use crate::stmt::loop_analyzer;
 
 /// Analyze a while statement.
@@ -41,7 +41,7 @@ pub fn analyze(
     );
     let always_enters_loop = while_true
         || analysis_data
-            .get_expr_type(cond_pos)
+            .expr_types.get(&cond_pos).cloned()
             .is_some_and(|t| t.is_always_truthy());
 
     let body_stmts = while_stmt.body.statements();
@@ -58,15 +58,14 @@ pub fn analyze(
         analysis_data,
         false,
         always_enters_loop,
+        while_true,
     )?;
 
-    let can_leave_loop = !while_true || loop_scope.final_actions.contains(&ControlAction::Break);
-
-    if always_enters_loop && !can_leave_loop {
-        // `while (true)` with no reachable break never exits normally.
-        context.control_actions.insert(ControlAction::End);
-        context.has_returned = true;
-    }
+    // Psalm does not treat code after a break-less `while (true)` as
+    // unreachable: it is analyzed with the pre-loop scope (the loop's
+    // assignments never escape), so e.g. `echo $a;` after the loop reports an
+    // undefined variable.
+    let _ = &loop_scope;
 
     Ok(())
 }

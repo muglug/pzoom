@@ -96,28 +96,68 @@ fn substitute_union(existing: &TUnion, old_type: &TUnion, new_type: Option<&TUni
         return existing.clone();
     }
 
+    // An empty-array member beside another array-ish member folds (Psalm
+    // reaches the same end state through TypeCombiner in its branch merges):
+    // `array<never, never>|list<T>` must read as `list<T>` downstream.
+    let has_empty_array = atomics.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TArray { key_type, value_type }
+                if key_type.is_nothing() && value_type.is_nothing()
+        )
+    });
+    if has_empty_array
+        && atomics.len() > 1
+        && atomics.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TArray { .. }
+                    | TAtomic::TNonEmptyArray { .. }
+                    | TAtomic::TList { .. }
+                    | TAtomic::TNonEmptyList { .. }
+                    | TAtomic::TKeyedArray { .. }
+            )
+        })
+    {
+        atomics = pzoom_code_info::ttype::type_combiner::combine(atomics, false);
+    }
+
     let mut result = TUnion::from_types(atomics);
     result.from_docblock = existing.from_docblock;
     result.ignore_nullable_issues = existing.ignore_nullable_issues;
     result.ignore_falsable_issues = existing.ignore_falsable_issues;
+    // Psalm's Union::substitute preserves the union's dataflow — replacing
+    // atomics must not sever taint paths (`if ($x !== "") { $x = null; }`
+    // still echoes the original value's taint afterwards).
+    result.parent_nodes = existing.parent_nodes.clone();
     if let Some(new_type) = new_type {
         if new_type.from_docblock {
             result.from_docblock = true;
+        }
+        for parent_node in &new_type.parent_nodes {
+            if !result
+                .parent_nodes
+                .iter()
+                .any(|existing_node| existing_node.id == parent_node.id)
+            {
+                result.parent_nodes.push(parent_node.clone());
+            }
         }
     }
     result
 }
 
 /// The variable a dependent `get_class`/`gettype` atomic depends on, if any.
-fn dependent_type_var(atomic: &TAtomic) -> Option<pzoom_str::StrId> {
+fn dependent_type_var(atomic: &TAtomic) -> Option<&VarName> {
     match atomic {
         TAtomic::TDependentGetClass { var_id, .. } | TAtomic::TDependentGetType { var_id } => {
-            Some(*var_id)
+            Some(var_id)
         }
         _ => None,
     }
 }
-use pzoom_str::{Interner, StrId};
+use pzoom_code_info::VarName;
+use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
@@ -128,23 +168,28 @@ use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 #[derive(Clone, Debug, Default)]
 pub struct BlockContext {
     /// Variable types currently in scope: `$varName` -> Type.
-    pub locals: FxHashMap<StrId, TUnion>,
+    pub locals: FxHashMap<VarName, TUnion>,
+
+    /// Variables whose conflicting clauses were evicted in this scope; branch
+    /// analyzers propagate the eviction to the parent context after the body
+    /// (Psalm's `Context::$parent_remove_vars`).
+    pub parent_remove_vars: FxHashSet<VarName>,
 
     /// Variables that have definitely been assigned in this scope (with count).
-    pub assigned_var_ids: FxHashMap<StrId, usize>,
+    pub assigned_var_ids: FxHashMap<VarName, usize>,
 
     /// Variables that may have been assigned (e.g., in one branch of an if).
-    pub possibly_assigned_var_ids: FxHashSet<StrId>,
+    pub possibly_assigned_var_ids: FxHashSet<VarName>,
 
     /// Variables that might be in scope at this point — a superset of `locals`
     /// that also retains variables possibly defined on some incoming path.
     /// Mirrors Psalm's `Context::$vars_possibly_in_scope`; consulted when merging
     /// branch/loop scopes to decide which variables become "possibly defined"
     /// afterwards.
-    pub vars_possibly_in_scope: FxHashSet<StrId>,
+    pub vars_possibly_in_scope: FxHashSet<VarName>,
 
     /// Variables referenced in conditional contexts.
-    pub cond_referenced_var_ids: FxHashSet<StrId>,
+    pub cond_referenced_var_ids: FxHashSet<VarName>,
 
     /// Active CNF clauses representing what is known to be true at this point.
     /// Used for type algebra simplification in nested conditionals.
@@ -166,8 +211,45 @@ pub struct BlockContext {
     /// Whether we're inside an isset() call.
     pub inside_isset: bool,
 
+    /// Whether we're inside an empty() call specifically (a subset of
+    /// inside_isset): Psalm reports never-in-scope variables there.
+    pub inside_empty: bool,
+
+    /// Whether we're analyzing an argument of class_exists()/interface_exists()
+    /// /enum_exists()/trait_exists()/class_alias(): `X::class` existence checks
+    /// are suppressed there (Psalm's Context::inside_class_exists).
+    pub inside_class_exists: bool,
+
+    /// Whether the expression being analyzed is the root of an array
+    /// assignment target (`$out` in `$out[] = ...;`) — a write position, so
+    /// undefined/possibly-undefined variable reads are not reported (Psalm
+    /// seeds undeclared roots as fresh arrays).
+    pub inside_assignment_root: bool,
+
     /// Whether we're inside an unset() call.
     pub inside_unset: bool,
+
+    /// Whether we're analyzing an argument passed to a by-ref parameter.
+    /// Psalm never read-analyzes such an argument when its var path isn't in
+    /// scope, so an empty-array fetch there stays silent (the call writes the
+    /// offset rather than reading it).
+    pub inside_by_ref_argument: bool,
+
+    /// Whether we're analyzing the value of an assignment (Psalm's
+    /// `Context::inside_assignment`) — the result of a call here is "used".
+    pub inside_assignment: bool,
+
+    /// Whether we're analyzing a call argument (Psalm's `Context::inside_call`).
+    pub inside_call: bool,
+
+    /// Whether we're analyzing a returned expression (Psalm's
+    /// `Context::inside_return`).
+    pub inside_return: bool,
+
+    /// Whether the property fetch being analyzed is the root of an array
+    /// APPEND target (`$a->foo[] = …`) — Psalm doesn't count that as a read
+    /// of the property for find_unused_code (an offset write does).
+    pub inside_array_append_root: bool,
 
     /// Whether we're analyzing an expression in a general-use context
     /// (e.g. array offset/index computation) where Psalm suppresses certain
@@ -213,13 +295,13 @@ pub struct BlockContext {
     pub namespace: Option<StrId>,
 
     /// Maps in-scope references to the variable they reference (`$b => $a` for `$b = &$a`).
-    pub references_in_scope: FxHashMap<StrId, StrId>,
+    pub references_in_scope: FxHashMap<VarName, VarName>,
 
     /// Set of references to values outside the current local scope (array offsets/properties/globals).
-    pub references_to_external_scope: FxHashSet<StrId>,
+    pub references_to_external_scope: FxHashSet<VarName>,
 
     /// References that may have originated in a confusing scope (if/loop), and are unsafe to reuse.
-    pub references_possibly_from_confusing_scope: FxHashSet<StrId>,
+    pub references_possibly_from_confusing_scope: FxHashSet<VarName>,
 
     /// Runtime class aliases declared via `class_alias`.
     pub class_aliases: FxHashMap<StrId, StrId>,
@@ -228,10 +310,15 @@ pub struct BlockContext {
     pub defined_constants: FxHashMap<StrId, TUnion>,
 
     /// Type constraints imposed by by-ref parameters on referenced variables.
-    pub reference_constraints: FxHashMap<StrId, Vec<TUnion>>,
+    pub reference_constraints: FxHashMap<VarName, Vec<TUnion>>,
+
+    /// Foreach key variables and the list variable whose keys they iterate
+    /// (stands in for Psalm's `TIntRange::$dependent_list_key`): writing
+    /// `$list[$key] = ...` with such a key keeps the list a list.
+    pub list_key_dependencies: FxHashMap<VarName, VarName>,
 
     /// Function-local static variables declared via `static $x`.
-    pub static_var_ids: FxHashSet<StrId>,
+    pub static_var_ids: FxHashSet<VarName>,
 
     /// Expected callable types for closure/arrow expressions keyed by expression start offset.
     pub expected_callable_arg_types: FxHashMap<u32, TUnion>,
@@ -270,15 +357,12 @@ impl BlockContext {
     /// Remove `$this` and any `$this->...`-derived locals/assignment tracking.
     /// Used when entering a `static` closure/arrow scope, where `$this` is not
     /// available.
-    pub fn strip_this_assumptions(&mut self, interner: &Interner) {
-        let this_related_vars: Vec<StrId> = self
+    pub fn strip_this_assumptions(&mut self) {
+        let this_related_vars: Vec<VarName> = self
             .locals
             .keys()
-            .copied()
-            .filter(|var_id| {
-                *var_id == StrId::THIS_VAR
-                    || interner.lookup(*var_id).as_ref().starts_with("$this->")
-            })
+            .cloned()
+            .filter(|var_id| var_id.as_str() == "$this" || var_id.starts_with("$this->"))
             .collect();
 
         for var_id in this_related_vars {
@@ -291,12 +375,12 @@ impl BlockContext {
     /// Remove property-path locals (`$x->y`) plus their assignment tracking,
     /// class-string origins and any clauses keyed on a property path. Closures
     /// don't inherit the outer scope's property-narrowing assumptions.
-    pub fn strip_property_path_assumptions(&mut self, interner: &Interner) {
-        let property_path_vars: Vec<StrId> = self
+    pub fn strip_property_path_assumptions(&mut self) {
+        let property_path_vars: Vec<VarName> = self
             .locals
             .keys()
-            .copied()
-            .filter(|var_id| interner.lookup(*var_id).as_ref().contains("->"))
+            .cloned()
+            .filter(|var_id| var_id.contains("->"))
             .collect();
 
         for var_id in property_path_vars {
@@ -317,6 +401,12 @@ impl BlockContext {
     pub fn child(&self) -> Self {
         Self {
             locals: self.locals.clone(),
+            // Psalm clones $parent_remove_vars into branch contexts and never
+            // clears it: once a var is assigned anywhere earlier, every later
+            // if-statement boundary replays removeVarFromConflictingClauses
+            // for it on the outer context (IfAnalyzer's parent_remove_vars
+            // loop), purging stale clauses that mention it.
+            parent_remove_vars: self.parent_remove_vars.clone(),
             assigned_var_ids: FxHashMap::default(),
             possibly_assigned_var_ids: FxHashSet::default(),
             vars_possibly_in_scope: self.vars_possibly_in_scope.clone(),
@@ -327,7 +417,15 @@ impl BlockContext {
             inside_throw: false,
             inside_conditional: self.inside_conditional,
             inside_isset: false,
+            inside_empty: false,
+            inside_class_exists: false,
+            inside_assignment_root: false,
             inside_unset: false,
+            inside_by_ref_argument: false,
+            inside_assignment: false,
+            inside_call: false,
+            inside_return: false,
+            inside_array_append_root: false,
             inside_general_use: self.inside_general_use,
             check_variables: self.check_variables,
             inside_loop: self.inside_loop,
@@ -348,6 +446,7 @@ impl BlockContext {
             class_aliases: self.class_aliases.clone(),
             defined_constants: self.defined_constants.clone(),
             reference_constraints: self.reference_constraints.clone(),
+            list_key_dependencies: self.list_key_dependencies.clone(),
             static_var_ids: self.static_var_ids.clone(),
             expected_callable_arg_types: self.expected_callable_arg_types.clone(),
             if_body_context: None,
@@ -355,67 +454,83 @@ impl BlockContext {
         }
     }
 
+    /// Whether the expression being analyzed is in a position that uses its
+    /// value (Psalm's `Context::insideUse`).
+    pub fn inside_use(&self) -> bool {
+        self.inside_assignment
+            || self.inside_return
+            || self.inside_call
+            || self.inside_general_use
+            || self.inside_conditional
+            || self.inside_throw
+            || self.inside_isset
+    }
+
     /// Get the type of a variable, if known.
-    pub fn get_var_type(&self, var_id: StrId) -> Option<&TUnion> {
-        self.locals.get(&var_id)
+    pub fn get_var_type(&self, var_id: &str) -> Option<&TUnion> {
+        self.locals.get(var_id)
     }
 
     /// Set the type of a variable.
-    pub fn set_var_type(&mut self, var_id: StrId, var_type: TUnion) {
-        let root_var_id = self.get_reference_root(var_id);
+    pub fn set_var_type(&mut self, var_id: impl Into<VarName>, var_type: TUnion) {
+        let root_var_id = self.get_reference_root(var_id.into());
         self.propagate_reference_cluster_type(root_var_id, var_type);
     }
 
     /// Update the inferred type of a variable without treating it as an assignment.
-    pub fn set_var_type_for_inference(&mut self, var_id: StrId, var_type: TUnion) {
-        let root_var_id = self.get_reference_root(var_id);
+    pub fn set_var_type_for_inference(&mut self, var_id: impl Into<VarName>, var_type: TUnion) {
+        let root_var_id = self.get_reference_root(var_id.into());
         self.propagate_reference_cluster_type_without_assignment(root_var_id, var_type);
     }
 
     /// Set the type of a variable directly, without propagating through reference bindings.
-    pub fn set_var_type_direct(&mut self, var_id: StrId, var_type: TUnion) {
-        self.locals.insert(var_id, var_type);
-        *self.assigned_var_ids.entry(var_id).or_insert(0) += 1;
+    pub fn set_var_type_direct(&mut self, var_id: impl Into<VarName>, var_type: TUnion) {
+        let var_id = var_id.into();
+        self.locals.insert(var_id.clone(), var_type);
+        *self.assigned_var_ids.entry(var_id.clone()).or_insert(0) += 1;
+        // Psalm's AssignmentAnalyzer records every assignment in
+        // possibly_assigned_var_ids as well as assigned_var_ids.
+        self.possibly_assigned_var_ids.insert(var_id.clone());
         self.vars_possibly_in_scope.insert(var_id);
     }
 
     /// Check if a variable has been definitely assigned.
-    pub fn is_assigned(&self, var_id: StrId) -> bool {
-        self.assigned_var_ids.contains_key(&var_id)
+    pub fn is_assigned(&self, var_id: &str) -> bool {
+        self.assigned_var_ids.contains_key(var_id)
     }
 
     /// Check if a variable might be assigned.
-    pub fn is_possibly_assigned(&self, var_id: StrId) -> bool {
-        self.possibly_assigned_var_ids.contains(&var_id)
+    pub fn is_possibly_assigned(&self, var_id: &str) -> bool {
+        self.possibly_assigned_var_ids.contains(var_id)
     }
 
-    pub fn add_reference_constraint(&mut self, var_id: StrId, constraint: TUnion) {
-        let root_var_id = self.get_reference_root(var_id);
+    pub fn add_reference_constraint(&mut self, var_id: impl Into<VarName>, constraint: TUnion) {
+        let root_var_id = self.get_reference_root(var_id.into());
         let entry = self.reference_constraints.entry(root_var_id).or_default();
         if !entry.contains(&constraint) {
             entry.push(constraint);
         }
     }
 
-    pub fn get_reference_constraints(&self, var_id: StrId) -> Option<&Vec<TUnion>> {
-        let root_var_id = self.get_reference_root(var_id);
+    pub fn get_reference_constraints(&self, var_id: impl Into<VarName>) -> Option<&Vec<TUnion>> {
+        let root_var_id = self.get_reference_root(var_id.into());
         self.reference_constraints.get(&root_var_id)
     }
 
     /// Get variables that were redefined compared to a parent context.
     pub fn get_redefined_locals(
         &self,
-        parent_locals: &FxHashMap<StrId, TUnion>,
+        parent_locals: &FxHashMap<VarName, TUnion>,
         _check_equality: bool,
-        removed_vars: &mut FxHashSet<StrId>,
-    ) -> FxHashMap<StrId, TUnion> {
+        removed_vars: &mut FxHashSet<VarName>,
+    ) -> FxHashMap<VarName, TUnion> {
         let mut redefined = FxHashMap::default();
 
         for (var_id, var_type) in &self.locals {
             if let Some(parent_type) = parent_locals.get(var_id) {
                 // Variable exists in both - check if redefined
                 if var_type != parent_type {
-                    redefined.insert(*var_id, var_type.clone());
+                    redefined.insert(var_id.clone(), var_type.clone());
                 }
             }
         }
@@ -423,7 +538,7 @@ impl BlockContext {
         // Track variables that were removed
         for var_id in parent_locals.keys() {
             if !self.locals.contains_key(var_id) {
-                removed_vars.insert(*var_id);
+                removed_vars.insert(var_id.clone());
             }
         }
 
@@ -431,8 +546,8 @@ impl BlockContext {
     }
 
     /// Whether a variable is currently in scope.
-    pub fn has_variable(&self, var_id: StrId) -> bool {
-        self.locals.contains_key(&var_id)
+    pub fn has_variable(&self, var_id: &str) -> bool {
+        self.locals.contains_key(var_id)
     }
 
     /// Propagate the changes a block made to a set of variables back into this
@@ -447,8 +562,8 @@ impl BlockContext {
         start_context: &BlockContext,
         end_context: &BlockContext,
         has_leaving_statements: bool,
-        vars_to_update: &FxHashSet<StrId>,
-        updated_vars: &mut FxHashSet<StrId>,
+        vars_to_update: &FxHashSet<VarName>,
+        updated_vars: &mut FxHashSet<VarName>,
     ) {
         for (var_id, old_type) in &start_context.locals {
             // Only variables that underwent some negation are eligible.
@@ -457,7 +572,7 @@ impl BlockContext {
             }
 
             // If we're leaving, the block's possibility is effectively deleted.
-            let new_type = if !has_leaving_statements && end_context.has_variable(*var_id) {
+            let new_type = if !has_leaving_statements && end_context.has_variable(var_id) {
                 end_context.locals.get(var_id)
             } else {
                 None
@@ -465,8 +580,8 @@ impl BlockContext {
 
             let Some(existing_type) = self.locals.get(var_id).cloned() else {
                 if let Some(new_type) = new_type {
-                    self.locals.insert(*var_id, new_type.clone());
-                    updated_vars.insert(*var_id);
+                    self.locals.insert(var_id.clone(), new_type.clone());
+                    updated_vars.insert(var_id.clone());
                 }
                 continue;
             };
@@ -481,15 +596,44 @@ impl BlockContext {
 
             if type_changed && can_substitute {
                 let substituted = substitute_union(&existing_type, old_type, new_type);
-                self.locals.insert(*var_id, substituted);
-                updated_vars.insert(*var_id);
+                self.locals.insert(var_id.clone(), substituted);
+                updated_vars.insert(var_id.clone());
             }
         }
     }
 
+    /// Psalm's `Context::getRedefinedVars`: this context's locals whose type
+    /// differs from `new_vars` (full union equality, as `Union::equals`), plus
+    /// — with `include_new_vars` — locals absent from `new_vars` entirely. The
+    /// returned types are *this* context's.
+    pub fn get_redefined_vars(
+        &self,
+        new_vars: &FxHashMap<VarName, TUnion>,
+        include_new_vars: bool,
+    ) -> FxHashMap<VarName, TUnion> {
+        let mut redefined_vars = FxHashMap::default();
+
+        for (var_id, this_type) in &self.locals {
+            match new_vars.get(var_id) {
+                None => {
+                    if include_new_vars {
+                        redefined_vars.insert(var_id.clone(), this_type.clone());
+                    }
+                }
+                Some(new_type) => {
+                    if this_type != new_type {
+                        redefined_vars.insert(var_id.clone(), this_type.clone());
+                    }
+                }
+            }
+        }
+
+        redefined_vars
+    }
+
     /// Variables that are new or whose type/assignment-count changed between two
     /// contexts. Mirrors Hakana's `BlockContext::get_new_or_updated_locals`.
-    pub fn get_new_or_updated_locals(original: &Self, new: &Self) -> FxHashSet<StrId> {
+    pub fn get_new_or_updated_locals(original: &Self, new: &Self) -> FxHashSet<VarName> {
         let mut redefined_var_ids = FxHashSet::default();
 
         for (var_id, new_type) in &new.locals {
@@ -498,10 +642,10 @@ impl BlockContext {
                     != new.assigned_var_ids.get(var_id).copied().unwrap_or(0)
                     || original_type != new_type
                 {
-                    redefined_var_ids.insert(*var_id);
+                    redefined_var_ids.insert(var_id.clone());
                 }
             } else {
-                redefined_var_ids.insert(*var_id);
+                redefined_var_ids.insert(var_id.clone());
             }
         }
 
@@ -514,12 +658,12 @@ impl BlockContext {
     /// dependency no longer holds, so the type collapses to its plain equivalent
     /// (`class-string` / `string`). Without this, `$t = get_class($a); $a = new
     /// B(); switch ($t)` would wrongly narrow the *new* `$a`.
-    pub fn invalidate_dependent_types(&mut self, var_id: StrId) {
+    pub fn invalidate_dependent_types(&mut self, var_id: &str) {
         for local_type in self.locals.values_mut() {
             if !local_type
                 .types
                 .iter()
-                .any(|atomic| dependent_type_var(atomic) == Some(var_id))
+                .any(|atomic| dependent_type_var(atomic).is_some_and(|v| v == var_id))
             {
                 continue;
             }
@@ -527,10 +671,10 @@ impl BlockContext {
                 .types
                 .iter()
                 .map(|atomic| match atomic {
-                    TAtomic::TDependentGetClass { var_id: v, .. } if *v == var_id => {
+                    TAtomic::TDependentGetClass { var_id: v, .. } if *v == *var_id => {
                         TAtomic::TClassString { as_type: None }
                     }
-                    TAtomic::TDependentGetType { var_id: v } if *v == var_id => TAtomic::TString,
+                    TAtomic::TDependentGetType { var_id: v } if *v == *var_id => TAtomic::TString,
                     other => other.clone(),
                 })
                 .collect();
@@ -541,14 +685,41 @@ impl BlockContext {
     /// Drop any clauses that mention `var_id`, because its type has changed.
     /// Mirrors Hakana's `remove_var_from_conflicting_clauses` (simplified: pzoom
     /// always discards conflicting clauses rather than reconciling them).
-    pub fn remove_var_from_conflicting_clauses(
-        &mut self,
-        var_id: StrId,
-        interner: &pzoom_str::Interner,
-    ) {
+    pub fn remove_var_from_conflicting_clauses(&mut self, var_id: impl Into<VarName>) {
+        let var_id = var_id.into();
         let mut changed = FxHashSet::default();
-        changed.insert(var_id);
-        self.clauses = BlockContext::remove_reconciled_clause_refs(&self.clauses, &changed, interner).0;
+        changed.insert(var_id.clone());
+        self.clauses = BlockContext::remove_reconciled_clause_refs(&self.clauses, &changed).0;
+        self.parent_remove_vars.insert(var_id);
+    }
+
+    /// Drops any clauses mentioning `var_name` (or a path rooted in it) and
+    /// records the eviction for parent propagation — Psalm's
+    /// `Context::removeVarFromConflictingClauses`, string-keyed.
+    pub fn remove_var_name_from_conflicting_clauses(&mut self, var_name: &str) {
+        self.remove_var_name_clauses(var_name);
+        self.parent_remove_vars.insert(VarName::new(var_name));
+    }
+
+    /// Clause removal without the parent_remove_vars marking: Psalm only
+    /// reaches removeVarFromConflictingClauses on assignment when the var
+    /// already existed in scope (removeDescendents is gated on
+    /// `isset($context->vars_in_scope[$var_id])`), so a first assignment
+    /// must not seed the if-boundary replay.
+    pub fn remove_var_name_clauses(&mut self, var_name: &str) {
+        use pzoom_code_info::algebra::ClauseKey;
+
+        self.clauses.retain(|clause| {
+            !clause.possibilities.keys().any(|key| match key {
+                ClauseKey::Name(name) => {
+                    name == var_name
+                        || name.starts_with(&format!("{}[", var_name))
+                        || name.starts_with(&format!("{}->", var_name))
+                        || name.contains(&format!("[{}]", var_name))
+                }
+                ClauseKey::Range(..) => false,
+            })
+        });
     }
 
     /// Remove reconciled clause refs from a set of clauses.
@@ -556,9 +727,8 @@ impl BlockContext {
     /// Returns the filtered clauses and a set of changed variable IDs.
     pub fn remove_reconciled_clause_refs(
         clauses: &[Rc<Clause>],
-        changed_var_ids: &FxHashSet<StrId>,
-        interner: &pzoom_str::Interner,
-    ) -> (Vec<Rc<Clause>>, FxHashSet<StrId>) {
+        changed_var_ids: &FxHashSet<VarName>,
+    ) -> (Vec<Rc<Clause>>, FxHashSet<VarName>) {
         use pzoom_code_info::algebra::ClauseKey;
 
         let mut result = Vec::new();
@@ -567,17 +737,16 @@ impl BlockContext {
         for clause in clauses {
             let mut dominated = false;
 
-            for (key, _) in &clause.possibilities {
+            for (key, _) in clause.possibilities.iter() {
                 if let ClauseKey::Name(name) = key {
                     // Check if any changed var affects this clause
-                    for changed_var_id in changed_var_ids {
-                        let changed_name = interner.lookup(*changed_var_id);
-                        if name == &*changed_name
+                    for changed_name in changed_var_ids {
+                        if name == changed_name
                             || name.starts_with(&format!("{}[", changed_name))
                             || name.contains(&format!("[{}]", changed_name))
                         {
                             dominated = true;
-                            affected_var_ids.insert(*changed_var_id);
+                            affected_var_ids.insert(changed_name.clone());
                             break;
                         }
                     }
@@ -604,8 +773,7 @@ impl BlockContext {
     /// enclosing if/ternary body reconcile does not re-report them.
     pub fn partition_reconciled_clause_refs(
         clauses: &[Rc<Clause>],
-        changed_var_ids: &FxHashSet<StrId>,
-        interner: &pzoom_str::Interner,
+        changed_var_ids: &FxHashSet<VarName>,
     ) -> (Vec<Rc<Clause>>, Vec<Rc<Clause>>) {
         use pzoom_code_info::algebra::ClauseKey;
 
@@ -615,11 +783,10 @@ impl BlockContext {
         for clause in clauses {
             let mut dominated = false;
 
-            for (key, _) in &clause.possibilities {
+            for (key, _) in clause.possibilities.iter() {
                 if let ClauseKey::Name(name) = key {
-                    for changed_var_id in changed_var_ids {
-                        let changed_name = interner.lookup(*changed_var_id);
-                        if name == &*changed_name
+                    for changed_name in changed_var_ids {
+                        if name == changed_name
                             || name.starts_with(&format!("{}[", changed_name))
                             || name.contains(&format!("[{}]", changed_name))
                         {
@@ -646,13 +813,13 @@ impl BlockContext {
     /// Merge another context into this one (for branch merging).
     pub fn merge(&mut self, other: &BlockContext) {
         // Variables assigned in both branches are definitely assigned
-        let self_keys: FxHashSet<_> = self.assigned_var_ids.keys().copied().collect();
-        let other_keys: FxHashSet<_> = other.assigned_var_ids.keys().copied().collect();
+        let self_keys: FxHashSet<_> = self.assigned_var_ids.keys().cloned().collect();
+        let other_keys: FxHashSet<_> = other.assigned_var_ids.keys().cloned().collect();
 
-        let common_assigned: FxHashSet<_> = self_keys.intersection(&other_keys).copied().collect();
+        let common_assigned: FxHashSet<_> = self_keys.intersection(&other_keys).cloned().collect();
 
         // Variables assigned in either branch are possibly assigned
-        let all_assigned: FxHashSet<_> = self_keys.union(&other_keys).copied().collect();
+        let all_assigned: FxHashSet<_> = self_keys.union(&other_keys).cloned().collect();
 
         // Update assigned_var_ids to only have common assignments
         self.assigned_var_ids
@@ -660,23 +827,23 @@ impl BlockContext {
 
         // Add non-common to possibly assigned
         for var_id in all_assigned.difference(&common_assigned) {
-            self.possibly_assigned_var_ids.insert(*var_id);
+            self.possibly_assigned_var_ids.insert(var_id.clone());
         }
 
         // Anything possibly in scope in either branch is possibly in scope after.
         self.vars_possibly_in_scope
-            .extend(other.vars_possibly_in_scope.iter().copied());
+            .extend(other.vars_possibly_in_scope.iter().cloned());
 
         // Merge variable types (union of types from both branches)
         for (var_id, other_type) in &other.locals {
             if let Some(self_type) = self.locals.get(var_id) {
                 // Combine types from both branches
                 let combined = combine_union_types(self_type, other_type, false);
-                self.locals.insert(*var_id, combined);
+                self.locals.insert(var_id.clone(), combined);
             } else {
                 // Variable only exists in other branch - add it but mark as possibly assigned
-                self.locals.insert(*var_id, other_type.clone());
-                self.possibly_assigned_var_ids.insert(*var_id);
+                self.locals.insert(var_id.clone(), other_type.clone());
+                self.possibly_assigned_var_ids.insert(var_id.clone());
             }
         }
 
@@ -703,7 +870,7 @@ impl BlockContext {
 
         let mut merged_constraints = self.reference_constraints.clone();
         for (var_id, constraints) in &other.reference_constraints {
-            let entry = merged_constraints.entry(*var_id).or_default();
+            let entry = merged_constraints.entry(var_id.clone()).or_default();
             for constraint in constraints {
                 if !entry.contains(constraint) {
                     entry.push(constraint.clone());
@@ -723,30 +890,32 @@ impl BlockContext {
         self.references_to_external_scope = self
             .references_to_external_scope
             .intersection(&other.references_to_external_scope)
-            .copied()
+            .cloned()
             .collect();
 
         self.references_possibly_from_confusing_scope.extend(
             other
                 .references_possibly_from_confusing_scope
                 .iter()
-                .copied(),
+                .cloned(),
         );
     }
 
     /// Create/update a reference binding (`$lhs = &$rhs`).
     pub fn set_reference(
         &mut self,
-        lhs_var_id: StrId,
-        rhs_var_id: StrId,
+        lhs_var_id: impl Into<VarName>,
+        rhs_var_id: impl Into<VarName>,
         rhs_fallback_type: TUnion,
         rhs_is_external: bool,
     ) {
-        self.remove_reference_binding(lhs_var_id);
+        let lhs_var_id = lhs_var_id.into();
+        let rhs_var_id = rhs_var_id.into();
+        self.remove_reference_binding(&lhs_var_id);
         self.references_possibly_from_confusing_scope
             .remove(&lhs_var_id);
 
-        let rhs_root = self.get_reference_root(rhs_var_id);
+        let rhs_root = self.get_reference_root(rhs_var_id.clone());
         let rhs_type = self
             .locals
             .get(&rhs_root)
@@ -754,7 +923,8 @@ impl BlockContext {
             .unwrap_or(rhs_fallback_type);
 
         if lhs_var_id != rhs_root {
-            self.references_in_scope.insert(lhs_var_id, rhs_root);
+            self.references_in_scope
+                .insert(lhs_var_id.clone(), rhs_root.clone());
         } else {
             self.references_in_scope.remove(&lhs_var_id);
         }
@@ -762,7 +932,10 @@ impl BlockContext {
         if lhs_var_id != rhs_root
             && let Some(lhs_constraints) = self.reference_constraints.remove(&lhs_var_id)
         {
-            let entry = self.reference_constraints.entry(rhs_root).or_default();
+            let entry = self
+                .reference_constraints
+                .entry(rhs_root.clone())
+                .or_default();
             for constraint in lhs_constraints {
                 if !entry.contains(&constraint) {
                     entry.push(constraint);
@@ -783,32 +956,38 @@ impl BlockContext {
     }
 
     /// Remove a variable and clean up any reference relationships.
-    pub fn remove_var(&mut self, var_id: StrId) {
+    pub fn remove_var(&mut self, var_id: &str) {
         self.remove_reference_binding(var_id);
 
-        let referenced_by: Vec<StrId> = self
+        let referenced_by: Vec<VarName> = self
             .references_in_scope
             .iter()
-            .filter_map(|(reference_id, target_id)| (*target_id == var_id).then_some(*reference_id))
+            .filter_map(|(reference_id, target_id)| {
+                (target_id == var_id).then(|| reference_id.clone())
+            })
             .collect();
 
         if !referenced_by.is_empty() {
-            let new_root = referenced_by[0];
+            let new_root = referenced_by[0].clone();
 
             for reference_id in &referenced_by {
                 self.references_in_scope.remove(reference_id);
             }
 
             for reference_id in referenced_by.iter().skip(1) {
-                self.references_in_scope.insert(*reference_id, new_root);
+                self.references_in_scope
+                    .insert(reference_id.clone(), new_root.clone());
             }
 
-            if self.references_to_external_scope.remove(&var_id) {
-                self.references_to_external_scope.insert(new_root);
+            if self.references_to_external_scope.remove(var_id) {
+                self.references_to_external_scope.insert(new_root.clone());
             }
 
-            if let Some(removed_constraints) = self.reference_constraints.remove(&var_id) {
-                let entry = self.reference_constraints.entry(new_root).or_default();
+            if let Some(removed_constraints) = self.reference_constraints.remove(var_id) {
+                let entry = self
+                    .reference_constraints
+                    .entry(new_root.clone())
+                    .or_default();
                 for constraint in removed_constraints {
                     if !entry.contains(&constraint) {
                         entry.push(constraint);
@@ -816,39 +995,37 @@ impl BlockContext {
                 }
             }
 
-            if let Some(existing_type) = self.locals.get(&var_id).cloned() {
+            if let Some(existing_type) = self.locals.get(var_id).cloned() {
                 self.propagate_reference_cluster_type(new_root, existing_type);
             }
         }
 
-        self.locals.remove(&var_id);
-        self.assigned_var_ids.remove(&var_id);
-        self.possibly_assigned_var_ids.remove(&var_id);
-        self.cond_referenced_var_ids.remove(&var_id);
-        self.references_to_external_scope.remove(&var_id);
-        self.references_possibly_from_confusing_scope
-            .remove(&var_id);
-        self.reference_constraints.remove(&var_id);
+        self.locals.remove(var_id);
+        self.assigned_var_ids.remove(var_id);
+        self.possibly_assigned_var_ids.remove(var_id);
+        self.cond_referenced_var_ids.remove(var_id);
+        self.references_to_external_scope.remove(var_id);
+        self.references_possibly_from_confusing_scope.remove(var_id);
+        self.reference_constraints.remove(var_id);
     }
 
     /// Remove reference metadata for a single variable binding.
-    pub fn remove_reference_binding(&mut self, var_id: StrId) {
-        self.references_in_scope.remove(&var_id);
-        self.references_to_external_scope.remove(&var_id);
+    pub fn remove_reference_binding(&mut self, var_id: &str) {
+        self.references_in_scope.remove(var_id);
+        self.references_to_external_scope.remove(var_id);
     }
 
-    pub fn mark_external_reference(&mut self, var_id: StrId) {
-        self.references_to_external_scope.insert(var_id);
+    pub fn mark_external_reference(&mut self, var_id: impl Into<VarName>) {
+        self.references_to_external_scope.insert(var_id.into());
     }
 
-    pub fn clear_confusing_reference(&mut self, var_id: StrId) {
+    pub fn clear_confusing_reference(&mut self, var_id: &str) {
+        self.references_possibly_from_confusing_scope.remove(var_id);
+    }
+
+    pub fn has_confusing_reference(&self, var_id: &str) -> bool {
         self.references_possibly_from_confusing_scope
-            .remove(&var_id);
-    }
-
-    pub fn has_confusing_reference(&self, var_id: StrId) -> bool {
-        self.references_possibly_from_confusing_scope
-            .contains(&var_id)
+            .contains(var_id)
     }
 
     /// Track references that escaped from a confusing scope (if/loop) into this scope.
@@ -865,7 +1042,7 @@ impl BlockContext {
                 && !self.references_to_external_scope.contains(reference_id)
             {
                 self.references_possibly_from_confusing_scope
-                    .insert(*reference_id);
+                    .insert(reference_id.clone());
             }
         }
 
@@ -873,16 +1050,16 @@ impl BlockContext {
             confusing_scope_context
                 .references_possibly_from_confusing_scope
                 .iter()
-                .copied(),
+                .cloned(),
         );
     }
 
-    fn get_reference_root(&self, var_id: StrId) -> StrId {
+    fn get_reference_root(&self, var_id: VarName) -> VarName {
         let mut current = var_id;
         let mut seen = FxHashSet::default();
 
         while let Some(next) = self.references_in_scope.get(&current) {
-            if !seen.insert(current) {
+            if !seen.insert(current.clone()) {
                 break;
             }
 
@@ -890,44 +1067,62 @@ impl BlockContext {
                 break;
             }
 
-            current = *next;
+            current = next.clone();
         }
 
         current
     }
 
-    fn propagate_reference_cluster_type(&mut self, root_var_id: StrId, var_type: TUnion) {
-        self.locals.insert(root_var_id, var_type.clone());
-        *self.assigned_var_ids.entry(root_var_id).or_insert(0) += 1;
-        self.vars_possibly_in_scope.insert(root_var_id);
+    fn propagate_reference_cluster_type(&mut self, root_var_id: VarName, var_type: TUnion) {
+        self.locals.insert(root_var_id.clone(), var_type.clone());
+        *self
+            .assigned_var_ids
+            .entry(root_var_id.clone())
+            .or_insert(0) += 1;
+        // Psalm's AssignmentAnalyzer records every assignment in
+        // possibly_assigned_var_ids as well as assigned_var_ids.
+        self.possibly_assigned_var_ids.insert(root_var_id.clone());
+        self.vars_possibly_in_scope.insert(root_var_id.clone());
 
-        let aliases: Vec<StrId> = self
+        let aliases: Vec<VarName> = self
             .references_in_scope
             .iter()
             .filter_map(|(reference_id, target_id)| {
-                (*target_id == root_var_id).then_some(*reference_id)
+                (*target_id == root_var_id).then(|| reference_id.clone())
             })
             .collect();
 
         for alias in aliases {
-            self.locals.insert(alias, var_type.clone());
-            *self.assigned_var_ids.entry(alias).or_insert(0) += 1;
+            // The alias keeps its own dataflow history (notably its
+            // reference-binding node) in addition to the new write's: reading
+            // the alias later uses both the write and the binding.
+            let mut alias_type = var_type.clone();
+            if let Some(existing) = self.locals.get(&alias) {
+                for parent_node in &existing.parent_nodes {
+                    if !alias_type.parent_nodes.contains(parent_node) {
+                        alias_type.parent_nodes.push(parent_node.clone());
+                    }
+                }
+            }
+            self.locals.insert(alias.clone(), alias_type);
+            *self.assigned_var_ids.entry(alias.clone()).or_insert(0) += 1;
+            self.possibly_assigned_var_ids.insert(alias.clone());
             self.vars_possibly_in_scope.insert(alias);
         }
     }
 
     fn propagate_reference_cluster_type_without_assignment(
         &mut self,
-        root_var_id: StrId,
+        root_var_id: VarName,
         var_type: TUnion,
     ) {
-        self.locals.insert(root_var_id, var_type.clone());
+        self.locals.insert(root_var_id.clone(), var_type.clone());
 
-        let aliases: Vec<StrId> = self
+        let aliases: Vec<VarName> = self
             .references_in_scope
             .iter()
             .filter_map(|(reference_id, target_id)| {
-                (*target_id == root_var_id).then_some(*reference_id)
+                (*target_id == root_var_id).then(|| reference_id.clone())
             })
             .collect();
 

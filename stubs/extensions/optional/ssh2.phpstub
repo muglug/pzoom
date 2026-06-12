@@ -1,0 +1,312 @@
+<?php
+
+// Start of ssh2 v.0.11.0-dev
+
+/**
+ * @param string $host
+ * @param int $port
+ * @param array<array-key, mixed> $methods
+ * @param array<array-key, mixed> $callbacks
+ * @return false|resource
+ */
+function ssh2_connect($host, $port = 22, ?array $methods = null, ?array $callbacks = null) {}
+
+/**
+ * @param resource $session
+ * @return bool
+ */
+function ssh2_disconnect($session) {}
+
+/**
+ * @param resource $session
+ * @return array<array-key, mixed>|false
+ */
+function ssh2_methods_negotiated($session) {}
+
+/**
+ * @param resource $session
+ * @param int $flags
+ * @return false|string
+ */
+function ssh2_fingerprint($session, $flags = null) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @return array<array-key, string>|bool
+ */
+function ssh2_auth_none($session, $username) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @param string $password
+ * @return bool
+ */
+function ssh2_auth_password($session, $username, $password) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @param string $pubkey
+ * @param string $privkey
+ * @param ?string $passphrase [optional]
+ * @return bool true on success or false on failure.
+ */
+function ssh2_auth_pubkey($session, $username, $pubkey, $privkey, $passphrase = null) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @param string $pubkeyfile
+ * @param string $privkeyfile
+ * @param string $passphrase
+ * @return bool
+ */
+function ssh2_auth_pubkey_file($session, $username, $pubkeyfile, $privkeyfile, $passphrase = null) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @param string $hostname
+ * @param string $pubkeyfile
+ * @param string $privkeyfile
+ * @param string $passphrase
+ * @param string $local_username
+ * @return bool
+ */
+function ssh2_auth_hostbased_file($session, $username, $hostname, $pubkeyfile, $privkeyfile, $passphrase = null, $local_username = null) {}
+
+/**
+ * @param resource $session
+ * @param int $port
+ * @param string $host
+ * @param string $max_connections
+ * @return false|resource
+ */
+function ssh2_forward_listen($session, $port, $host = null, $max_connections = 16) {}
+
+/**
+ * @param resource $listener
+ * @return false|resource
+ */
+function ssh2_forward_accept($listener) {}
+
+/**
+ * @param resource $session
+ * @param string $term_type
+ * @param array<array-key, mixed> $env
+ * @param int $width
+ * @param int $height
+ * @param int $width_height_type
+ * @return false|resource
+ */
+function ssh2_shell($session, $term_type = null, ?array $env = null, $width = null, $height = null, $width_height_type = null) {}
+
+/**
+ * @param resource $session
+ * @param string $command
+ * @param string $pty
+ * @param array<array-key, mixed> $env
+ * @param int $width
+ * @param int $height
+ * @param int $width_height_type
+ * @return false|resource
+ */
+function ssh2_exec($session, $command, $pty = null, ?array $env = null, $width = null, $height = null, $width_height_type = null) {}
+
+/**
+ * @param resource $session
+ * @param string $host
+ * @param int $port
+ * @return false|resource
+ */
+function ssh2_tunnel($session, $host, $port) {}
+
+/**
+ * @param resource $session
+ * @param string $remote_file
+ * @param string $local_file
+ * @return bool
+ */
+function ssh2_scp_recv($session, $remote_file, $local_file) {}
+
+/**
+ * @param resource $session
+ * @param string $local_file
+ * @param string $remote_file
+ * @param int $create_mode
+ * @return bool
+ */
+function ssh2_scp_send($session, $local_file, $remote_file, $create_mode = null) {}
+
+/**
+ * @param resource $channel
+ * @param int $streamid
+ * @return false|resource
+ */
+function ssh2_fetch_stream($channel, $streamid) {}
+
+/**
+ * @param array<array-key, mixed> $desc
+ * @param int $timeout
+ * @return int
+ */
+function ssh2_poll(&$desc, $timeout = 30) {}
+
+/**
+ * @param resource $session
+ * @return false|resource
+ */
+function ssh2_sftp($session) {}
+
+/**
+ * @param resource $sftp
+ * @param string $from
+ * @param string $to
+ * @return bool
+ */
+function ssh2_sftp_rename($sftp, $from, $to) {}
+
+/**
+ * @param resource $sftp
+ * @param string $filename
+ * @return bool
+ */
+function ssh2_sftp_unlink($sftp, $filename) {}
+
+/**
+ * @param resource $sftp
+ * @param string $dirname
+ * @param int $mode
+ * @param bool $recursive
+ * @return bool
+ */
+function ssh2_sftp_mkdir($sftp, $dirname, $mode = null, $recursive = null) {}
+
+/**
+ * @param resource $sftp
+ * @param string $dirname
+ * @return bool
+ */
+function ssh2_sftp_rmdir($sftp, $dirname) {}
+
+/**
+ * @param resource $sftp
+ * @param string $path
+ * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
+ */
+function ssh2_sftp_stat($sftp, $path) {}
+
+/**
+ * @param resource $sftp
+ * @param string $path
+ * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
+ */
+function ssh2_sftp_lstat($sftp, $path) {}
+
+/**
+ * @param resource $sftp
+ * @param string $target
+ * @param string $link
+ * @return bool
+ */
+function ssh2_sftp_symlink($sftp, $target, $link) {}
+
+/**
+ * @param resource $sftp
+ * @param string $link
+ * @return false|non-falsy-string
+ */
+function ssh2_sftp_readlink($sftp, $link) {}
+
+/**
+ * @param resource $sftp
+ * @param string $filename
+ * @return false|non-falsy-string
+ */
+function ssh2_sftp_realpath($sftp, $filename) {}
+
+/**
+ * @param resource $session
+ * @return false|resource
+ */
+function ssh2_publickey_init($session) {}
+
+/**
+ * @param resource $pkey
+ * @param string $algoname
+ * @param string $blob
+ * @param bool $overwrite
+ * @param array<array-key, mixed> $attributes
+ * @return bool
+ */
+function ssh2_publickey_add($pkey, $algoname, $blob, $overwrite = null, ?array $attributes = null) {}
+
+/**
+ * @param resource $pkey
+ * @param string $algoname
+ * @param string $blob
+ * @return bool
+ */
+function ssh2_publickey_remove($pkey, $algoname, $blob) {}
+
+/**
+ * @param resource $pkey
+ * @return array<array-key, mixed>|false
+ */
+function ssh2_publickey_list($pkey) {}
+
+/**
+ * @param resource $sftp
+ * @param string $filename
+ * @param int $mode
+ * @return bool
+ */
+function ssh2_sftp_chmod($sftp, $filename, $mode) {}
+
+/**
+ * @param resource $session
+ * @param string $username
+ * @return bool
+ */
+function ssh2_auth_agent($session, $username) {}
+
+/**
+ * @param resource $channel
+ * @return bool Returns true on success or false on failure.
+ */
+function ssh2_send_eof($channel): bool {}
+
+define('SSH2_FINGERPRINT_MD5', 0);
+
+define('SSH2_FINGERPRINT_SHA1', 1);
+
+define('SSH2_FINGERPRINT_HEX', 0);
+
+define('SSH2_FINGERPRINT_RAW', 2);
+
+define('SSH2_TERM_UNIT_CHARS', 0);
+
+define('SSH2_TERM_UNIT_PIXELS', 1);
+
+define('SSH2_DEFAULT_TERMINAL', "vanilla");
+
+define('SSH2_DEFAULT_TERM_WIDTH', 80);
+
+define('SSH2_DEFAULT_TERM_HEIGHT', 25);
+
+define('SSH2_DEFAULT_TERM_UNIT', 0);
+
+define('SSH2_STREAM_STDIO', 0);
+
+define('SSH2_STREAM_STDERR', 1);
+define('SSH2_POLLIN', 1);
+define('SSH2_POLLEXT', 2);
+define('SSH2_POLLOUT', 4);
+define('SSH2_POLLERR', 8);
+define('SSH2_POLLHUP', 16);
+define('SSH2_POLLNVAL', 32);
+define('SSH2_POLL_SESSION_CLOSED', 16);
+define('SSH2_POLL_CHANNEL_CLOSED', 128);
+define('SSH2_POLL_LISTENER_CLOSED', 128);

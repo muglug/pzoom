@@ -2,10 +2,13 @@
 """Psalm⇆pzoom parity score: how faithfully does pzoom (Rust) mirror Psalm (PHP)?
 
 Unlike the broad ``similarity_heuristic.py`` (file-level token cosine over three
-projects), this tool is Psalm-only and works at *method* granularity:
+projects), this tool is Psalm-only and works at *method* granularity. The pzoom
+side is the ``pzoom-analyzer`` and ``pzoom-code-info`` crates only:
 
   * For every Psalm file that is in pzoom's scope it finds the pzoom
-    counterpart (from PSALM_HAKANA_MAPPING.md, or an exact filename match).
+    counterpart from PSALM_FILE_MAP.json — a complete map of every file in
+    the two crates to its Psalm counterpart (null = pzoom-specific; a list =
+    one pzoom file covering several small Psalm files).
   * Within a matched file pair it lines up similarly-named methods and compares
     *which members / methods / functions they reference*, and how often.
   * Names are canonicalised so cross-language renames line up:
@@ -145,21 +148,6 @@ SYNONYMS = {
     "maybeadd": "addissue",                   # Psalm IssueBuffer::maybeAdd == pzoom add_issue
     "maybeaddissue": "addissue",
 }
-
-
-def canon_filename(stem: str) -> str:
-    """Canonical form of a *file* stem for matching Psalm↔pzoom filenames.
-    Unlike :func:`canon` it keeps keyword-like words (trait/new/namespace/…),
-    which are meaningful in file names, so ``TraitAnalyzer`` != ``new_analyzer``."""
-    words = [w.lower() for w in _WORD_RE.findall(stem)]
-    if not words:
-        return ""
-    if words[-1] == "storage":
-        words[-1] = "info"
-    if len(words) > 1 and words[0] == "get":
-        words = words[1:]
-    key = "".join(words)
-    return SYNONYMS.get(key, key)
 
 
 def canon(ident: str, keep_interning: bool) -> str | None:
@@ -328,61 +316,53 @@ def load_docs(root: Path, ext: str, lang: str, keep_interning: bool) -> dict[str
 
 
 # --------------------------------------------------------------------------- #
-# Mapping (PSALM_HAKANA_MAPPING.md):  Psalm basename -> [pzoom rel paths]
+# Mapping (PSALM_FILE_MAP.json):  pzoom rel path -> Psalm rel path(s) | null
 # --------------------------------------------------------------------------- #
 
+# The pzoom side of the score: only these crates mirror Psalm file-for-file.
+SCOPE_CRATES = ("pzoom-analyzer", "pzoom-code-info")
 
-# Distribution splits: Psalm "mega-files" whose logic pzoom carved into an extra
-# standalone helper that has *no Psalm file of its own*. Each extra is included
-# in the Psalm file's pzoom union ONLY IF it also exists as a standalone file in
-# Hakana (verified at runtime against the mapping's Hakana column) and likewise
-# has no Psalm counterpart there — i.e. *both* Rust ports made the same split, so
-# it's a genuine cross-language structural decision, not a pzoom-only quirk.
-# (function_analyzer.rs / class_analyzer.rs are deliberately absent: Hakana keeps
-# FunctionLikeAnalyzer monolithic, so those pzoom-only splits are excluded.)
-DISTRIBUTION_SPLITS = {
-    "statementsanalyzer.php": ["crates/pzoom-analyzer/src/stmt_analyzer.rs"],
-    "functionlikeanalyzer.php": ["crates/pzoom-analyzer/src/function_analysis_data.rs"],
-}
+# Psalm files ported in pzoom crates *outside* the scope crates (pzoom-syntax,
+# pzoom-orchestrator, pzoom-cli). They are excluded from the score entirely:
+# neither matched (their port isn't in scope) nor missing (they aren't gaps).
+PORTED_OUTSIDE_SCOPE = frozenset({
+    # pzoom-orchestrator
+    "Internal/Analyzer/ProjectAnalyzer.php",
+    "Internal/Codebase/Analyzer.php",
+    "Internal/Codebase/Scanner.php",
+    "Internal/Codebase/Populator.php",
+    "Internal/Cache.php",
+    "Internal/Diff/AstDiffer.php",
+    # pzoom-syntax (docblock / declaration scanning)
+    "Internal/Scanner/ParsedDocblock.php",
+    "Internal/Type/TypeParser.php",
+    "Internal/Type/TypeTokenizer.php",
+    "Internal/Type/ParseTree.php",
+    "Internal/Type/ParseTreeCreator.php",
+    "Internal/Analyzer/Statements/Expression/SimpleTypeInferer.php",
+    # pzoom-cli (issue collection / report rendering)
+    "IssueBuffer.php",
+    "Report.php",
+})
 
 
-def _cell_basename(cell: str) -> str:
-    """Reduce a mapping-table cell to a bare ``Foo.php`` / ``foo.rs`` name, or ''."""
-    cell = cell.strip().strip("`").strip()
-    m = re.match(r"([A-Za-z0-9_]+\.(?:php|rs))", cell)
-    return m.group(1) if m else ""
+def load_file_map(path: Path) -> dict[str, list[str]]:
+    """Read the complete pzoom→Psalm file map and return the inverse:
+    Psalm rel path (under src/Psalm) -> [pzoom repo-relative paths].
 
-
-def parse_mapping(path: Path) -> tuple[dict[str, list[str]], dict[str, dict]]:
-    """Return (psalm-basename -> [pzoom rel paths], pzoom rel path -> cells)."""
+    The JSON is a dict over *every* ``.rs`` file in the scope crates; a value is
+    a Psalm path, a list of Psalm paths (one pzoom file covering several small
+    Psalm files), or null (pzoom-specific — module roots, Hakana ports,
+    conscious departures). Keyed by full paths, so duplicate Psalm basenames
+    can't mis-bind, and there is no fuzzy filename fallback."""
     inv: dict[str, list[str]] = defaultdict(list)
-    meta: dict[str, dict] = {}
-    if not path.exists():
-        return inv, meta
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("| `crates/"):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for pz, psalm in data.items():
+        if not psalm:
             continue
-        cols = line.split("|")
-        if len(cols) < 4:
-            continue
-        pz = cols[1].strip().strip("`").strip()
-        hk, ps = _cell_basename(cols[2]), _cell_basename(cols[3])
-        meta[pz] = {"hakana": hk, "psalm": ps}
-        if ps:
-            inv[ps.lower()].append(pz)
-    return inv, meta
-
-
-def verified_splits(meta: dict[str, dict]) -> dict[str, list[str]]:
-    """Keep only split extras that exist in Hakana (hakana cell set) and have no
-    Psalm counterpart (psalm cell empty) — the cross-language carve-out test."""
-    out: dict[str, list[str]] = {}
-    for psalm_base, extras in DISTRIBUTION_SPLITS.items():
-        ok = [e for e in extras
-              if meta.get(e, {}).get("hakana") and not meta.get(e, {}).get("psalm")]
-        if ok:
-            out[psalm_base] = ok
-    return out
+        for p in (psalm if isinstance(psalm, list) else [psalm]):
+            inv[p].append(pz)
+    return inv
 
 
 # --------------------------------------------------------------------------- #
@@ -479,8 +459,18 @@ RUST_IDIOM_METHODS = frozenset(
     "withcapacity".split())
 
 
+RELOCATION_THRESHOLD = 0.5
+# Tokens appearing in more than this share of corpus files prove nothing about
+# where a function's behaviour lives — generated kitchen-sink files (e.g.
+# PreloaderList.php) would otherwise blanket-exonerate everything.
+RELOCATION_MAX_DF = 0.25
+
+
 def find_introduced(pz_methods: list[Method], psalm: Doc, vocab: set,
-                    min_size: int, threshold: float) -> tuple[float, list]:
+                    min_size: int, threshold: float,
+                    relocation_corpora: list[tuple[str, set]] | None = None,
+                    relocation_df: dict[str, float] | None = None,
+                    ) -> tuple[float, list, list]:
     """Detect pzoom functions the corresponding Psalm file has under *no* naming.
 
     A pzoom function is "introduced" when it is **both** differently-named from
@@ -499,11 +489,19 @@ def find_introduced(pz_methods: list[Method], psalm: Doc, vocab: set,
     count, a proxy for how much code it is), not just its Psalm-domain mass — so
     a large pzoom-specific method counts for much more than a small one, and
     removing one visibly raises parity. precision = 1 − (introduced size / all
-    pzoom size)."""
+    pzoom size).
+
+    A candidate is *exonerated* (reported as relocated, not introduced) when it
+    grounds strongly (≥ RELOCATION_THRESHOLD) in some single **other** Psalm
+    file or in a Hakana file: pzoom legitimately consolidates logic from
+    several Psalm files (e.g. FunctionLikeNodeScanner checks living beside
+    FunctionAnalyzer code) and ports dataflow machinery from Hakana per
+    AGENTS.md — neither is behaviour Psalm lacks."""
     psalm_tokens = set(psalm.bag)
     psalm_names = {m.name for m in psalm.methods}
     total = introduced_mass = 0
     rows = []
+    relocated_rows = []
     for f in pz_methods:
         size = sum(f.refs.values())                    # ≈ method size (all refs)
         if size == 0:
@@ -518,15 +516,41 @@ def find_introduced(pz_methods: list[Method], psalm: Doc, vocab: set,
         grounded = sum(c for t, c in domain.items() if t in psalm_tokens)
         grounding = grounded / dsize if dsize else 0.0  # no domain refs ⇒ novel
         if size >= min_size and grounding < threshold:
+            relocation_home = None
+            if relocation_corpora:
+                # Ground only on *discriminative* tokens: drop those present in
+                # most corpus files before asking which single file knows them.
+                discr = {
+                    t: c for t, c in domain.items()
+                    if relocation_df is None
+                    or relocation_df.get(t, 1.0) <= RELOCATION_MAX_DF
+                }
+                discr_size = sum(discr.values())
+                if discr_size:
+                    best_label, best_g = None, 0.0
+                    for label, tokens in relocation_corpora:
+                        g = sum(c for t, c in discr.items() if t in tokens) / discr_size
+                        if g > best_g:
+                            best_label, best_g = label, g
+                    if best_g >= RELOCATION_THRESHOLD:
+                        relocation_home = (best_label, round(best_g, 2))
+            if relocation_home is not None:
+                relocated_rows.append(
+                    (f.raw_name, relocation_home[0], relocation_home[1], size))
+                continue
             introduced_mass += size
             rows.append((f.raw_name, round(grounding, 2), size))
     precision = 1.0 - introduced_mass / total if total else 1.0
-    return precision, sorted(rows, key=lambda r: r[2], reverse=True)
+    return (precision, sorted(rows, key=lambda r: r[2], reverse=True),
+            sorted(relocated_rows, key=lambda r: r[3], reverse=True))
 
 
 def score_file(psalm: Doc, pz_methods: list[Method], pz_bag: Counter,
                idf: dict[str, float], intro_min_size: int = 8,
-               intro_threshold: float = 0.2) -> tuple[float, float, dict]:
+               intro_threshold: float = 0.2,
+               relocation_corpora: list[tuple[str, set]] | None = None,
+               relocation_df: dict[str, float] | None = None,
+               ) -> tuple[float, float, dict]:
     """Return (file_recall, method_struct, detail).
 
     file_recall  -- of Psalm's whole-file weighted construct references, what
@@ -540,8 +564,9 @@ def score_file(psalm: Doc, pz_methods: list[Method], pz_bag: Counter,
     detail also carries `precision` (1 − share of pzoom logic that is introduced
     behaviour absent from Psalm) and the `introduced` function list."""
     file_recall = weighted_recall(psalm.bag, pz_bag, idf)
-    precision, introduced = find_introduced(pz_methods, psalm, set(idf),
-                                            intro_min_size, intro_threshold)
+    precision, introduced, relocated = find_introduced(
+        pz_methods, psalm, set(idf), intro_min_size, intro_threshold,
+        relocation_corpora, relocation_df)
     # Diagnostics only (never folded into the headline): file-level precision
     # flags relocated logic; novel share flags pzoom-only vocabulary/behaviour.
     file_precision = weighted_precision(psalm.bag, pz_bag, idf)
@@ -582,6 +607,7 @@ def score_file(psalm: Doc, pz_methods: list[Method], pz_bag: Counter,
         "missing_constructs": [name for _, name in missing[:14]],
         "precision": precision,
         "introduced": introduced,
+        "relocated": relocated,
         "file_precision": file_precision,
         "novel_share": novel_share,
     }
@@ -598,7 +624,12 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pzoom-dir", default=None)
     ap.add_argument("--psalm-dir", default=None, help="Psalm repo root or its src/Psalm dir")
-    ap.add_argument("--mapping", default=None)
+    ap.add_argument("--hakana-dir", default=None,
+                    help="Hakana repo root (used to exonerate pzoom functions "
+                         "ported from Hakana from the introduced penalty); "
+                         "auto-located beside the Psalm clone when omitted")
+    ap.add_argument("--mapping", default=None,
+                    help="pzoom→Psalm file map JSON (default PSALM_FILE_MAP.json)")
     ap.add_argument("--report", default=None)
     ap.add_argument("--backlog", default=None,
                     help="path for the prioritized worklist (default docs/PSALM_PARITY_BACKLOG.md)")
@@ -646,43 +677,40 @@ def main() -> int:
     ki = args.keep_interning
     print("loading pzoom ...", file=sys.stderr)
     pz = load_docs(pz_root, ".rs", "rust", ki)
+    pz = {rel: d for rel, d in pz.items()
+          if rel.split("/", 1)[0] in SCOPE_CRATES}
     print("loading psalm ...", file=sys.stderr)
     ps = load_docs(psalm_root, ".php", "php", ki)
 
-    inv, meta = parse_mapping(Path(args.mapping) if args.mapping
-                              else repo / "PSALM_HAKANA_MAPPING.md")
-    splits = verified_splits(meta)
-    for psalm_base, extras in splits.items():
-        print(f"distribution split (Hakana-verified): {psalm_base} += {extras}",
-              file=sys.stderr)
+    hakana_root = None
+    if args.hakana_dir:
+        h = Path(args.hakana_dir)
+        hakana_root = next((c for c in (h / "hakana-core" / "src", h / "src", h)
+                            if c.exists()), None)
+    else:
+        hakana_root = next(
+            (c for c in (Path.home() / "git/hakana/hakana-core/src",
+                         repo.parent / "hakana/hakana-core/src") if c.exists()),
+            None)
+    hk: dict = {}
+    if hakana_root is not None:
+        print("loading hakana ...", file=sys.stderr)
+        hk = load_docs(hakana_root, ".rs", "rust", ki)
 
-    # pzoom file lookup by rel path and by basename (for filename fallback)
-    pz_by_base: dict[str, list[Doc]] = defaultdict(list)
-    for d in pz.values():
-        pz_by_base[Path(d.rel).name.lower()].append(d)
+    map_path = Path(args.mapping) if args.mapping else repo / "PSALM_FILE_MAP.json"
+    inv = load_file_map(map_path)
+    unknown = [p for p in inv if p not in ps]
+    if unknown:
+        print(f"warning: {len(unknown)} mapped Psalm files not found in the "
+              f"Psalm checkout: {unknown[:5]}", file=sys.stderr)
 
     def pzoom_equiv(psalm_doc: Doc):
         """Return merged (methods, bag, label) for the pzoom counterpart, or None."""
-        base = psalm_doc.path.name.lower()
-        rels = inv.get(base)
         docs = []
-        if rels:
-            for r in rels:                     # mapping paths are repo-relative
-                key = r[len("crates/"):] if r.startswith("crates/") else r
-                if key in pz:
-                    docs.append(pz[key])
-        # union in Hakana-verified distribution-split helpers
-        for extra in splits.get(base, []):
-            key = extra[len("crates/"):] if extra.startswith("crates/") else extra
-            if key in pz and pz[key] not in docs:
+        for r in inv.get(psalm_doc.rel, []):   # map paths are repo-relative
+            key = r[len("crates/"):] if r.startswith("crates/") else r
+            if key in pz:
                 docs.append(pz[key])
-        if not docs:                       # filename canonical fallback
-            stem = canon_filename(psalm_doc.path.stem)
-            if len(stem) >= 4:
-                for cand in pz.values():
-                    if canon_filename(cand.path.stem) == stem:
-                        docs = [cand]
-                        break
         if not docs:
             return None
         methods, bag, labels = [], Counter(), []
@@ -703,7 +731,7 @@ def main() -> int:
     for d in ps.values():
         parent = str(Path(d.rel).parent)
         dir_total[parent] += 1
-        if d.path.name.lower() in inv:
+        if d.rel in inv:
             dir_mapped[parent] += 1
     dense_dirs = {p for p in dir_total
                   if dir_mapped[p] >= 2
@@ -712,8 +740,33 @@ def main() -> int:
 
     idf = build_weights(ps, args.weight)
 
+    # Relocation corpora for the introduced check: every Psalm file's token
+    # set (a flagged fn grounding strongly in a *different* Psalm file is
+    # consolidated, not invented) plus Hakana's (sanctioned implementation
+    # reference for e.g. dataflow machinery).
+    # Data/generated files (e.g. PreloaderList.php: a flat list naming every
+    # Psalm class) cannot be a behaviour "home" — they would blanket-exonerate
+    # any function that references rare type names.
+    def is_data_file(d) -> bool:
+        return len(d.methods) <= 2 and len(set(d.bag)) > 400
+
+    psalm_token_sets = [("psalm:" + d.rel, set(d.bag))
+                        for d in ps.values() if not is_data_file(d)]
+    hakana_token_sets = [("hakana:" + d.rel, set(d.bag))
+                         for d in hk.values() if not is_data_file(d)]
+    # Document frequency over the combined corpus, for the discriminative-token
+    # filter in the relocation check.
+    df_counts: Counter = Counter()
+    for _, tokens in psalm_token_sets + hakana_token_sets:
+        for t in tokens:
+            df_counts[t] += 1
+    n_corpus = max(1, len(psalm_token_sets) + len(hakana_token_sets))
+    relocation_df = {t: c / n_corpus for t, c in df_counts.items()}
+
     rows = []
     for d in sorted(ps.values(), key=lambda x: x.rel):
+        if d.rel in PORTED_OUTSIDE_SCOPE:
+            continue
         mass = w_mass(d.bag, idf)
         if mass == 0:
             continue
@@ -725,12 +778,37 @@ def main() -> int:
                              "mass": mass, "detail": None})
             continue
         methods, bag, labels = equiv
+        relocation_corpora = [
+            (label, tokens) for label, tokens in psalm_token_sets
+            if label != "psalm:" + d.rel
+        ] + hakana_token_sets
         score, struct, detail = score_file(d, methods, bag, idf,
-                                           args.intro_min_size, args.intro_threshold)
+                                           args.intro_min_size, args.intro_threshold,
+                                           relocation_corpora, relocation_df)
         precision = detail["precision"]
         rows.append({"psalm": d.rel, "pz": labels, "score": score,
                      "struct": struct, "precision": precision,
                      "penalized": score * precision, "mass": mass, "detail": detail})
+
+    # Enrich relocations with actionable targets: the pzoom file mapped to the
+    # behaviour's Psalm home (where the function should move), or a note that a
+    # mapping is missing.
+    for r in rows:
+        d = r.get("detail")
+        if not d or not d.get("relocated"):
+            continue
+        hints = []
+        for name, home, g, size in d["relocated"]:
+            if home.startswith("psalm:"):
+                home_rel = home[len("psalm:"):]
+                cells = inv.get(home_rel)
+                hints.append((name, home_rel, g, size,
+                              ", ".join(f"`{c}`" for c in cells) if cells
+                              else "*(no mapping — out of the two-crate scope, "
+                                   "or add a row to PSALM_FILE_MAP.json)*"))
+            else:
+                hints.append((name, home[len("hakana:"):], g, size, None))
+        d["relocation_hints"] = hints
 
     total_mass = sum(r["mass"] for r in rows)
     matched_rows = [r for r in rows if r["pz"]]
@@ -757,7 +835,7 @@ def main() -> int:
 
     report = render(rows, project, matched_only, precision_only, struct_only,
                     coverage, in_scope_dirs, matched_rows, missing_rows, args,
-                    splits, file_prec_diag, novel_diag)
+                    file_prec_diag, novel_diag)
     out = Path(args.report) if args.report else repo / "docs" / "PSALM_PARITY_REPORT.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8")
@@ -882,12 +960,14 @@ def render_backlog(matched_rows, missing_rows, args) -> str:
 
 
 def render(rows, project, matched_only, precision_only, struct_only, coverage,
-           in_scope_dirs, matched_rows, missing_rows, args, splits,
+           in_scope_dirs, matched_rows, missing_rows, args,
            file_prec_diag=0.0, novel_diag=0.0) -> str:
     L = []
     a = L.append
     a("# Psalm ⇆ pzoom parity\n")
-    a("_Generated by `scripts/psalm_parity.py`. For each in-scope Psalm file it "
+    a("_Generated by `scripts/psalm_parity.py`. The pzoom side is the "
+      "`pzoom-analyzer` and `pzoom-code-info` crates, mapped file-by-file to "
+      "Psalm in `PSALM_FILE_MAP.json`. For each in-scope Psalm file it "
       "finds the pzoom counterpart and scores **recall × precision**: recall = "
       "how many of Psalm's referenced members / methods / functions are mirrored "
       "on the pzoom side; precision = the share of pzoom's logic that corresponds "
@@ -923,16 +1003,6 @@ def render(rows, project, matched_only, precision_only, struct_only, coverage,
       "this is mostly pzoom's divergent type-atom vocabulary plus genuinely "
       "introduced logic; high values flag files worth eyeballing.\n")
 
-    if splits:
-        a("### Distribution splits applied (Hakana-verified)\n")
-        a("Psalm mega-files whose logic pzoom carved into an extra helper that "
-          "*also* exists standalone in Hakana with no Psalm file — so both Rust "
-          "ports made the same split. The helper's references are unioned into "
-          "the Psalm file's pzoom side.\n")
-        for psalm_base, extras in splits.items():
-            a(f"- `{psalm_base}` += {', '.join('`'+Path(e).name+'`' for e in extras)}")
-        a("")
-
     a("## Biggest gaps — in-scope Psalm files with no pzoom equivalent\n")
     a("Sorted by IDF-weighted reference mass (≈ how much logic is unported).\n")
     a("| Psalm file | ref mass |")
@@ -955,6 +1025,46 @@ def render(rows, project, matched_only, precision_only, struct_only, coverage,
             fns = ", ".join(f"`{n}` ({g:.2f})"
                             for n, g, _ in r["detail"]["introduced"][:6])
             a(f"| `{Path(r['psalm']).name}` | {100*r['precision']:.0f} | {fns} |")
+        a("")
+
+    # Render-time filter only (detail["relocation_hints"] keeps the full list):
+    # tiny helpers ground "perfectly" in unrelated files by chance (twin
+    # one-liners), so only hints of substantive size are worth acting on.
+    MIN_RELOC_HINT_SIZE = 20
+    renderable_hints = {
+        id(r): [h for h in r["detail"].get("relocation_hints", [])
+                if h[3] >= MIN_RELOC_HINT_SIZE]
+        for r in matched_rows
+    }
+    reloc_rows = [r for r in matched_rows if renderable_hints[id(r)]]
+    if reloc_rows:
+        a("## Relocated logic (action: move it, or map it)\n")
+        a("Functions exonerated from the introduced penalty because their "
+          "behaviour grounds in a *different* Psalm file than the one their "
+          "current Rust home is mapped to. For Psalm homes: move the function "
+          "into the Rust counterpart listed under *move to* (or add a mapping "
+          "row to PSALM_HAKANA_MAPPING.md when none exists) so file-level "
+          "scores reflect where the logic actually lives. Hakana homes are "
+          "sanctioned ports (AGENTS.md) and fine in place.\n")
+        a("| current home (mapped to) | function | behaviour lives in | move to |")
+        a("|---|---|---|---|")
+        printed = 0
+        for r in sorted(reloc_rows,
+                        key=lambda r: -max(h[3] for h in renderable_hints[id(r)])):
+            for name, home, g, size, target in renderable_hints[id(r)][:4]:
+                if target is None:
+                    target = f"*(Hakana port: `{home}` — keep in place)*"
+                    home_label = f"hakana `{home}`"
+                else:
+                    home_label = f"`{home}`"
+                home_cells = ", ".join(r["pz"]) if isinstance(r["pz"], list) else str(r["pz"])
+                a(f"| `{home_cells}` (`{Path(r['psalm']).name}`) | `{name}` "
+                  f"(g={g:.2f}, size={size}) | {home_label} | {target} |")
+                printed += 1
+                if printed >= 40:
+                    break
+            if printed >= 40:
+                break
         a("")
 
     # `file-prec` and `novel` are diagnostics (relocation / pzoom-only share),

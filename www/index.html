@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>pzoom</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A fast Rust port of Psalm.">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/elegant.min.css">
+  <style>
+    :root {
+      --pink: #f0c;
+      --cyan: #00ffd5;
+      --ink: #111;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      min-height: 100vh;
+      background-color: #fff;
+      color: var(--ink);
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 60px 20px 40px;
+    }
+
+    .logo {
+      width: 100%;
+      max-width: 540px;
+      height: auto;
+      margin: 0 auto 28px;
+    }
+
+    h1 {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+
+    .tagline {
+      font-size: 22px;
+      font-weight: 500;
+      margin: 0 0 40px;
+      color: #333;
+    }
+
+    .tagline a {
+      color: #c0a;
+    }
+
+    @media (max-width: 600px) {
+      .tagline {
+        font-size: 18px;
+      }
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 26px;
+      justify-content: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 16px;
+      text-decoration: none;
+      padding: 13px 22px;
+      border: 2px solid var(--ink);
+      color: var(--ink);
+      transition: background-color 0.12s ease-out;
+    }
+    .btn.github {
+      background-color: var(--cyan);
+    }
+
+    .btn:hover {
+      background-color: #00e6c0;
+    }
+
+    .btn svg {
+      display: inline-block;
+    }
+
+    main {
+      flex: 1;
+      width: 100%;
+      min-width: 300px;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 0 20px 20px;
+    }
+
+    main h2 {
+      font-size: 20px;
+      margin: 0 0 16px;
+    }
+
+    #editor_container {
+      border: 2px solid var(--ink);
+    }
+
+    .CodeMirror {
+      height: 300px;
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.6em;
+    }
+
+    /* Psalm-style editor chrome: white gutter, faint line numbers */
+    .CodeMirror-gutters {
+      background: #fff;
+      border-right: none;
+    }
+
+    .CodeMirror-linenumber {
+      color: #ccc;
+      padding-left: 0;
+    }
+
+    .CodeMirror pre.CodeMirror-line {
+      padding: 0 8px;
+    }
+
+    /* Psalm color palette for PHP code (psalm.dev's elegant-theme overrides) */
+    .cm-s-elegant span.cm-number,
+    .cm-s-elegant span.cm-atom {
+      color: #000;
+    }
+
+    .cm-s-elegant span.cm-string {
+      color: #c0a;
+    }
+
+    .cm-s-elegant span.cm-comment {
+      color: #888;
+    }
+
+    .cm-s-elegant span.cm-meta,
+    .cm-s-elegant span.cm-variable,
+    .cm-s-elegant span.cm-variable-2,
+    .cm-s-elegant span.cm-qualifier,
+    .cm-s-elegant span.cm-builtin,
+    .cm-s-elegant span.cm-link {
+      color: #000;
+    }
+
+    .cm-s-elegant span.cm-keyword {
+      color: #c0a;
+    }
+
+    .cm-s-elegant span.cm-error {
+      background-color: #000;
+    }
+
+    /* Psalm-style red squiggly underlines instead of gutter icons */
+    .CodeMirror-lint-mark-error {
+      background-position: 0 95%;
+      background-repeat: repeat-x;
+      background-size: 7px 3px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 10'%3E%3Cpath fill='none' stroke='%2300997f' stroke-width='6' d='M0 8.5c8 0 8-7 16-7s8 7 16 7 8-7 16-7 8 7 16 7' class='st0'/%3E%3C/svg%3E") !important;
+      padding-bottom: 5px;
+    }
+
+    .CodeMirror-lint-mark-warning {
+      background-position: 0 95%;
+      background-repeat: repeat-x;
+      background-size: 7px 4px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='18' version='1' viewBox='0 0 32 18'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cpath stroke='%23A89542' stroke-width='5' d='M0 15c8 0 8-8 16-8s8 8 16 8'/%3E%3Cpath stroke='%23E0B72A' stroke-width='5' d='M0 11c8 0 8-8 16-8s8 8 16 8'/%3E%3C/g%3E%3C/svg%3E");
+      padding-bottom: 5px;
+    }
+
+    #pzoom_output {
+      border: 2px solid var(--ink);
+      margin: 1em 0 0;
+      padding: 20px;
+      height: 200px;
+      box-sizing: border-box;
+      overflow: auto;
+      font-family: 'SF Mono', SFMono-Regular, ui-monospace, 'DejaVu Sans Mono', Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.6em;
+      white-space: pre-wrap;
+    }
+
+    #pzoom_output .issue-kind {
+      color: #c0a;
+      font-weight: 700;
+    }
+
+    #pzoom_output .issue-pos {
+      color: #888;
+    }
+
+    #get_link_button {
+      margin-top: 16px;
+      padding: 8px 18px;
+      font: inherit;
+      font-weight: 700;
+      background: var(--cyan);
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      cursor: pointer;
+    }
+
+    #get_link_button:hover {
+      background: #00e6c0;
+    }
+
+    #pzoom_output .all-clear {
+      color: #00997f;
+      font-weight: 700;
+    }
+
+    footer {
+      text-align: center;
+      padding: 44px 20px 40px;
+      color: #888;
+      font-size: 14px;
+    }
+
+    footer a {
+      color: #555;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>pzoom</h1>
+    <img class="logo" src="/pzoom-logo.svg" alt="pzoom">
+    <p class="tagline">A fast Rust port of <a href="https://psalm.dev" target="_blank" rel="noopener">Psalm</a></p>
+    <div class="buttons">
+      <a class="btn github" href="https://github.com/muglug/pzoom" target="_blank" rel="noopener">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <path fill-rule="evenodd" clip-rule="evenodd"
+            d="M8 0C3.58 0 0 3.58 0 8C0 11.54 2.29 14.53 5.47 15.59C5.87 15.66 6.02 15.42 6.02 15.21C6.02 15.02 6.01 14.39 6.01 13.72C4 14.09 3.48 13.23 3.32 12.78C3.23 12.55 2.84 11.84 2.5 11.65C2.22 11.5 1.82 11.13 2.49 11.12C3.12 11.11 3.57 11.7 3.72 11.94C4.44 13.15 5.59 12.81 6.05 12.6C6.12 12.08 6.33 11.73 6.56 11.53C4.78 11.33 2.92 10.64 2.92 7.58C2.92 6.71 3.23 5.99 3.74 5.43C3.66 5.23 3.38 4.41 3.82 3.31C3.82 3.31 4.49 3.1 6.02 4.13C6.66 3.95 7.34 3.86 8.02 3.86C8.7 3.86 9.38 3.95 10.02 4.13C11.55 3.09 12.22 3.31 12.22 3.31C12.66 4.41 12.38 5.23 12.3 5.43C12.81 5.99 13.12 6.7 13.12 7.58C13.12 10.65 11.25 11.33 9.47 11.53C9.76 11.78 10.01 12.26 10.01 13.01C10.01 14.08 10 14.94 10 15.21C10 15.42 10.15 15.67 10.55 15.59C13.71 14.53 16 11.53 16 8C16 3.58 12.42 0 8 0Z" />
+        </svg>
+        GitHub
+      </a>
+      <a class="btn" href="https://mattbrown.dev/articles/from-psalm-to-pzoom" target="_blank" rel="noopener">
+        Blog post
+      </a>
+    </div>
+  </header>
+  <main>
+    <h2>Try it</h2>
+    <div id="editor_container">
+      <textarea id="php_code">&lt;?php
+
+/**
+ * @return array&lt;string&gt;
+ */
+function takesAnInt(int $i) {
+    return [$i, "hello"];
+}
+
+$data = ["some text", 5];
+takesAnInt($data[0]);
+
+$condition = rand(0, 5);
+if ($condition) {
+} elseif ($condition) {}
+</textarea>
+    </div>
+
+    <div id="pzoom_output">Loading analyzer&hellip;</div>
+
+    <button id="get_link_button">Get link</button>
+  </main>
+  <footer>
+    <a href="https://github.com/muglug/pzoom/blob/main/LICENSE" target="_blank" rel="noopener">MIT licensed</a>
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/php/php.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/lint/lint.min.js"></script>
+
+  <script type="module">
+    import init, { ScannerAndAnalyzer } from '/pkg/pzoom_wasm.js';
+
+    const outputEl = document.getElementById('pzoom_output');
+    let analyzer = null;
+    let latestIssues = [];
+
+    const editor = CodeMirror.fromTextArea(document.getElementById('php_code'), {
+      mode: 'php',
+      lineNumbers: true,
+      indentUnit: 4,
+      theme: 'elegant',
+      lint: {
+        getAnnotations: () => latestIssues.map((issue) => ({
+          from: editor.posFromIndex(issue.from),
+          to: editor.posFromIndex(issue.to),
+          severity: 'error',
+          message: issue.type + ': ' + issue.message,
+        })),
+        lintOnChange: false,
+      },
+    });
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function renderResults(issues) {
+      if (issues.length === 0) {
+        outputEl.innerHTML = '<span class="all-clear">No issues found.</span>';
+        return;
+      }
+
+      outputEl.innerHTML = issues
+        .map((issue) =>
+          '<div><span class="issue-kind">' + escapeHtml(issue.type) + '</span> ' +
+          '<span class="issue-pos">' + issue.line_from + ':' + issue.column_from + '</span> &mdash; ' +
+          escapeHtml(issue.message) + '</div>')
+        .join('');
+    }
+
+    function runAnalysis() {
+      if (!analyzer) {
+        return;
+      }
+
+      let response;
+      try {
+        response = JSON.parse(analyzer.get_results(editor.getValue()));
+      } catch (e) {
+        outputEl.textContent = 'Analysis failed: ' + e;
+        return;
+      }
+
+      latestIssues = response.results || [];
+      latestIssues.sort((a, b) => a.from - b.from);
+      renderResults(latestIssues);
+      editor.performLint();
+    }
+
+    let debounceTimer = null;
+    editor.on('change', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(runAnalysis, 400);
+    });
+
+    // Shareable links: compress the code into the URL hash (deflate + base64url).
+    async function compressToHash(text) {
+      const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+      const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      let binary = '';
+      for (const byte of bytes) {
+        binary += String.fromCharCode(byte);
+      }
+      return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    }
+
+    async function decompressFromHash(hash) {
+      const binary = atob(hash.replaceAll('-', '+').replaceAll('_', '/'));
+      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      return new Response(stream).text();
+    }
+
+    document.getElementById('get_link_button').addEventListener('click', async () => {
+      window.location.hash = await compressToHash(editor.getValue());
+    });
+
+    (async () => {
+      const hash = window.location.hash.slice(1);
+      if (hash) {
+        try {
+          editor.setValue(await decompressFromHash(hash));
+        } catch (e) {
+          // Ignore malformed share links and keep the default snippet.
+        }
+      }
+
+      editor.on('change', () => {
+        if (window.location.hash) {
+          history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      });
+
+      try {
+        await init();
+        // Constructing the analyzer scans PHP's built-in stubs, which takes a
+        // moment; defer so the loading message paints first.
+        setTimeout(() => {
+          analyzer = new ScannerAndAnalyzer();
+          runAnalysis();
+        }, 50);
+      } catch (e) {
+        outputEl.textContent = 'Failed to load the analyzer: ' + e;
+      }
+    })();
+  </script>
+</body>
+
+</html>

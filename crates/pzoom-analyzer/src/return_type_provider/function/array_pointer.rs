@@ -23,7 +23,7 @@ impl FunctionReturnTypeProvider for ArrayPointerReturnTypeProvider {
         analysis_data: &mut FunctionAnalysisData,
     ) -> Option<TUnion> {
         let pos = event.arg_positions.first().copied()?;
-        let arr_type = analysis_data.get_expr_type(pos)?;
+        let arr_type = analysis_data.expr_types.get(&pos).cloned()?;
         let info = fca::extract_array_like_info_from_union(&arr_type)?;
 
         let value_type = info.value_type;

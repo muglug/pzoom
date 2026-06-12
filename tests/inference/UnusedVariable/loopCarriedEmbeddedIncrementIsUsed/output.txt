@@ -1,0 +1,1 @@
+UnusedVariable - input.php:28:13 - $first is never referenced or the value is not used

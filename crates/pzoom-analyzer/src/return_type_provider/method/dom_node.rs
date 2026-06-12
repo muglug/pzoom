@@ -20,7 +20,7 @@ impl MethodReturnTypeProvider for DomNodeReturnTypeProvider {
         }
 
         let first_arg_pos = *event.arg_positions.first()?;
-        let arg_type = event.analysis_data.get_expr_type(first_arg_pos)?;
+        let arg_type = event.analysis_data.expr_types.get(&first_arg_pos).cloned()?;
 
         if !arg_type.types.iter().any(|atomic| {
             matches!(

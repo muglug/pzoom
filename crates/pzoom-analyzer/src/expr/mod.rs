@@ -16,6 +16,7 @@ pub mod exit_analyzer;
 pub mod include_analyzer;
 pub mod isset_analyzer;
 pub mod match_analyzer;
+pub mod partial_application_analyzer;
 pub mod ternary_analyzer;
 pub mod throw_analyzer;
 pub mod unop_analyzer;

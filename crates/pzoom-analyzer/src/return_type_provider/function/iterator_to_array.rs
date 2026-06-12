@@ -28,12 +28,12 @@ fn infer_iterator_to_array_return_type(
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
     let iterator_pos = arg_positions.first().copied()?;
-    let iterator_type = analysis_data.get_expr_type(iterator_pos)?;
+    let iterator_type = analysis_data.expr_types.get(&iterator_pos).cloned()?;
     let iterable_info = fca::extract_iterable_like_info_from_union(analyzer, &iterator_type)?;
 
     let preserve_keys = arg_positions
         .get(1)
-        .and_then(|pos| analysis_data.get_expr_type(*pos))
+        .and_then(|pos| analysis_data.expr_types.get(&*pos).cloned())
         .and_then(|ty| fca::get_literal_bool_from_union(&ty));
 
     match preserve_keys {

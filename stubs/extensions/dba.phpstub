@@ -37,10 +37,19 @@ namespace {
     ): Dba\Connection|false {
     }
 
+    /**
+     * @param resource $dba
+     * @return void
+     */
     function dba_close(Dba\Connection $dba): void
     {
     }
 
+    /**
+     * @param array<array-key, mixed>|string $key
+     * @param resource $dba
+     * @return bool
+     */
     function dba_exists(string|array $key, Dba\Connection $dba): bool
     {
     }
@@ -54,49 +63,84 @@ namespace {
     }
 
     /**
-     * @return array<int, string>|false
+     * @param false|null|string $key
+     * @return array<array-key, mixed>|false
      */
     function dba_key_split(string|false|null $key): array|false
     {
     }
 
+    /**
+     * @param resource $dba
+     * @return string
+     */
     function dba_firstkey(Dba\Connection $dba): string|false
     {
     }
 
+    /**
+     * @param resource $dba
+     * @return string
+     */
     function dba_nextkey(Dba\Connection $dba): string|false
     {
     }
 
+    /**
+     * @param array<array-key, mixed>|string $key
+     * @param resource $dba
+     * @return bool
+     */
     function dba_delete(string|array $key, Dba\Connection $dba): bool
     {
     }
 
+    /**
+     * @param array<array-key, mixed>|string $key
+     * @param string $value
+     * @param resource $dba
+     * @return bool
+     */
     function dba_insert(string|array $key, string $value, Dba\Connection $dba): bool
     {
     }
 
+    /**
+     * @param array<array-key, mixed>|string $key
+     * @param string $value
+     * @param resource $dba
+     * @return bool
+     */
     function dba_replace(string|array $key, string $value, Dba\Connection $dba): bool
     {
     }
 
+    /**
+     * @param resource $dba
+     * @return bool
+     */
     function dba_optimize(Dba\Connection $dba): bool
     {
     }
 
+    /**
+     * @param resource $dba
+     * @return bool
+     */
     function dba_sync(Dba\Connection $dba): bool
     {
     }
 
     /**
-     * @return array<int|string, string>
+     * @param bool $full_info
+     * @return array<array-key, mixed>
      */
     function dba_handlers(bool $full_info = false): array
     {
     }
 
     /**
-     * @return array<int, string>
+     * @return array<array-key, mixed>
      */
     function dba_list(): array
     {

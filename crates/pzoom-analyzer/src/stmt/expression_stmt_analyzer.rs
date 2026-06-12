@@ -77,10 +77,13 @@ pub fn analyze(
     // Analyze the expression - the result type is discarded
     let pos = expression_analyzer::analyze(analyzer, expr_stmt.expression, analysis_data, context);
 
-    // A statement-level expression of type `never` ends control flow.
-    if analysis_data
-        .get_expr_type(pos)
-        .is_some_and(|t| t.is_nothing())
+    // A statement-level expression of type `never` ends control flow — except
+    // a bare `yield;`, whose type is `never` (the unused send() value, as in
+    // Psalm's YieldAnalyzer) while the generator plainly resumes after it.
+    if !matches!(expr_stmt.expression.unparenthesized(), Expression::Yield(_))
+        && analysis_data
+            .expr_types.get(&pos).cloned()
+            .is_some_and(|t| t.is_nothing())
     {
         context.has_returned = true;
     }

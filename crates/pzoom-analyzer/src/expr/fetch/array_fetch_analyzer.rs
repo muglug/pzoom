@@ -8,19 +8,27 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
 
+use pzoom_code_info::data_flow::path::ArrayDataKind;
+use pzoom_code_info::VarName;
 use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::ttype::type_combiner;
-use pzoom_code_info::{ArrayKey, Assertion, ClauseKey, TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{
+    ArrayKey, Assertion, ClauseKey, DataFlowNode, GraphKind, PathKind, TAtomic, TUnion,
+    WholeProgramKind, combine_union_types,
+};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
+use crate::data_flow::make_data_flow_node_position;
 use crate::expression_analyzer;
 use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::template::inferred_type_replacer;
 use crate::type_comparator::object_type_comparator;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
+use std::rc::Rc;
 
 /// Compute line number from byte offset in source.
 fn get_line_number(source: &str, offset: u32) -> u32 {
@@ -30,6 +38,142 @@ fn get_line_number(source: &str, offset: u32) -> u32 {
         .filter(|&b| b == b'\n')
         .count() as u32
         + 1
+}
+
+/// Creates a path between a variable `$foo` and a fetched value `$foo["a"]`
+/// (Hakana `array_fetch_analyzer::add_array_fetch_dataflow`).
+pub(crate) fn add_array_fetch_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    array_expr_pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+    keyed_array_var_id: Option<String>,
+    value_type: &mut TUnion,
+    key_type: &mut TUnion,
+) {
+    // Hakana additionally skips this work in whole-program taint mode when the value
+    // type is not taintable; pzoom does not track `has_taintable_value` yet.
+    let _ = matches!(
+        analysis_data.data_flow_graph.kind,
+        GraphKind::WholeProgram(WholeProgramKind::Taint)
+    );
+
+    let Some(stmt_var_type) = analysis_data.expr_types.get(&array_expr_pos).cloned() else {
+        return;
+    };
+
+    if stmt_var_type.parent_nodes.is_empty() {
+        return;
+    }
+
+    let node_name = if let Some(keyed_array_var_id) = &keyed_array_var_id {
+        keyed_array_var_id.clone()
+    } else {
+        "arrayvalue-fetch".to_string()
+    };
+    let new_parent_node = DataFlowNode::get_for_local_string(
+        node_name,
+        make_data_flow_node_position(analyzer, array_expr_pos),
+    );
+    analysis_data
+        .data_flow_graph
+        .add_node(new_parent_node.clone());
+
+    let key_type_single = if key_type.types.len() == 1 {
+        key_type.types.first()
+    } else {
+        None
+    };
+
+    let dim_value = if let Some(key_type_single) = key_type_single {
+        match key_type_single {
+            TAtomic::TLiteralString { value } => Some(value.clone()),
+            TAtomic::TLiteralInt { value } => Some(value.to_string()),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    let mut array_key_node = None;
+
+    if keyed_array_var_id.is_none() && dim_value.is_none() {
+        let fetch_node = DataFlowNode::get_for_local_string(
+            "arraykey-fetch".to_string(),
+            make_data_flow_node_position(analyzer, array_expr_pos),
+        );
+        analysis_data.data_flow_graph.add_node(fetch_node.clone());
+        array_key_node = Some(fetch_node);
+        analysis_data
+            .data_flow_graph
+            .add_node(new_parent_node.clone());
+    }
+
+    for parent_node in stmt_var_type.parent_nodes.iter() {
+        analysis_data.data_flow_graph.add_path(
+            &parent_node.id,
+            &new_parent_node.id,
+            if let Some(dim_value) = dim_value.clone() {
+                PathKind::ArrayFetch(ArrayDataKind::ArrayValue, dim_value)
+            } else {
+                PathKind::UnknownArrayFetch(ArrayDataKind::ArrayValue)
+            },
+            vec![],
+            vec![],
+        );
+
+        if let Some(array_key_node) = array_key_node.clone() {
+            analysis_data.data_flow_graph.add_path(
+                &parent_node.id,
+                &array_key_node.id,
+                PathKind::UnknownArrayFetch(ArrayDataKind::ArrayKey),
+                vec![],
+                vec![],
+            );
+        }
+    }
+
+    // The offset value is consumed by the fetch: its dataflow parents feed
+    // the fetch node, so non-fetch offset expressions (e.g. `$keys[++$key]`)
+    // count as used (Psalm reaches the same verdict).
+    let key_parent_nodes = key_type.parent_nodes.clone();
+    for parent_node in key_parent_nodes.iter() {
+        analysis_data.data_flow_graph.add_path(
+            &parent_node.id,
+            &new_parent_node.id,
+            PathKind::Default,
+            vec![],
+            vec![],
+        );
+    }
+
+    value_type.parent_nodes.push(new_parent_node);
+
+    if let Some(array_key_node) = array_key_node {
+        key_type.parent_nodes.push(array_key_node);
+    }
+}
+
+/// Apply array-fetch dataflow to a result type and record it as the expression type.
+#[allow(clippy::too_many_arguments)]
+fn set_fetch_type_with_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    pos: Pos,
+    array_expr_pos: Pos,
+    keyed_array_var_id: Option<String>,
+    mut expr_type: TUnion,
+    index_type: Option<&TUnion>,
+) {
+    let mut key_type = index_type.cloned().unwrap_or_else(TUnion::array_key);
+    add_array_fetch_dataflow(
+        analyzer,
+        array_expr_pos,
+        analysis_data,
+        keyed_array_var_id,
+        &mut expr_type,
+        &mut key_type,
+    );
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
 }
 
 /// Analyze an array access expression like $arr[0] or $arr['key'].
@@ -45,39 +189,70 @@ pub fn analyze(
 
     if let (Some(base_key), Some(index_key)) = (cached_base_key.as_ref(), cached_index_key.as_ref())
     {
-        if can_reuse_cached_dim_path(base_key, index_key) {
+        // Taint (whole-program) mode needs the full fetch dataflow — the
+        // memo shortcut only registers a use sink.
+        if can_reuse_cached_dim_path(base_key, index_key)
+            && !matches!(analysis_data.data_flow_graph.kind, GraphKind::WholeProgram(_))
+        {
             let full_key = format!("{}[{}]", base_key, index_key);
-            let full_key_id = analyzer.interner.intern(&full_key);
-            if let Some(existing_type) = context.locals.get(&full_key_id) {
+            let full_key_id = VarName::new(&full_key);
+            // The narrowed dim-path type is captured BEFORE the base
+            // re-analysis below can re-derive (and widen) it.
+            if let Some(existing_type) = context.locals.get(&full_key_id).cloned() {
                 let has_asserted_dim = context_asserts_isset_state(context, &full_key) == Some(true);
-                let base_has_nullable_or_falsable_access = analyzer
-                    .interner
-                    .find(base_key)
-                    .and_then(|base_key_id| context.locals.get(&base_key_id))
-                    .is_some_and(|base_type| base_type.is_nullable || base_type.is_falsable);
+                let base_has_nullable_or_falsable_access = context
+                    .locals
+                    .get(base_key.as_str())
+                    .is_some_and(|base_type| base_type.is_nullable() || base_type.is_falsable());
 
-                if has_asserted_dim {
-                    analysis_data.set_expr_type(pos, existing_type.clone());
-                    return;
-                }
+                let reusable = has_asserted_dim
+                    || !existing_type.possibly_undefined
+                    || (context_asserts_isset_state(context, &full_key) == Some(true)
+                        && !base_has_nullable_or_falsable_access);
 
-                if existing_type.possibly_undefined {
-                    if context_asserts_isset_state(context, &full_key) == Some(true)
-                        && !base_has_nullable_or_falsable_access
+                if reusable {
+                    // Psalm analyzes the base expression regardless of the
+                    // reuse, so the read counts as a use of the base variable
+                    // in the variable-use graph. Full re-analysis here would
+                    // re-derive (and disturb) the narrowed path types, so
+                    // only the use sink is registered.
+                    if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody
+                        && let Some(base_type) = context.locals.get(base_key.as_str())
+                        && !base_type.parent_nodes.is_empty()
                     {
-                        analysis_data.set_expr_type(pos, existing_type.clone());
-                        return;
+                        let base_span = access.array.span();
+                        let sink_node = DataFlowNode::get_for_variable_sink(
+                            pzoom_code_info::VarId(analyzer.interner.intern(base_key)),
+                            make_data_flow_node_position(
+                                analyzer,
+                                (base_span.start.offset, base_span.end.offset),
+                            ),
+                        );
+                        for parent_node in &base_type.parent_nodes {
+                            analysis_data.data_flow_graph.add_path(
+                                &parent_node.id,
+                                &sink_node.id,
+                                PathKind::Default,
+                                vec![],
+                                vec![],
+                            );
+                        }
+                        analysis_data.data_flow_graph.add_node(sink_node);
                     }
-                } else {
-                    analysis_data.set_expr_type(pos, existing_type.clone());
+
+                    analysis_data.expr_types.insert(pos, Rc::new(existing_type));
                     return;
                 }
             }
         }
     }
 
-    // Analyze the array expression
+    // Analyze the array expression (general use — Hakana's
+    // array_fetch_analyzer marks the whole fetch as consuming).
+    let was_inside_general_use_for_base = context.inside_general_use;
+    context.inside_general_use = true;
     let array_pos = expression_analyzer::analyze(analyzer, access.array, analysis_data, context);
+    context.inside_general_use = was_inside_general_use_for_base;
 
     // Psalm/Hakana do not suppress undefined-variable checks for dim expressions
     // inside isset()/unset() guards.
@@ -98,38 +273,77 @@ pub fn analyze(
     context.inside_unset = was_inside_unset;
 
     let array_type = analysis_data
-        .get_expr_type(array_pos)
-        .map(|rc| (*rc).clone());
+        .expr_types.get(&array_pos).cloned()
+        .map(|rc| (*rc).clone())
+        // Reading through a type variable resolves it via its accumulated
+        // lower bounds (Hakana's instance-call receiver pattern applied to
+        // array reads — a concrete element shape is required here).
+        .map(|array_type| {
+            crate::template::resolve_type_variables_in_union(
+                &array_type,
+                &analysis_data.type_variable_bounds,
+            )
+        });
     let index_type = analysis_data
-        .get_expr_type(index_pos)
+        .expr_types.get(&index_pos).cloned()
         .map(|rc| (*rc).clone());
 
     let base_has_nullable_or_falsable_access = array_type
         .as_ref()
-        .is_some_and(|t| t.is_nullable || t.is_falsable);
+        .is_some_and(|t| t.is_nullable() || t.is_falsable());
 
     let mut cached_possibly_undefined_offset = false;
 
-    if let (Some(base_key), Some(index_key)) = (cached_base_key, cached_index_key) {
-        if can_reuse_cached_dim_path(&base_key, &index_key) {
+    let keyed_array_var_id = match (cached_base_key.as_ref(), cached_index_key.as_ref()) {
+        (Some(base_key), Some(index_key)) => Some(format!("{}[{}]", base_key, index_key)),
+        _ => None,
+    };
+
+    if let (Some(base_key), Some(index_key)) = (cached_base_key.as_ref(), cached_index_key.as_ref())
+    {
+        if can_reuse_cached_dim_path(base_key, index_key) {
             let full_key = format!("{}[{}]", base_key, index_key);
-            let full_key_id = analyzer.interner.intern(&full_key);
+            let full_key_id = VarName::new(&full_key);
             if let Some(existing_type) = context.locals.get(&full_key_id) {
                 let has_asserted_dim = context_asserts_isset_state(context, &full_key) == Some(true);
                 if has_asserted_dim {
-                    analysis_data.set_expr_type(pos, existing_type.clone());
+                    set_fetch_type_with_dataflow(
+                        analyzer,
+                        analysis_data,
+                        pos,
+                        array_pos,
+                        keyed_array_var_id.clone(),
+                        existing_type.clone(),
+                        index_type.as_ref(),
+                    );
                     return;
                 }
                 if existing_type.possibly_undefined {
                     if context_asserts_isset_state(context, &full_key) == Some(true) {
                         if !base_has_nullable_or_falsable_access {
-                            analysis_data.set_expr_type(pos, existing_type.clone());
+                            set_fetch_type_with_dataflow(
+                                analyzer,
+                                analysis_data,
+                                pos,
+                                array_pos,
+                                keyed_array_var_id.clone(),
+                                existing_type.clone(),
+                                index_type.as_ref(),
+                            );
                             return;
                         }
                     }
                     cached_possibly_undefined_offset = true;
                 } else {
-                    analysis_data.set_expr_type(pos, existing_type.clone());
+                    set_fetch_type_with_dataflow(
+                        analyzer,
+                        analysis_data,
+                        pos,
+                        array_pos,
+                        keyed_array_var_id.clone(),
+                        existing_type.clone(),
+                        index_type.as_ref(),
+                    );
                     return;
                 }
             }
@@ -138,13 +352,35 @@ pub fn analyze(
 
     // If we don't know the array type, return mixed
     let Some(array_type) = array_type else {
-        analysis_data.set_expr_type(pos, TUnion::mixed());
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
         return;
     };
-    let result_from_docblock = array_type.from_docblock;
+    // Psalm's fetched-element provenance is the nested value union's own
+    // from_docblock (Union::setFromDocblock marks all levels), so a
+    // signature-backed outer union can lose the flag while its elements stay
+    // docblock-defined. The combiner below rebuilds the union from atomics,
+    // so the value unions' flags are OR-accumulated here.
+    let mut result_from_docblock = array_type.from_docblock;
+    // Psalm's ArrayFetchAnalyzer recurses into a template parameter's bound
+    // for array access (`DATA[$k]` where DATA as array<string, V> fetches V) —
+    // except when the offset is itself a template (`DATA[K]` with K as
+    // key-of<DATA> stays a deferred indexed access).
+    let index_is_templated = index_type.as_ref().is_some_and(|index_type| {
+        index_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+    });
+    let array_type = if index_is_templated {
+        array_type
+    } else {
+        expand_template_union_bounds(&array_type)
+    };
 
     // Check each type in the union
     let mut result_types: Vec<TAtomic> = Vec::new();
+    let mut result_ignore_nullable = false;
+    let mut result_ignore_falsable = false;
     let mut has_valid_access = false;
     let mut has_invalid_access = false;
     let mut has_null = false;
@@ -174,8 +410,22 @@ pub fn analyze(
             | TAtomic::TList { value_type }
             | TAtomic::TNonEmptyList { value_type } => {
                 has_valid_access = true;
+                let is_list_atomic =
+                    matches!(atomic, TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. });
                 if !literal_index_keys.is_empty() {
-                    has_literal_index_hit = true;
+                    // List keys are non-negative (Psalm types them
+                    // int<0, max>): a provably-negative literal offset is a
+                    // miss, not a hit.
+                    let all_negative = is_list_atomic
+                        && literal_index_keys.iter().all(|key| match key {
+                            ArrayKey::Int(value) => *value < 0,
+                            ArrayKey::String(_) => false,
+                        });
+                    if all_negative {
+                        has_literal_index_miss = true;
+                    } else {
+                        has_literal_index_hit = true;
+                    }
                 }
                 let key_type = match atomic {
                     TAtomic::TArray { key_type, .. } | TAtomic::TNonEmptyArray { key_type, .. } => {
@@ -185,6 +435,7 @@ pub fn analyze(
                 };
                 merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
                 atomic_expected_offset_types.push(key_type);
+                result_from_docblock |= value_type.from_docblock;
                 for t in &value_type.types {
                     if !result_types.contains(t) {
                         result_types.push(t.clone());
@@ -244,15 +495,76 @@ pub fn analyze(
                 } else {
                     // Non-literal keyed access is handled via key-type checks; Psalm does not
                     // generally emit possibly-undefined-offset here.
-                    for value in properties.values() {
-                        for t in &value.types {
-                            if !result_types.contains(t) {
-                                result_types.push(t.clone());
+                    // A plain-mixed contributor swallows the others (Psalm's
+                    // combineUnionTypes collapses X|mixed to mixed), so a
+                    // shape's known keys don't leak past a mixed fallback.
+                    let has_plain_mixed = properties
+                        .values()
+                        .chain(fallback_value_type.as_deref())
+                        .any(|value| {
+                            value.types.iter().any(|t| matches!(t, TAtomic::TMixed))
+                        });
+                    if has_plain_mixed {
+                        if !result_types.contains(&TAtomic::TMixed) {
+                            result_types.push(TAtomic::TMixed);
+                        }
+                    } else {
+                        for value in properties.values() {
+                            for t in &value.types {
+                                if !result_types.contains(t) {
+                                    result_types.push(t.clone());
+                                }
+                            }
+                        }
+                        if let Some(fallback) = fallback_value_type {
+                            for t in &fallback.types {
+                                if !result_types.contains(t) {
+                                    result_types.push(t.clone());
+                                }
                             }
                         }
                     }
-                    if let Some(fallback) = fallback_value_type {
-                        for t in &fallback.types {
+                }
+            }
+
+            // class-string-map: the value type is a function of the class-string
+            // key. Mirrors Psalm's handleArrayAccessOnClassStringMap — substitute
+            // the placeholder template with each offset's class-string target.
+            TAtomic::TClassStringMap {
+                param_name,
+                as_type,
+                value_param,
+            } => {
+                has_valid_access = true;
+                if !literal_index_keys.is_empty() {
+                    has_literal_index_hit = true;
+                }
+
+                let expected_key = TUnion::new(TAtomic::TClassString {
+                    as_type: as_type.clone(),
+                });
+                merge_expected_offset_type(&mut expected_offset_type, expected_key.clone());
+                atomic_expected_offset_types.push(expected_key);
+
+                if let Some(index_type) = index_type.as_ref() {
+                    for offset_atomic in &index_type.types {
+                        let Some(replacement) =
+                            class_string_map_offset_replacement(analyzer, offset_atomic)
+                        else {
+                            continue;
+                        };
+
+                        let mut template_result = pzoom_code_info::TemplateResult::default();
+                        crate::template::lower_bounds_insert(
+                            &mut template_result,
+                            *param_name,
+                            pzoom_code_info::GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
+                            TUnion::new(replacement),
+                        );
+                        let substituted =
+                            inferred_type_replacer::replace(value_param, &template_result);
+
+                        for t in &substituted.types {
                             if !result_types.contains(t) {
                                 result_types.push(t.clone());
                             }
@@ -271,8 +583,85 @@ pub fn analyze(
             | TAtomic::TLowercaseString
             | TAtomic::TNonEmptyLowercaseString => {
                 has_valid_access = true;
-                merge_expected_offset_type(&mut expected_offset_type, TUnion::int());
-                atomic_expected_offset_types.push(TUnion::int());
+                // A literal string bounds its valid offsets (Psalm's
+                // handleArrayAccessOnString): '' accepts none, a short
+                // literal accepts -len..len-1, anything else any int.
+                let mut literal_len: Option<i64> = match atomic {
+                    TAtomic::TLiteralString { value } => Some(value.len() as i64),
+                    _ => None,
+                };
+                // A string-offset read yields a single character (Psalm's
+                // TSingleLetter): `$s[0][1]` only accepts offset 0.
+                if literal_len.is_none()
+                    && let mago_syntax::ast::ast::expression::Expression::ArrayAccess(
+                        inner_access,
+                    ) = access.array.unparenthesized()
+                {
+                    let inner_span = mago_span::HasSpan::span(inner_access.array);
+                    let inner_base_is_string = analysis_data
+                        .expr_types.get(&(inner_span.start.offset, inner_span.end.offset)).cloned()
+                        .is_some_and(|inner_base| {
+                            !inner_base.types.is_empty()
+                                && inner_base.types.iter().all(|inner_atomic| {
+                                    matches!(
+                                        inner_atomic,
+                                        TAtomic::TString
+                                            | TAtomic::TNonEmptyString
+                                            | TAtomic::TLiteralString { .. }
+                                            | TAtomic::TNumericString
+                                            | TAtomic::TTruthyString
+                                            | TAtomic::TLowercaseString
+                                            | TAtomic::TNonEmptyLowercaseString
+                                    )
+                                })
+                        });
+                    if inner_base_is_string {
+                        literal_len = Some(1);
+                    }
+                }
+                let valid_offset_type = match literal_len {
+                    // '' has no valid offsets (Psalm: never). The expectation
+                    // machinery skips empty unions (empty arrays rely on
+                    // that), so report directly.
+                    Some(0) => {
+                        if !context.inside_isset && !context.inside_unset {
+                            let span = access.index.span();
+                            let start_line =
+                                get_line_number(analyzer.source, span.start.offset);
+                            analysis_data.add_issue(Issue::new(
+                                IssueKind::InvalidArrayOffset,
+                                "Cannot access value on an empty string",
+                                analyzer.file_path,
+                                span.start.offset,
+                                span.end.offset,
+                                start_line,
+                                0,
+                            ));
+                        }
+                        TUnion::int()
+                    }
+                    Some(len) if len < 10 => TUnion::from_types(
+                        (-len..len)
+                            .map(|value| TAtomic::TLiteralInt { value })
+                            .collect(),
+                    ),
+                    _ => TUnion::int(),
+                };
+                // An in-range int literal offset is valid on a string, so a
+                // shape miss elsewhere in the union is only *possibly* invalid.
+                if !literal_index_keys.is_empty()
+                    && literal_index_keys.iter().all(|key| match key {
+                        ArrayKey::Int(value) => match literal_len {
+                            Some(len) => *value >= -len && *value < len,
+                            None => true,
+                        },
+                        ArrayKey::String(_) => false,
+                    })
+                {
+                    has_literal_index_hit = true;
+                }
+                merge_expected_offset_type(&mut expected_offset_type, valid_offset_type.clone());
+                atomic_expected_offset_types.push(valid_offset_type);
                 if !result_types.contains(&TAtomic::TString) {
                     result_types.push(TAtomic::TString);
                 }
@@ -289,7 +678,8 @@ pub fn analyze(
                 result_types.push(TAtomic::TMixed);
             }
 
-            // Invalid array access types
+            // Invalid array access types. `iterable` may be a Traversable,
+            // which has no dim access (Psalm: InvalidArrayAccess).
             TAtomic::TInt
             | TAtomic::TLiteralInt { .. }
             | TAtomic::TFloat
@@ -299,6 +689,7 @@ pub fn analyze(
             | TAtomic::TFalse
             | TAtomic::TObject
             | TAtomic::TResource
+            | TAtomic::TIterable { .. }
             | TAtomic::TCallable { .. }
             | TAtomic::TClosure { .. }
             | TAtomic::TVoid => {
@@ -307,43 +698,94 @@ pub fn analyze(
             }
             TAtomic::TNothing => {}
 
-            TAtomic::TNamedObject { name, .. } => {
-                if class_supports_array_access(analyzer, *name) {
+            // An intersection (`Traversable&ArrayAccess<int, string>&...`,
+            // e.g. arraylike-object) fetches through its ArrayAccess member.
+            TAtomic::TObjectIntersection { types } => {
+                let access_member = types.iter().find(|member| {
+                    matches!(member, TAtomic::TNamedObject { name, .. }
+                        if class_supports_array_access(analyzer, *name))
+                });
+                if let Some(member @ TAtomic::TNamedObject { name, .. }) = access_member {
                     has_valid_access = true;
                     if !literal_index_keys.is_empty() {
                         has_literal_index_hit = true;
                     }
-                    let class_name = analyzer.interner.lookup(*name);
-                    let is_weak_map = class_name
-                        .trim_start_matches('\\')
-                        .eq_ignore_ascii_case("WeakMap");
-
-                    if is_weak_map {
-                        if let TAtomic::TNamedObject {
-                            type_params: Some(type_params),
-                            ..
-                        } = atomic
-                        {
-                            if let Some(key_type) = type_params.first() {
-                                merge_expected_offset_type(
-                                    &mut expected_offset_type,
-                                    key_type.clone(),
-                                );
-                                atomic_expected_offset_types.push(key_type.clone());
+                    if let Some((key_type, value_type)) =
+                        resolve_array_access_method_types(analyzer, member, *name)
+                    {
+                        merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
+                        atomic_expected_offset_types.push(key_type);
+                        result_ignore_nullable |= value_type.ignore_nullable_issues;
+                        result_ignore_falsable |= value_type.ignore_falsable_issues;
+                        for t in &value_type.types {
+                            if !result_types.contains(t) {
+                                result_types.push(t.clone());
                             }
-                            if let Some(value_type) = type_params.get(1) {
-                                for t in &value_type.types {
-                                    if !result_types.contains(t) {
-                                        result_types.push(t.clone());
-                                    }
-                                }
-                            } else if !result_types.contains(&TAtomic::TMixed) {
-                                result_types.push(TAtomic::TMixed);
-                            }
-                        } else if !result_types.contains(&TAtomic::TMixed) {
-                            merge_expected_offset_type(&mut expected_offset_type, TUnion::mixed());
-                            atomic_expected_offset_types.push(TUnion::mixed());
+                        }
+                    } else {
+                        merge_expected_offset_type(&mut expected_offset_type, TUnion::mixed());
+                        atomic_expected_offset_types.push(TUnion::mixed());
+                        if !result_types.contains(&TAtomic::TMixed) {
                             result_types.push(TAtomic::TMixed);
+                        }
+                    }
+                } else {
+                    has_invalid_access = true;
+                    invalid_type_name = atomic.get_id(Some(analyzer.interner));
+                }
+            }
+
+            TAtomic::TNamedObject { name, .. } => {
+                // Psalm hard-codes SimpleXMLElement dim access to
+                // SimpleXMLElement|null (handleArrayAccessOnNamedObject).
+                if *name == StrId::SIMPLE_XML_ELEMENT
+                    || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
+                        class_info.all_parent_classes.contains(&StrId::SIMPLE_XML_ELEMENT)
+                    })
+                {
+                    has_valid_access = true;
+                    if !literal_index_keys.is_empty() {
+                        has_literal_index_hit = true;
+                    }
+                    merge_expected_offset_type(&mut expected_offset_type, TUnion::array_key());
+                    atomic_expected_offset_types.push(TUnion::array_key());
+                    for simplexml_member in [
+                        TAtomic::TNull,
+                        TAtomic::TNamedObject {
+                            name: StrId::SIMPLE_XML_ELEMENT,
+                            type_params: None,
+                            is_static: false,
+                            remapped_params: false,
+                        },
+                    ] {
+                        if !result_types.contains(&simplexml_member) {
+                            result_types.push(simplexml_member);
+                        }
+                    }
+                } else if class_supports_array_access(analyzer, *name) {
+                    has_valid_access = true;
+                    if !literal_index_keys.is_empty() {
+                        has_literal_index_hit = true;
+                    }
+                    // Psalm's handleArrayAccessOnObject types the access via
+                    // the class's offsetGet, localizing the declaring class's
+                    // templates through the receiver's type params
+                    // (SplObjectStorage<Node, Union>[$node] is Union).
+                    if let Some((key_type, value_type)) =
+                        resolve_array_access_method_types(analyzer, atomic, *name)
+                    {
+                        merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
+                        atomic_expected_offset_types.push(key_type);
+                        // ArrayAccess::offsetGet is `TValue|null` with
+                        // @psalm-ignore-nullable-return: the fetched union
+                        // keeps the ignore flags (Psalm's combineUnionTypes
+                        // preserves them).
+                        result_ignore_nullable |= value_type.ignore_nullable_issues;
+                        result_ignore_falsable |= value_type.ignore_falsable_issues;
+                        for t in &value_type.types {
+                            if !result_types.contains(t) {
+                                result_types.push(t.clone());
+                            }
                         }
                     } else {
                         merge_expected_offset_type(&mut expected_offset_type, TUnion::mixed());
@@ -369,6 +811,36 @@ pub fn analyze(
         }
     }
 
+    // Hakana `handle_array_access_on_mixed`: record mixed-source data and connect the
+    // array's parents to a "mixed-var-array-access" node.
+    if has_mixed_access && !context.inside_isset {
+        for origin in &array_type.parent_nodes {
+            analysis_data
+                .data_flow_graph
+                .add_mixed_data(origin, format!("{}-{}", pos.0, pos.1));
+        }
+
+        if !array_type.parent_nodes.is_empty() {
+            let new_parent_node = DataFlowNode::get_for_local_string(
+                "mixed-var-array-access".to_string(),
+                make_data_flow_node_position(analyzer, pos),
+            );
+            analysis_data
+                .data_flow_graph
+                .add_node(new_parent_node.clone());
+
+            for parent_node in array_type.parent_nodes.iter() {
+                analysis_data.data_flow_graph.add_path(
+                    &parent_node.id,
+                    &new_parent_node.id,
+                    PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+        }
+    }
+
     // Report issues based on what we found
     let span = access.array.span();
     let start_line = get_line_number(analyzer.source, span.start.offset);
@@ -389,7 +861,15 @@ pub fn analyze(
             start_line,
             0,
         ));
-        analysis_data.set_expr_type(pos, TUnion::mixed());
+        set_fetch_type_with_dataflow(
+            analyzer,
+            analysis_data,
+            pos,
+            array_pos,
+            keyed_array_var_id,
+            TUnion::mixed(),
+            index_type.as_ref(),
+        );
         return;
     }
 
@@ -421,12 +901,24 @@ pub fn analyze(
             start_line,
             0,
         ));
-        analysis_data.set_expr_type(pos, TUnion::mixed());
+        set_fetch_type_with_dataflow(
+            analyzer,
+            analysis_data,
+            pos,
+            array_pos,
+            keyed_array_var_id,
+            TUnion::mixed(),
+            index_type.as_ref(),
+        );
         return;
     }
 
-    // Possibly invalid access (union with non-array type)
-    if has_invalid_access && has_valid_access && !context.inside_isset {
+    // Possibly invalid access (union with non-array type). Psalm skips the
+    // false-member complaint for internal-function returns marked
+    // ignore_falsable_issues (ignoreInternalFunctionFalseReturn).
+    let invalid_only_ignored_false =
+        invalid_type_name == "false" && array_type.ignore_falsable_issues;
+    if has_invalid_access && has_valid_access && !context.inside_isset && !invalid_only_ignored_false {
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyInvalidArrayAccess,
             format!(
@@ -459,6 +951,55 @@ pub fn analyze(
         && !context.inside_unset;
 
     let mut emitted_offset_issue = false;
+    if !literal_index_keys.is_empty()
+        && has_literal_index_miss
+        && has_literal_index_hit
+        && !has_mixed_access
+        && !context.inside_unset
+        && !context.inside_isset
+    {
+        // Some union members accept the offset (e.g. a string half taking int
+        // offsets) while an array shape misses it — Psalm's
+        // PossiblyInvalidArrayOffset.
+        let span = access.index.span();
+        let start_line = get_line_number(analyzer.source, span.start.offset);
+        // Psalm spells literal offsets as `using offset value of '0|1'`
+        // (raw values joined with |, in single quotes) and other offsets as
+        // `using a {type} offset`.
+        let literal_values: Option<Vec<String>> = index_type.as_ref().and_then(|union| {
+            union
+                .types
+                .iter()
+                .map(|atomic| match atomic {
+                    TAtomic::TLiteralInt { value } => Some(value.to_string()),
+                    TAtomic::TLiteralString { value } => Some(value.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        let used_offset = match literal_values {
+            Some(values) if !values.is_empty() => {
+                format!("using offset value of '{}'", values.join("|"))
+            }
+            _ => format!(
+                "using a {} offset",
+                index_type
+                    .as_ref()
+                    .map(|t| t.get_id(Some(analyzer.interner)))
+                    .unwrap_or_else(|| "array-key".to_string())
+            ),
+        };
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyInvalidArrayOffset,
+            format!("Cannot access value {}", used_offset),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        emitted_offset_issue = true;
+    }
     if should_emit_invalid_literal_offset {
         let span = access.index.span();
         let start_line = get_line_number(analyzer.source, span.start.offset);
@@ -479,12 +1020,23 @@ pub fn analyze(
         emitted_offset_issue = true;
     }
 
+    // Psalm reports the possibly-undefined offset alongside a
+    // possibly-invalid (e.g. array|false) access — pure invalid accesses
+    // returned earlier.
     if has_possibly_undefined_offset
         && !should_emit_invalid_literal_offset
-        && !has_invalid_access
         && !context.inside_isset
         && !context.inside_unset
         && !context.inside_conditional
+        // Psalm's IssueBuffer::accepts gates the |null widening on the issue
+        // actually reporting: a suppressed PossiblyUndefinedArrayOffset
+        // leaves the fetched type alone.
+        && !crate::issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            span.start.offset,
+            "PossiblyUndefinedArrayOffset",
+        )
     {
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyUndefinedArrayOffset,
@@ -495,36 +1047,77 @@ pub fn analyze(
             start_line,
             0,
         ));
+        // Psalm widens the reported fetch with |null (the runtime yields
+        // null plus a warning when the key is absent).
+        if !result_types.is_empty() && !result_types.contains(&TAtomic::TNull) {
+            result_types.push(TAtomic::TNull);
+        }
     }
 
     // Check for invalid array offset type
     if let Some(index_type) = index_type.clone() {
         if emitted_offset_issue {
-            if result_types.is_empty() {
-                analysis_data.set_expr_type(pos, TUnion::nothing());
+            let result_union = if result_types.is_empty() {
+                TUnion::nothing()
             } else {
                 let combined = type_combiner::combine(result_types, false);
                 let mut result_union = TUnion::from_types(combined);
-                result_union.from_docblock = result_from_docblock;
-                analysis_data.set_expr_type(pos, result_union);
-            }
+                result_union.from_docblock |= result_from_docblock;
+                result_union
+            };
+            set_fetch_type_with_dataflow(
+                analyzer,
+                analysis_data,
+                pos,
+                array_pos,
+                keyed_array_var_id,
+                result_union,
+                Some(&index_type),
+            );
             return;
         }
 
         if context.inside_unset {
             // Psalm/Hakana do not report array-offset-type issues inside unset guards.
-            if result_types.is_empty() {
-                analysis_data.set_expr_type(pos, TUnion::mixed());
+            let result_union = if result_types.is_empty() {
+                TUnion::mixed()
             } else {
                 let combined = type_combiner::combine(result_types, false);
                 let mut result_union = TUnion::from_types(combined);
-                result_union.from_docblock = result_from_docblock;
-                analysis_data.set_expr_type(pos, result_union);
-            }
+                result_union.from_docblock |= result_from_docblock;
+                result_union
+            };
+            set_fetch_type_with_dataflow(
+                analyzer,
+                analysis_data,
+                pos,
+                array_pos,
+                keyed_array_var_id,
+                result_union,
+                Some(&index_type),
+            );
             return;
         }
 
-        if atomic_expected_offset_types.is_empty() {
+        // Psalm's getArrayAccessTypeGivenOffset: a mixed offset reports
+        // MixedArrayOffset before any expected-offset comparison.
+        if index_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed))
+        {
+            let span = access.index.span();
+            let start_line = get_line_number(analyzer.source, span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::MixedArrayOffset,
+                "Cannot access value using mixed offset",
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                start_line,
+                0,
+            ));
+        } else if atomic_expected_offset_types.is_empty() {
             emitted_offset_issue = check_array_offset(
                 &index_type,
                 expected_offset_type.as_ref(),
@@ -546,38 +1139,109 @@ pub fn analyze(
     }
 
     // Set the result type using the type combiner for proper simplification
-    if result_types.is_empty() {
+    let result_union = if result_types.is_empty() {
         if emitted_offset_issue {
-            analysis_data.set_expr_type(pos, TUnion::nothing());
+            TUnion::nothing()
         } else {
-            analysis_data.set_expr_type(pos, TUnion::mixed());
+            TUnion::mixed()
         }
     } else {
         let combined = type_combiner::combine(result_types, false);
         let mut result_union = TUnion::from_types(combined);
-        result_union.from_docblock = result_from_docblock;
-        analysis_data.set_expr_type(pos, result_union);
-    }
+        result_union.from_docblock |= result_from_docblock;
+        result_union.ignore_nullable_issues |= result_ignore_nullable;
+        result_union.ignore_falsable_issues |= result_ignore_falsable;
+        result_union
+    };
+    // Psalm's ArrayFetchAnalyzer tail: a fetch from a provably-empty array
+    // reports EmptyArrayAccess and degrades to mixed rather than flowing a
+    // `never` into later expressions.
+    let result_union = if result_union.is_nothing()
+        && !emitted_offset_issue
+        && !array_type.is_mixed()
+        && !context.inside_isset
+        && !context.inside_by_ref_argument
+    {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::EmptyArrayAccess,
+            format!(
+                "Cannot access value on empty array variable {}",
+                cached_base_key.as_deref().unwrap_or("")
+            ),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        TUnion::mixed()
+    } else {
+        result_union
+    };
+    set_fetch_type_with_dataflow(
+        analyzer,
+        analysis_data,
+        pos,
+        array_pos,
+        keyed_array_var_id,
+        result_union,
+        index_type.as_ref(),
+    );
 
     if let (Some(base_key), Some(index_key)) = (
         expression_identifier::get_expression_var_key(access.array),
         get_array_index_key(access.index),
     ) {
-        if can_reuse_cached_dim_path(&base_key, &index_key)
-            && let Some(expr_type) = analysis_data.get_expr_type(pos).map(|t| (*t).clone())
+        // Psalm only stores fetch results outside isset() — an isset-guarded
+        // fetch is issue-suppressed (e.g. `b?:` loses possibly_undefined), so
+        // caching it would leak a definite type into the surrounding scope.
+        if !context.inside_isset
+            && can_reuse_cached_dim_path(&base_key, &index_key)
+            && let Some(expr_type) = analysis_data.expr_types.get(&pos).cloned().map(|t| (*t).clone())
         {
             let is_cacheable = !expr_type.is_mixed()
-                && !expr_type.is_nullable
-                && !expr_type.is_falsable
+                && !expr_type.is_nullable()
+                && !expr_type.is_falsable()
                 && !expr_type.possibly_undefined
                 && !expr_type.is_nothing();
 
             if is_cacheable {
                 let full_key = format!("{}[{}]", base_key, index_key);
-                let full_key_id = analyzer.interner.intern(&full_key);
+                let full_key_id = VarName::new(&full_key);
                 context.locals.insert(full_key_id, expr_type);
             }
         }
+    }
+}
+
+/// The class-string target of an array offset, used to substitute a
+/// `class-string-map`'s placeholder template (Psalm's
+/// `handleArrayAccessOnClassStringMap`): a templated `class-string<T2>` stays
+/// deferred as the template param `T2`, `class-string<Foo>` / `Foo::class`
+/// resolve to the named object, and a bare `class-string` yields `object`.
+/// Non-class-string offsets are skipped (Psalm ignores them too).
+fn class_string_map_offset_replacement(
+    analyzer: &StatementsAnalyzer<'_>,
+    offset_atomic: &TAtomic,
+) -> Option<TAtomic> {
+    match offset_atomic {
+        TAtomic::TTemplateParamClass {
+            name,
+            defining_entity,
+            as_type,
+        } => Some(TAtomic::TTemplateParam {
+            name: *name,
+            defining_entity: *defining_entity,
+            as_type: Box::new(TUnion::new((**as_type).clone())),
+        }),
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => Some((**as_type).clone()),
+        TAtomic::TClassString { as_type: None } => Some(TAtomic::TObject),
+        TAtomic::TLiteralClassString { name } => Some(TAtomic::named_object(
+            analyzer.interner.intern(name.trim_start_matches('\\')),
+        )),
+        _ => None,
     }
 }
 
@@ -611,6 +1275,17 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
 
             Some(format!("{}::{}", class_name, constant_name))
         }
+        // Property paths / memoized method calls as dims key the same way the
+        // assertion finder keys them (expression_identifier), so a narrowed
+        // `$arr[$obj->prop]` entry is found again by the body's refetch.
+        Expression::ArrayAccess(_)
+        | Expression::Access(Access::Property(_))
+        | Expression::Access(Access::NullSafeProperty(_))
+        | Expression::Access(Access::StaticProperty(_))
+        | Expression::Call(mago_syntax::ast::ast::call::Call::Method(_))
+        | Expression::Call(mago_syntax::ast::ast::call::Call::NullSafeMethod(_)) => {
+            expression_identifier::get_expression_var_key(expr).map(|key| key.to_string())
+        }
         _ => None,
     }
 }
@@ -625,7 +1300,7 @@ fn context_asserts_isset_state(context: &BlockContext, var_name: &str) -> Option
     let descendant_prefix_property = format!("{var_name}->");
 
     for clause in &context.clauses {
-        for (name, assertions_by_offset) in &clause.possibilities {
+        for (name, assertions_by_offset) in clause.possibilities.iter() {
             let ClauseKey::Name(name) = name else {
                 continue;
             };
@@ -706,26 +1381,109 @@ fn get_literal_array_keys_from_union(index_type: &TUnion) -> Option<Vec<ArrayKey
     Some(keys)
 }
 
-fn class_supports_array_access(analyzer: &StatementsAnalyzer<'_>, class_name: StrId) -> bool {
-    let array_access = analyzer.interner.intern("ArrayAccess");
-    let array_access_fq = analyzer.interner.intern("\\ArrayAccess");
+/// The (key, value) types of an ArrayAccess-like receiver, from its
+/// offsetGet signature with the declaring class's templates localized
+/// through the receiver's type params (Psalm's handleArrayAccessOnObject).
+pub(crate) fn resolve_array_access_method_types(
+    analyzer: &StatementsAnalyzer<'_>,
+    atomic: &TAtomic,
+    class_id: StrId,
+) -> Option<(TUnion, TUnion)> {
+    let class_info = analyzer.codebase.get_class(class_id)?;
+    let type_params = if let TAtomic::TNamedObject { type_params, .. } = atomic {
+        type_params.as_deref()
+    } else {
+        None
+    };
 
+    // Psalm rewrites `$nodeList[$i]` on DOMNodeList to `$nodeList->item($i)`
+    // (handleArrayAccessOnNamedObject's domnodelist special case).
+    let accessor = if analyzer
+        .interner
+        .lookup(class_id)
+        .eq_ignore_ascii_case("DOMNodeList")
+    {
+        "item"
+    } else {
+        "offsetGet"
+    };
+    let offset_get_id = analyzer.interner.intern(accessor);
+    let method_info = class_info.methods.get(&offset_get_id).map(|m| &**m).or_else(|| {
+        class_info
+            .all_parent_classes
+            .iter()
+            .chain(class_info.all_parent_interfaces.iter())
+            .find_map(|ancestor| {
+                analyzer
+                    .codebase
+                    .get_class(*ancestor)?
+                    .methods
+                    .get(&offset_get_id)
+                    .map(|m| &**m)
+            })
+    })?;
+
+    let key_type = method_info
+        .params
+        .first()
+        .and_then(|param| param.get_type().cloned())
+        .unwrap_or_else(TUnion::mixed);
+    let value_type = method_info.get_return_type().cloned().unwrap_or_else(TUnion::mixed);
+
+    if value_type.is_mixed() && key_type.is_mixed() {
+        return None;
+    }
+
+    let mut localized_key = crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
+        class_info, type_params, &key_type,
+    );
+    let mut localized_value = crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
+        class_info, type_params, &value_type,
+    );
+    // `static`/`self` in the offsetGet signature resolve to the receiver
+    // (SimpleXMLElement::offsetGet(): static|null reads as the element type).
+    for union in [&mut localized_key, &mut localized_value] {
+        crate::type_expander::expand_union(
+            analyzer.codebase,
+            analyzer.interner,
+            union,
+            &crate::type_expander::TypeExpansionOptions {
+                self_class: Some(class_id),
+                static_class_type: crate::type_expander::StaticClassType::Name(class_id),
+                ..Default::default()
+            },
+        );
+    }
+    Some((localized_key, localized_value))
+}
+
+fn class_supports_array_access(analyzer: &StatementsAnalyzer<'_>, class_name: StrId) -> bool {
     if class_name == StrId::SIMPLE_XML_ELEMENT {
         return true;
     }
 
-    if class_name == array_access || class_name == array_access_fq {
+    // Psalm special-cases DOMNodeList dim access as an ->item() call.
+    if analyzer
+        .interner
+        .lookup(class_name)
+        .eq_ignore_ascii_case("DOMNodeList")
+    {
+        return true;
+    }
+
+    if class_name == StrId::ARRAY_ACCESS {
         return true;
     }
 
     let Some(class_info) = analyzer.codebase.get_class(class_name) else {
-        return false;
+        // An unknown class can't be disproven to implement ArrayAccess;
+        // UndefinedClass/UndefinedDocblockClass is reported elsewhere
+        // (Psalm doesn't add InvalidArrayAccess on top).
+        return true;
     };
 
-    class_info.interfaces.contains(&array_access)
-        || class_info.interfaces.contains(&array_access_fq)
-        || class_info.all_parent_interfaces.contains(&array_access)
-        || class_info.all_parent_interfaces.contains(&array_access_fq)
+    class_info.interfaces.contains(&StrId::ARRAY_ACCESS)
+        || class_info.all_parent_interfaces.contains(&StrId::ARRAY_ACCESS)
 }
 
 /// Check if the array offset type is valid.
@@ -739,12 +1497,11 @@ fn check_array_offset(
 ) -> bool {
     if let Some(expected_offset_type) = expected_offset_type {
         let coerce_class_strings = should_coerce_class_string_offsets(expected_offset_type);
-        let normalized_index_type =
-            normalize_array_offset_comparison_union(
-                &expand_template_union_bounds(index_type),
-                analyzer,
-                coerce_class_strings,
-            );
+        let normalized_index_type = normalize_array_offset_comparison_union(
+            index_type,
+            analyzer,
+            coerce_class_strings,
+        );
 
         if expected_offset_type
             .types
@@ -778,6 +1535,15 @@ fn check_array_offset(
             false,
             &mut comparison_result,
         ) {
+            return false;
+        }
+
+        // Psalm's handleArrayAccessOnKeyedArray accepts an offset whose
+        // mismatch is a coercion from the wider scalar (a plain string key on
+        // a literal-keyed shape) or from mixed — no offset issue is emitted.
+        if comparison_result.type_coerced_from_scalar.unwrap_or(false)
+            || comparison_result.type_coerced_from_mixed.unwrap_or(false)
+        {
             return false;
         }
 
@@ -958,12 +1724,11 @@ fn check_array_offset_against_expected_branches(
     let coerce_class_strings = expected_branches
         .iter()
         .all(should_coerce_class_string_offsets);
-    let normalized_index_type =
-        normalize_array_offset_comparison_union(
-            &expand_template_union_bounds(index_type),
-            analyzer,
-            coerce_class_strings,
-        );
+    let normalized_index_type = normalize_array_offset_comparison_union(
+        index_type,
+        analyzer,
+        coerce_class_strings,
+    );
 
     if expected_branches.iter().any(|expected| {
         expected
@@ -1003,6 +1768,16 @@ fn check_array_offset_against_expected_branches(
             false,
             &mut comparison_result,
         ) {
+            has_valid_branch = true;
+            continue;
+        }
+
+        // Psalm's handleArrayAccessOnKeyedArray accepts an offset whose
+        // mismatch is a coercion from the wider scalar (a plain string key on
+        // a literal-keyed shape) or from mixed — no offset issue is emitted.
+        if comparison_result.type_coerced_from_scalar.unwrap_or(false)
+            || comparison_result.type_coerced_from_mixed.unwrap_or(false)
+        {
             has_valid_branch = true;
             continue;
         }
@@ -1103,6 +1878,18 @@ fn merge_expected_offset_type(target: &mut Option<TUnion>, incoming: TUnion) {
 }
 
 fn expand_template_union_bounds(union: &TUnion) -> TUnion {
+    let has_template = union.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TTemplateParam { .. } | TAtomic::TTemplateParamClass { .. }
+        )
+    });
+    if !has_template {
+        // Nothing to expand — keep the union (and its metadata: parent_nodes,
+        // ignore_falsable_issues, …) untouched.
+        return union.clone();
+    }
+
     let mut expanded = Vec::new();
 
     for atomic in &union.types {
@@ -1130,7 +1917,12 @@ fn expand_template_union_bounds(union: &TUnion) -> TUnion {
     if expanded.is_empty() {
         union.clone()
     } else {
-        TUnion::from_types(expanded)
+        let mut expanded_union = TUnion::from_types(expanded);
+        expanded_union.parent_nodes = union.parent_nodes.clone();
+        expanded_union.ignore_falsable_issues = union.ignore_falsable_issues;
+        expanded_union.ignore_nullable_issues = union.ignore_nullable_issues;
+        expanded_union.possibly_undefined = union.possibly_undefined;
+        expanded_union
     }
 }
 
@@ -1359,8 +2151,11 @@ fn is_unresolved_expected_offset_atomic(
         | TAtomic::TKeyedArray { .. }
         | TAtomic::TObject => true,
         TAtomic::TNamedObject { name, .. } => {
+            // A known class as the expected offset is a legitimate object key
+            // (e.g. WeakMap<Throwable, int>); only unresolvable names count
+            // as unresolved.
             let type_name = analyzer.interner.lookup(*name);
-            !type_name.contains("::")
+            !type_name.contains("::") && analyzer.codebase.get_class(*name).is_none()
         }
         _ => false,
     }

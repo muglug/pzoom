@@ -11,7 +11,7 @@ use pzoom_code_info::functionlike_info::{
     FunctionLikeInfo,
     FunctionTemplateType,
 };
-use pzoom_code_info::{TAtomic, TUnion};
+use pzoom_code_info::GenericParent;
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 
@@ -34,7 +34,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // `return_type` holds the docblock type only (Psalm's model); the native hint
         // stays in `signature_return_type`. Effective reads use get_return_type().
         let mut return_type = None;
+        // The native hint's span is the fallback origin location; a docblock
+        // @return (captured below) takes precedence, matching Psalm's
+        // return_type_location.
+        let mut return_type_location: Option<(u32, u32)> = func.return_type_hint.as_ref().map(|rth| {
+            let hint_span = rth.hint.span();
+            (hint_span.start.offset, hint_span.end.offset)
+        });
         let mut is_pure = false;
+        let mut has_throws = false;
+        let mut unused_docblock_params: Vec<(String, u32)> = Vec::new();
         let mut is_mutation_free = false;
         let mut is_deprecated = false;
         let mut deprecation_message = None;
@@ -48,12 +57,15 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut no_named_arguments = false;
         let mut function_template_map: TemplateMap = FxHashMap::default();
         let mut function_docblock_issues: Vec<DocblockIssue> = Vec::new();
+        let mut taints = pzoom_code_info::functionlike_info::FunctionLikeTaints::default();
 
-        if let Some(docblock) = self.find_preceding_docblock(span.start.offset) {
+        if let Some((docblock_start, docblock)) =
+            self.find_preceding_docblock_with_offset(span.start.offset)
+        {
             let parsed = crate::docblock::parse(docblock, 0);
             let template_bindings = self.parse_docblock_template_bindings(
                 &parsed,
-                name,
+                GenericParent::FunctionLike(name),
                 None,
                 None,
                 None,
@@ -64,6 +76,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 .iter()
                 .map(|binding| FunctionTemplateType {
                     name: binding.name,
+                    conditional_subject: false,
                     defining_entity: binding.defining_entity,
                     as_type: binding.as_type.clone(),
                 })
@@ -84,6 +97,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             );
             inherits_docblock = self.is_docblock_inheritdoc(&parsed);
             is_pure = self.is_docblock_pure(&parsed);
+            has_throws = parsed.tags.contains_key("throws")
+                            || parsed.tags.contains_key("phpstan-throws");
             is_mutation_free = self.is_docblock_mutation_free(&parsed);
             no_named_arguments = self.is_docblock_no_named_arguments(&parsed);
             is_deprecated = self.is_docblock_deprecated(&parsed);
@@ -108,7 +123,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 function_docblock_type_aliases.clone(),
             );
 
-            self.apply_docblock_param_types(
+            let (unmatched_param_tags, has_undertyped_params) = self.apply_docblock_param_types(
                 &parsed,
                 &mut params,
                 None,
@@ -116,6 +131,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 Some(&function_template_map),
                 None,
             );
+            if has_undertyped_params {
+                for (tag_name, tag_offset) in unmatched_param_tags {
+                    function_docblock_issues.push(DocblockIssue {
+                        message: format!(
+                            "Incorrect param name ${} in docblock for {}",
+                            tag_name,
+                            self.interner.lookup(name)
+                        ),
+                        start_offset: tag_offset,
+                        end_offset: tag_offset.saturating_add(1),
+                    });
+                }
+            } else {
+                unused_docblock_params = unmatched_param_tags;
+            }
+            // Conditional-type subjects (`$param is …`, `func_num_args()`,
+            // PHP version tokens) parse against this function's scope and
+            // register generated templates on it (Psalm's
+            // FunctionLikeDocblockScanner model).
+            self.conditional_subject_scope = super::ConditionalSubjectScope {
+                entity: Some(GenericParent::FunctionLike(name)),
+                params: params
+                    .iter()
+                    .map(|param| (param.name, param.get_type().cloned()))
+                    .collect(),
+                generated_templates: Vec::new(),
+                subject_names: Vec::new(),
+            };
             self.apply_docblock_param_out_types(
                 &parsed,
                 &mut params,
@@ -136,11 +179,47 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             {
                 return_type = Some(match docblock_conditional_return {
                     Some(conditional) => {
-                        TUnion::new(TAtomic::TConditional(Box::new(conditional)))
+                        super::docblock_conditional_union(conditional)
                     }
                     None => docblock_return,
                 });
+                return_type_location = parsed.get_return_with_offset().and_then(
+                    |(offset, content)| {
+                        crate::docblock::extract_type_string_from_content(content).map(
+                            |type_str| {
+                                (
+                                    docblock_start + offset as u32,
+                                    docblock_start + (offset + type_str.len()) as u32,
+                                )
+                            },
+                        )
+                    },
+                );
             }
+            // `@psalm-taint-escape (<conditional>)` parses while the
+            // conditional-subject scope is alive (its `$param is …` subject
+            // resolves against this function's params).
+            let mut conditional_taint_escapes = self.parse_conditional_taint_escapes(
+                &parsed,
+                None,
+                None,
+                Some(&function_template_map),
+                None,
+            );
+
+            let generated_conditional_templates =
+                std::mem::take(&mut self.conditional_subject_scope.generated_templates);
+            template_types.extend(generated_conditional_templates);
+            for template_type in &mut template_types {
+                if self
+                    .conditional_subject_scope
+                    .subject_names
+                    .contains(&template_type.name)
+                {
+                    template_type.conditional_subject = true;
+                }
+            }
+            self.conditional_subject_scope = super::ConditionalSubjectScope::default();
             if_this_is_type = self.get_docblock_if_this_is_type(
                 &parsed,
                 None,
@@ -160,14 +239,38 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 }
             }
 
+            super::clear_docblock_flag_when_signature_backed(
+                return_type.as_mut(),
+                signature_return_type.as_ref(),
+            );
+
             let parsed_assertions =
                 self.get_docblock_assertions(&parsed, None, None, Some(&function_template_map));
             assertions.extend(parsed_assertions.assertions);
             if_true_assertions.extend(parsed_assertions.if_true_assertions);
             if_false_assertions.extend(parsed_assertions.if_false_assertions);
 
+            let (scanned_taints, _raw_conditional_escapes) =
+                self.scan_docblock_taints(&parsed, &mut params, is_pure);
+            taints = scanned_taints;
+            taints.conditionally_removed_taints = std::mem::take(&mut conditional_taint_escapes);
+
             self.active_docblock_type_aliases = previous_aliases;
         }
+
+        // JetBrains' #[Pure] attribute (phpstorm-stubs): bare #[Pure] matches
+        // @psalm-pure (no global-scope dependence), #[Pure(true)] matches
+        // @pure (result may depend on global scope); both map to is_pure.
+        is_pure = is_pure || self.has_attribute_named(&func.attribute_lists, "Pure");
+
+        // Builtin sinks (Psalm's InternalTaintSinkMap) are looked up at call
+        // time (argument_analyzer::get_builtin_argument_taints), mirroring
+        // Hakana's get_argument_taints.
+        //
+        // Hakana specializes every plain function's taint nodes per call site
+        // (`functionlike_scanner`: no `$this` ⇒ `specialize_call`); only
+        // methods stay global unless pure/annotated.
+        taints.specialize_call = true;
 
         let body_span = func.body.span();
         let uses_variadic_builtin_args =
@@ -180,21 +283,41 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             Some(&function_template_map),
         );
 
-        assertions.extend(self.get_implicit_assertions(
-            func.body.statements.as_slice(),
-            None,
-            None,
-        ));
-        let defined_constants =
-            self.collect_defined_constants_from_statements(func.body.statements.as_slice());
+        // Body-derived implicit assertions (a pzoom inference Psalm doesn't do)
+        // must not double up with an explicit docblock assertion for the same
+        // var: the duplicate would re-assert an already-narrowed type and
+        // produce a false RedundantCondition.
+        let explicit_assertion_vars: rustc_hash::FxHashSet<_> =
+            assertions.iter().map(|assertion| assertion.var_id).collect();
+        assertions.extend(
+            self.get_implicit_assertions(func.body.statements.as_slice(), None, None)
+                .into_iter()
+                .filter(|assertion| !explicit_assertion_vars.contains(&assertion.var_id)),
+        );
+        let defined_constants = self
+            .collect_defined_constants_from_statements(func.body.statements.as_slice(), None, None);
         let has_variadic_param = params.iter().any(|param| param.is_variadic);
 
+        let declared_if_not_exists = {
+            let short_name = func.name.value.to_ascii_lowercase();
+            self.current_not_exists_function_guards
+                .iter()
+                .any(|guarded| *guarded == short_name)
+        };
         let info = FunctionLikeInfo {
+            declared_if_not_exists,
             name,
             params,
             return_type,
+            return_type_location,
+            name_location: {
+                let name_span = mago_span::HasSpan::span(&func.name);
+                Some((name_span.start.offset, name_span.end.offset))
+            },
             signature_return_type,
             is_pure,
+            has_throws,
+            unused_docblock_params,
             is_mutation_free,
             is_deprecated: is_deprecated
                 || self.has_attribute_named(&func.attribute_lists, "Deprecated"),
@@ -215,9 +338,25 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             inherits_docblock,
             no_named_arguments,
             defined_constants,
+            taints,
             ..Default::default()
         };
 
         self.declarations.functions.push(info);
+
+        // Class-likes declared inside a function body are file-scoped once
+        // the function runs; Psalm's ReflectorVisitor collects them too
+        // (`function f() { class Foo {} ... new $d; }`).
+        for stmt in func.body.statements.iter() {
+            if matches!(
+                stmt,
+                mago_syntax::ast::ast::statement::Statement::Class(_)
+                    | mago_syntax::ast::ast::statement::Statement::Interface(_)
+                    | mago_syntax::ast::ast::statement::Statement::Trait(_)
+                    | mago_syntax::ast::ast::statement::Statement::Enum(_)
+            ) {
+                self.visit_statement(stmt);
+            }
+        }
     }
 }

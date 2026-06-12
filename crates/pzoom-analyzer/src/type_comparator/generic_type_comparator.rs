@@ -35,18 +35,29 @@ pub(crate) fn is_contained_by(
         None => {
             default_params = class_template_variances
                 .iter()
-                .map(|template_type| template_type.as_type.clone())
+                .map(|template_type| {
+                    let mut as_type = template_type.as_type.clone();
+                    // Psalm's from_template_default: a slot filled from the
+                    // template's declared bound coerces leniently (as-mixed);
+                    // @template declarations are docblock constructs.
+                    as_type.from_template_default = true;
+                    as_type.from_docblock = true;
+                    as_type
+                })
                 .collect();
             &default_params
         }
     };
 
+    let mut all_types_contain = true;
+
     // Iterate the INPUT params and stop once the container runs out of params,
     // mirroring Psalm's `foreach ($input_type_params ...) { if (!isset(
     // $container->type_params[$i])) break; }`. Extra input params are tolerated;
-    // missing ones simply aren't compared.
-    for (index, input_param) in input_type_params.iter().enumerate() {
-        let Some(container_param) = container_type_params.get(index) else {
+    // missing ones simply aren't compared, and like Psalm the loop runs every
+    // param rather than bailing at the first mismatch.
+    for (i, input_param) in input_type_params.iter().enumerate() {
+        let Some(container_param) = container_type_params.get(i) else {
             break;
         };
 
@@ -57,108 +68,129 @@ pub(crate) fn is_contained_by(
         }
 
         let variance = class_template_variances
-            .get(index)
+            .get(i)
             .map(|template_type| template_type.variance)
             .unwrap_or(TemplateVariance::Invariant);
 
-        let mut forward_result = TypeComparisonResult::new();
-        let mut reverse_result = TypeComparisonResult::new();
+        let mut param_comparison_result = TypeComparisonResult::new();
 
-        let matches = match variance {
-            TemplateVariance::Covariant => union_type_comparator::is_contained_by(
-                codebase,
-                input_param,
-                container_param,
-                false,
-                false,
-                &mut forward_result,
-            ),
+        let contained = match variance {
+            // Psalm's `@template-contravariant` params flip the comparison
+            // direction; everything else compares input-in-container first.
             TemplateVariance::Contravariant => union_type_comparator::is_contained_by(
                 codebase,
                 container_param,
                 input_param,
                 false,
                 false,
-                &mut forward_result,
+                &mut param_comparison_result,
             ),
-            TemplateVariance::Invariant => {
-                if !union_type_comparator::is_contained_by(
-                    codebase,
-                    input_param,
-                    container_param,
-                    false,
-                    false,
-                    &mut forward_result,
-                ) {
-                    false
-                } else if union_contains_any_literal(input_param)
-                    || union_has_template(input_param)
-                    || union_has_template(container_param)
-                {
-                    // Psalm's `GenericTypeComparator` only performs the reverse
-                    // (invariance) check when neither param involves a template
-                    // and the input does not contain a literal. A literal input
-                    // is treated as a generalisation of the container param, so
-                    // `Container<array{name: 'x'}>` satisfies
-                    // `Container<array{name: string}>` without a coercion.
-                    true
-                } else {
-                    union_type_comparator::is_contained_by(
-                        codebase,
-                        container_param,
-                        input_param,
-                        false,
-                        false,
-                        &mut reverse_result,
-                    )
-                }
-            }
+            _ => union_type_comparator::is_contained_by(
+                codebase,
+                input_param,
+                container_param,
+                false,
+                false,
+                &mut param_comparison_result,
+            ),
         };
 
-        if !matches {
+        if !contained {
             // Generator's third template param (`TSend`) defaults to `mixed`, so
             // a narrower send type is coerced from mixed rather than a real
             // mismatch. Psalm exempts `Generator` arg 2 when the failure is a
             // coercion from mixed.
             if class_name == StrId::GENERATOR
-                && index == 2
-                && (forward_result
-                    .type_coerced_from_nested_mixed
+                && i == 2
+                && param_comparison_result
+                    .type_coerced_from_mixed
                     .unwrap_or(false)
-                    || reverse_result
-                        .type_coerced_from_nested_mixed
-                        .unwrap_or(false))
             {
                 continue;
             }
 
-            if forward_result.type_coerced.unwrap_or(false)
-                || reverse_result.type_coerced.unwrap_or(false)
-            {
-                atomic_comparison_result.type_coerced = Some(true);
-            }
+            // Psalm's overwrite-style merge: a failing param sets each flag to
+            // its own result, but a flag already forced to `false` stays false.
+            atomic_comparison_result.type_coerced = Some(
+                param_comparison_result.type_coerced == Some(true)
+                    && atomic_comparison_result.type_coerced != Some(false),
+            );
 
-            if forward_result
-                .type_coerced_from_nested_mixed
+            atomic_comparison_result.type_coerced_from_mixed = Some(
+                param_comparison_result.type_coerced_from_mixed == Some(true)
+                    && atomic_comparison_result.type_coerced_from_mixed != Some(false),
+            );
+
+            atomic_comparison_result.type_coerced_from_as_mixed = Some(
+                param_comparison_result.type_coerced_from_as_mixed == Some(true)
+                    && atomic_comparison_result.type_coerced_from_as_mixed != Some(false),
+            );
+
+            // Psalm keeps `$all_types_contain` when the only failure was a
+            // coercion from a template's as-mixed bound (non-iterable
+            // containers).
+            if !param_comparison_result
+                .type_coerced_from_as_mixed
                 .unwrap_or(false)
-                || reverse_result
-                    .type_coerced_from_nested_mixed
-                    .unwrap_or(false)
             {
-                atomic_comparison_result.type_coerced_from_nested_mixed = Some(true);
+                all_types_contain = false;
             }
+        } else if !matches!(variance, TemplateVariance::Covariant)
+            && !union_contains_any_literal(input_param)
+            && !union_has_template(input_param)
+            && !union_has_template(container_param)
+        {
+            // Invariant generic params constrain a type variable from both
+            // sides (Hakana's generic comparator): a forward upper bound also
+            // becomes an equality lower bound on the container class.
+            atomic_comparison_result
+                .type_variable_lower_bounds
+                .extend(param_comparison_result.type_variable_lower_bounds);
 
-            return false;
+            atomic_comparison_result.type_variable_lower_bounds.extend(
+                param_comparison_result
+                    .type_variable_upper_bounds
+                    .clone()
+                    .into_iter()
+                    .map(|(name, mut bound)| {
+                        bound.equality_bound_classlike = Some(class_name);
+                        (name, bound)
+                    }),
+            );
+
+            atomic_comparison_result
+                .type_variable_upper_bounds
+                .extend(param_comparison_result.type_variable_upper_bounds);
+
+            let mut param_comparison_result = TypeComparisonResult::new();
+
+            // Psalm's "Make sure types are basically the same" invariance
+            // check: the container param must be contained right back, without
+            // coercion. A literal input is treated as a generalisation of the
+            // container param, so `Container<array{name: 'x'}>` satisfies
+            // `Container<array{name: string}>`, and templates skip the check.
+            if !union_type_comparator::is_contained_by(
+                codebase,
+                container_param,
+                input_param,
+                false,
+                false,
+                &mut param_comparison_result,
+            ) || param_comparison_result.type_coerced.unwrap_or(false)
+            {
+                all_types_contain = false;
+                atomic_comparison_result.type_coerced = Some(false);
+            }
         }
     }
 
-    true
+    all_types_contain
 }
 
 /// Recursively determines whether a union contains any literal type, mirroring
 /// Psalm's `Union::containsAnyLiteral()` (`ContainsLiteralVisitor`). Literal
 /// strings/ints/floats, `true`/`false`, and the empty array all count.
-pub(crate) fn union_contains_any_literal(union: &TUnion) -> bool {
+fn union_contains_any_literal(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_any_literal)
 }
 
@@ -244,6 +276,11 @@ fn atomic_has_template(atomic: &TAtomic) -> bool {
             type_params: Some(type_params),
             ..
         } => type_params.iter().any(union_has_template),
+        // `class-string<T>` references the template through its constraint
+        // (Psalm's TemplateTypeCollector visits TClassString's as-type).
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => atomic_has_template(as_type),
         TAtomic::TObjectIntersection { types } => types.iter().any(atomic_has_template),
         _ => false,
     }

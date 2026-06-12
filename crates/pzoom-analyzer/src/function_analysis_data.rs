@@ -2,9 +2,9 @@
 //!
 //! Holds all accumulated data during analysis of a function body.
 
-use pzoom_code_info::{DataFlowGraph, Issue, TUnion, combine_union_types};
+use pzoom_code_info::{DataFlowGraph, Issue, TUnion, VarName, combine_union_types};
 use pzoom_str::StrId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
 use crate::scope::LoopScope;
@@ -12,17 +12,102 @@ use crate::scope::LoopScope;
 /// Position in source code (start_offset, end_offset).
 pub type Pos = (u32, u32);
 
+/// Where a parameter's variable-use source node came from, so unused-param
+/// reporting can group per function-like and apply Psalm's trailing rule.
+#[derive(Debug, Clone)]
+pub struct ParamSourceInfo {
+    pub node_id: pzoom_code_info::data_flow::node::DataFlowNodeId,
+    /// Start offset of the enclosing function-like (grouping key).
+    pub function_key: u32,
+    pub param_index: usize,
+    pub is_closure: bool,
+    /// Psalm only reports params of plain functions, closures and private
+    /// methods; public/protected method params are find-unused-code territory.
+    pub reportable: bool,
+    pub is_promoted: bool,
+    /// By-ref params report only when the body neither reads nor writes them
+    /// (a written one is an out-param; Psalm's unusedPassByReference vs
+    /// passedByRefSimpleDefinedBefore distinction).
+    pub by_ref: bool,
+    /// End offset of the enclosing function-like, bounding the write scan.
+    pub function_end: u32,
+    pub name: String,
+    pub span: (u32, u32),
+    /// For method params: (method_or_class_final, in_interface, has_overrides)
+    /// drives PossiblyUnusedParam/UnusedParam under find_unused_code
+    /// (Psalm's checkMethodParamReferences). None for functions/closures.
+    pub method_param_meta: Option<(bool, bool, bool)>,
+}
+
 /// Central state container for analyzing a function or method.
 ///
 /// This struct accumulates all information discovered during analysis,
 /// including inferred types, issues, and control flow information.
 #[derive(Debug, Default)]
 pub struct FunctionAnalysisData {
+    /// Variables to narrow to their gatekeeping param's signature type once
+    /// the current call's argument verification finishes (Psalm's
+    /// coerceValueAfterGatekeeperArgument; the verification chain holds the
+    /// context immutably).
+    pub pending_gatekeeper_coercions: Vec<(VarName, TUnion)>,
     /// Inferred types for expressions, keyed by source position.
     pub expr_types: FxHashMap<Pos, Rc<TUnion>>,
 
+    /// Start offsets of no-arg method calls whose result was memoized
+    /// (Psalm's `memoizable` node attribute from MethodCallPurityAnalyzer) —
+    /// only these get assertion-finder var keys like `$e->getPrevious()`.
+    pub memoizable_method_call_offsets: FxHashSet<u32>,
+
+    /// Bounds accumulated for type variables (Hakana's
+    /// `type_variable_bounds`): constraints recorded while
+    /// `TAtomic::TTypeVariable` placeholders flow through the body, reconciled
+    /// against each other at the end of the function.
+    pub type_variable_bounds:
+        FxHashMap<String, pzoom_code_info::ttype::template::TypeVariableBounds>,
+
     /// Issues discovered during analysis.
     pub issues: Vec<Issue>,
+
+    /// Property-fetch expressions whose lookup failed on a known class
+    /// (undefined property). Psalm's handleNonExistentProperty leaves the
+    /// node untyped, so a chained fetch on it stays silent; pzoom records
+    /// `mixed` plus this marker.
+    pub failed_property_fetch_positions: rustc_hash::FxHashSet<Pos>,
+
+    /// Source offsets of `@psalm-suppress` tokens that suppressed an issue at
+    /// an emission-decision site (Psalm's `IssueBuffer::$used_suppressions`).
+    /// The file analyzer adds filter-pass matches and reports the unmatched
+    /// candidates as UnusedPsalmSuppress.
+    pub used_suppression_offsets: Vec<u32>,
+    /// Spans covered by a statement-level `@psalm-suppress` docblock: Psalm's
+    /// StatementsAnalyzer adds the docblock's suppressions for the duration of
+    /// that statement's analysis (nested statements included), so the
+    /// suppression applies to the whole statement span. Entries are
+    /// (docblock_start, docblock_end, stmt_start, stmt_end).
+    pub stmt_suppression_ranges: Vec<(u32, u32, u32, u32)>,
+
+    /// Spans of foreach **value** target variables (Psalm's
+    /// `StatementsAnalyzer::$foreach_var_locations`): an unused assignment at
+    /// one of these spans reports UnusedForeachValue instead of UnusedVariable.
+    pub foreach_var_positions: Vec<(u32, u32)>,
+
+    /// Parameter source-node metadata for Psalm's `checkParamReferences`
+    /// (UnusedParam/UnusedClosureParam with the trailing-params-only rule).
+    pub param_sources: Vec<ParamSourceInfo>,
+
+    /// Classes referenced from outside themselves (new/static-call/extends/
+    /// implements/signature types) — Psalm's isClassReferenced, for
+    /// UnusedClass under find_unused_code.
+    pub referenced_classes: rustc_hash::FxHashSet<pzoom_str::StrId>,
+    /// (class, lowercase method) pairs referenced by calls (excluding
+    /// self-recursion) — Psalm's isClassMethodReferenced.
+    pub referenced_class_members: rustc_hash::FxHashSet<(pzoom_str::StrId, pzoom_str::StrId)>,
+    /// (class, property) pairs READ somewhere — Psalm's isPropertyReferenced
+    /// (writes don't count as uses).
+    pub referenced_properties: rustc_hash::FxHashSet<(pzoom_str::StrId, pzoom_str::StrId)>,
+    /// (class, lowercase method) pairs whose call RESULT was used — Psalm's
+    /// isMethodReturnReferenced.
+    pub method_returns_used: rustc_hash::FxHashSet<(pzoom_str::StrId, pzoom_str::StrId)>,
 
     /// Return types inferred from return statements.
     pub inferred_return_types: Vec<TUnion>,
@@ -45,6 +130,11 @@ pub struct FunctionAnalysisData {
     /// Current statement's end position.
     pub current_stmt_end: Option<u32>,
 
+    /// The condition expression currently being reconciled, when narrower
+    /// than the statement — Psalm's reconciler issues point at the condition
+    /// (`if ($x === "a")` highlights `$x === "a"`), not the whole statement.
+    pub current_reconcile_pos: Option<(u32, u32)>,
+
     /// Assertions that hold when an expression is truthy.
     /// Key is expression position, value is map from variable name to narrowed type.
     pub if_true_assertions: FxHashMap<Pos, FxHashMap<StrId, TUnion>>,
@@ -54,9 +144,6 @@ pub struct FunctionAnalysisData {
 
     /// Function-body data-flow graph used for parent-node tracking.
     pub data_flow_graph: DataFlowGraph,
-
-    /// Variables that have been referenced (for unused variable detection).
-    pub referenced_var_ids: FxHashMap<StrId, u32>,
 
     /// Variables that have been assigned (for definite assignment analysis).
     pub assigned_var_ids: FxHashMap<StrId, u32>,
@@ -70,8 +157,28 @@ pub struct FunctionAnalysisData {
     /// callsites in the same file.
     pub function_argument_callsite_types: FxHashMap<(StrId, usize), TUnion>,
 
-    /// Effects from one expression copied to another (for control flow).
-    effects: FxHashMap<Pos, Vec<Pos>>,
+    /// Method signatures of anonymous classes analyzed in this scope, keyed by
+    /// the synthetic `@anonymous-class:{file}:{offset}` name. Anonymous classes
+    /// are not registered in the codebase, so method calls on them resolve
+    /// through this side table instead.
+    pub anonymous_class_methods:
+        FxHashMap<StrId, FxHashMap<StrId, pzoom_code_info::FunctionLikeInfo>>,
+
+    /// Top-level variable types known when a function-like declaration is
+    /// analyzed. `global $x` statements clone from here, mirroring Psalm's
+    /// `$global_context->vars_in_scope` lookup in GlobalAnalyzer.
+    pub file_global_types: FxHashMap<pzoom_code_info::VarName, TUnion>,
+
+    /// Function-likes (keyed by start offset) whose bodies call
+    /// func_get_args(): every parameter is implicitly read (Psalm skips
+    /// unused-param reporting for them).
+    pub func_get_args_functions: rustc_hash::FxHashSet<u32>,
+
+    /// Per-switch frames collecting the contexts captured at `break`
+    /// statements that leave the switch (Hakana's `case_scope.break_vars`):
+    /// they join the post-switch merge so a `$a = 5; break;` inside a case
+    /// keeps its dataflow alive past the switch.
+    pub switch_break_contexts: Vec<Vec<crate::context::BlockContext>>,
 
     /// Active loop scopes, innermost last. Pushed by the loop analyzer before
     /// analyzing a loop body and popped afterwards; `break`/`continue` update the
@@ -84,30 +191,27 @@ pub struct FunctionAnalysisData {
     recording_level: usize,
 
     /// Stack of buffered issues, one buffer per active recording session.
-    recorded_issues: Vec<Vec<Issue>>,
+    pub(crate) recorded_issues: Vec<Vec<Issue>>,
+
+    /// Vars whose current reconcile found an assertion redundant (Psalm's
+    /// `$failed_reconciliation = RECONCILIATION_REDUNDANT`): reconcile_keyed_
+    /// types folds these into `changed_var_ids` so the redundant fact's
+    /// clauses are dropped afterwards. Scoped per reconcile call (take/
+    /// restore), filled by `trigger_issue_for_impossible`.
+    pub redundant_reconciled_vars: rustc_hash::FxHashSet<VarName>,
+
+    /// Each variable's first assignment location in the current function-like
+    /// (Psalm's `StatementsAnalyzer::$all_vars` / `getFirstAppearance`). Used
+    /// to retract a MixedAssignment when a later always-exiting guard proves
+    /// the variable non-mixed (Psalm's `IssueBuffer::remove` callers). The
+    /// function-like analyzers save/clear/restore this around each body, the
+    /// same scoping Psalm gets from one StatementsAnalyzer per function-like.
+    pub(crate) first_var_appearances: FxHashMap<VarName, u32>,
 }
 
 impl FunctionAnalysisData {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Store the inferred type for an expression at the given position.
-    pub fn set_expr_type(&mut self, pos: Pos, expr_type: TUnion) {
-        self.expr_types.insert(pos, Rc::new(expr_type));
-    }
-
-    /// Get the inferred type for an expression at the given position.
-    pub fn get_expr_type(&self, pos: Pos) -> Option<Rc<TUnion>> {
-        self.expr_types.get(&pos).cloned()
-    }
-
-    /// Get the inferred type, or mixed if not found.
-    pub fn get_expr_type_or_mixed(&self, pos: Pos) -> Rc<TUnion> {
-        self.expr_types
-            .get(&pos)
-            .cloned()
-            .unwrap_or_else(|| Rc::new(TUnion::mixed()))
     }
 
     /// Add an issue to be reported.
@@ -121,13 +225,32 @@ impl FunctionAnalysisData {
             }
             return;
         }
+        // Psalm's IssueBuffer emitted-key: issue type + file:line:column +
+        // (dupe_key ?? message). Same-kind issues at the same position with
+        // an equal dupe key collapse to one, even with different messages —
+        // the reconciler's "Docblock-defined type int for $x is never null"
+        // dedupes against the assertion finder's "int does not contain null".
+        let issue_dedupe_text = issue.dupe_key.as_ref().unwrap_or(&issue.message);
+        if self.issues.iter().any(|existing| {
+            existing.kind == issue.kind
+                && existing.location.file_path == issue.location.file_path
+                && existing.location.start_line == issue.location.start_line
+                && existing.location.start_column == issue.location.start_column
+                && existing.dupe_key.as_ref().unwrap_or(&existing.message) == issue_dedupe_text
+        }) {
+            return;
+        }
         self.issues.push(issue);
     }
 
-    /// Add an issue if it's not suppressed by configuration.
-    pub fn maybe_add_issue(&mut self, issue: Issue, _suppressed: &[String]) {
-        // TODO: Check against suppressed issue types
-        self.add_issue(issue);
+    /// Where new issues will land right now: (emitted count, active
+    /// recording-frame count). Used to delimit an emission window that must
+    /// be swept afterwards (inferred-purity probes).
+    pub fn issue_emission_marks(&self) -> (usize, usize) {
+        (
+            self.issues.len(),
+            self.recorded_issues.last().map_or(0, |frame| frame.len()),
+        )
     }
 
     /// Begin a new issue-recording session. Issues added while recording is active
@@ -150,10 +273,12 @@ impl FunctionAnalysisData {
     }
 
     /// Re-emit a previously recorded issue. If an outer recording session is still
-    /// active the issue is re-buffered there; otherwise it is emitted.
+    /// active the issue is re-buffered there; otherwise it is emitted (through
+    /// the same emitted-key dedupe as a fresh emission — Psalm's IssueBuffer
+    /// applies alreadyEmitted to bubbled-up recorded issues too).
     pub fn bubble_up_issue(&mut self, issue: Issue) {
         if self.recording_level == 0 {
-            self.issues.push(issue);
+            self.add_issue(issue);
             return;
         }
         if let Some(buffer) = self.recorded_issues.last_mut() {
@@ -161,19 +286,18 @@ impl FunctionAnalysisData {
         }
     }
 
-    /// Record that a variable was referenced.
-    pub fn record_var_reference(&mut self, var_id: StrId, pos: u32) {
-        self.referenced_var_ids.entry(var_id).or_insert(pos);
-    }
-
-    /// Record that a variable was assigned.
-    pub fn record_var_assignment(&mut self, var_id: StrId, pos: u32) {
-        self.assigned_var_ids.entry(var_id).or_insert(pos);
-    }
-
-    /// Add a return type inferred from a return statement.
-    pub fn add_return_type(&mut self, return_type: TUnion) {
-        self.inferred_return_types.push(return_type);
+    /// Psalm's `IssueBuffer::remove`: retract an already-reported issue of
+    /// `kind` whose span starts at `offset` — from the active recording frame
+    /// (loop fixpoint) and from the emitted set.
+    pub fn remove_issue(&mut self, kind: pzoom_code_info::IssueKind, offset: u32) {
+        if let Some(frame) = self.recorded_issues.last_mut() {
+            frame.retain(|issue| {
+                issue.kind != kind || issue.location.start_offset != offset
+            });
+        }
+        self.issues.retain(|issue| {
+            issue.kind != kind || issue.location.start_offset != offset
+        });
     }
 
     /// Combine the inferred return types recorded since `start_index` into one
@@ -192,70 +316,6 @@ impl FunctionAnalysisData {
         combined
     }
 
-    /// Add yield key/value types inferred from a yield expression.
-    pub fn add_yield_type(&mut self, key_type: Option<TUnion>, value_type: TUnion) {
-        self.inferred_yield_types.push((key_type, value_type));
-    }
-
-    /// Set assertions for when an expression is truthy.
-    pub fn set_if_true_assertions(&mut self, pos: Pos, assertions: FxHashMap<StrId, TUnion>) {
-        self.if_true_assertions.insert(pos, assertions);
-    }
-
-    /// Set assertions for when an expression is falsy.
-    pub fn set_if_false_assertions(&mut self, pos: Pos, assertions: FxHashMap<StrId, TUnion>) {
-        self.if_false_assertions.insert(pos, assertions);
-    }
-
-    /// Get assertions for when an expression is truthy.
-    pub fn get_if_true_assertions(&self, pos: Pos) -> Option<&FxHashMap<StrId, TUnion>> {
-        self.if_true_assertions.get(&pos)
-    }
-
-    /// Get assertions for when an expression is falsy.
-    pub fn get_if_false_assertions(&self, pos: Pos) -> Option<&FxHashMap<StrId, TUnion>> {
-        self.if_false_assertions.get(&pos)
-    }
-
-    /// Get the expression type as an Rc.
-    pub fn get_rc_expr_type(&self, pos: Pos) -> Option<&Rc<TUnion>> {
-        self.expr_types.get(&pos)
-    }
-
-    /// Set the expression type with an existing Rc.
-    pub fn set_rc_expr_type(&mut self, pos: Pos, expr_type: Rc<TUnion>) {
-        self.expr_types.insert(pos, expr_type);
-    }
-
-    /// Copy effects from one position to another.
-    ///
-    /// This is used to propagate effects from sub-expressions to parent expressions.
-    pub fn copy_effects(&mut self, from_pos: Pos, to_pos: Pos) {
-        self.effects.entry(to_pos).or_default().push(from_pos);
-    }
-
-    /// Combine effects from two positions into a target position.
-    ///
-    /// This is used when analyzing branches (e.g., ternary expressions).
-    pub fn combine_effects(&mut self, from_pos1: Pos, from_pos2: Pos, to_pos: Pos) {
-        let mut combined = vec![from_pos1, from_pos2];
-
-        // Also copy any effects that were recorded for the source positions
-        if let Some(effects1) = self.effects.get(&from_pos1) {
-            combined.extend(effects1.clone());
-        }
-        if let Some(effects2) = self.effects.get(&from_pos2) {
-            combined.extend(effects2.clone());
-        }
-
-        self.effects.entry(to_pos).or_default().extend(combined);
-    }
-
-    /// Get effects for a position.
-    pub fn get_effects(&self, pos: Pos) -> Option<&Vec<Pos>> {
-        self.effects.get(&pos)
-    }
-
     pub fn record_function_argument_callsite_type(
         &mut self,
         function_id: StrId,
@@ -270,12 +330,4 @@ impl FunctionAnalysisData {
         }
     }
 
-    pub fn get_function_argument_callsite_type(
-        &self,
-        function_id: StrId,
-        param_index: usize,
-    ) -> Option<&TUnion> {
-        self.function_argument_callsite_types
-            .get(&(function_id, param_index))
-    }
 }

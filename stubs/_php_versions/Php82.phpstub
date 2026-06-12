@@ -1,0 +1,20 @@
+<?php
+
+/**
+ * Version overlay mirroring Psalm's stubs/Php82.phpstub: loaded only when the
+ * analysis PHP version is >= 8.2, BEFORE the base extension stubs (sorted
+ * first), so its members take precedence in the stub-vs-stub merge.
+ *
+ * @psalm-immutable
+ */
+class ReflectionUnionType extends ReflectionType
+{
+    /**
+     * @return non-empty-list<ReflectionNamedType|ReflectionIntersectionType>
+     *
+     * @pure
+     */
+    public function getTypes(): array
+    {
+    }
+}

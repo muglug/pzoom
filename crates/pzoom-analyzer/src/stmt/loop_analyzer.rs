@@ -20,8 +20,8 @@ use mago_syntax::ast::ast::statement::Statement;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
+use pzoom_code_info::VarName;
 use pzoom_code_info::combine_union_types;
-use pzoom_str::StrId;
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -30,7 +30,7 @@ use crate::function_analysis_data::FunctionAnalysisData;
 use crate::reconciler;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
+use crate::stmt::scope_analyzer::ControlAction;
 use crate::stmt::loop_::{assignment_map_visitor::get_assignment_map, tast_cleaner::clean_nodes};
 use crate::stmt_analyzer;
 
@@ -51,6 +51,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     is_do: bool,
     always_enters_loop: bool,
+    while_true: bool,
 ) -> Result<(LoopScope, BlockContext), AnalysisError> {
     // Baseline assignment counts before the loop, so we can later invalidate clauses
     // for any variable the loop body (re)assigns — even when the reassignment leaves
@@ -66,7 +67,7 @@ pub fn analyze(
         0
     };
 
-    let mut always_assigned_before_loop_body_vars: FxHashSet<StrId> = FxHashSet::default();
+    let mut always_assigned_before_loop_body_vars: FxHashSet<VarName> = FxHashSet::default();
 
     // Build the CNF formula for each pre-condition up front (mirrors Hakana).
     let mut pre_condition_clauses: Vec<Vec<Clause>> = Vec::new();
@@ -93,11 +94,12 @@ pub fn analyze(
             BlockContext::get_new_or_updated_locals(loop_parent_context, loop_context);
     }
 
-    // Determine whether the body unconditionally breaks (its only control action is Break).
-    let mut break_context = loop_context.break_types.clone();
-    break_context.push(BreakContext::Loop);
+    // Determine whether the body unconditionally breaks (its only control
+    // action is Break). Psalm's LoopAnalyzer computes this with EMPTY break
+    // types: the body's own break/continue surface as Break/Continue, while
+    // nested loops consume theirs.
     let final_actions =
-        crate::stmt::scope_analyzer::get_control_actions(stmts, analysis_data, &break_context, true);
+        crate::stmt::scope_analyzer::get_control_actions(stmts, analysis_data, &[], true);
     let does_always_break =
         final_actions.len() == 1 && final_actions.contains(&ControlAction::Break);
 
@@ -198,38 +200,59 @@ pub fn analyze(
                 has_changes = true;
             }
 
-            let mut different_from_pre_loop_types: FxHashSet<StrId> = FxHashSet::default();
+            let mut different_from_pre_loop_types: FxHashSet<VarName> = FxHashSet::default();
 
             for (var_id, continue_context_type) in continue_context.locals.clone() {
                 if always_assigned_before_loop_body_vars.contains(&var_id) {
                     if let Some(pre_loop_context_type) = pre_loop_context.locals.get(&var_id) {
                         if continue_context_type != *pre_loop_context_type {
-                            different_from_pre_loop_types.insert(var_id);
+                            if !loop_types_equal(&continue_context_type, pre_loop_context_type) {
+                                different_from_pre_loop_types.insert(var_id);
+                            }
                             has_changes = true;
                         }
                     } else {
                         has_changes = true;
                     }
                 } else if let Some(parent_context_type) = original_parent_context.locals.get(&var_id) {
+                    // `has_changes` (whether another pass runs) keeps the
+                    // metadata-sensitive comparison — dataflow parents changed
+                    // by the body need a re-pass so loop-carried reads connect
+                    // to the new assignment nodes. The WIDENING and CLAUSE
+                    // PURGING use Psalm's `Union::equals` semantics (types and
+                    // flags only): a parent-scoped var whose type merely
+                    // re-ordered or grew new parent nodes must not lose
+                    // inherited disjunction clauses (`$calling || $file`).
                     if continue_context_type != *parent_context_type {
                         has_changes = true;
-
+                    }
+                    if !loop_types_equal(&continue_context_type, parent_context_type) {
                         let widened =
                             combine_union_types(&continue_context_type, parent_context_type, false);
-                        continue_context.locals.insert(var_id, widened);
+                        continue_context.locals.insert(var_id.clone(), widened);
 
-                        pre_loop_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
-                        loop_parent_context.possibly_assigned_var_ids.insert(var_id);
+                        pre_loop_context.remove_var_from_conflicting_clauses(var_id.clone());
+                        // NOTE: the variable already existed in the parent
+                        // scope — a loop-body reassignment widens its type but
+                        // cannot make it possibly-undefined. It IS possibly
+                        // assigned, though (Psalm's LoopAnalyzer marks the
+                        // loop parent) — an enclosing if's merge needs that
+                        // to keep the var possibly-redefined.
+                        loop_parent_context
+                            .possibly_assigned_var_ids
+                            .insert(var_id.clone());
                     }
 
                     if let Some(loop_context_type) = loop_context.locals.get(&var_id) {
                         if continue_context_type != *loop_context_type {
                             has_changes = true;
                         }
-                        let widened =
-                            combine_union_types(&continue_context_type, loop_context_type, false);
-                        continue_context.locals.insert(var_id, widened);
-                        pre_loop_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
+                        if !loop_types_equal(&continue_context_type, loop_context_type) {
+                            let widened =
+                                combine_union_types(&continue_context_type, loop_context_type, false);
+                            continue_context.locals.insert(var_id.clone(), widened);
+                            pre_loop_context.remove_var_from_conflicting_clauses(var_id.clone());
+                        }
                     }
                 } else {
                     if !recorded_issues.is_empty() {
@@ -252,6 +275,13 @@ pub fn analyze(
             }
 
             continue_context.clauses.clone_from(&pre_loop_context.clauses);
+            // Psalm's LoopAnalyzer resets byref constraints to the pre-loop
+            // state for each reanalysis pass — a constraint established by a
+            // by-ref call inside the body must not flag the loop-top
+            // reassignment of the same var.
+            continue_context
+                .reference_constraints
+                .clone_from(&pre_loop_context.reference_constraints);
 
             analysis_data.start_recording_issues();
 
@@ -284,7 +314,7 @@ pub fn analyze(
                     if let Some(pre_loop_context_type) = pre_loop_context_type {
                         continue_context
                             .locals
-                            .insert(*var_id, pre_loop_context_type.clone());
+                            .insert(var_id.clone(), pre_loop_context_type.clone());
                     } else {
                         continue_context.locals.remove(var_id);
                     }
@@ -345,8 +375,23 @@ pub fn analyze(
     let does_always_break = does_sometimes_break && loop_scope.final_actions.len() == 1;
 
     if does_sometimes_break {
+        // Psalm merges break-time variable states straight into the parent
+        // context (modern LoopAnalyzer has no inner-do special case here).
+        for (var_id, var_type) in &loop_scope.possibly_redefined_loop_parent_vars {
+            if let Some(loop_parent_context_type) = loop_parent_context.locals.get_mut(var_id) {
+                *loop_parent_context_type =
+                    combine_union_types(var_type, loop_parent_context_type, false);
+            }
+            loop_parent_context
+                .possibly_assigned_var_ids
+                .insert(var_id.clone());
+        }
+
+        // The inner do context still sees the break states for the post-body
+        // condition evaluation.
         if let Some(inner_do_context_inner) = inner_do_context.as_mut() {
-            for (var_id, possibly_redefined_var_type) in &loop_scope.possibly_redefined_loop_parent_vars
+            for (var_id, possibly_redefined_var_type) in
+                &loop_scope.possibly_redefined_loop_parent_vars
             {
                 if let Some(do_context_type) = inner_do_context_inner.locals.get_mut(var_id) {
                     *do_context_type = if do_context_type == possibly_redefined_var_type {
@@ -355,15 +400,6 @@ pub fn analyze(
                         combine_union_types(possibly_redefined_var_type, do_context_type, false)
                     };
                 }
-                loop_parent_context.possibly_assigned_var_ids.insert(*var_id);
-            }
-        } else {
-            for (var_id, var_type) in &loop_scope.possibly_redefined_loop_parent_vars {
-                if let Some(loop_parent_context_type) = loop_parent_context.locals.get_mut(var_id) {
-                    *loop_parent_context_type =
-                        combine_union_types(var_type, loop_parent_context_type, false);
-                }
-                loop_parent_context.possibly_assigned_var_ids.insert(*var_id);
             }
         }
     }
@@ -372,8 +408,8 @@ pub fn analyze(
         if let Some(loop_context_type) = loop_context.locals.get(&var_id) {
             if *loop_context_type != var_type {
                 let combined = combine_union_types(&var_type, loop_context_type, false);
-                loop_parent_context.locals.insert(var_id, combined);
-                loop_parent_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
+                loop_parent_context.locals.insert(var_id.clone(), combined);
+                loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
             }
         }
     }
@@ -385,7 +421,7 @@ pub fn analyze(
     for (var_id, body_count) in &continue_context.assigned_var_ids {
         let pre_count = pre_loop_assigned_counts.get(var_id).copied().unwrap_or(0);
         if *body_count > pre_count {
-            loop_parent_context.remove_var_from_conflicting_clauses(*var_id, analyzer.interner);
+            loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
         }
     }
 
@@ -393,14 +429,21 @@ pub fn analyze(
         for (var_id, var_type) in loop_parent_context.locals.clone() {
             if let Some(continue_context_type) = continue_context.locals.get(&var_id) {
                 if continue_context_type.is_mixed() {
-                    loop_parent_context
-                        .locals
-                        .insert(var_id, continue_context_type.clone());
-                    loop_parent_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
+                    // The replacement keeps the parent's dataflow parents:
+                    // mixed widening must not sever the pre-loop assignment's
+                    // flow to post-loop uses.
+                    let mut replacement = continue_context_type.clone();
+                    for parent_node in &var_type.parent_nodes {
+                        if !replacement.parent_nodes.contains(parent_node) {
+                            replacement.parent_nodes.push(parent_node.clone());
+                        }
+                    }
+                    loop_parent_context.locals.insert(var_id.clone(), replacement);
+                    loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 } else if *continue_context_type != var_type {
                     let combined = combine_union_types(&var_type, continue_context_type, false);
-                    loop_parent_context.locals.insert(var_id, combined);
-                    loop_parent_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
+                    loop_parent_context.locals.insert(var_id.clone(), combined);
+                    loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 }
             } else {
                 loop_parent_context.locals.remove(&var_id);
@@ -430,7 +473,7 @@ pub fn analyze(
                 analysis_data,
                 true,
                 false,
-                false,
+                crate::reconciler::EmissionMode::Silent,
                 None,
             );
 
@@ -439,29 +482,71 @@ pub fn analyze(
                     if loop_parent_context.locals.contains_key(&var_id) {
                         loop_parent_context
                             .locals
-                            .insert(var_id, reconciled_type.clone());
+                            .insert(var_id.clone(), reconciled_type.clone());
                     }
-                    loop_parent_context.remove_var_from_conflicting_clauses(var_id, analyzer.interner);
+                    loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 }
             }
         }
     }
 
-    if always_enters_loop {
+    // Psalm copies loop vars only when the loop can actually exit
+    // (`$always_enters_loop && $can_leave_loop`): a `while (true)` with no
+    // break never reaches the code after it, so its assignments stay inside.
+    let can_leave_loop = !while_true || does_sometimes_break;
+
+    if always_enters_loop && can_leave_loop {
         let does_sometimes_continue = loop_scope.final_actions.contains(&ControlAction::Continue);
 
+        // Variables assigned before the loop body (e.g. a foreach key/value)
+        // that are never reassigned inside the body are guaranteed to hold
+        // their loop-assigned type after the loop, even if it breaks or
+        // continues, so they must not be merged back to their pre-loop type
+        // (Psalm's setLoopVars $always_assigned_before_loop_body_vars).
+        let always_assigned_unmodified_vars: FxHashSet<&VarName> =
+            always_assigned_before_loop_body_vars
+                .iter()
+                .filter(|var_id| !assignment_map.contains_key(var_id.as_ref()))
+                .collect();
+
         for (var_id, var_type) in &continue_context.locals {
-            if does_sometimes_break || does_sometimes_continue {
+            if (does_sometimes_break || does_sometimes_continue)
+                && !always_assigned_unmodified_vars.contains(var_id)
+            {
                 if let Some(possibly_defined_type) =
                     loop_scope.possibly_defined_loop_parent_vars.get(var_id)
                 {
                     loop_parent_context.locals.insert(
-                        *var_id,
+                        var_id.clone(),
                         combine_union_types(var_type, possibly_defined_type, false),
                     );
+                    // The loop always runs and every exit path defines the
+                    // variable: it is definitely assigned, not merely possibly
+                    // (the break sweep above flagged it).
+                    loop_parent_context.possibly_assigned_var_ids.remove(var_id);
+                    loop_parent_context
+                        .assigned_var_ids
+                        .entry(var_id.clone())
+                        .or_insert(1);
                 }
             } else {
-                loop_parent_context.locals.insert(*var_id, var_type.clone());
+                loop_parent_context.locals.insert(var_id.clone(), var_type.clone());
+            }
+        }
+    }
+
+    // Anything possibly in scope at the body's end is possibly in scope after
+    // the loop (Psalm: `$loop_parent_context->vars_possibly_in_scope +=
+    // $continue_context->vars_possibly_in_scope`).
+    for var_id in &continue_context.vars_possibly_in_scope {
+        if !loop_parent_context.vars_possibly_in_scope.contains(var_id) {
+            loop_parent_context
+                .vars_possibly_in_scope
+                .insert(var_id.clone());
+            if !loop_parent_context.locals.contains_key(var_id) {
+                loop_parent_context
+                    .possibly_assigned_var_ids
+                    .insert(var_id.clone());
             }
         }
     }
@@ -470,9 +555,9 @@ pub fn analyze(
     // possibly-in-scope after the loop (Psalm folds LoopScope::vars_possibly_in_scope
     // back into the surrounding context).
     for var_id in &loop_scope.vars_possibly_in_scope {
-        loop_parent_context.vars_possibly_in_scope.insert(*var_id);
+        loop_parent_context.vars_possibly_in_scope.insert(var_id.clone());
         if !loop_parent_context.locals.contains_key(var_id) {
-            loop_parent_context.possibly_assigned_var_ids.insert(*var_id);
+            loop_parent_context.possibly_assigned_var_ids.insert(var_id.clone());
         }
     }
 
@@ -537,7 +622,7 @@ fn apply_pre_condition_to_loop_context(
     loop_parent_context: &mut BlockContext,
     analysis_data: &mut FunctionAnalysisData,
     is_do: bool,
-) -> FxHashSet<StrId> {
+) -> FxHashSet<VarName> {
     let pre_referenced_var_ids = loop_context.cond_referenced_var_ids.clone();
     loop_context.cond_referenced_var_ids = FxHashSet::default();
 
@@ -552,7 +637,7 @@ fn apply_pre_condition_to_loop_context(
     loop_context
         .cond_referenced_var_ids
         .extend(pre_referenced_var_ids);
-    let mut new_referenced_var_ids: FxHashSet<String> = FxHashSet::default();
+    let mut new_referenced_var_ids: FxHashSet<VarName> = FxHashSet::default();
 
     let always_assigned_before_loop_body_vars =
         BlockContext::get_new_or_updated_locals(loop_context, loop_parent_context);
@@ -584,7 +669,7 @@ fn apply_pre_condition_to_loop_context(
             analysis_data,
             true,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             Some(&active_while_types),
         );
     }
@@ -614,14 +699,26 @@ fn update_loop_scope_contexts(
         loop_context.locals = pre_outer_context.locals.clone();
     } else {
         for (var_id, var_type) in &loop_scope.possibly_redefined_loop_vars {
-            if continue_context.has_variable(*var_id) {
+            if continue_context.has_variable(var_id) {
                 let combined = combine_union_types(
                     continue_context.locals.get(var_id).unwrap(),
                     var_type,
                     false,
                 );
-                continue_context.locals.insert(*var_id, combined);
+                continue_context.locals.insert(var_id.clone(), combined);
             }
         }
     }
+}
+
+/// Loop change-detection equality: Psalm's `Union::equals` compares types and
+/// semantic flags but not dataflow parent nodes, which churn every pass.
+fn loop_types_equal(a: &pzoom_code_info::TUnion, b: &pzoom_code_info::TUnion) -> bool {
+    a.types.len() == b.types.len()
+        && a.types.iter().all(|atomic| b.types.contains(atomic))
+        && a.from_docblock == b.from_docblock
+        && a.from_calculation == b.from_calculation
+        && a.possibly_undefined == b.possibly_undefined
+        && a.ignore_nullable_issues == b.ignore_nullable_issues
+        && a.ignore_falsable_issues == b.ignore_falsable_issues
 }

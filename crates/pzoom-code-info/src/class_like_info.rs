@@ -8,6 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{FunctionLikeInfo, TAtomic, TUnion};
+use crate::ttype::template::GenericParent;
 
 // `PropertyInfo`, `ClassConstantInfo`, and `Visibility` live in their own modules
 // (mirroring Hakana's `property_info.rs` / `class_constant_info.rs` /
@@ -38,12 +39,41 @@ pub struct ClassLikeInfo {
     /// Whether this class is immutable (@psalm-immutable / @immutable).
     pub is_immutable: bool,
 
+    /// Class-level `@psalm-taint-specialize`: taints on instances and their
+    /// non-static method calls are tracked per call site instead of globally
+    /// (Psalm's `ClassLikeStorage::$specialize_instance`).
+    #[serde(default)]
+    pub specialize_instance: bool,
+
+    /// The promised yield type (`@psalm-yield T`): `yield`ing an instance of
+    /// this class produces this type (Psalm's `ClassLikeStorage::$yield`).
+    #[serde(default)]
+    pub yield_type: Option<TUnion>,
+
+    /// The class that declared `yield_type` when inherited (Psalm's
+    /// `declaring_yield_fqcn`) — templates in the yield type are defined there.
+    #[serde(default)]
+    pub declaring_yield_class: Option<StrId>,
+
     /// Whether this class is externally-mutation-free
     /// (`@psalm-external-mutation-free`): its methods may mutate `$this` but not
     /// any external state, so calling them on a freshly-constructed (reference
     /// -free) instance is allowed from a pure context.
     #[serde(default)]
     pub is_external_mutation_free: bool,
+
+    /// Whether the class is declared `@psalm-api`/`@api` (Psalm's
+    /// `public_api`): exempt from UnusedClass/ClassMustBeFinal, and its
+    /// public members from PossiblyUnusedMethod/Property.
+    #[serde(default)]
+    pub is_public_api: bool,
+
+
+    /// Whether `@psalm-consistent-templates` is declared: child classes must
+    /// keep the parent's template signature, making `new static` on a
+    /// templated class safe (Psalm's `enforce_template_inheritance`).
+    #[serde(default)]
+    pub enforce_template_inheritance: bool,
 
     /// Whether constructors must keep parameter names across inheritance.
     #[serde(default)]
@@ -76,6 +106,26 @@ pub struct ClassLikeInfo {
     /// Includes parent, grandparent, great-grandparent, etc.
     pub all_parent_classes: Vec<StrId>,
 
+    /// `@psalm-inheritors A|B` — the closed set of allowed subtypes
+    /// (Psalm's `ClassLikeStorage::$inheritors`). A negated instanceof on
+    /// this type expands to the listed alternatives.
+    #[serde(default)]
+    pub inheritors: Vec<TAtomic>,
+
+    /// True when a stub file (also) declared this class. Psalm marks such
+    /// storages `stubbed`; their constructors are opaque to the property
+    /// initialization simulation.
+    #[serde(default)]
+    pub is_stubbed: bool,
+
+    /// Class names from positive `class_exists(...)`/`interface_exists(...)`
+    /// guards on the `if` block this declaration sits in. When any guard class
+    /// is unknown after the scan, Psalm's ReflectorVisitor would never have
+    /// registered this declaration (ExpressionResolver::enterConditional
+    /// returns false), so analysis skips it.
+    #[serde(default)]
+    pub conditional_guard_classes: Vec<StrId>,
+
     /// Directly implemented/extended interfaces (declared on this class/interface).
     pub interfaces: FxHashSet<StrId>,
 
@@ -83,7 +133,10 @@ pub struct ClassLikeInfo {
     pub all_parent_interfaces: Vec<StrId>,
 
     /// Used traits.
-    pub used_traits: FxHashSet<StrId>,
+    /// Traits used by this class (insertion order = declaration order, then
+    /// inherited traits appended by the populator) — iteration order is
+    /// load-bearing for trait member precedence and template remapping.
+    pub used_traits: indexmap::IndexSet<StrId, rustc_hash::FxBuildHasher>,
 
     /// Required parent classes from docblock annotations (e.g. `@psalm-require-extends`).
     pub required_extends: Vec<StrId>,
@@ -98,8 +151,19 @@ pub struct ClassLikeInfo {
     /// The actual method info is stored in the codebase's functionlike_infos.
     pub method_names: FxHashSet<StrId>,
 
-    /// Methods available on this class (including inherited).
-    pub methods: FxHashMap<StrId, FunctionLikeInfo>,
+    /// Methods available on this class (including inherited). Values are
+    /// `Arc`-shared: the populate phase flattens ancestor methods into every
+    /// descendant, and ~90% of entries are inherited — sharing makes those
+    /// refcount bumps instead of deep `FunctionLikeInfo` copies (Psalm avoids
+    /// the duplication via `declaring_method_ids` indirection instead).
+    pub methods: FxHashMap<StrId, std::sync::Arc<FunctionLikeInfo>>,
+
+    /// Lowercase method name -> correctly-cased method name, only for methods
+    /// whose declared name differs from its lowercase form. pzoom resolves
+    /// method names case-sensitively; this map recovers the declared casing for
+    /// diagnostics and for PHP's case-insensitive override matching.
+    #[serde(default)]
+    pub method_lc_names: FxHashMap<StrId, StrId>,
 
     /// Pseudo instance methods from `@method` annotations.
     pub pseudo_methods: FxHashMap<StrId, FunctionLikeInfo>,
@@ -124,7 +188,16 @@ pub struct ClassLikeInfo {
     pub overridden_method_ids: FxHashMap<StrId, FxHashSet<StrId>>,
 
     /// Properties defined in this class.
-    pub properties: FxHashMap<StrId, PropertyInfo>,
+    /// Properties on this class (including inherited). Values are
+    /// `Arc`-shared like `methods`: inheritance flattening is a refcount bump
+    /// instead of a deep `PropertyInfo` copy.
+    pub properties: FxHashMap<StrId, std::sync::Arc<PropertyInfo>>,
+
+    /// Property name strings -> interned ids, built at populate time so
+    /// interner-less contexts (the type comparators matching `object{...}`
+    /// shape keys against class properties) can resolve names.
+    #[serde(default)]
+    pub property_name_lookup: FxHashMap<String, StrId>,
 
     /// Pseudo property write types from `@property`/`@property-write` docblocks.
     pub pseudo_property_set_types: FxHashMap<StrId, TUnion>,
@@ -146,6 +219,14 @@ pub struct ClassLikeInfo {
 
     /// Template/generic type parameters.
     pub template_types: Vec<TemplateType>,
+
+    /// Templates with no public mutation channel (Hakana's
+    /// `template_readonly`): every class template starts here and is removed
+    /// when it appears in a public non-constructor method parameter or a
+    /// public property type. Readonly templates resolve eagerly at `new`
+    /// (no type variable is minted — nothing later can constrain them).
+    #[serde(default)]
+    pub template_readonly: FxHashSet<StrId>,
 
     /// Generic arguments provided to extended/implemented classlikes.
     ///
@@ -170,6 +251,11 @@ pub struct ClassLikeInfo {
     /// Duplicate property declarations collected during scanning.
     #[serde(default)]
     pub duplicate_property_issues: Vec<DuplicatePropertyIssue>,
+
+    /// Duplicate constant/enum-case declarations collected during scanning
+    /// (Psalm's ClassLikeNodeScanner DuplicateConstant).
+    #[serde(default)]
+    pub duplicate_constant_issues: Vec<DuplicatePropertyIssue>,
 
     /// Whether this class has been deprecated.
     pub is_deprecated: bool,
@@ -199,6 +285,30 @@ pub struct ClassLikeInfo {
 
     /// End offset in the file.
     pub end_offset: u32,
+
+    /// Span of the class/interface/trait/enum NAME token — Psalm anchors
+    /// class-wide issues here rather than on the whole declaration span.
+    pub name_location: Option<(u32, u32)>,
+}
+
+impl ClassLikeInfo {
+    /// Find the correctly-cased method for a reference that failed exact
+    /// lookup. Returns the declared name when it differs only by case from
+    /// `requested`; never returns `requested`.
+    pub fn cased_method_for(
+        &self,
+        interner: &pzoom_str::Interner,
+        requested: StrId,
+    ) -> Option<StrId> {
+        let lc = interner.lookup(requested).to_ascii_lowercase();
+        let lc_id = interner.intern(&lc);
+        let cased = if self.methods.contains_key(&lc_id) {
+            lc_id
+        } else {
+            *self.method_lc_names.get(&lc_id)?
+        };
+        (cased != requested).then_some(cased)
+    }
 }
 
 /// Docblock issue captured during scanning.
@@ -238,7 +348,7 @@ pub enum ClassLikeKind {
 pub struct TemplateType {
     pub name: StrId,
     /// The class-like that defines this template (Psalm's `$defining_class`).
-    pub defining_entity: StrId,
+    pub defining_entity: GenericParent,
     pub as_type: TUnion,
     pub variance: TemplateVariance,
 }

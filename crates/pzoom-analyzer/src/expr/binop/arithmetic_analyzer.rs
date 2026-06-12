@@ -9,6 +9,7 @@ use crate::context::BlockContext;
 use crate::expression_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Analyze an arithmetic binary operation (+, -, *, /, %, **).
 pub fn analyze(
@@ -24,8 +25,8 @@ pub fn analyze(
     let left_pos = expression_analyzer::analyze(analyzer, left, analysis_data, context);
     let right_pos = expression_analyzer::analyze(analyzer, right, analysis_data, context);
 
-    let left_type = analysis_data.get_expr_type(left_pos);
-    let right_type = analysis_data.get_expr_type(right_pos);
+    let left_type = analysis_data.expr_types.get(&left_pos).cloned();
+    let right_type = analysis_data.expr_types.get(&right_pos).cloned();
 
     // Precise literal-folding / int-range propagation (Psalm ArithmeticOpAnalyzer)
     // when both operands are single numeric atomics; array/other operands return
@@ -35,10 +36,37 @@ pub fn analyze(
             op,
             left_type.as_deref(),
             right_type.as_deref(),
+            context.inside_loop,
         )
     {
-        analysis_data.set_expr_type(pos, precise);
+        analysis_data.expr_types.insert(pos, Rc::new(precise));
         return;
+    }
+
+    // Hakana's arithmetic analyzer: a type-variable operand flows through to
+    // the result and is constrained from above to `num` (int|float).
+    let mut type_variable_atomics = Vec::new();
+    for operand_type in [left_type.as_deref(), right_type.as_deref()].into_iter().flatten() {
+        for atomic in &operand_type.types {
+            if let TAtomic::TTypeVariable { name } = atomic {
+                if let Some(pzoom_code_info::TypeVariableBounds { upper_bounds, .. }) =
+                    analysis_data.type_variable_bounds.get_mut(name)
+                {
+                    let mut bound = pzoom_code_info::TemplateBound::new(
+                        TUnion::new(TAtomic::TNumeric),
+                        0,
+                        None,
+                        None,
+                    );
+                    bound.pos = Some(crate::template::bound_location(analyzer, pos));
+                    upper_bounds.push(bound);
+                }
+
+                if !type_variable_atomics.contains(atomic) {
+                    type_variable_atomics.push(atomic.clone());
+                }
+            }
+        }
     }
 
     let result_type = match operator {
@@ -62,7 +90,19 @@ pub fn analyze(
         _ => TUnion::new(TAtomic::TNumeric),
     };
 
-    analysis_data.set_expr_type(pos, result_type);
+    let result_type = if type_variable_atomics.is_empty() {
+        result_type
+    } else {
+        let mut result_atomics = result_type.types;
+        for type_variable_atomic in type_variable_atomics {
+            if !result_atomics.contains(&type_variable_atomic) {
+                result_atomics.push(type_variable_atomic);
+            }
+        }
+        TUnion::from_types(result_atomics)
+    };
+
+    analysis_data.expr_types.insert(pos, Rc::new(result_type));
 }
 
 /// Infer the result type of addition.

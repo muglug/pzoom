@@ -98,6 +98,20 @@ pzoom reads Psalm's XML configuration format. It looks for `psalm.xml`, `psalm.x
 
 See the [Psalm configuration documentation](https://psalm.dev/docs/running_psalm/configuration/) for more details on available options.
 
+## Differences to Psalm
+
+pzoom aims to match Psalm's analysis, with a small number of deliberate
+divergences:
+
+- **Case-sensitive name resolution.** PHP and Psalm resolve class, function
+  and method names case-insensitively. pzoom resolves them case-sensitively: a
+  wrong-cased reference is reported as `UndefinedClass` /
+  `UndefinedDocblockClass` / `UndefinedFunction` / `UndefinedMethod`, with the
+  correctly-cased name suggested in the message (e.g. ``Class foo does not
+  exist (incorrect casing of Foo)``). Runtime-truth checks still honor PHP
+  semantics: `method_exists()` matches case-insensitively, and method
+  *declarations* override parent methods case-insensitively.
+
 ## Architecture
 
 pzoom uses a three-phase analysis pipeline:

@@ -8,6 +8,7 @@ use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use crate::context::BlockContext;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Analyze a constant fetch expression.
 ///
@@ -22,65 +23,36 @@ pub fn analyze(
     let const_name = constant.name.value();
     let name_offset = constant.name.span().start.offset;
 
+    // The standard streams are hardcoded as resources (Psalm's
+    // ConstFetchAnalyzer::getGlobalConstType) — their stub declarations are
+    // self-referential placeholders (`const STDERR = STDERR;`).
+    if matches!(const_name, "STDERR" | "STDOUT" | "STDIN") {
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TResource)));
+        return;
+    }
+
     // Check for built-in constants first (case-insensitive for true/false/null)
     let result_type = match const_name.to_lowercase().as_str() {
         "true" => {
-            analysis_data.set_expr_type(pos, TUnion::new(TAtomic::TTrue));
+            analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TTrue)));
             return;
         }
         "false" => {
-            analysis_data.set_expr_type(pos, TUnion::new(TAtomic::TFalse));
+            analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TFalse)));
             return;
         }
         "null" => {
-            analysis_data.set_expr_type(pos, TUnion::null());
+            analysis_data.expr_types.insert(pos, Rc::new(TUnion::null()));
             return;
         }
 
-        // PHP version constants
-        "php_version" => TUnion::string(),
-        "php_major_version"
-        | "php_minor_version"
-        | "php_release_version"
-        | "php_version_id"
-        | "php_int_max"
-        | "php_int_min"
-        | "php_int_size"
-        | "php_float_dig"
-        | "php_maxpathlen" => TUnion::int(),
-        "php_float_epsilon" | "php_float_max" | "php_float_min" => TUnion::float(),
-
-        // OS constants
-        "php_os" | "php_os_family" | "php_eol" | "directory_separator" | "path_separator" => {
-            TUnion::string()
-        }
-
-        // Boolean-ish constants
-        "php_debug" | "php_zts" => TUnion::bool(),
-
-        // Common constants from stubs - check hardcoded list first
-        "e_all"
-        | "e_error"
-        | "e_warning"
-        | "e_parse"
-        | "e_notice"
-        | "e_strict"
-        | "e_deprecated"
-        | "e_core_error"
-        | "e_core_warning"
-        | "e_compile_error"
-        | "e_compile_warning"
-        | "e_user_error"
-        | "e_user_warning"
-        | "e_user_notice"
-        | "e_user_deprecated"
-        | "e_recoverable_error" => TUnion::int(),
-
-        // For other constants, try lookup
+        // For other constants (the runtime constants are typed at
+        // collection via runtime_global_constant_type; E_* error levels
+        // carry literal values from the stubs), try lookup
         _ => {
             // Resolve constant name considering namespace
             if let Some(const_info) = resolve_constant(analyzer, const_name, name_offset, context) {
-                analysis_data.set_expr_type(pos, const_info);
+                analysis_data.expr_types.insert(pos, Rc::new(const_info));
                 return;
             }
 
@@ -98,7 +70,7 @@ pub fn analyze(
         }
     };
 
-    analysis_data.set_expr_type(pos, result_type);
+    analysis_data.expr_types.insert(pos, Rc::new(result_type));
 }
 
 /// Resolve a constant by name, considering namespace context.
@@ -142,7 +114,13 @@ fn resolve_constant(
         }
     }
 
-    // Fall back to global namespace
+    // Fall back to the global namespace. PHP falls back only for
+    // UNQUALIFIED names: a relative-qualified `A\B` inside `namespace C`
+    // resolves solely to `C\A\B` (Psalm's getGlobalConstType fallback uses
+    // just the last name part, which likewise never matches `A\B`).
+    if !is_fully_qualified && normalized_name.contains('\\') && context.namespace.is_some() {
+        return None;
+    }
     let const_id = analyzer.interner.intern(normalized_name);
     analyzer
         .codebase

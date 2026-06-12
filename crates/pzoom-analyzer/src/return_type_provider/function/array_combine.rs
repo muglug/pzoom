@@ -21,8 +21,8 @@ impl FunctionReturnTypeProvider for ArrayCombineReturnTypeProvider {
     ) -> Option<TUnion> {
         let keys_pos = event.arg_positions.first().copied()?;
         let values_pos = event.arg_positions.get(1).copied()?;
-        let keys_type = analysis_data.get_expr_type(keys_pos)?;
-        let values_type = analysis_data.get_expr_type(values_pos)?;
+        let keys_type = analysis_data.expr_types.get(&keys_pos).cloned()?;
+        let values_type = analysis_data.expr_types.get(&values_pos).cloned()?;
 
         let keys_len = known_tuple_len(&keys_type)?;
         let values_len = known_tuple_len(&values_type)?;

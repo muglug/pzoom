@@ -1,0 +1,1 @@
+MissingTemplateParam - input.php:19:7 - DirectUseWithoutBinding has missing template params when extending GenericHolder

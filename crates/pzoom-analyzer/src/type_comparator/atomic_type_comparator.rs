@@ -23,22 +23,102 @@ pub fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
+    is_contained_by_in_context(
+        codebase,
+        input_type_part,
+        container_type_part,
+        false,
+        atomic_comparison_result,
+    )
+}
+
+/// `is_contained_by` with Psalm's `$allow_interface_equality` flag threaded
+/// through: equality-tolerant contexts (identity checks, param defaults,
+/// assertion filtering) let a template-param container accept any input
+/// fitting its bound.
+pub fn is_contained_by_in_context(
+    codebase: &CodebaseInfo,
+    input_type_part: &TAtomic,
+    container_type_part: &TAtomic,
+    allow_interface_equality: bool,
+    atomic_comparison_result: &mut TypeComparisonResult,
+) -> bool {
     // The dependent `get_class()`/`gettype()` atomics are class-string/string
     // subtypes; compare them as their plain supertype (Psalm models them via
     // class inheritance, so they are transparently comparable as strings).
     if let Some(input_equiv) = input_type_part.dependent_string_equivalent() {
-        return is_contained_by(
+        return is_contained_by_in_context(
             codebase,
             &input_equiv,
             container_type_part,
+            allow_interface_equality,
             atomic_comparison_result,
         );
     }
     if let Some(container_equiv) = container_type_part.dependent_string_equivalent() {
-        return is_contained_by(
+        return is_contained_by_in_context(
             codebase,
             input_type_part,
             &container_equiv,
+            allow_interface_equality,
+            atomic_comparison_result,
+        );
+    }
+
+    // An unresolved conditional type compares through its branches (Psalm's
+    // AtomicTypeComparator): as a container, the input must fit one branch
+    // atomic; as an input, one branch atomic must fit the container.
+    if let TAtomic::TConditional(container_conditional) = container_type_part {
+        return container_conditional
+            .if_true_type
+            .types
+            .iter()
+            .chain(container_conditional.if_false_type.types.iter())
+            .any(|container_branch_part| {
+                is_contained_by_in_context(
+                    codebase,
+                    input_type_part,
+                    container_branch_part,
+                    allow_interface_equality,
+                    atomic_comparison_result,
+                )
+            });
+    }
+    if let TAtomic::TConditional(input_conditional) = input_type_part {
+        return input_conditional
+            .if_true_type
+            .types
+            .iter()
+            .chain(input_conditional.if_false_type.types.iter())
+            .any(|input_branch_part| {
+                is_contained_by_in_context(
+                    codebase,
+                    input_branch_part,
+                    container_type_part,
+                    allow_interface_equality,
+                    atomic_comparison_result,
+                )
+            });
+    }
+
+    // A `class-string-map` compares as `array<class-string<placeholder>, value>`
+    // on either side (Psalm's ArrayTypeComparator substitutes
+    // `new TArray([getStandinKeyParam(), value_param])` before comparing).
+    if let Some(input_equiv) = input_type_part.get_class_string_map_as_array() {
+        return is_contained_by_in_context(
+            codebase,
+            &input_equiv,
+            container_type_part,
+            allow_interface_equality,
+            atomic_comparison_result,
+        );
+    }
+    if let Some(container_equiv) = container_type_part.get_class_string_map_as_array() {
+        return is_contained_by_in_context(
+            codebase,
+            input_type_part,
+            &container_equiv,
+            allow_interface_equality,
             atomic_comparison_result,
         );
     }
@@ -46,20 +126,21 @@ pub fn is_contained_by(
     if let TAtomic::TObjectIntersection { types } = container_type_part {
         for intersection_type in types {
             let mut intersection_result = TypeComparisonResult::new();
-            if !is_contained_by(
+            if !is_contained_by_in_context(
                 codebase,
                 input_type_part,
                 intersection_type,
+                allow_interface_equality,
                 &mut intersection_result,
             ) {
                 if intersection_result.type_coerced.unwrap_or(false) {
                     atomic_comparison_result.type_coerced = Some(true);
                 }
                 if intersection_result
-                    .type_coerced_from_nested_mixed
+                    .type_coerced_from_mixed
                     .unwrap_or(false)
                 {
-                    atomic_comparison_result.type_coerced_from_nested_mixed = Some(true);
+                    atomic_comparison_result.type_coerced_from_mixed = Some(true);
                 }
                 return false;
             }
@@ -70,10 +151,11 @@ pub fn is_contained_by(
 
     if let TAtomic::TObjectIntersection { types } = input_type_part {
         for intersection_type in types {
-            if is_contained_by(
+            if is_contained_by_in_context(
                 codebase,
                 intersection_type,
                 container_type_part,
+                allow_interface_equality,
                 atomic_comparison_result,
             ) {
                 return true;
@@ -83,37 +165,96 @@ pub fn is_contained_by(
         return false;
     }
 
-    // Template params compare using their bound ("as") type.
+    // Two template params compare *shallowly* (Psalm's ObjectComparator::
+    // isShallowlyContainedBy): identity, declared-bound links, or an
+    // `@extends` mapping — never via mutual bound containment.
+    if let (
+        TAtomic::TTemplateParam {
+            name: input_name,
+            defining_entity: input_entity,
+            as_type: input_as,
+        },
+        TAtomic::TTemplateParam {
+            name: container_name,
+            defining_entity: container_entity,
+            as_type: container_as,
+        },
+    ) = (input_type_part, container_type_part)
+    {
+        return template_param_shallowly_contained_by(
+            codebase,
+            (*input_name, input_entity, input_as),
+            (*container_name, container_entity, container_as),
+            allow_interface_equality,
+            atomic_comparison_result,
+        );
+    }
+
+    // An input template param compares using its bound ("as") type — a value
+    // of type `T as Foo` is always a Foo (Psalm AtomicTypeComparator's
+    // input-TTemplateParam arm).
     if let TAtomic::TTemplateParam { as_type, .. } = input_type_part {
-        return union_type_comparator::is_contained_by(
+        return union_type_comparator::is_contained_by_in_context(
             codebase,
             as_type,
             &pzoom_code_info::TUnion::new(container_type_part.clone()),
             false,
             false,
+            allow_interface_equality,
             atomic_comparison_result,
         );
     }
 
+    // A template param *container* is rigid: it stands for whatever type the
+    // caller chooses, so a concrete input only satisfies it in
+    // equality-tolerant contexts (Psalm's container-TTemplateParam arm honors
+    // a bound match only under allow_interface_equality). The bound
+    // comparison always runs so coercion flags accumulate (LessSpecific vs
+    // Invalid classification).
     if let TAtomic::TTemplateParam { as_type, .. } = container_type_part {
-        return union_type_comparator::is_contained_by(
+        // Psalm: `mixed` input is contained by an as-mixed template container.
+        if matches!(
+            input_type_part,
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed
+        ) {
+            if as_type.is_mixed() {
+                return true;
+            }
+            atomic_comparison_result.type_coerced = Some(true);
+            atomic_comparison_result.type_coerced_from_mixed = Some(true);
+            return false;
+        }
+        // Psalm: `never` input is contained by anything.
+        if matches!(input_type_part, TAtomic::TNothing) {
+            return true;
+        }
+        // Psalm: `null` input is contained by a template with a nullable (or
+        // mixed) bound.
+        if matches!(input_type_part, TAtomic::TNull) {
+            return as_type.is_nullable() || as_type.is_mixed();
+        }
+
+        let fits_bound = union_type_comparator::is_contained_by_in_context(
             codebase,
             &pzoom_code_info::TUnion::new(input_type_part.clone()),
             as_type,
             false,
             false,
+            allow_interface_equality,
             atomic_comparison_result,
         );
+        return allow_interface_equality && fits_bound;
     }
 
     if let TAtomic::TTemplateParamClass { as_type, .. } = input_type_part {
         let class_string_input = TAtomic::TClassString {
             as_type: Some(Box::new((**as_type).clone())),
         };
-        return is_contained_by(
+        return is_contained_by_in_context(
             codebase,
             &class_string_input,
             container_type_part,
+            allow_interface_equality,
             atomic_comparison_result,
         );
     }
@@ -122,10 +263,11 @@ pub fn is_contained_by(
         let class_string_container = TAtomic::TClassString {
             as_type: Some(Box::new((**as_type).clone())),
         };
-        return is_contained_by(
+        return is_contained_by_in_context(
             codebase,
             input_type_part,
             &class_string_container,
+            allow_interface_equality,
             atomic_comparison_result,
         );
     }
@@ -197,7 +339,9 @@ pub fn is_contained_by(
         return true;
     }
 
-    // Enum cases are valid instances of their declaring enum class.
+    // Enum cases are valid instances of their declaring enum class — and of
+    // anything the enum implements (Psalm treats the case as the enum's
+    // storage for object containment).
     if let (
         TAtomic::TEnumCase {
             enum_name: input_enum,
@@ -208,7 +352,12 @@ pub fn is_contained_by(
             ..
         },
     ) = (input_type_part, container_type_part)
-        && input_enum == container_name
+        && (input_enum == container_name
+            || object_type_comparator::is_class_subtype_of(
+                *input_enum,
+                *container_name,
+                codebase,
+            ))
     {
         return true;
     }
@@ -220,7 +369,12 @@ pub fn is_contained_by(
             ..
         },
     ) = (input_type_part, container_type_part)
-        && input_enum == container_name
+        && (input_enum == container_name
+            || object_type_comparator::is_class_subtype_of(
+                *input_enum,
+                *container_name,
+                codebase,
+            ))
     {
         return true;
     }
@@ -241,7 +395,20 @@ pub fn is_contained_by(
     // Mixed input requires coercion
     if matches!(input_type_part, TAtomic::TMixed | TAtomic::TNonEmptyMixed) {
         atomic_comparison_result.type_coerced = Some(true);
-        atomic_comparison_result.type_coerced_from_nested_mixed = Some(true);
+        atomic_comparison_result.type_coerced_from_mixed = Some(true);
+        return false;
+    }
+
+    // A template whose bound is mixed is as good as mixed (Psalm
+    // AtomicTypeComparator: template-as-mixed inputs coerce from mixed); the
+    // as-mixed flag marks the template origin, which suppresses Mixed*
+    // reporting downstream.
+    if let TAtomic::TTemplateParam { as_type, .. } = input_type_part
+        && as_type.is_mixed()
+    {
+        atomic_comparison_result.type_coerced = Some(true);
+        atomic_comparison_result.type_coerced_from_mixed = Some(true);
+        atomic_comparison_result.type_coerced_from_as_mixed = Some(true);
         return false;
     }
 
@@ -317,13 +484,21 @@ pub fn is_contained_by(
             // `InvalidScalarArgument`). pzoom has no per-atomic docblock flag, so we
             // preserve the incoming value across the nested element comparisons.
             let saved_scalar_match = atomic_comparison_result.scalar_type_match_found;
+            let keyed_shape_pair = matches!(input_type_part, TAtomic::TKeyedArray { .. })
+                && matches!(container_type_part, TAtomic::TKeyedArray { .. });
+            atomic_comparison_result.scalar_type_match_found = None;
             let result = array_type_comparator::is_contained_by(
                 codebase,
                 input_type_part,
                 container_type_part,
                 atomic_comparison_result,
             );
-            atomic_comparison_result.scalar_type_match_found = saved_scalar_match;
+            // Shape-vs-shape comparisons compute the flag deliberately
+            // (KeyedArrayComparator's per-property propagation); every other
+            // nested element comparison keeps the incoming value.
+            if !keyed_shape_pair || atomic_comparison_result.scalar_type_match_found.is_none() {
+                atomic_comparison_result.scalar_type_match_found = saved_scalar_match;
+            }
             return result;
         }
     }
@@ -335,6 +510,17 @@ pub fn is_contained_by(
             if matches!(
                 input_type_part,
                 TAtomic::TNamedObject { name, .. } if *name == StrId::CLOSURE
+            ) {
+                return true;
+            }
+
+            // A `callable-object` (Psalm's TCallableObject) is callable.
+            if matches!(
+                input_type_part,
+                TAtomic::TObjectWithProperties {
+                    is_invokable: true,
+                    ..
+                }
             ) {
                 return true;
             }
@@ -364,6 +550,21 @@ pub fn is_contained_by(
             if is_array_type(input_type_part) {
                 return true;
             }
+
+            // An object declaring __invoke is callable when its signature
+            // satisfies the container's.
+            if let TAtomic::TNamedObject { name, .. } = input_type_part
+                && codebase
+                    .get_class(*name)
+                    .is_some_and(|class_info| class_info.methods.contains_key(&StrId::INVOKE))
+            {
+                return callable_type_comparator::is_contained_by(
+                    codebase,
+                    input_type_part,
+                    container_type_part,
+                    atomic_comparison_result,
+                );
+            }
         }
     }
 
@@ -376,6 +577,74 @@ pub fn is_contained_by(
         // Arrays are iterable; check that the element key/value types are compatible.
         if is_array_type(input_type_part) {
             if container_key.is_mixed() && container_value.is_mixed() {
+                return true;
+            }
+
+            // A keyed shape checks each entry against the container's value
+            // union individually: combining distinct entry shapes first would
+            // merge them into one all-optional shape matching neither union
+            // branch (Psalm compares per property).
+            if let TAtomic::TKeyedArray {
+                properties,
+                fallback_key_type,
+                fallback_value_type,
+                ..
+            } = input_type_part
+            {
+                use pzoom_code_info::ArrayKey;
+
+                let key_contained = |key_union: &pzoom_code_info::TUnion,
+                                     atomic_comparison_result: &mut TypeComparisonResult| {
+                    container_key.is_mixed()
+                        || union_type_comparator::is_contained_by(
+                            codebase,
+                            key_union,
+                            container_key,
+                            false,
+                            false,
+                            atomic_comparison_result,
+                        )
+                };
+                let value_contained = |value_union: &pzoom_code_info::TUnion,
+                                       atomic_comparison_result: &mut TypeComparisonResult| {
+                    container_value.is_mixed()
+                        || union_type_comparator::is_contained_by(
+                            codebase,
+                            value_union,
+                            container_value,
+                            false,
+                            false,
+                            atomic_comparison_result,
+                        )
+                };
+
+                for (key, value) in properties.iter() {
+                    let key_union = match key {
+                        ArrayKey::Int(i) => {
+                            pzoom_code_info::TUnion::new(TAtomic::TLiteralInt { value: *i })
+                        }
+                        ArrayKey::String(s) => {
+                            pzoom_code_info::TUnion::new(TAtomic::TLiteralString {
+                                value: s.to_string(),
+                            })
+                        }
+                    };
+                    if !key_contained(&key_union, atomic_comparison_result)
+                        || !value_contained(value, atomic_comparison_result)
+                    {
+                        return false;
+                    }
+                }
+                if let Some(fallback_key_type) = fallback_key_type
+                    && !key_contained(fallback_key_type, atomic_comparison_result)
+                {
+                    return false;
+                }
+                if let Some(fallback_value_type) = fallback_value_type
+                    && !value_contained(fallback_value_type, atomic_comparison_result)
+                {
+                    return false;
+                }
                 return true;
             }
 
@@ -419,28 +688,51 @@ pub fn is_contained_by(
                         | StrId::TRAVERSABLE
                         | StrId::ITERATOR
                         | StrId::ITERATOR_AGGREGATE
-                ) && let Some(params) = type_params
-                    && params.len() >= 2
-                {
-                    let key_ok = container_key.is_mixed()
-                        || union_type_comparator::is_contained_by(
-                            codebase,
-                            &params[0],
-                            container_key,
-                            false,
-                            false,
-                            atomic_comparison_result,
-                        );
-                    let value_ok = container_value.is_mixed()
-                        || union_type_comparator::is_contained_by(
-                            codebase,
-                            &params[1],
-                            container_value,
-                            false,
-                            false,
-                            atomic_comparison_result,
-                        );
-                    return key_ok && value_ok;
+                ) {
+                    if let Some(params) = type_params
+                        && params.len() >= 2
+                    {
+                        let key_ok = container_key.is_mixed()
+                            || union_type_comparator::is_contained_by(
+                                codebase,
+                                &params[0],
+                                container_key,
+                                false,
+                                false,
+                                atomic_comparison_result,
+                            );
+                        let value_ok = container_value.is_mixed()
+                            || union_type_comparator::is_contained_by(
+                                codebase,
+                                &params[1],
+                                container_value,
+                                false,
+                                false,
+                                atomic_comparison_result,
+                            );
+                        return key_ok && value_ok;
+                    }
+
+                    // No type params: the input's iteration types are its
+                    // template defaults. A container slot that is itself a
+                    // mixed-bound template param accepts them (Psalm compares
+                    // bound-to-bound and succeeds); a concrete slot (e.g.
+                    // `int`) reports a real coercion from mixed.
+                    let accepts_unknown = |slot: &pzoom_code_info::TUnion| {
+                        slot.is_mixed()
+                            || slot.types.iter().all(|atomic| {
+                                matches!(
+                                    atomic,
+                                    TAtomic::TTemplateParam { as_type, .. } if as_type.is_mixed()
+                                )
+                            })
+                    };
+                    if accepts_unknown(container_key) && accepts_unknown(container_value) {
+                        return true;
+                    }
+                    atomic_comparison_result.type_coerced = Some(true);
+                    atomic_comparison_result.type_coerced_from_mixed = Some(true);
+                    return false;
                 }
 
                 return true;
@@ -525,10 +817,11 @@ pub fn is_contained_by(
             TAtomic::TClassString { as_type: input_as } => {
                 if let Some(container_as) = container_as {
                     if let Some(input_as) = input_as {
-                        return is_contained_by(
+                        return is_contained_by_in_context(
                             codebase,
                             input_as,
                             container_as,
+                            allow_interface_equality,
                             atomic_comparison_result,
                         );
                     }
@@ -593,6 +886,7 @@ fn is_scalar_type(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
         TAtomic::TInt
+            | TAtomic::TNonspecificLiteralInt
             | TAtomic::TFloat
             | TAtomic::TString
             | TAtomic::TBool
@@ -606,6 +900,7 @@ fn is_scalar_type(atomic: &TAtomic) -> bool {
             | TAtomic::TNonEmptyString
             | TAtomic::TLowercaseString
             | TAtomic::TTruthyString
+            | TAtomic::TCallableString
             | TAtomic::TNonEmptyNumericString
             | TAtomic::TNonEmptyLowercaseString
             | TAtomic::TClassString { .. }
@@ -658,7 +953,7 @@ fn array_atomic_key_value_types(
             let mut value_union: Option<TUnion> =
                 fallback_value_type.as_ref().map(|v| (**v).clone());
 
-            for (key, value) in properties {
+            for (key, value) in properties.iter() {
                 let key_atomic = match key {
                     ArrayKey::Int(i) => TAtomic::TLiteralInt { value: *i },
                     ArrayKey::String(s) => TAtomic::TLiteralString { value: s.clone() },
@@ -731,9 +1026,25 @@ pub fn can_be_identical(codebase: &CodebaseInfo, type1: &TAtomic, type2: &TAtomi
         return can_be_identical(codebase, type1, &equiv);
     }
 
+    // A `class-string-map` behaves as `array<class-string<placeholder>, value>`.
+    if let Some(equiv) = type1.get_class_string_map_as_array() {
+        return can_be_identical(codebase, &equiv, type2);
+    }
+    if let Some(equiv) = type2.get_class_string_map_as_array() {
+        return can_be_identical(codebase, type1, &equiv);
+    }
+
     // Mixed can be identical to anything
     if matches!(type1, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
         || matches!(type2, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
+    {
+        return true;
+    }
+
+    // A type variable can be identical to anything (Hakana's
+    // `can_be_identical`); its constraints are reconciled at function end.
+    if matches!(type1, TAtomic::TTypeVariable { .. })
+        || matches!(type2, TAtomic::TTypeVariable { .. })
     {
         return true;
     }
@@ -775,12 +1086,129 @@ pub fn can_be_identical(codebase: &CodebaseInfo, type1: &TAtomic, type2: &TAtomi
         return false;
     }
 
-    // Check if either is contained by the other
+    // Check if either is contained by the other. Psalm's canBeIdentical
+    // passes allow_interface_equality=true, so a template param can be
+    // identical to anything fitting its bound.
     let mut result = TypeComparisonResult::new();
-    if is_contained_by(codebase, type1, type2, &mut result) {
+    if is_contained_by_in_context(codebase, type1, type2, true, &mut result) {
         return true;
     }
-    if is_contained_by(codebase, type2, type1, &mut result) {
+    if is_contained_by_in_context(codebase, type2, type1, true, &mut result) {
+        return true;
+    }
+
+    false
+}
+
+/// Two template params compare shallowly — a port of the template-vs-template
+/// rules in Psalm's `ObjectComparator::isShallowlyContainedBy` /
+/// `isIntersectionShallowlyContainedBy` (with pzoom's standing
+/// `allow_interface_equality = false`):
+///
+/// 1. The same param (name + defining entity) is contained by itself.
+/// 2. Two function-defined templates from *different* functions are
+///    interchangeable.
+/// 3. `T1 as T2` is contained by `T2` (the input's bound names the container).
+/// 4. Templates from different entities with single-atomic bounds compare via
+///    those bounds when both are named objects (shallowly) or both `mixed`
+///    (true) — unless the input is a method template of the container's own
+///    class (Psalm extracts the class from the `fn-class::method` id; pzoom's
+///    interner-free comparator can't, an accepted leniency).
+/// 5. A class-defined input whose class fills the container's template via
+///    `@extends`/`@implements` is contained by it.
+fn template_param_shallowly_contained_by(
+    codebase: &CodebaseInfo,
+    (input_name, input_entity, input_as): (
+        StrId,
+        &pzoom_code_info::GenericParent,
+        &pzoom_code_info::TUnion,
+    ),
+    (container_name, container_entity, container_as): (
+        StrId,
+        &pzoom_code_info::GenericParent,
+        &pzoom_code_info::TUnion,
+    ),
+    allow_interface_equality: bool,
+    atomic_comparison_result: &mut TypeComparisonResult,
+) -> bool {
+    use pzoom_code_info::GenericParent;
+
+    // Psalm's isShallowlyContainedBy pre-check: different defining entities
+    // with single-atomic bounds compare via the bounds when the input is not
+    // defined on (a method of) the container's class.
+    if input_entity != container_entity
+        && input_as.types.len() == 1
+        && container_as.types.len() == 1
+    {
+        let container_in_fn = matches!(container_entity, GenericParent::FunctionLike(_));
+
+        if !container_in_fn {
+            match (input_as.types.first(), container_as.types.first()) {
+                (
+                    Some(input_bound @ TAtomic::TNamedObject { .. }),
+                    Some(container_bound @ TAtomic::TNamedObject { .. }),
+                ) => {
+                    return is_contained_by_in_context(
+                        codebase,
+                        input_bound,
+                        container_bound,
+                        allow_interface_equality,
+                        atomic_comparison_result,
+                    );
+                }
+                (
+                    Some(TAtomic::TMixed | TAtomic::TNonEmptyMixed),
+                    Some(TAtomic::TMixed | TAtomic::TNonEmptyMixed),
+                ) => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Psalm's function-template special rules apply only outside
+    // equality-tolerant contexts (gated on !allow_interface_equality).
+    if !allow_interface_equality {
+        // Two function-defined templates from different functions.
+        if let (GenericParent::FunctionLike(_), GenericParent::FunctionLike(_)) =
+            (input_entity, container_entity)
+            && input_entity != container_entity
+        {
+            return true;
+        }
+
+        // `T1 as T2` satisfies `T2` — the input's bound names the container
+        // template exactly.
+        if input_as.types.iter().any(|input_as_atomic| {
+            matches!(
+                input_as_atomic,
+                TAtomic::TTemplateParam {
+                    name,
+                    defining_entity,
+                    ..
+                } if *name == container_name && defining_entity == container_entity
+            )
+        }) {
+            return true;
+        }
+    }
+
+    // The same template param.
+    if input_name == container_name && input_entity == container_entity {
+        return true;
+    }
+
+    // A class-defined input template whose class fills the container's
+    // template through the `@extends`/`@implements` chain.
+    if let (GenericParent::ClassLike(input_class), GenericParent::ClassLike(container_class)) =
+        (input_entity, container_entity)
+        && let Some(input_class_info) = codebase.get_class(*input_class)
+        && input_class_info
+            .template_extended_params
+            .get(container_class)
+            .is_some_and(|template_map| template_map.contains_key(&container_name))
+    {
         return true;
     }
 
@@ -811,7 +1239,8 @@ fn strict_scalar_identity_family(atomic: &TAtomic) -> Option<StrictScalarIdentit
         | TAtomic::TNonEmptyString
         | TAtomic::TLowercaseString
         | TAtomic::TNonEmptyLowercaseString
-        | TAtomic::TTruthyString => Some(StrictScalarIdentityFamily::String),
+        | TAtomic::TTruthyString
+        | TAtomic::TCallableString => Some(StrictScalarIdentityFamily::String),
         _ => None,
     }
 }

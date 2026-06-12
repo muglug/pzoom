@@ -12,7 +12,7 @@ use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
+use crate::stmt::scope_analyzer::BreakContext;
 use crate::stmt::loop_analyzer;
 
 /// Analyze a for loop statement.
@@ -39,17 +39,31 @@ pub fn analyze(
     // (`for (;;)`, `for (; true;)`, `for ($i = 0;; $i++)`). In that case the body
     // is guaranteed to run at least once and the loop only exits via `break` —
     // matching how Psalm derives `always_enters_loop`.
-    let always_enters_loop = pre_conditions
+    let while_true = pre_conditions
         .last()
         .map_or(true, |condition| is_always_true(condition));
-    let while_true = always_enters_loop;
+    // Psalm's `doesEnterLoop`: `for ($i = 1; $i < 2; ...)` with literal-int
+    // init and bound provably runs the body at least once.
+    let always_enters_loop =
+        while_true || does_enter_loop( for_stmt, &pre_conditions, context);
 
     let mut for_context = context.clone();
     for_context.inside_loop = true;
     for_context.inside_foreach = false;
     for_context.break_types.push(BreakContext::Loop);
 
-    let loop_scope = LoopScope::new(context.locals.clone());
+    let mut loop_scope = LoopScope::new(context.locals.clone());
+    // Counter variables assigned in init/increment are protected: a nested
+    // foreach reassigning one reports LoopInvalidation.
+    for expr in for_stmt
+        .initializations
+        .iter()
+        .chain(for_stmt.increments.iter())
+    {
+        if let Some(var_name) = directly_assigned_var_name(expr) {
+            loop_scope.protected_var_ids.insert(var_name);
+        }
+    }
 
     let body_stmts = for_stmt.body.statements();
 
@@ -62,17 +76,14 @@ pub fn analyze(
         &mut for_context,
         context,
         analysis_data,
+        false,
         always_enters_loop,
         while_true,
     )?;
 
-    // An infinite loop with no reachable `break` never exits normally, so any
-    // code after it is unreachable.
-    let exits_via_break = loop_scope.final_actions.contains(&ControlAction::Break);
-    if while_true && !exits_via_break {
-        context.control_actions.insert(ControlAction::End);
-        context.has_returned = true;
-    }
+    // Psalm does not treat code after a break-less infinite `for` as
+    // unreachable; it is analyzed with the pre-loop scope.
+    let _ = &loop_scope;
 
     Ok(())
 }
@@ -84,4 +95,75 @@ fn is_always_true(condition: &Expression<'_>) -> bool {
         condition.unparenthesized(),
         Expression::Literal(Literal::True(_))
     )
+}
+
+/// Psalm's `LoopAnalyzer::doesEnterLoop` for `for` statements: a single
+/// literal-int init (`$i = 1`) compared against a literal-int bound
+/// (`$i < 2`, `$i <= 2`) that holds at entry proves the body runs.
+fn does_enter_loop(
+    for_stmt: &For<'_>,
+    pre_conditions: &[&Expression<'_>],
+    context: &BlockContext,
+) -> bool {
+    use mago_syntax::ast::ast::binary::BinaryOperator;
+    use mago_syntax::ast::ast::variable::Variable;
+
+    if for_stmt.initializations.len() != 1 || for_stmt.conditions.len() != 1 {
+        return false;
+    }
+    let Some(condition) = pre_conditions.last() else {
+        return false;
+    };
+    let Expression::Binary(binary) = condition.unparenthesized() else {
+        return false;
+    };
+    let Expression::Variable(Variable::Direct(direct)) = binary.lhs.unparenthesized() else {
+        return false;
+    };
+    let Expression::Literal(Literal::Integer(bound_literal)) = binary.rhs.unparenthesized()
+    else {
+        return false;
+    };
+    let Some(bound_value) = bound_literal.value else {
+        return false;
+    };
+
+    // The init expressions ran in the parent context, so the counter's value
+    // is its current local type.
+    let init_value = context
+        .locals
+        .get(direct.name)
+        .or_else(|| context.locals.get(direct.name.trim_start_matches('$')))
+        .and_then(|var_type| match var_type.types.as_slice() {
+            [pzoom_code_info::TAtomic::TLiteralInt { value }] => Some(*value),
+            _ => None,
+        });
+    let Some(init_value) = init_value else {
+        return false;
+    };
+
+    match &binary.operator {
+        BinaryOperator::LessThan(_) => init_value < bound_value as i64,
+        BinaryOperator::LessThanOrEqual(_) => init_value <= bound_value as i64,
+        BinaryOperator::GreaterThan(_) => init_value > bound_value as i64,
+        BinaryOperator::GreaterThanOrEqual(_) => init_value >= bound_value as i64,
+        _ => false,
+    }
+}
+
+/// The variable directly assigned/incremented by a for-init or increment
+/// expression (`$i = 0`, `$i++`, `++$i`, `$i += 1`).
+fn directly_assigned_var_name(expr: &Expression<'_>) -> Option<pzoom_code_info::VarName> {
+    use mago_syntax::ast::ast::variable::Variable;
+    let target = match expr.unparenthesized() {
+        Expression::Assignment(assignment) => assignment.lhs.unparenthesized(),
+        Expression::UnaryPostfix(postfix) => postfix.operand.unparenthesized(),
+        Expression::UnaryPrefix(prefix) => prefix.operand.unparenthesized(),
+        _ => return None,
+    };
+    if let Expression::Variable(Variable::Direct(direct)) = target {
+        Some(pzoom_code_info::VarName::new(direct.name))
+    } else {
+        None
+    }
 }

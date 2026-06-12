@@ -1,12 +1,137 @@
 //! Atomic property fetch analyzer - handles property lookups on specific types.
 
 use pzoom_code_info::class_like_info::Visibility;
-use pzoom_code_info::{Issue, IssueKind, TUnion};
+use pzoom_code_info::VarName;
+use pzoom_code_info::{DataFlowNode, Issue, IssueKind, PathKind, TUnion, VarId};
 
 use crate::context::BlockContext;
+use crate::data_flow::make_data_flow_node_position;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
+
+/// Hakana `atomic_property_fetch_analyzer::add_property_dataflow`. A
+/// `@psalm-taint-specialize` class's instances track property taints through
+/// the receiver variable's own dataflow (per-instance); other classes read
+/// the global `Class::$prop` property node.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn add_property_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    lhs_pos: Option<Pos>,
+    lhs_parent_nodes: &[DataFlowNode],
+    name_pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+    mut stmt_type: TUnion,
+    in_assignment: bool,
+    property_id: (StrId, StrId),
+    declaring_property_class: StrId,
+    lhs_var_id: Option<&str>,
+) -> TUnion {
+    let specialize_instance = analyzer
+        .codebase
+        .get_class(property_id.0)
+        .is_some_and(|class_info| class_info.specialize_instance);
+
+    if specialize_instance {
+        if let (Some(lhs_var_id), Some(lhs_pos)) = (lhs_var_id, lhs_pos) {
+            let var_id = VarName::new(lhs_var_id);
+            let var_node = DataFlowNode::get_for_lvar(
+                VarId(analyzer.interner.intern(&var_id)),
+                make_data_flow_node_position(analyzer, lhs_pos),
+            );
+            let property_node = DataFlowNode::get_for_local_property_fetch(
+                VarId(analyzer.interner.intern(&var_id)),
+                property_id.1,
+                make_data_flow_node_position(analyzer, name_pos),
+            );
+
+            analysis_data.data_flow_graph.add_node(var_node.clone());
+            analysis_data.data_flow_graph.add_node(property_node.clone());
+            analysis_data.data_flow_graph.add_path(
+                &var_node.id,
+                &property_node.id,
+                PathKind::PropertyFetch(property_id.0, property_id.1),
+                vec![],
+                vec![],
+            );
+
+            for parent_node in lhs_parent_nodes {
+                analysis_data.data_flow_graph.add_path(
+                    &parent_node.id,
+                    &var_node.id,
+                    PathKind::Default,
+                    vec![],
+                    vec![],
+                );
+            }
+
+            stmt_type.parent_nodes.push(property_node);
+        }
+    } else if let Some(lhs_var_id) = lhs_var_id {
+        let var_id = VarName::new(lhs_var_id);
+        stmt_type = add_unspecialized_property_fetch_dataflow(
+            DataFlowNode::get_for_local_property_fetch(
+                VarId(analyzer.interner.intern(&var_id)),
+                property_id.1,
+                make_data_flow_node_position(analyzer, name_pos),
+            ),
+            property_id,
+            analysis_data,
+            in_assignment,
+            stmt_type,
+        );
+    }
+
+    let localized_property_node = DataFlowNode::get_for_localized_property(
+        (declaring_property_class, property_id.1),
+        make_data_flow_node_position(analyzer, name_pos),
+    );
+
+    analysis_data
+        .data_flow_graph
+        .add_node(localized_property_node.clone());
+
+    stmt_type.parent_nodes.push(localized_property_node);
+
+    stmt_type
+}
+
+/// Hakana `add_unspecialized_property_fetch_dataflow`.
+pub(crate) fn add_unspecialized_property_fetch_dataflow(
+    localized_property_node: DataFlowNode,
+    property_id: (StrId, StrId),
+    analysis_data: &mut FunctionAnalysisData,
+    in_assignment: bool,
+    mut stmt_type: TUnion,
+) -> TUnion {
+    analysis_data
+        .data_flow_graph
+        .add_node(localized_property_node.clone());
+
+    let property_node = DataFlowNode::get_for_property(property_id);
+
+    if in_assignment {
+        analysis_data.data_flow_graph.add_path(
+            &property_node.id,
+            &localized_property_node.id,
+            PathKind::PropertyAssignment(property_id.0, property_id.1),
+            vec![],
+            vec![],
+        );
+    } else {
+        analysis_data.data_flow_graph.add_path(
+            &property_node.id,
+            &localized_property_node.id,
+            PathKind::PropertyFetch(property_id.0, property_id.1),
+            vec![],
+            vec![],
+        );
+    }
+
+    stmt_type.parent_nodes = vec![localized_property_node];
+
+    stmt_type
+}
 
 /// Analyze a property fetch on a known class type.
 pub fn analyze_property(
@@ -25,6 +150,16 @@ pub fn analyze_property(
     if let Some(class_info) = analyzer.codebase.get_class(class_id) {
         // Look up the property
         if let Some(prop_info) = class_info.properties.get(&prop_id) {
+            // Reads mark the property used (Psalm records the reference for
+            // find_unused_code; writes don't count).
+            if analyzer.config.find_unused_code
+                && !_in_assignment
+                && !_context.inside_array_append_root
+            {
+                analysis_data
+                    .referenced_properties
+                    .insert((prop_info.declaring_class, prop_id));
+            }
             // Visibility, scoped to the class that declares the property (matches Psalm):
             // - private: only the declaring class itself;
             // - protected: the declaring class and any class in its hierarchy.
@@ -102,7 +237,7 @@ pub fn analyze_property(
             });
         } else {
             // Property not found - fall back to magic __get return type when available.
-            let magic_get_id = analyzer.interner.intern("__get");
+            let magic_get_id = StrId::GET;
             if let Some(magic_get_info) = class_info.methods.get(&magic_get_id) {
                 if let Some(return_type) = magic_get_info
                     .return_type
@@ -140,15 +275,53 @@ use crate::expression_identifier;
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
 
 pub(crate) fn get_reconciled_property_type(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &BlockContext,
     object_expr: &Expression<'_>,
     prop_name: &str,
 ) -> Option<TUnion> {
     let object_key = expression_identifier::get_expression_var_key(object_expr)?;
     let property_key = format!("{}->{}", object_key, prop_name);
-    let property_id = analyzer.interner.find(&property_key)?;
-    context.locals.get(&property_id).cloned()
+    context.locals.get(property_key.as_str()).cloned()
+}
+
+/// Psalm's AtomicPropertyFetchAnalyzer: a property missing on the receiver
+/// class is retargeted to the enclosing class when the receiver extends it and
+/// the enclosing class declares the property — e.g. a private property
+/// accessed through `$this` after an `instanceof` narrowed it to a subclass
+/// (private properties are not inherited into the child's table).
+pub(crate) fn retarget_property_class_for_context(
+    analyzer: &StatementsAnalyzer<'_>,
+    receiver_class: pzoom_str::StrId,
+    prop_id: pzoom_str::StrId,
+) -> pzoom_str::StrId {
+    if analyzer
+        .codebase
+        .get_class(receiver_class)
+        .is_some_and(|class_info| class_info.properties.contains_key(&prop_id))
+    {
+        return receiver_class;
+    }
+
+    let Some(self_class) = analyzer.get_declaring_class() else {
+        return receiver_class;
+    };
+    if self_class == receiver_class {
+        return receiver_class;
+    }
+
+    if crate::type_comparator::object_type_comparator::is_class_subtype_of(
+        receiver_class,
+        self_class,
+        analyzer.codebase,
+    ) && analyzer
+        .codebase
+        .get_class(self_class)
+        .is_some_and(|class_info| class_info.properties.contains_key(&prop_id))
+    {
+        return self_class;
+    }
+
+    receiver_class
 }
 
 /// Look up the type of a property on a type.
@@ -162,10 +335,70 @@ pub(crate) fn get_property_type(
     suppress_null_issues: bool,
     has_this: bool,
     context: &BlockContext,
+    is_static_access: bool,
+) -> Option<TUnion> {
+    // Psalm's InstancePropertyFetchAnalyzer: `@psalm-ignore-nullable-return`
+    // receivers suppress the possibly-null fetch issues AND propagate the
+    // flag onto the fetched property type.
+    let suppress_null_issues = suppress_null_issues || obj_type.ignore_nullable_issues;
+    let mut result = get_property_type_inner(
+        analyzer,
+        obj_type,
+        prop_name,
+        pos,
+        analysis_data,
+        is_this_fetch,
+        suppress_null_issues,
+        has_this,
+        context,
+        is_static_access,
+    )?;
+    if obj_type.ignore_nullable_issues {
+        result.ignore_nullable_issues = true;
+    }
+    Some(result)
+}
+
+fn get_property_type_inner(
+    analyzer: &StatementsAnalyzer<'_>,
+    obj_type: &TUnion,
+    prop_name: &str,
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+    is_this_fetch: bool,
+    suppress_null_issues: bool,
+    has_this: bool,
+    context: &BlockContext,
+    is_static_access: bool,
 ) -> Option<TUnion> {
     let prop_id = analyzer.interner.intern(prop_name);
     let expanded_obj_type = expand_template_object_union(obj_type);
     let mut lookup_types = expand_intersection_lookup_types(&expanded_obj_type);
+
+    // A known enum case resolves ->name to the literal case name and ->value
+    // to the case's backed value (Psalm's handleEnumName/handleEnumValue);
+    // other properties fall through to the enum class.
+    if lookup_types.len() == 1
+        && let TAtomic::TEnumCase {
+            enum_name,
+            case_name,
+        } = &lookup_types[0]
+    {
+        if prop_id == StrId::NAME {
+            return Some(TUnion::new(TAtomic::TLiteralString {
+                value: analyzer.interner.lookup(*case_name).to_string(),
+            }));
+        }
+        if prop_id == StrId::VALUE
+            && let Some(case_value) = analyzer
+                .codebase
+                .get_class(*enum_name)
+                .and_then(|class_info| class_info.constants.get(case_name))
+                .and_then(|const_info| const_info.enum_case_value.clone())
+        {
+            return Some(case_value);
+        }
+    }
 
     for atomic in &mut lookup_types {
         if let TAtomic::TEnumCase { enum_name, .. } = atomic {
@@ -297,14 +530,36 @@ pub(crate) fn get_property_type(
 
     // If any object type in the union has this property, prefer that successful lookup.
     // This avoids false positives when a union includes mixed/other object branches.
+    // Other union members contribute their own view of the property (a declared
+    // property elsewhere, a magic __get return, an object-shape entry) — Psalm's
+    // InstancePropertyFetchAnalyzer combines the per-atomic results.
     let mut resolved_property: Option<(pzoom_str::StrId, Visibility, bool, Option<TUnion>)> = None;
+    let mut additional_member_types: Vec<TUnion> = Vec::new();
 
     for atomic in &lookup_types {
-        if let TAtomic::TNamedObject { name, type_params , .. } = atomic {
-            if let Some(class_info) = analyzer.codebase.get_class(*name) {
-                if let Some(prop_info) = class_info.properties.get(&prop_id) {
+        match atomic {
+            TAtomic::TNamedObject { name, type_params, .. } => {
+                let Some(class_info) = analyzer.codebase.get_class(*name) else {
+                    continue;
+                };
+                if let Some(prop_info) = class_info
+                    .properties
+                    .get(&prop_id)
+                    // A static property is invisible to instance access
+                    // (Psalm treats `$obj->staticProp` as non-existent),
+                    // but `$obj::$staticProp` reaches it.
+                    .filter(|prop_info| is_static_access || !prop_info.is_static)
+                {
+                    // Reads mark the property used for find_unused_code (Psalm's
+                    // isPropertyReferenced; writes don't count).
+                    if analyzer.config.find_unused_code
+                        && !context.inside_array_append_root
+                    {
+                        analysis_data
+                            .referenced_properties
+                            .insert((prop_info.declaring_class, prop_id));
+                    }
                     let property_type = get_pseudo_property_get_type(
-                        analyzer,
                         class_info,
                         type_params.as_deref(),
                         prop_id,
@@ -312,22 +567,66 @@ pub(crate) fn get_property_type(
                     .or_else(|| {
                         prop_info.get_type().map(|property_type| {
                             substitute_class_template_params(
-                                analyzer,
                                 class_info,
                                 type_params.as_deref(),
                                 property_type,
                             )
                         })
+                    })
+                    .map(|mut property_type| {
+                        // Psalm's AtomicPropertyFetchAnalyzer expands the stored
+                        // property type at the use site against the declaring
+                        // class (resolves self/static and class-constant
+                        // references like `@var Foo::VISIBILITY_*`).
+                        let declaring_class = prop_info.declaring_class;
+                        crate::type_expander::expand_union(
+                            analyzer.codebase,
+                            analyzer.interner,
+                            &mut property_type,
+                            &crate::type_expander::TypeExpansionOptions {
+                                self_class: Some(declaring_class),
+                                static_class_type:
+                                    crate::type_expander::StaticClassType::Name(*name),
+                                parent_class: analyzer
+                                    .codebase
+                                    .get_class(declaring_class)
+                                    .and_then(|info| info.parent_class),
+                                ..Default::default()
+                            },
+                        );
+                        property_type
                     });
-                    resolved_property = Some((
-                        *name,
-                        prop_info.visibility,
-                        prop_info.is_deprecated,
-                        property_type,
-                    ));
-                    break;
+                    if resolved_property.is_none() {
+                        resolved_property = Some((
+                            *name,
+                            prop_info.visibility,
+                            prop_info.is_deprecated,
+                            property_type,
+                        ));
+                    } else if let Some(property_type) = property_type {
+                        additional_member_types.push(property_type);
+                    }
+                } else if !class_has_sealed_properties(class_info) {
+                    // A union member without the declared property answers
+                    // through its magic __get (or reads as mixed).
+                    if let Some(magic_get_return_type) =
+                        get_magic_get_return_type( class_info, type_params.as_deref())
+                    {
+                        additional_member_types.push(magic_get_return_type);
+                    } else if class_has_magic_getter(class_info) {
+                        additional_member_types.push(TUnion::mixed());
+                    }
                 }
             }
+            // An object-shape intersection/union part that declares the
+            // property answers directly (`a&object{test2: "lmao"}`).
+            TAtomic::TObjectWithProperties { properties, .. } => {
+                let key = pzoom_code_info::ArrayKey::String(prop_name.to_string());
+                if let Some(prop_type) = properties.get(&key) {
+                    return Some(prop_type.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -457,6 +756,10 @@ pub(crate) fn get_property_type(
         }
 
         let mut final_property_type = property_type.unwrap_or_else(TUnion::mixed);
+        for member_type in additional_member_types {
+            final_property_type =
+                pzoom_code_info::combine_union_types(&final_property_type, &member_type, false);
+        }
         if has_null && has_object_type {
             final_property_type.add_type(TAtomic::TNull);
         }
@@ -467,14 +770,16 @@ pub(crate) fn get_property_type(
     for atomic in &lookup_types {
         match atomic {
             TAtomic::TNamedObject { name, type_params , .. } => {
-                if *name == pzoom_str::StrId::SIMPLE_XML_ELEMENT {
-                    return Some(TUnion::mixed());
-                }
-
                 // Look up the class
                 if let Some(class_info) = analyzer.codebase.get_class(*name) {
-                    // Look up the property
-                    if let Some(prop_info) = class_info.properties.get(&prop_id) {
+                    // Look up the property; a static property is invisible
+                    // to instance access (Psalm reports UndefinedPropertyFetch
+                    // for `$obj->staticProp`) but visible to `$obj::$prop`.
+                    if let Some(prop_info) = class_info
+                        .properties
+                        .get(&prop_id)
+                        .filter(|prop_info| is_static_access || !prop_info.is_static)
+                    {
                         let visibility_scope_class_id =
                             get_property_visibility_scope_class_id(class_info, prop_id);
 
@@ -600,14 +905,72 @@ pub(crate) fn get_property_type(
                         // Return the property's type
                         return prop_info.get_type().map(|property_type| {
                             substitute_class_template_params(
-                                analyzer,
                                 class_info,
                                 type_params.as_deref(),
                                 property_type,
                             )
                         });
                     } else {
-                        if class_info.kind == ClassLikeKind::Interface {
+                        // Psalm checks magic getters first; a plain interface
+                        // fetch reports NoInterfaceProperties and stops — no
+                        // follow-up UndefinedPropertyFetch for the same fetch.
+                        if class_info.kind == ClassLikeKind::Interface
+                            && !class_has_magic_getter(class_info)
+                        {
+                            // PHP core enum interfaces have properties: an
+                            // interface extending UnitEnum/BackedEnum exposes
+                            // the stub-declared $name/$value (Psalm's
+                            // is_enum_interface path).
+                            if let Some(enum_interface_prop_type) = class_info
+                                .interfaces
+                                .iter()
+                                .filter(|interface_id| {
+                                    matches!(
+                                        &*analyzer.interner.lookup(**interface_id),
+                                        "UnitEnum" | "BackedEnum"
+                                    )
+                                })
+                                .find_map(|interface_id| {
+                                    analyzer
+                                        .codebase
+                                        .get_class(*interface_id)
+                                        .and_then(|interface_info| {
+                                            interface_info.properties.get(&prop_id)
+                                        })
+                                        .and_then(|prop_info| prop_info.get_type().cloned())
+                                })
+                            {
+                                return Some(enum_interface_prop_type);
+                            }
+
+                            // An intersection with an enum interface allows
+                            // the fetch — another part supplies the property
+                            // (Psalm's intersects_with_enum).
+                            if lookup_types.iter().any(|other| {
+                                if other == atomic {
+                                    return false;
+                                }
+                                let TAtomic::TNamedObject { name: other_name, .. } = other else {
+                                    return false;
+                                };
+                                matches!(
+                                    &*analyzer.interner.lookup(*other_name),
+                                    "UnitEnum" | "BackedEnum"
+                                ) || analyzer.codebase.get_class(*other_name).is_some_and(
+                                    |other_info| {
+                                        other_info.kind == ClassLikeKind::Enum
+                                            || other_info.interfaces.iter().any(|interface_id| {
+                                                matches!(
+                                                    &*analyzer.interner.lookup(*interface_id),
+                                                    "UnitEnum" | "BackedEnum"
+                                                )
+                                            })
+                                    },
+                                )
+                            }) {
+                                continue;
+                            }
+
                             let (line, col) = analyzer.get_line_column(pos.0);
                             analysis_data.add_issue(Issue::new(
                                 IssueKind::NoInterfaceProperties,
@@ -618,11 +981,11 @@ pub(crate) fn get_property_type(
                                 line,
                                 col,
                             ));
+                            return None;
                         }
 
                         if class_has_magic_getter(class_info) {
                             if let Some(pseudo_property_type) = get_pseudo_property_get_type(
-                                analyzer,
                                 class_info,
                                 type_params.as_deref(),
                                 prop_id,
@@ -630,8 +993,12 @@ pub(crate) fn get_property_type(
                                 return Some(pseudo_property_type);
                             }
 
+                            // Psalm gates the magic-property-missing report on
+                            // sealed-ness only; declaring *some* @property
+                            // annotations does not seal an unsealed class.
                             if class_has_sealed_properties(class_info)
-                                || !class_info.pseudo_property_get_types.is_empty()
+                                || (!class_info.pseudo_property_get_types.is_empty()
+                                    && !class_info.no_seal_properties)
                             {
                                 let class_name = analyzer.interner.lookup(*name);
                                 let (line, col) = analyzer.get_line_column(pos.0);
@@ -665,17 +1032,10 @@ pub(crate) fn get_property_type(
                                 }
                             } else {
                                 if let Some(magic_get_return_type) = get_magic_get_return_type(
-                                    analyzer,
                                     class_info,
                                     type_params.as_deref(),
                                 ) {
                                     return Some(magic_get_return_type);
-                                }
-
-                                if let Some(simplexml_magic_type) =
-                                    get_simplexml_magic_property_type(analyzer, *name)
-                                {
-                                    return Some(simplexml_magic_type);
                                 }
 
                                 return Some(TUnion::mixed());
@@ -684,14 +1044,14 @@ pub(crate) fn get_property_type(
                             continue;
                         }
 
-                        if let Some(simplexml_magic_type) =
-                            get_simplexml_magic_property_type(analyzer, *name)
-                        {
-                            return Some(simplexml_magic_type);
-                        }
-
                         if class_info.no_seal_properties {
                             return Some(TUnion::mixed());
+                        }
+
+                        // isset($obj->undefined) is a legitimate existence
+                        // probe — Psalm reports nothing inside isset().
+                        if context.inside_isset {
+                            continue;
                         }
 
                         // Property not found - emit appropriate issue
@@ -725,7 +1085,7 @@ pub(crate) fn get_property_type(
             TAtomic::TObject => {
                 // Generic object - can't look up property
             }
-            TAtomic::TObjectWithProperties { properties } => {
+            TAtomic::TObjectWithProperties { properties, .. } => {
                 // `object{foo: T, ...}` — a known property resolves to its
                 // declared type; other properties are allowed (these objects are
                 // not sealed), so they read back as `mixed`.
@@ -737,9 +1097,6 @@ pub(crate) fn get_property_type(
             }
             TAtomic::TMixed => {
                 if is_this_fetch && !has_this {
-                    continue;
-                }
-                if context.inside_general_use {
                     continue;
                 }
                 let (line, col) = analyzer.get_line_column(pos.0);
@@ -765,54 +1122,59 @@ pub(crate) fn get_property_type(
     None
 }
 
-pub(crate) fn get_pseudo_property_get_type(
-    analyzer: &StatementsAnalyzer<'_>,
+fn get_pseudo_property_get_type(
     class_info: &pzoom_code_info::ClassLikeInfo,
     type_params: Option<&[TUnion]>,
     prop_id: pzoom_str::StrId,
 ) -> Option<TUnion> {
     let pseudo_type = class_info.pseudo_property_get_types.get(&prop_id)?;
     Some(substitute_class_template_params(
-        analyzer,
         class_info,
         type_params,
         pseudo_type,
     ))
 }
 
-pub(crate) fn get_magic_get_return_type(
-    analyzer: &StatementsAnalyzer<'_>,
+fn get_magic_get_return_type(
     class_info: &pzoom_code_info::ClassLikeInfo,
     type_params: Option<&[TUnion]>,
 ) -> Option<TUnion> {
     let method_info = class_info.methods.get(&pzoom_str::StrId::GET)?;
     let return_type = method_info.get_return_type()?;
 
-    let mut template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    template_defaults.extend_overlay(function_call_analyzer::get_template_defaults(method_info));
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    for template_type in &method_info.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
 
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
+    );
     function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
+        &mut template_result,
         function_call_analyzer::infer_class_template_replacements_from_type_params(
             class_info,
             type_params,
         ),
     );
 
-    if template_defaults.is_empty() && template_replacements.is_empty() {
+    if crate::template::template_result_is_empty(&template_result) {
         Some(return_type.clone())
     } else {
         Some(function_call_analyzer::replace_templates_in_union(
             return_type,
-            &template_replacements,
-            &template_defaults,
+            &template_result,
         ))
     }
 }
 
-pub(crate) fn class_has_magic_getter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
+fn class_has_magic_getter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::GET)
 }
 
@@ -820,38 +1182,7 @@ pub(crate) fn class_has_sealed_properties(class_info: &pzoom_code_info::ClassLik
     class_info.sealed_properties.unwrap_or(false) && !class_info.no_seal_properties
 }
 
-pub(crate) fn get_simplexml_magic_property_type(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_id: StrId,
-) -> Option<TUnion> {
-    let class_name = analyzer.interner.lookup(class_id);
-    let normalized = class_name.trim_start_matches('\\');
-    if !normalized.eq_ignore_ascii_case("SimpleXMLElement")
-        && !normalized.eq_ignore_ascii_case("SimpleXMLIterator")
-    {
-        return None;
-    }
-
-    let mut types = vec![TAtomic::TNamedObject {
-        name: class_id,
-        type_params: None,
-    is_static: false, remapped_params: false }];
-
-    if let Some(iterator_id) = analyzer.interner.find("SimpleXMLIterator")
-        && analyzer.codebase.get_class(iterator_id).is_some()
-        && iterator_id != class_id
-    {
-        types.push(TAtomic::TNamedObject {
-            name: iterator_id,
-            type_params: None,
-        is_static: false, remapped_params: false });
-    }
-
-    Some(TUnion::from_types(types))
-}
-
 pub(crate) fn substitute_class_template_params(
-    analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     type_params: Option<&[TUnion]>,
     property_type: &TUnion,
@@ -860,26 +1191,24 @@ pub(crate) fn substitute_class_template_params(
         return property_type.clone();
     }
 
-    let template_defaults = function_call_analyzer::get_class_template_defaults(class_info);
-    let mut template_replacements =
-        function_call_analyzer::infer_class_template_replacements_from_extended_params(class_info);
+    let mut template_result = function_call_analyzer::get_class_template_defaults(class_info);
+    function_call_analyzer::infer_class_template_replacements_from_extended_params(
+        &mut template_result,
+        class_info,
+    );
     function_call_analyzer::overlay_template_replacements(
-        &mut template_replacements,
+        &mut template_result,
         function_call_analyzer::infer_class_template_replacements_from_type_params(
             class_info,
             type_params,
         ),
     );
 
-    if template_defaults.is_empty() && template_replacements.is_empty() {
+    if crate::template::template_result_is_empty(&template_result) {
         return property_type.clone();
     }
 
-    function_call_analyzer::replace_templates_in_union(
-        property_type,
-        &template_replacements,
-        &template_defaults,
-    )
+    function_call_analyzer::replace_templates_in_union(property_type, &template_result)
 }
 
 pub(crate) fn expand_template_object_union(obj_type: &TUnion) -> TUnion {
@@ -983,6 +1312,27 @@ pub(crate) fn receiver_allows_property_visibility_override(
     }
 
     has_target_class && has_override_interface
+}
+
+/// Psalm's `Properties::getPropertyType` overridden-property fallback: an
+/// untyped property redeclaration inherits the overridden (ancestor)
+/// property's declared type.
+pub(crate) fn get_overridden_property_type(
+    codebase: &pzoom_code_info::CodebaseInfo,
+    class_id: pzoom_str::StrId,
+    prop_id: pzoom_str::StrId,
+) -> Option<TUnion> {
+    let class_info = codebase.get_class(class_id)?;
+    class_info
+        .all_parent_classes
+        .iter()
+        .chain(class_info.interfaces.iter())
+        .find_map(|ancestor_id| {
+            codebase
+                .get_class(*ancestor_id)
+                .and_then(|ancestor_info| ancestor_info.properties.get(&prop_id))
+                .and_then(|ancestor_prop| ancestor_prop.get_type().cloned())
+        })
 }
 
 pub(crate) fn get_property_visibility_scope_class_id(

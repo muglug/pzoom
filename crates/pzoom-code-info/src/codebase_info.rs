@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     ClassLikeInfo, FunctionLikeInfo, TAtomic, TUnion,
     class_type_alias::ClassTypeAlias,
-    functionlike_info::{AssertionType, ConditionalReturnCondition},
+    functionlike_info::AssertionType,
 };
 
 /// Central storage for all codebase type information.
@@ -30,6 +30,19 @@ pub struct CodebaseInfo {
     /// Files that have been scanned.
     pub files: FxHashMap<StrId, FileInfo>,
 
+    /// Function names where a project declaration replaced a stub's entry
+    /// during registration (Psalm's DuplicateFunction for core functions —
+    /// the higher-precedence project definition wins the storage slot, so the
+    /// clash must be remembered here for the analyzer to report).
+    #[serde(default)]
+    pub redefined_stub_functions: FxHashSet<StrId>,
+
+    /// Functions whose `if (!function_exists(...))` polyfill declaration was
+    /// dropped in favor of an existing definition — their declarations are
+    /// not duplicates.
+    #[serde(default)]
+    pub conditionally_skipped_functions: FxHashSet<StrId>,
+
     /// Map from classlike to all its descendants (classes, interfaces extending/implementing it).
     /// Populated during the populate phase.
     pub all_classlike_descendants: FxHashMap<StrId, FxHashSet<StrId>>,
@@ -44,6 +57,32 @@ pub struct CodebaseInfo {
     /// backslash and lowercasing. Populated during the populate phase.
     #[serde(default)]
     pub classlike_name_lookup: FxHashMap<String, StrId>,
+
+    /// Interned lowercase classlike name -> interned correctly-cased name, only
+    /// for classlikes whose declared name differs from its lowercase form.
+    /// pzoom resolves classlike names case-sensitively; this map recovers the
+    /// declared casing so UndefinedClass/UndefinedDocblockClass messages can
+    /// point at it. Populated during the populate phase.
+    #[serde(default)]
+    pub classlike_lc_names: FxHashMap<StrId, StrId>,
+
+    /// Same as `classlike_lc_names` for top-level functions (UndefinedFunction
+    /// messages). Populated during the populate phase.
+    #[serde(default)]
+    pub functionlike_lc_names: FxHashMap<StrId, StrId>,
+
+    /// `define()` calls collected anywhere in scanned code (Psalm's
+    /// ExpressionScanner). Registered as global constants after populate when
+    /// the config sets `allConstantsGlobal` (Psalm's `addGlobalConstantType`).
+    #[serde(default)]
+    pub global_defines: Vec<GlobalDefine>,
+
+    /// Case-insensitive top-level function lookup (declared names lowercased,
+    /// leading backslash trimmed). Populated during the populate phase; lets
+    /// string-only contexts (the scalar comparator checking a literal against
+    /// `callable-string`) resolve function existence without an interner.
+    #[serde(default)]
+    pub functionlike_name_lookup: FxHashMap<String, StrId>,
 }
 
 /// Information about a global constant.
@@ -53,6 +92,34 @@ pub struct ConstantInfo {
     pub constant_type: TUnion,
     pub file_path: StrId,
     pub start_offset: u32,
+    /// Initializer parts unresolvable at scan time (`const X = Other::CONST;`)
+    /// — the populator resolves them once every class is known.
+    #[serde(default)]
+    pub unresolved_initializer:
+        Option<crate::class_constant_info::UnresolvedConstExpr>,
+}
+
+/// A `define()` call collected at scan time.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct GlobalDefine {
+    pub name: StrId,
+    pub value: GlobalDefineValue,
+    pub file_path: StrId,
+    pub start_offset: u32,
+}
+
+/// The defined value of a scan-time `define()`. Psalm's SimpleTypeInferer
+/// leaves call values mixed, but the constants Psalm-on-itself resolves at
+/// runtime via `get_defined_constants()` (e.g. PSALM_VERSION) come from
+/// single calls, so pzoom remembers the callee and substitutes its declared
+/// return type once the codebase is populated.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum GlobalDefineValue {
+    Resolved(TUnion),
+    /// Value is a call to a named function; use its declared return type.
+    FunctionReturn(StrId),
+    /// Value is a static method call; use its declared return type.
+    MethodReturn(StrId, StrId),
 }
 
 // `FileInfo` and the inline-annotation structs live in [`crate::file_info`]
@@ -120,6 +187,46 @@ impl CodebaseInfo {
         self.classlike_name_lookup.get(&normalized).copied()
     }
 
+    /// Case-insensitive top-level function resolution by declared name.
+    pub fn resolve_functionlike_name(&self, name: &str) -> Option<StrId> {
+        let normalized = name.trim_start_matches('\\').to_ascii_lowercase();
+        self.functionlike_name_lookup.get(&normalized).copied()
+    }
+
+    /// Find the correctly-cased classlike for a reference that failed exact
+    /// lookup. Returns the declared name when it differs only by case from
+    /// `requested` (for "did you mean" diagnostics); never returns `requested`.
+    pub fn cased_classlike_for(
+        &self,
+        interner: &pzoom_str::Interner,
+        requested: StrId,
+    ) -> Option<StrId> {
+        let lc = interner.lookup(requested).to_ascii_lowercase();
+        let lc_id = interner.intern(&lc);
+        let cased = if self.classlike_infos.contains_key(&lc_id) {
+            lc_id
+        } else {
+            *self.classlike_lc_names.get(&lc_id)?
+        };
+        (cased != requested).then_some(cased)
+    }
+
+    /// Same as [`Self::cased_classlike_for`] for top-level functions.
+    pub fn cased_functionlike_for(
+        &self,
+        interner: &pzoom_str::Interner,
+        requested: StrId,
+    ) -> Option<StrId> {
+        let lc = interner.lookup(requested).to_ascii_lowercase();
+        let lc_id = interner.intern(&lc);
+        let cased = if self.functionlike_infos.contains_key(&lc_id) {
+            lc_id
+        } else {
+            *self.functionlike_lc_names.get(&lc_id)?
+        };
+        (cased != requested).then_some(cased)
+    }
+
     /// Check if a function exists.
     pub fn function_exists(&self, name: StrId) -> bool {
         self.functionlike_infos.contains_key(&name)
@@ -138,12 +245,75 @@ impl CodebaseInfo {
                 .is_some_and(|file_info| file_info.is_stub);
 
             if existing_is_stub && !incoming_is_stub {
-                *existing = info;
+                let incoming_in_project_dirs = self
+                    .files
+                    .get(&info.file_path)
+                    .is_none_or(|file_info| file_info.is_in_project_dirs);
+
+                // A project-dir class always beats the stub (Psalm's
+                // ClassLikeNodeScanner refuses to stub-override classes from
+                // analyzed project dirs), so a test polyfill of ArrayObject or
+                // a project class shadowing a stubbed name wins wholesale.
+                if incoming_in_project_dirs {
+                    *existing = info;
+                    return;
+                }
+
+                // For dependency sources (vendor/), the real declaration
+                // becomes the base (real hierarchy, full member set) but
+                // members the stub declares override it — Psalm's stub
+                // semantics ("stub files override the original definitions"),
+                // which is how stubs/phpparser.phpstub refines vendor
+                // php-parser signatures (getArgs(): list<Arg>).
+                let stub = std::mem::replace(existing, info);
+                // Psalm marks a storage that a stub (also) declared as
+                // `stubbed` (ClassLikeNodeScanner) - constructors of such
+                // classes are opaque to initialization checks.
+                existing.is_stubbed = true;
+                for (method_name, method_info) in stub.methods {
+                    existing.method_names.insert(method_name);
+                    existing.methods.insert(method_name, method_info);
+                }
+                for (prop_name, prop_info) in stub.properties {
+                    existing.properties.insert(prop_name, prop_info);
+                }
+                for (const_name, const_info) in stub.constants {
+                    existing.constants.insert(const_name, const_info);
+                }
+                if !stub.template_types.is_empty() && existing.template_types.is_empty() {
+                    existing.template_types = stub.template_types;
+                }
                 return;
             }
 
             if !existing_is_stub && incoming_is_stub {
+                existing.is_stubbed = true;
                 return;
+            }
+
+            // Psalm's scanning is composer-autoload driven, so it only ever
+            // sees ONE declaration of a class per run; a duplicate in another
+            // dependency file (e.g. psalm/plugin-mockery's conditional trait
+            // stubs redeclaring Mockery's trait) never loads. Approximate
+            // that: among non-stub files, a redeclaration outside the project
+            // dirs never merges — the project declaration (or the first
+            // dependency one) wins.
+            if !existing_is_stub && !incoming_is_stub {
+                let incoming_in_project_dirs = self
+                    .files
+                    .get(&info.file_path)
+                    .is_none_or(|file_info| file_info.is_in_project_dirs);
+                let existing_in_project_dirs = self
+                    .files
+                    .get(&existing.file_path)
+                    .is_none_or(|file_info| file_info.is_in_project_dirs);
+                if !incoming_in_project_dirs {
+                    return;
+                }
+                if !existing_in_project_dirs {
+                    *existing = info;
+                    return;
+                }
             }
 
             let template_name_remap = get_class_template_name_remap(existing, &info);
@@ -169,7 +339,11 @@ impl CodebaseInfo {
                     {
                         *existing_method_info = method_info;
                     } else {
-                        merge_functionlike_info(existing_method_info, method_info);
+                        merge_functionlike_info(
+                            std::sync::Arc::make_mut(existing_method_info),
+                            std::sync::Arc::try_unwrap(method_info)
+                                .unwrap_or_else(|shared| (*shared).clone()),
+                        );
                     }
                 } else {
                     existing.methods.insert(method_name, method_info);
@@ -297,6 +471,13 @@ impl CodebaseInfo {
     /// Register a function in the codebase.
     pub fn register_function(&mut self, info: FunctionLikeInfo) {
         if let Some(existing) = self.functionlike_infos.get_mut(&info.name) {
+            // An `if (!function_exists(...))` polyfill never runs when the
+            // function already exists: keep the existing definition, no
+            // DuplicateFunction (Psalm skips the branch entirely).
+            if info.declared_if_not_exists {
+                self.conditionally_skipped_functions.insert(info.name);
+                return;
+            }
             let existing_prec = file_precedence(&self.files, existing.file_path);
             let incoming_prec = file_precedence(&self.files, info.file_path);
 
@@ -304,6 +485,12 @@ impl CodebaseInfo {
             // phpstorm-derived `extensions/*` stubs) replaces a lower one outright;
             // a lower-precedence source is ignored. Mirrors Psalm's stub precedence.
             if incoming_prec > existing_prec {
+                // Project code redefining a stubbed core function is Psalm's
+                // DuplicateFunction — remember the clash, since the project
+                // definition is about to take over the storage slot.
+                if incoming_prec == 3 {
+                    self.redefined_stub_functions.insert(info.name);
+                }
                 *existing = info;
                 return;
             }
@@ -593,7 +780,7 @@ fn remap_classlike_info_template_names(info: &mut ClassLikeInfo, remap: &FxHashM
     }
 
     for method_info in info.methods.values_mut() {
-        remap_functionlike_info_template_names(method_info, remap);
+        remap_functionlike_info_template_names(std::sync::Arc::make_mut(method_info), remap);
     }
 
     for method_info in info.pseudo_methods.values_mut() {
@@ -605,6 +792,7 @@ fn remap_classlike_info_template_names(info: &mut ClassLikeInfo, remap: &FxHashM
     }
 
     for property_info in info.properties.values_mut() {
+        let property_info = std::sync::Arc::make_mut(property_info);
         if let Some(property_type) = property_info.property_type.as_mut() {
             remap_union_template_names(property_type, remap);
         }
@@ -715,21 +903,11 @@ fn remap_union_template_names(union: &mut TUnion, remap: &FxHashMap<StrId, StrId
 fn remap_atomic_template_names(atomic: &mut TAtomic, remap: &FxHashMap<StrId, StrId>) {
     match atomic {
         TAtomic::TConditional(conditional) => {
-            match &mut conditional.condition {
-                ConditionalReturnCondition::TemplateIs {
-                    template_name,
-                    asserted_type,
-                } => {
-                    if let Some(mapped_name) = remap.get(template_name) {
-                        *template_name = *mapped_name;
-                    }
-                    remap_union_template_names(asserted_type, remap);
-                }
-                ConditionalReturnCondition::ParamIs { asserted_type, .. } => {
-                    remap_union_template_names(asserted_type, remap);
-                }
-                ConditionalReturnCondition::FuncNumArgsIs { .. } => {}
+            if let Some(mapped_name) = remap.get(&conditional.param_name) {
+                conditional.param_name = *mapped_name;
             }
+            remap_union_template_names(&mut conditional.as_type, remap);
+            remap_union_template_names(&mut conditional.conditional_type, remap);
             remap_union_template_names(&mut conditional.if_true_type, remap);
             remap_union_template_names(&mut conditional.if_false_type, remap);
         }
@@ -757,7 +935,7 @@ fn remap_atomic_template_names(atomic: &mut TAtomic, remap: &FxHashMap<StrId, St
             fallback_value_type,
             ..
         } => {
-            for property_type in properties.values_mut() {
+            for property_type in std::sync::Arc::make_mut(properties).values_mut() {
                 remap_union_template_names(property_type, remap);
             }
             if let Some(fallback_key_type) = fallback_key_type.as_mut() {

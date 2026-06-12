@@ -1,0 +1,2 @@
+MixedReturnStatement - input.php:11:16 - Could not infer a return type
+    input.php:2:24 - Consider improving the type here

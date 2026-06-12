@@ -4,14 +4,15 @@
 //! to [`DeclarationCollector`]; split out of the module root for organization.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::class_like::{Class, Enum, Interface, Trait};
+use pzoom_str::StrId;
+use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
 use mago_syntax::ast::ast::modifier::Modifier;
 
 use pzoom_code_info::class_like_info::{
     ClassLikeInfo, ClassLikeKind, TemplateType,
 };
 use pzoom_code_info::class_type_alias::ClassTypeAlias;
-use pzoom_code_info::{TAtomic, TUnion};
+use pzoom_code_info::{GenericParent, TAtomic, TUnion};
 use rustc_hash::FxHashMap;
 
 
@@ -29,6 +30,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             file_path: self.file_path,
             start_offset: span.start.offset,
             end_offset: span.end.offset,
+            name_location: {
+                let name_span = class.name.span();
+                Some((name_span.start.offset, name_span.end.offset))
+            },
+            conditional_guard_classes: self.current_guard_classes.clone(),
             ..Default::default()
         };
 
@@ -38,10 +44,14 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             info.is_final = self.is_docblock_final(parsed);
+            info.is_public_api =
+                parsed.tags.contains_key("psalm-api") || parsed.tags.contains_key("api");
             info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
                 info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
             info.is_consistent_constructor = self.is_docblock_consistent_constructor(&parsed);
+            info.enforce_template_inheritance = self.is_docblock_consistent_templates(&parsed);
             info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
             info.override_method_visibility = self.is_docblock_override_method_visibility(&parsed);
             info.override_property_visibility =
@@ -105,7 +115,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         if let Some(parsed) = parsed_docblock.as_ref() {
             let template_bindings = self.parse_docblock_template_bindings(
                 parsed,
-                name,
+                GenericParent::ClassLike(name),
                 Some(name),
                 info.parent_class,
                 None,
@@ -125,14 +135,20 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, name);
-            class_docblock_type_aliases = self.collect_docblock_type_aliases(
-                parsed,
-                Some(name),
-                info.parent_class,
-                Some(&class_template_map),
-                None,
-            );
+                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            // Psalm reads `@psalm-type` aliases from every comment attached
+            // to the node (ClassLikeNodeScanner's getComments loop), so
+            // collect across the whole preceding docblock run — the closest
+            // block is the run's last entry, its aliases winning on collision.
+            for run_parsed in self.find_preceding_docblock_run(span.start.offset) {
+                class_docblock_type_aliases = self.collect_docblock_type_aliases(
+                    &run_parsed,
+                    Some(name),
+                    info.parent_class,
+                    Some(&class_template_map),
+                    Some(&class_docblock_type_aliases),
+                );
+            }
 
             for (alias_name, aliased_type) in &class_docblock_type_aliases {
                 let scoped_alias = self.interner.intern(&format!(
@@ -189,6 +205,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 parent_class,
                 Some(&class_template_map),
             );
+
+            // `@psalm-yield T`: the promised type produced by `yield`ing an
+            // instance of this class (Psalm's ClassLikeStorage::$yield).
+            if let Some(yield_tags) = parsed.tags.get("psalm-yield")
+                && let Some(content) = yield_tags.values().next()
+            {
+                let type_str = content.trim();
+                if !type_str.is_empty()
+                    && let Ok(parsed_type) =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                {
+                    info.yield_type = Some(self.resolve_docblock_union_type(
+                        parsed_type,
+                        Some(name),
+                        parent_class,
+                        Some(&class_template_map),
+                    ));
+                }
+            }
+
+            self.apply_docblock_inheritors(
+                &mut info,
+                parsed,
+                Some(name),
+                parent_class,
+                Some(&class_template_map),
+            );
+
             self.active_docblock_type_aliases = previous_aliases;
         }
 
@@ -199,6 +243,61 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         );
         self.collect_class_members(&mut info, &class.members);
         self.active_docblock_type_aliases = previous_aliases;
+        self.add_old_style_constructor_alias(&mut info);
+
+        self.declarations.classes.push(info);
+    }
+
+    /// Register an anonymous class as a real classlike storage under its
+    /// synthetic `@anonymous-class:{file}:{offset}` name (Psalm registers
+    /// `{parent}@anonymous` storages in ReflectorVisitor). Class-level
+    /// docblock processing is skipped: a docblock preceding `new class`
+    /// belongs to the enclosing statement, not the class.
+    pub(crate) fn visit_anonymous_class(&mut self, class: &AnonymousClass<'_>) {
+        let span = class.span();
+        let name = self.interner.intern(&format!(
+            "{}:{}:{}",
+            pzoom_code_info::ANONYMOUS_CLASS_PREFIX,
+            self.interner.lookup(self.file_path),
+            span.start.offset
+        ));
+
+        let mut info = ClassLikeInfo {
+            name,
+            kind: ClassLikeKind::Class,
+            file_path: self.file_path,
+            start_offset: span.start.offset,
+            end_offset: span.end.offset,
+            conditional_guard_classes: self.current_guard_classes.clone(),
+            // Anonymous classes cannot be extended.
+            is_final: true,
+            ..Default::default()
+        };
+
+        for modifier in class.modifiers.iter() {
+            if let Modifier::Readonly(_) = modifier {
+                info.is_readonly = true;
+                info.is_immutable = true;
+                info.is_external_mutation_free = true;
+            }
+        }
+
+        if let Some(extends) = &class.extends {
+            if let Some(parent) = extends.types.first() {
+                info.parent_class = Some(self.resolve_identifier(parent));
+            }
+        }
+
+        if let Some(implements) = &class.implements {
+            for iface in &implements.types {
+                let iface_name = self.resolve_identifier(iface);
+                info.interfaces.insert(iface_name);
+            }
+        }
+
+        let parent_class = info.parent_class;
+        self.precollect_class_constants(&mut info, &class.members, Some(name), parent_class);
+        self.collect_class_members(&mut info, &class.members);
         self.add_old_style_constructor_alias(&mut info);
 
         self.declarations.classes.push(info);
@@ -215,6 +314,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             file_path: self.file_path,
             start_offset: span.start.offset,
             end_offset: span.end.offset,
+            name_location: {
+                let name_span = iface.name.span();
+                Some((name_span.start.offset, name_span.end.offset))
+            },
             ..Default::default()
         };
 
@@ -224,6 +327,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
                 info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
             info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
@@ -257,7 +361,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         if let Some(parsed) = parsed_docblock.as_ref() {
             let template_bindings = self.parse_docblock_template_bindings(
                 parsed,
-                name,
+                GenericParent::ClassLike(name),
                 None,
                 None,
                 None,
@@ -277,14 +381,20 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, name);
-            class_docblock_type_aliases = self.collect_docblock_type_aliases(
-                parsed,
-                Some(name),
-                None,
-                Some(&class_template_map),
-                None,
-            );
+                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            // Psalm reads `@psalm-type` aliases from every comment attached
+            // to the node (ClassLikeNodeScanner's getComments loop), so
+            // collect across the whole preceding docblock run — the closest
+            // block is the run's last entry, its aliases winning on collision.
+            for run_parsed in self.find_preceding_docblock_run(span.start.offset) {
+                class_docblock_type_aliases = self.collect_docblock_type_aliases(
+                    &run_parsed,
+                    Some(name),
+                    None,
+                    Some(&class_template_map),
+                    Some(&class_docblock_type_aliases),
+                );
+            }
 
             for (alias_name, aliased_type) in &class_docblock_type_aliases {
                 let scoped_alias = self.interner.intern(&format!(
@@ -340,6 +450,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 None,
                 Some(&class_template_map),
             );
+
+            // `@psalm-yield T`: the promised type produced by `yield`ing an
+            // instance of this interface (Psalm's ClassLikeStorage::$yield).
+            if let Some(yield_tags) = parsed.tags.get("psalm-yield")
+                && let Some(content) = yield_tags.values().next()
+            {
+                let type_str = content.trim();
+                if !type_str.is_empty()
+                    && let Ok(parsed_type) =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                {
+                    info.yield_type = Some(self.resolve_docblock_union_type(
+                        parsed_type,
+                        Some(name),
+                        None,
+                        Some(&class_template_map),
+                    ));
+                }
+            }
+
+            self.apply_docblock_inheritors(
+                &mut info,
+                parsed,
+                Some(name),
+                None,
+                Some(&class_template_map),
+            );
+
             self.active_docblock_type_aliases = previous_aliases;
         }
 
@@ -365,6 +503,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             file_path: self.file_path,
             start_offset: span.start.offset,
             end_offset: span.end.offset,
+            name_location: {
+                let name_span = tr.name.span();
+                Some((name_span.start.offset, name_span.end.offset))
+            },
             ..Default::default()
         };
 
@@ -374,6 +516,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
                 info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
             info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
@@ -399,7 +542,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         if let Some(parsed) = parsed_docblock.as_ref() {
             let template_bindings = self.parse_docblock_template_bindings(
                 parsed,
-                name,
+                GenericParent::ClassLike(name),
                 Some(name),
                 None,
                 None,
@@ -419,14 +562,20 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, name);
-            class_docblock_type_aliases = self.collect_docblock_type_aliases(
-                parsed,
-                Some(name),
-                None,
-                Some(&class_template_map),
-                None,
-            );
+                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            // Psalm reads `@psalm-type` aliases from every comment attached
+            // to the node (ClassLikeNodeScanner's getComments loop), so
+            // collect across the whole preceding docblock run — the closest
+            // block is the run's last entry, its aliases winning on collision.
+            for run_parsed in self.find_preceding_docblock_run(span.start.offset) {
+                class_docblock_type_aliases = self.collect_docblock_type_aliases(
+                    &run_parsed,
+                    Some(name),
+                    None,
+                    Some(&class_template_map),
+                    Some(&class_docblock_type_aliases),
+                );
+            }
 
             for (alias_name, aliased_type) in &class_docblock_type_aliases {
                 let scoped_alias = self.interner.intern(&format!(
@@ -511,6 +660,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             file_path: self.file_path,
             start_offset: span.start.offset,
             end_offset: span.end.offset,
+            name_location: {
+                let name_span = en.name.span();
+                Some((name_span.start.offset, name_span.end.offset))
+            },
             ..Default::default()
         };
 
@@ -520,6 +673,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         if let Some(parsed) = parsed_docblock.as_ref() {
             info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
                 info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
             info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
@@ -540,15 +694,15 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             info.is_deprecated = true;
         }
 
-        info.interfaces.insert(self.interner.intern("UnitEnum"));
+        info.interfaces.insert(StrId::UNIT_ENUM);
         if let Some(backing_atomic) = enum_backing_atomic.as_ref() {
-            info.interfaces.insert(self.interner.intern("BackedEnum"));
+            info.interfaces.insert(StrId::BACKED_ENUM);
             match backing_atomic {
                 TAtomic::TInt => {
-                    info.interfaces.insert(self.interner.intern("IntBackedEnum"));
+                    info.interfaces.insert(StrId::INT_BACKED_ENUM);
                 }
                 TAtomic::TString => {
-                    info.interfaces.insert(self.interner.intern("StringBackedEnum"));
+                    info.interfaces.insert(StrId::STRING_BACKED_ENUM);
                 }
                 _ => {}
             }
@@ -569,7 +723,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         if let Some(parsed) = parsed_docblock.as_ref() {
             let template_bindings = self.parse_docblock_template_bindings(
                 parsed,
-                name,
+                GenericParent::ClassLike(name),
                 Some(name),
                 None,
                 None,
@@ -587,8 +741,47 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 .collect();
         }
 
+        // `@psalm-type` aliases on enums work like on classes (Psalm's
+        // ClassLikeNodeScanner handles every classlike kind).
+        let mut class_docblock_type_aliases: FxHashMap<String, TUnion> = FxHashMap::default();
+        if parsed_docblock.is_some() {
+            let class_template_map = self.build_template_map_from_class_template_types(
+                &info.template_types,
+                GenericParent::ClassLike(name),
+            );
+            for run_parsed in self.find_preceding_docblock_run(span.start.offset) {
+                class_docblock_type_aliases = self.collect_docblock_type_aliases(
+                    &run_parsed,
+                    Some(name),
+                    None,
+                    Some(&class_template_map),
+                    Some(&class_docblock_type_aliases),
+                );
+            }
+
+            for (alias_name, aliased_type) in &class_docblock_type_aliases {
+                let scoped_alias = self.interner.intern(&format!(
+                    "{}::{}",
+                    self.interner.lookup(name),
+                    alias_name
+                ));
+                self.declarations.type_aliases.push(ClassTypeAlias {
+                    name: scoped_alias,
+                    aliased_type: aliased_type.clone(),
+                    file_path: self.file_path,
+                    start_offset: span.start.offset,
+                });
+            }
+            self.register_namespace_type_aliases(&class_docblock_type_aliases, span.start.offset);
+        }
+
         // Parse members
+        let previous_aliases = std::mem::replace(
+            &mut self.active_docblock_type_aliases,
+            class_docblock_type_aliases,
+        );
         self.collect_class_members(&mut info, &en.members);
+        self.active_docblock_type_aliases = previous_aliases;
 
         self.declarations.classes.push(info);
     }

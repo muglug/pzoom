@@ -21,8 +21,12 @@ class stdClass
 }
 
 /**
- * @template K
- * @template-covariant V
+ * Interface to detect if a class is traversable using &foreach;.
+ *
+ * @link http://php.net/manual/en/class.traversable.php
+ *
+ * @template-covariant TKey
+ * @template-covariant TValue
  *
  * @inheritors IteratorAggregate|Generator|Iterator|PDOStatement|DS\Collection|DOMNodeList|DatePeriod
  */
@@ -31,15 +35,17 @@ interface Traversable
 }
 
 /**
- * @template K
- * @template-covariant V
+ * @template-covariant TKey
+ * @template-covariant TValue
+ *
+ * @template-extends Traversable<TKey, TValue>
  *
  * @extends Traversable<K, V>
  */
 interface IteratorAggregate extends Traversable
 {
     /**
-     * @return Traversable<K, V>
+     * @return Traversable<TKey, TValue> An instance of an object implementing Iterator or Traversable
      *
      * @throws Exception
      */
@@ -47,64 +53,106 @@ interface IteratorAggregate extends Traversable
 }
 
 /**
- * @template K
- * @template-covariant V
+ * @template-covariant TKey
+ * @template-covariant TValue
+ *
+ * @template-extends Traversable<TKey, TValue>
  *
  * @extends Traversable<K, V>
  */
 interface Iterator extends Traversable
 {
     /**
-     * @return null|V
+     * @return TValue|null returns current value or null when iterator is drained
+     * @psalm-ignore-nullable-return
      */
     public function current(): mixed;
 
+    /**
+     * @return void Any returned value is ignored.
+     */
     public function next(): void;
 
     /**
-     * @return null|K
+     * @return TKey|null current key or null when iterator is drained
+     * @psalm-ignore-nullable-return
      */
     public function key(): mixed;
 
+    /**
+     * @return bool The return value will be casted to boolean and then evaluated.
+     *              Returns true on success or false on failure.
+     */
     public function valid(): bool;
 
+    /**
+     * @return void Any returned value is ignored.
+     */
     public function rewind(): void;
 }
 
 /**
- * @template K
- * @template V
+ * Interface to provide accessing objects as arrays.
+ *
+ * @link http://php.net/manual/en/class.arrayaccess.php
+ *
+ * @template TKey
+ * @template TValue
  */
 interface ArrayAccess
 {
     /**
-     * @param K $offset
+     * Whether an offset exists
      *
-     * @no-named-arguments
+     * @link http://php.net/manual/en/arrayaccess.offsetexists.php
+     *
+     * @param TKey $offset An offset to check for.
+     * @return bool true on success or false on failure.
+     *              The return value will be casted to boolean if non-boolean was returned.
+     *
+     * @since 5.0.0
+     * @no-named-arguments because of conflict with ArrayObject
      */
     public function offsetExists(mixed $offset): bool;
 
     /**
-     * @param K $offset
+     * Offset to retrieve
      *
-     * @return V
+     * @link http://php.net/manual/en/arrayaccess.offsetget.php
      *
-     * @no-named-arguments
+     * @param TKey $offset The offset to retrieve.
+     * @return TValue|null Can return all value types.
+     * @psalm-ignore-nullable-return
+     *
+     * @since 5.0.0
+     * @no-named-arguments because of conflict with ArrayObject
      */
     public function offsetGet(mixed $offset): mixed;
 
     /**
-     * @param K $offset
-     * @param V $value
+     * Offset to set
      *
-     * @no-named-arguments
+     * @link http://php.net/manual/en/arrayaccess.offsetset.php
+     *
+     * @param TKey|null $offset The offset to assign the value to.
+     * @param TValue $value The value to set.
+     * @return void
+     *
+     * @since 5.0.0
+     * @no-named-arguments because of conflict with ArrayObject
      */
     public function offsetSet(mixed $offset, mixed $value): void;
 
     /**
-     * @param K $offset
+     * Offset to unset
      *
-     * @no-named-arguments
+     * @link http://php.net/manual/en/arrayaccess.offsetunset.php
+     *
+     * @param TKey $offset The offset to unset.
+     * @return void
+     *
+     * @since 5.0.0
+     * @no-named-arguments because of conflict with ArrayObject
      */
     public function offsetUnset(mixed $offset): void;
 }
@@ -112,7 +160,7 @@ interface ArrayAccess
 interface Serializable
 {
     /**
-     * @return string|null
+     * @return null|string
      *
      * @throws Exception
      */
@@ -120,103 +168,154 @@ interface Serializable
 
     /**
      * @param string $data
-     *
      * @return void
      */
     public function unserialize(string $data);
 }
 
+/**
+ * @psalm-taint-specialize
+ */
 interface Throwable extends Stringable
 {
+    /**
+     * @psalm-mutation-free
+     */
     public function getMessage(): string;
 
     /**
-     * @return int|string
+     * @psalm-mutation-free
+     *
+     * @return int|string https://www.php.net/manual/en/throwable.getcode.php
      */
     public function getCode();
 
+    /**
+     * @psalm-mutation-free
+     */
     public function getFile(): string;
 
+    /**
+     * @psalm-mutation-free
+     */
     public function getLine(): int;
 
+    /**
+     * @psalm-mutation-free
+     * @return list<array{file?:string,line?:int,function?:string,class?:class-string,type?:'::'|'->',args?:array<mixed>}>
+     */
     public function getTrace(): array;
 
+    /**
+     * @psalm-mutation-free
+     * @psalm-taint-source input
+     */
     public function getTraceAsString(): string;
 
+    /**
+     * @psalm-mutation-free
+     */
     public function getPrevious(): Throwable|null;
 
     /**
      * @return string
+     * @psalm-taint-source input
      */
     public function __toString();
 }
 
+/**
+ * @psalm-taint-specialize
+ */
 class Exception implements Throwable
 {
-    protected $message;
-
-    protected $code;
-
-    protected string $file;
-
-    protected int $line;
+    /**
+     * @var string
+     */
+    protected $message = '';
 
     /**
+     * @var int
+     */
+    protected $code = 0;
+
+    /**
+     * @var string
+     */
+    protected string $file = '';
+
+    /**
+     * @var int
+     */
+    protected int $line = 0;
+
+    /**
+     * @psalm-external-mutation-free
+     * @param string $message
+     * @param int $code
+     * @param Throwable $previous
+     *
      * @pure
      */
     public function __construct(string $message = '', int $code = 0, null|Throwable $previous = null) {}
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getMessage(): string
     {
     }
 
     /**
-     * @return int|string
+     * @psalm-mutation-free
      *
-     * @mutation-free
+     * @return int|string https://www.php.net/manual/en/throwable.getcode.php
      */
     final public function getCode()
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getFile(): string
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getLine(): int
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
+     * @return list<array{file?:string,line?:int,function?:string,class?:class-string,type?:'::'|'->',args?:array<mixed>}>
      */
     final public function getTrace(): array
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getPrevious(): null|Throwable
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
+     * @psalm-taint-source input
      */
     final public function getTraceAsString(): string
     {
     }
 
+    /**
+     * @return string
+     * @psalm-taint-source input
+     */
     public function __toString(): string
     {
     }
@@ -226,78 +325,100 @@ class Exception implements Throwable
     }
 }
 
+/**
+ * @psalm-taint-specialize
+ */
 class Error implements Throwable
 {
-    protected $message;
-
-    protected $code;
-
-    protected string $file;
-
-    protected int $line;
+    /**
+     * @var string
+     */
+    protected $message = '';
 
     /**
+     * @var int
+     */
+    protected $code = 0;
+
+    /**
+     * @var string
+     */
+    protected string $file = '';
+
+    /**
+     * @var int
+     */
+    protected int $line = 0;
+
+    /**
+     * @psalm-external-mutation-free
      * @param string $message
      * @param int $code
-     * @param null|Throwable $previous
+     * @param Throwable $previous
      *
      * @pure
      */
     public function __construct(string $message = '', int $code = 0, null|Throwable $previous = null) {}
 
     /**
-     * @return string
+     * @psalm-mutation-free
      *
-     * @mutation-free
+     * @return string
      */
     final public function getMessage(): string
     {
     }
 
     /**
-     * @return int
+     * @psalm-mutation-free
      *
-     * @mutation-free
+     * @return int
      */
     final public function getCode()
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getFile(): string
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getLine(): int
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
+     * @return list<array{file?:string,line?:int,function?:string,class?:class-string,type?:'::'|'->',args?:array<mixed>}>
      */
     final public function getTrace(): array
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
+     * @psalm-taint-source input
      */
     final public function getTraceAsString(): string
     {
     }
 
     /**
-     * @mutation-free
+     * @psalm-mutation-free
      */
     final public function getPrevious(): null|Throwable
     {
     }
 
+    /**
+     * @return string
+     * @psalm-taint-source input
+     */
     public function __toString(): string
     {
     }
@@ -435,18 +556,16 @@ interface Countable
 }
 
 /**
- * @template T of object
+ * @template-covariant T as object
  */
 final class WeakReference
 {
     public function __construct() {}
 
     /**
-     * @template Input of object
-     *
-     * @param Input $object
-     *
-     * @return WeakReference<Input>
+     * @template TIn as object
+     * @param TIn $object
+     * @return WeakReference<TIn>
      *
      * @pure
      */
@@ -455,7 +574,7 @@ final class WeakReference
     }
 
     /**
-     * @return T|null
+     *  @return ?T
      *
      * @pure
      */
@@ -465,16 +584,19 @@ final class WeakReference
 }
 
 /**
- * @template K of object
- * @template V
+ * @template TKey of object
+ * @template TVal of mixed
+ * @implements ArrayAccess<TKey, TVal>
+ * @implements IteratorAggregate<TKey,TVal>
+ * @implements Traversable<TKey,TVal>
  *
- * @implements ArrayAccess<K, V>
- * @implements IteratorAggregate<K, V>
+ * @since 8.0.0
  */
 final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
 {
     /**
-     * @param K $object
+     * @param TKey $object
+     * @return bool
      *
      * @pure
      * @no-named-arguments
@@ -484,9 +606,9 @@ final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
     }
 
     /**
-     * @param K $object
-     *
-     * @return V
+     * @param TKey $object
+     * @return TVal|null
+     * @psalm-ignore-nullable-return
      *
      * @pure
      * @no-named-arguments
@@ -496,8 +618,9 @@ final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
     }
 
     /**
-     * @param K $object
-     * @param V $value
+     * @param TKey $object
+     * @param TVal $value
+     * @return void
      *
      * @no-named-arguments
      */
@@ -506,7 +629,8 @@ final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
     }
 
     /**
-     * @param K $object
+     * @param TKey $object
+     * @return void
      *
      * @no-named-arguments
      */
@@ -515,7 +639,7 @@ final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
     }
 
     /**
-     * @return Iterator<K, V>
+     *  @return Traversable<TKey, TVal>
      *
      * @pure
      */
@@ -535,9 +659,15 @@ final class WeakMap implements ArrayAccess, Countable, IteratorAggregate
 
 interface Stringable
 {
+    /**
+     *  @return string
+     */
     public function __toString(): string;
 }
 
+/**
+ *  @psalm-immutable
+ */
 #[Attribute(Attribute::TARGET_CLASS)]
 final class Attribute
 {
@@ -552,6 +682,9 @@ final class Attribute
 
     public int $flags;
 
+    /**
+     * @param int-mask-of<self::*> $flags
+     */
     public function __construct(int $flags = self::TARGET_ALL) {}
 }
 
@@ -585,12 +718,14 @@ final class InternalIterator implements Iterator
  */
 interface UnitEnum
 {
+    /**
+     *  @var non-empty-string $name
+     */
     public readonly string $name;
 
     /**
+     * @psalm-pure
      * @return list<static>
-     *
-     * @pure
      */
     public static function cases(): array;
 }
@@ -603,17 +738,26 @@ interface BackedEnum extends UnitEnum
     public readonly int|string $value;
 
     /**
+     * @psalm-pure
+     *
      * @throws ValueError
      * @throws TypeError
-     *
-     * @pure
      */
     public static function from(int|string $value): static;
 
     /**
-     * @pure
+     * @psalm-pure
      */
     public static function tryFrom(int|string $value): null|static;
+
+    /** @var non-empty-string $name */
+    public readonly string $name;
+
+    /**
+     * @psalm-pure
+     * @return list<static>
+     */
+    public static function cases(): array;
 }
 
 /**
@@ -753,33 +897,57 @@ final class ReturnTypeWillChange
     public function __construct() {}
 }
 
+/**
+ *  @psalm-immutable
+ */
 #[Attribute(Attribute::TARGET_CLASS)]
 final class AllowDynamicProperties
 {
     public function __construct() {}
 }
 
+/**
+ *  @psalm-immutable
+ */
 #[Attribute(Attribute::TARGET_PARAMETER)]
 final class SensitiveParameter
 {
     public function __construct() {}
 }
 
+/**
+ * @psalm-immutable
+ * @template TValue
+ *
+ * @since 8.2.0
+ */
 final class SensitiveParameterValue
 {
     private readonly mixed $value;
 
+    /**
+     *  @param TValue $value
+     */
     public function __construct(mixed $value) {}
 
+    /**
+     *  @return TValue
+     */
     public function getValue(): mixed
     {
     }
 
+    /**
+     *  @return array<never, never>
+     */
     public function __debugInfo(): array
     {
     }
 }
 
+/**
+ *  @psalm-immutable
+ */
 #[Attribute(Attribute::TARGET_METHOD | Attribute::TARGET_PROPERTY)]
 final class Override
 {
@@ -800,6 +968,14 @@ final class Deprecated
     public function __construct(null|string $message = null, null|string $since = null) {}
 }
 
+/**
+ * Indicates that the return value of a function should not be ignored.
+ * When applied to a function or method, a warning is emitted if the
+ * return value is not used.
+ *
+ * @psalm-immutable
+ * @since 8.5
+ */
 #[Attribute(Attribute::TARGET_METHOD | Attribute::TARGET_FUNCTION)]
 final class NoDiscard
 {
@@ -814,9 +990,9 @@ final class DelayedTargetValidation
 }
 
 /**
- * @return non-empty-string
- *
  * @pure
+ *
+ * @return string
  */
 function zend_version(): string
 {
@@ -824,6 +1000,8 @@ function zend_version(): string
 
 /**
  * @pure
+ *
+ * @return int
  */
 function func_num_args(): int
 {
@@ -839,15 +1017,26 @@ function func_get_arg(int $position): mixed
 /**
  * @pure
  * @no-named-arguments
+ *
+ * @return list<mixed>
  */
 function func_get_args(): array
 {
 }
 
 /**
- * @return int<0, max>
+ * @psalm-pure
  *
- * @pure
+ * @psalm-return (
+ *     $string is ''
+ *     ? 0
+ *     : (
+ *          $string is non-empty-string
+ *              ? positive-int
+ *              : (0|positive-int)
+ *     )
+ * )
+ *
  * @no-named-arguments
  */
 function strlen(string $string): int
@@ -887,7 +1076,12 @@ function strncasecmp(string $string1, string $string2, int $length): int
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @template T as string
+ * @param T $needle
+ * @psalm-assert-if-true =(T is '' ? string : non-empty-string) $haystack
+ * @return ($needle is '' ? true : ($haystack is '' ? false : bool))
+ *
  * @no-named-arguments
  */
 function str_starts_with(string $haystack, string $needle): bool
@@ -895,7 +1089,12 @@ function str_starts_with(string $haystack, string $needle): bool
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @template T as string
+ * @param T $needle
+ * @psalm-assert-if-true =(T is '' ? string : non-empty-string) $haystack
+ * @return ($needle is '' ? true : ($haystack is '' ? false : bool))
+ *
  * @no-named-arguments
  */
 function str_ends_with(string $haystack, string $needle): bool
@@ -903,7 +1102,12 @@ function str_ends_with(string $haystack, string $needle): bool
 }
 
 /**
- * @pure
+ * @psalm-pure
+ * @template T as string
+ * @param T $needle
+ * @psalm-assert-if-true =(T is '' ? string : non-empty-string) $haystack
+ * @return ($needle is '' ? true : ($haystack is '' ? false : bool))
+ *
  * @no-named-arguments
  */
 function str_contains(string $haystack, string $needle): bool
@@ -940,6 +1144,9 @@ function define(string $constant_name, mixed $value, bool $case_insensitive = fa
 /**
  * @pure
  * @no-named-arguments
+ *
+ * @param string $constant_name
+ * @return bool
  */
 function defined(string $constant_name): bool
 {
@@ -948,6 +1155,9 @@ function defined(string $constant_name): bool
 /**
  * @pure
  * @no-named-arguments
+ *
+ * @param object $object
+ * @return class-string
  */
 function get_class(object $object): string
 {
@@ -956,6 +1166,8 @@ function get_class(object $object): string
 /**
  * @pure
  * @no-named-arguments
+ *
+ * @return class-string
  */
 function get_called_class(): string
 {
@@ -1061,18 +1273,18 @@ function class_alias(string $class, string $alias, bool $autoload = true): bool
 }
 
 /**
- * @return list<non-empty-string>
- *
  * @pure
+ *
+ * @return list<string>
  */
 function get_included_files(): array
 {
 }
 
 /**
- * @return list<non-empty-string>
- *
  * @pure
+ *
+ * @return list<string>
  */
 function get_required_files(): array
 {
@@ -1089,8 +1301,10 @@ function is_subclass_of(mixed $object_or_class, string $class, bool $allow_strin
 }
 
 /**
- * @param object|class-string $object_or_class
+ * @param mixed $object_or_class
  * @param class-string $class
+ * @param bool $allow_string
+ * @return ($allow_string is false ? ($object_or_class is object ? bool : false) : bool)
  *
  * @pure
  */
@@ -1135,7 +1349,8 @@ function user_error(string $message, int $error_level = E_USER_NOTICE)
 }
 
 /**
- * @return callable|null
+ * @param callable(int, string, string=, int=, array<array-key, mixed>=):bool|null $callback
+ * @return callable(int, string, string=, int=, array<array-key, mixed>=):bool|null
  */
 function set_error_handler(null|callable $callback, int $error_levels = E_ALL)
 {
@@ -1148,6 +1363,9 @@ function get_error_handler(): null|callable
 {
 }
 
+/**
+ * @return true
+ */
 function restore_error_handler(): true
 {
 }
@@ -1166,32 +1384,35 @@ function get_exception_handler(): null|callable
 {
 }
 
+/**
+ * @return true
+ */
 function restore_exception_handler(): true
 {
 }
 
 /**
- * @return list<class-string>
- *
  * @pure
+ *
+ * @return list<class-string>
  */
 function get_declared_classes(): array
 {
 }
 
 /**
- * @return list<interface-string>
- *
  * @pure
+ *
+ * @return list<class-string>
  */
 function get_declared_interfaces(): array
 {
 }
 
 /**
- * @return list<trait-string>
- *
  * @pure
+ *
+ * @return list<class-string>
  */
 function get_declared_traits(): array
 {
@@ -1208,6 +1429,8 @@ function get_defined_functions(bool $exclude_disabled = true): array
 
 /**
  * @pure
+ *
+ * @return array<array-key, mixed>
  */
 function get_defined_vars(): array
 {
@@ -1225,9 +1448,10 @@ function get_resource_type($resource): string
 }
 
 /**
- * @return non-empty-list<non-empty-string>
- *
  * @pure
+ *
+ * @param bool $zend_extensions
+ * @return list<string>
  */
 function get_loaded_extensions(bool $zend_extensions = false): array
 {
@@ -1252,6 +1476,8 @@ function get_extension_funcs(string $extension): array|false
 }
 
 /**
+ * @return ($categorize is false ? array<string,int|string|float|bool|null|array|resource> : array<string, array<string,int|string|float|bool|null|array|resource>>)
+ *
  * @pure
  */
 function get_defined_constants(bool $categorize = false): array
@@ -1260,30 +1486,50 @@ function get_defined_constants(bool $categorize = false): array
 
 /**
  * @pure
+ *
+ * @param int $options
+ * @param int $limit
+ * @return list<array{args?: list<mixed>, class?: class-string, file?: string, function: string, line?: int, object?: object, type?: string}>
  */
 function debug_backtrace(int $options = DEBUG_BACKTRACE_PROVIDE_OBJECT, int $limit = 0): array
 {
 }
 
+/**
+ * @param int $options
+ * @param int $limit
+ * @return void
+ */
 function debug_print_backtrace(int $options = 0, int $limit = 0): void
 {
 }
 
+/**
+ * @return int
+ */
 function gc_collect_cycles(): int
 {
 }
 
 /**
  * @pure
+ *
+ * @return bool
  */
 function gc_enabled(): bool
 {
 }
 
+/**
+ * @return void
+ */
 function gc_enable(): void
 {
 }
 
+/**
+ * @return void
+ */
 function gc_disable(): void
 {
 }
@@ -1297,6 +1543,9 @@ function gc_status(): array
 {
 }
 
+/**
+ * @return int
+ */
 function gc_mem_caches(): int
 {
 }

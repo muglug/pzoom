@@ -1585,3 +1585,12 @@ const CURLINFO_SSL_DATA_OUT = 5;
 const CURLINFO_SSL_DATA_IN = 6;
 
 const CURLINFO_POSTTRANSFER_TIME_T = 6291523;
+
+/**
+ * Persistent cURL share handle resource.
+ *
+ * @since 8.5 PHP
+ */
+final class CurlSharePersistentHandle
+{
+}

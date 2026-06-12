@@ -544,6 +544,11 @@ function sodium_randombytes_uniform(int $upperBoundNonInclusive): int
 }
 
 /**
+ * @psalm-pure
+ * @template T as string
+ * @param T $string
+ * @return (T is non-empty-string ? non-empty-string : string)
+ *
  * @throws SodiumException
  */
 function sodium_bin2hex(string $string): string
@@ -594,6 +599,9 @@ function sodium_memcmp(string $string1, string $string2): int
 }
 
 /**
+ * @param string $string
+ * @param-out null $string
+ *
  * @throws SodiumException
  */
 function sodium_memzero(string &$string): void
@@ -698,6 +706,11 @@ function sodium_crypto_secretstream_xchacha20poly1305_rekey(string &$state): voi
 }
 
 /**
+ * @psalm-pure
+ * @template T as string
+ * @param T $string
+ * @return (T is non-empty-string ? non-empty-string : string)
+ *
  * @throws SodiumException
  */
 function sodium_bin2base64(string $string, int $id): string

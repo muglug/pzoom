@@ -1,0 +1,1 @@
+RedundantConditionGivenDocblockType - input.php:6:5 - Docblock-defined type non-empty-list<string> for $a is always truthy

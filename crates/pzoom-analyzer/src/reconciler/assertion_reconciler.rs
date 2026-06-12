@@ -12,7 +12,7 @@ use super::{negated_assertion_reconciler, simple_assertion_reconciler};
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
-use crate::template::TemplateMap;
+use pzoom_code_info::TemplateResult;
 
 /// Main entry point for assertion reconciliation.
 ///
@@ -22,7 +22,7 @@ pub fn reconcile(
     assertion: &Assertion,
     existing_var_type: Option<&TUnion>,
     possibly_undefined: bool,
-    key: Option<&String>,
+    key: Option<&str>,
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     inside_loop: bool,
@@ -40,6 +40,7 @@ pub fn reconcile(
             &existing_var_type,
             key,
             negated,
+            possibly_undefined,
             analysis_data,
             analyzer,
             inside_loop,
@@ -89,9 +90,73 @@ pub fn intersect_union_with_atomic(
     assertion_atomic: &TAtomic,
     analyzer: &StatementsAnalyzer<'_>,
 ) -> Option<TUnion> {
+    // Psalm's AssertionReconciler keyed-array pre-step: when the asserted
+    // shape shares NO keys with some existing keyed members, those members
+    // absorb the asserted properties (sequential @psalm-assert shape calls
+    // intersect: array{foo} + assert array{bar} = array{foo, bar}), and
+    // they alone form the result.
+    if let TAtomic::TKeyedArray {
+        properties: assertion_properties,
+        ..
+    } = assertion_atomic
+    {
+        // Only when NO member shares keys with the assertion (the
+        // sequential-assert case); a member sharing keys means a
+        // discriminated union, where the assertion selects its shape.
+        let any_member_shares_keys = existing_var_type.types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TKeyedArray { properties, .. }
+                    if properties.keys().any(|key| assertion_properties.contains_key(key))
+            )
+        });
+        let mut merged_members = Vec::new();
+        for atomic in &existing_var_type.types {
+            if any_member_shares_keys {
+                break;
+            }
+            if let TAtomic::TKeyedArray {
+                properties: existing_properties,
+                is_list,
+                sealed,
+                fallback_key_type,
+                fallback_value_type,
+            } = atomic
+                && !existing_properties
+                    .keys()
+                    .any(|key| assertion_properties.contains_key(key))
+            {
+                let mut properties = (**existing_properties).clone();
+                for (key, value) in assertion_properties.iter() {
+                    properties.insert(key.clone(), value.clone());
+                }
+                merged_members.push(TAtomic::TKeyedArray {
+                    properties: std::sync::Arc::new(properties),
+                    is_list: *is_list,
+                    sealed: *sealed,
+                    fallback_key_type: fallback_key_type.clone(),
+                    fallback_value_type: fallback_value_type.clone(),
+                });
+            }
+        }
+        if !merged_members.is_empty() {
+            return Some(TUnion::from_types(merged_members));
+        }
+    }
+
     let mut acceptable_types = Vec::new();
 
     for atomic in &existing_var_type.types {
+        // Psalm's reconcileNumeric splits array-key into its numeric halves
+        // (int and numeric-string) — a per-atomic intersection can't.
+        if matches!(
+            (atomic, assertion_atomic),
+            (TAtomic::TArrayKey, TAtomic::TNumeric)
+        ) {
+            acceptable_types.push(TAtomic::TInt);
+            acceptable_types.push(TAtomic::TNumericString);
+            continue;
+        }
         if let Some(intersected) =
             intersect_atomic_with_atomic_inner(atomic, assertion_atomic, Some(analyzer.codebase))
         {
@@ -116,11 +181,76 @@ pub fn intersect_atomic_with_atomic(
     intersect_atomic_with_atomic_inner(existing_atomic, assertion_atomic, None)
 }
 
+/// The element type of an array/list intersection: a mixed side defers to the
+/// other, otherwise the types intersect (falling back to the assertion side
+/// when they cannot).
+fn intersect_array_value_unions(existing: &TUnion, assertion: &TUnion) -> TUnion {
+    if assertion.is_mixed() {
+        return existing.clone();
+    }
+    if existing.is_mixed() {
+        return assertion.clone();
+    }
+    intersect_union_with_union(existing, assertion).unwrap_or_else(|| assertion.clone())
+}
+
+/// Psalm's `callable-array{0: class-string|object, 1: non-empty-string}`.
+fn callable_array_shape() -> TAtomic {
+    let mut properties: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion> =
+        rustc_hash::FxHashMap::default();
+    properties.insert(
+        pzoom_code_info::ArrayKey::Int(0),
+        TUnion::from_types(vec![
+            TAtomic::TClassString { as_type: None },
+            TAtomic::TObject,
+        ]),
+    );
+    properties.insert(
+        pzoom_code_info::ArrayKey::Int(1),
+        TUnion::new(TAtomic::TNonEmptyString),
+    );
+    TAtomic::TKeyedArray {
+        properties: std::sync::Arc::new(properties),
+        is_list: true,
+        sealed: true,
+        fallback_key_type: None,
+        fallback_value_type: None,
+    }
+}
+
+/// Whether an array key union could hold int keys (so the array could be a
+/// list). `never` (empty array) qualifies; a string-only key type does not.
+fn array_key_union_allows_int(key_type: &TUnion) -> bool {
+    key_type.is_nothing()
+        || key_type.types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TInt
+                    | TAtomic::TLiteralInt { .. }
+                    | TAtomic::TIntRange { .. }
+                    | TAtomic::TArrayKey
+                    | TAtomic::TMixed
+                    | TAtomic::TNonEmptyMixed
+            )
+        })
+}
+
 fn intersect_atomic_with_atomic_inner(
     existing_atomic: &TAtomic,
     assertion_atomic: &TAtomic,
     codebase: Option<&CodebaseInfo>,
 ) -> Option<TAtomic> {
+    // Hakana's assertion reconciler keeps a type variable through any
+    // intersection (its bound recording happens where analysis data is in
+    // scope; the variable's constraints reconcile at function end).
+    if matches!(existing_atomic, TAtomic::TTypeVariable { .. }) {
+        return Some(existing_atomic.clone());
+    }
+
+    if matches!(assertion_atomic, TAtomic::TTypeVariable { .. }) {
+        return Some(assertion_atomic.clone());
+    }
+
     if let TAtomic::TObjectIntersection { types } = existing_atomic {
         let mut intersection_types = Vec::new();
         for atomic in types {
@@ -209,12 +339,46 @@ fn intersect_atomic_with_atomic_inner(
     if matches!(existing_atomic, TAtomic::TCallable { .. })
         && atomic_can_be_callable_representation(assertion_atomic)
     {
+        // `is_array` on a callable narrows to Psalm's callable-array shape
+        // `{0: class-string|object, 1: non-empty-string}` — a sealed
+        // two-element list (so `count()` knows it is exactly 2).
+        if matches!(
+            assertion_atomic,
+            TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. } | TAtomic::TList { .. }
+        ) {
+            return Some(callable_array_shape());
+        }
+        // `is_string` on a callable narrows to callable-string (Psalm's
+        // reconcileString pushes TCallableString for a TCallable part).
+        if matches!(assertion_atomic, TAtomic::TString) {
+            return Some(TAtomic::TCallableString);
+        }
         return Some(assertion_atomic.clone());
     }
 
     if matches!(assertion_atomic, TAtomic::TCallable { .. })
         && atomic_can_be_callable_representation(existing_atomic)
     {
+        // Psalm's reconcileCallable narrows a plain string to callable-string.
+        if matches!(
+            existing_atomic,
+            TAtomic::TString
+                | TAtomic::TNonEmptyString
+                | TAtomic::TTruthyString
+                | TAtomic::TLowercaseString
+                | TAtomic::TNonEmptyLowercaseString
+        ) {
+            return Some(TAtomic::TCallableString);
+        }
+        // A KNOWN class is only callable when it declares __invoke (Psalm's
+        // reconcileCallable drops the rest); unknown classes stay.
+        if let TAtomic::TNamedObject { name, .. } = existing_atomic
+            && let Some(codebase) = codebase
+            && let Some(class_info) = codebase.get_class(*name)
+            && !class_info.methods.contains_key(&pzoom_str::StrId::INVOKE)
+        {
+            return None;
+        }
         return Some(existing_atomic.clone());
     }
 
@@ -306,6 +470,8 @@ fn intersect_atomic_with_atomic_inner(
                 None
             }
         }
+        // array-key ∩ numeric is int|numeric-string; the union-level loop in
+        // intersect_union_with_atomic splits it (a single atomic can't).
         (TAtomic::TArrayKey, TAtomic::TNumeric) => Some(TAtomic::TNumeric),
         (TAtomic::TScalar, TAtomic::TNumeric) => Some(TAtomic::TNumeric),
         // numeric contains every int/float-valued atomic; intersecting keeps the
@@ -325,6 +491,33 @@ fn intersect_atomic_with_atomic_inner(
         (TAtomic::TString, TAtomic::TLiteralString { value }) => Some(TAtomic::TLiteralString {
             value: value.clone(),
         }),
+        // `gettype($x)` results are string subtypes (Psalm's
+        // TDependentGetType): `$t === 'object'` narrows to the literal —
+        // but only the strings gettype can actually return ('bool' can't).
+        (TAtomic::TDependentGetType { .. }, TAtomic::TLiteralString { value })
+            if matches!(
+                value.as_str(),
+                "boolean"
+                    | "integer"
+                    | "double"
+                    | "string"
+                    | "array"
+                    | "object"
+                    | "resource"
+                    | "resource (closed)"
+                    | "NULL"
+                    | "unknown type"
+            ) =>
+        {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
+        (TAtomic::TDependentGetClass { .. }, TAtomic::TLiteralString { value }) => {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
         (TAtomic::TString, TAtomic::TNonEmptyString) => Some(TAtomic::TNonEmptyString),
         (TAtomic::TString, TAtomic::TNumericString) => Some(TAtomic::TNumericString),
         // A non-empty literal string (e.g. "0") is a member of non-empty-string, so
@@ -332,6 +525,31 @@ fn intersect_atomic_with_atomic_inner(
         (TAtomic::TNonEmptyString, TAtomic::TLiteralString { value })
         | (TAtomic::TLiteralString { value }, TAtomic::TNonEmptyString)
             if !value.is_empty() =>
+        {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
+        // A lowercase literal string is a member of (non-empty-)lowercase-string
+        // and a truthy literal a member of truthy-string, so `$s === 'foo'` on
+        // those refinements keeps the literal rather than clearing.
+        (
+            TAtomic::TLowercaseString | TAtomic::TNonEmptyLowercaseString,
+            TAtomic::TLiteralString { value },
+        )
+        | (
+            TAtomic::TLiteralString { value },
+            TAtomic::TLowercaseString | TAtomic::TNonEmptyLowercaseString,
+        ) if !value.is_empty()
+            && !value.chars().any(|c| c.is_uppercase()) =>
+        {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
+        (TAtomic::TTruthyString, TAtomic::TLiteralString { value })
+        | (TAtomic::TLiteralString { value }, TAtomic::TTruthyString)
+            if !value.is_empty() && value != "0" =>
         {
             Some(TAtomic::TLiteralString {
                 value: value.clone(),
@@ -351,11 +569,60 @@ fn intersect_atomic_with_atomic_inner(
         ) if value.parse::<f64>().is_ok() => {
             Some(TAtomic::TLiteralString { value: value.clone() })
         }
-        (TAtomic::TString, TAtomic::TClassString { as_type }) => Some(TAtomic::TClassString {
-            as_type: as_type.clone(),
-        }),
+        (TAtomic::TString, TAtomic::TClassString { as_type })
+        // A class-string is a non-empty (and non-falsy) string, so the
+        // narrower string-family types intersect to class-string too
+        // (class_exists on a non-falsy-string — Psalm's reconcileString).
+        | (TAtomic::TNonEmptyString, TAtomic::TClassString { as_type })
+        | (TAtomic::TTruthyString, TAtomic::TClassString { as_type })
+        | (TAtomic::TCallableString, TAtomic::TClassString { as_type })
+        | (TAtomic::TLowercaseString, TAtomic::TClassString { as_type })
+        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TClassString { as_type }) => {
+            Some(TAtomic::TClassString {
+                as_type: as_type.clone(),
+            })
+        }
         (TAtomic::TString, TAtomic::TLiteralClassString { name }) => {
             Some(TAtomic::TLiteralClassString { name: name.clone() })
+        }
+        // callable-string is a subtype of the general string family, so
+        // `function_exists($s)` narrows a plain string to callable-string.
+        (
+            TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString,
+            TAtomic::TCallableString,
+        ) => Some(TAtomic::TCallableString),
+        // A literal string naming a known function (or a Class::method whose
+        // class resolves) is a member of callable-string, so
+        // `function_exists($name)` on a literal keeps the literal.
+        (TAtomic::TLiteralString { value }, TAtomic::TCallableString)
+        | (TAtomic::TCallableString, TAtomic::TLiteralString { value }) => {
+            let resolves = codebase.is_some_and(|codebase| {
+                if let Some((class_name, _)) = value.split_once("::") {
+                    codebase.resolve_classlike_name(class_name).is_some()
+                } else {
+                    codebase.resolve_functionlike_name(value).is_some()
+                }
+            });
+            if resolves {
+                Some(TAtomic::TLiteralString {
+                    value: value.clone(),
+                })
+            } else {
+                None
+            }
+        }
+        // Psalm's handleLiteralEqualityWithString: any non-literal string
+        // subtype (class-string included) asserted equal to a literal
+        // becomes that literal — `$class_name === 'SoapFault'` on a
+        // class-string narrows to 'SoapFault' without complaint.
+        (TAtomic::TClassString { .. }, TAtomic::TLiteralString { value }) => {
+            Some(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
         }
         (TAtomic::TLiteralString { value }, TAtomic::TString) => Some(TAtomic::TLiteralString {
             value: value.clone(),
@@ -364,6 +631,16 @@ fn intersect_atomic_with_atomic_inner(
             Some(TAtomic::TLiteralClassString { name: name.clone() })
         }
         (TAtomic::TNonEmptyString, TAtomic::TString) => Some(TAtomic::TNonEmptyString),
+        (TAtomic::TTruthyString, TAtomic::TString) => Some(TAtomic::TTruthyString),
+        // callable-string is a non-falsy-string subtype (Psalm TCallableString)
+        (TAtomic::TCallableString, TAtomic::TString)
+        | (TAtomic::TCallableString, TAtomic::TNonEmptyString)
+        | (TAtomic::TCallableString, TAtomic::TTruthyString)
+        | (TAtomic::TCallableString, TAtomic::TCallableString)
+        | (TAtomic::TString, TAtomic::TCallableString)
+        | (TAtomic::TNonEmptyString, TAtomic::TCallableString)
+        | (TAtomic::TTruthyString, TAtomic::TCallableString) => Some(TAtomic::TCallableString),
+        (TAtomic::TString, TAtomic::TTruthyString) => Some(TAtomic::TTruthyString),
         (TAtomic::TNumericString, TAtomic::TString) => Some(TAtomic::TNumericString),
         (TAtomic::TClassString { as_type }, TAtomic::TString) => Some(TAtomic::TClassString {
             as_type: as_type.clone(),
@@ -534,6 +811,92 @@ fn intersect_atomic_with_atomic_inner(
             enum_name: *a_enum,
             case_name: *a_case,
         }),
+        // An enum-typed value often appears as a plain named object (the
+        // signature scanner doesn't resolve enum-ness); it still intersects
+        // with the enum's cases and with the enum itself — including through
+        // an interface the enum implements (`I ∩ E::A = E::A`).
+        (
+            TAtomic::TNamedObject { name, .. },
+            TAtomic::TEnumCase {
+                enum_name,
+                case_name,
+            },
+        )
+        | (
+            TAtomic::TEnumCase {
+                enum_name,
+                case_name,
+            },
+            TAtomic::TNamedObject { name, .. },
+        ) if name == enum_name
+            || codebase.is_some_and(|codebase| {
+                crate::type_comparator::object_type_comparator::is_class_subtype_of(
+                    *enum_name, *name, codebase,
+                )
+            }) =>
+        {
+            Some(TAtomic::TEnumCase {
+                enum_name: *enum_name,
+                case_name: *case_name,
+            })
+        }
+        (TAtomic::TNamedObject { name, .. }, TAtomic::TEnum { name: enum_name })
+        | (TAtomic::TEnum { name: enum_name }, TAtomic::TNamedObject { name, .. })
+            if name == enum_name
+                || codebase.is_some_and(|codebase| {
+                    crate::type_comparator::object_type_comparator::is_class_subtype_of(
+                        *enum_name, *name, codebase,
+                    )
+                }) =>
+        {
+            Some(TAtomic::TEnum { name: *enum_name })
+        }
+
+        // A bare `object` narrowed by an object-with-properties assertion
+        // (e.g. method_exists(.., '__toString') -> stringable-object) keeps
+        // the more specific shape; the reverse keeps the existing shape.
+        (TAtomic::TObject, TAtomic::TObjectWithProperties { .. }) => {
+            Some(assertion_atomic.clone())
+        }
+        (TAtomic::TObjectWithProperties { .. }, TAtomic::TObject) => {
+            Some(existing_atomic.clone())
+        }
+        // A named object asserted to an object shape stays itself when a
+        // subclass could satisfy the shape; a FINAL class must already
+        // declare the asserted properties/__toString or the intersection is
+        // empty (Psalm: "Type Foo for $x is never").
+        (
+            TAtomic::TNamedObject { name, .. },
+            TAtomic::TObjectWithProperties {
+                properties,
+                is_stringable,
+                ..
+            },
+        ) => {
+            let satisfiable = match codebase.and_then(|codebase| codebase.get_class(*name)) {
+                Some(class_info) if class_info.is_final => {
+                    let properties_ok = properties.is_empty() || !class_info.properties.is_empty();
+                    let stringable_ok =
+                        !*is_stringable || class_info.methods.contains_key(&StrId::TO_STRING);
+                    properties_ok && stringable_ok
+                }
+                _ => true,
+            };
+            if satisfiable {
+                if *is_stringable || properties.is_empty() {
+                    Some(existing_atomic.clone())
+                } else {
+                    // Psalm intersects the class with the asserted shape
+                    // (`stdClass&object{status: ...}`), so the shape's
+                    // properties read through the result.
+                    Some(TAtomic::TObjectIntersection {
+                        types: vec![existing_atomic.clone(), assertion_atomic.clone()],
+                    })
+                }
+            } else {
+                None
+            }
+        }
 
         // object types
         (TAtomic::TObject, TAtomic::TNamedObject { name, type_params , .. }) => {
@@ -590,81 +953,277 @@ fn intersect_atomic_with_atomic_inner(
             }
         }
 
-        // array types
+        // array types: intersect the generic params (Psalm's
+        // filterTypeWithAnotherType narrows non-empty-array<string, Atomic>
+        // by an asserted array<array-key, TLiteral...> to
+        // non-empty-array<string, TLiteral...>).
         (
-            TAtomic::TArray { .. },
+            TAtomic::TArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
             TAtomic::TArray {
                 key_type,
                 value_type,
             },
-        ) => Some(TAtomic::TArray {
-            key_type: key_type.clone(),
-            value_type: value_type.clone(),
-        }),
-        (
-            TAtomic::TArray { .. },
+        )
+        | (
+            TAtomic::TArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
             TAtomic::TNonEmptyArray {
                 key_type,
                 value_type,
             },
-        ) => Some(TAtomic::TNonEmptyArray {
-            key_type: key_type.clone(),
-            value_type: value_type.clone(),
-        }),
-        (
+        )
+        | (
+            TAtomic::TNonEmptyArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            },
+        )
+        | (
+            TAtomic::TNonEmptyArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
             TAtomic::TNonEmptyArray {
                 key_type,
                 value_type,
             },
-            TAtomic::TArray { .. },
-        ) => Some(TAtomic::TNonEmptyArray {
-            key_type: key_type.clone(),
-            value_type: value_type.clone(),
-        }),
-        (TAtomic::TList { value_type }, TAtomic::TArray { .. }) => Some(TAtomic::TList {
-            value_type: value_type.clone(),
-        }),
-        (TAtomic::TNonEmptyList { value_type }, TAtomic::TArray { .. }) => {
-            Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
+        ) => {
+            // Disjoint params mean the arrays can't intersect at all (Psalm's
+            // filterTypeWithAnotherType drops the atomic); the more-specific
+            // fallback only covers mixed-vs-concrete pairs the param
+            // intersection can't express.
+            // A missing param intersection falls back to the more-specific
+            // side UNLESS the params are provably disjoint (no containment in
+            // either direction) — then the arrays can't intersect at all and
+            // Psalm's filterTypeWithAnotherType drops the atomic.
+            let params_disjoint = |a: &TUnion, b: &TUnion| {
+                if a.is_mixed()
+                    || b.is_mixed()
+                    || a.types
+                        .iter()
+                        .chain(b.types.iter())
+                        .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+                {
+                    return false;
+                }
+                let Some(codebase) = codebase else {
+                    return false;
+                };
+                !crate::type_comparator::union_type_comparator::can_be_contained_by(
+                    codebase, a, b,
+                ) && !crate::type_comparator::union_type_comparator::can_be_contained_by(
+                    codebase, b, a,
+                )
+            };
+            let intersected_key = match intersect_union_with_union_with_codebase(
+                existing_key_type,
+                key_type,
+                codebase,
+            ) {
+                Some(intersected) => intersected,
+                None if params_disjoint(existing_key_type, key_type) => return None,
+                None => pick_more_specific_union(existing_key_type, key_type),
+            };
+            let intersected_value = match intersect_union_with_union_with_codebase(
+                existing_value_type,
+                value_type,
+                codebase,
+            ) {
+                Some(intersected) => intersected,
+                None if params_disjoint(existing_value_type, value_type) => return None,
+                None => pick_more_specific_union(existing_value_type, value_type),
+            };
+            if matches!(existing_atomic, TAtomic::TNonEmptyArray { .. })
+                || matches!(assertion_atomic, TAtomic::TNonEmptyArray { .. })
+            {
+                Some(TAtomic::TNonEmptyArray {
+                    key_type: Box::new(intersected_key),
+                    value_type: Box::new(intersected_value),
+                })
+            } else {
+                Some(TAtomic::TArray {
+                    key_type: Box::new(intersected_key),
+                    value_type: Box::new(intersected_value),
+                })
+            }
+        }
+        (
+            TAtomic::TList {
+                value_type: existing_value_type,
+            },
+            TAtomic::TArray { key_type, value_type },
+        ) => {
+            // A non-empty list has int keys: an assertion to a string-keyed
+            // array is disjoint (the empty list is the only overlap).
+            if !array_key_union_allows_int(key_type) {
+                return None;
+            }
+            Some(TAtomic::TList {
+                value_type: Box::new(
+                    intersect_union_with_union_with_codebase(
+                        existing_value_type,
+                        value_type,
+                        codebase,
+                    )
+                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
+                ),
             })
         }
-        (TAtomic::TList { value_type }, TAtomic::TNonEmptyArray { .. }) => {
+        (
+            TAtomic::TNonEmptyList {
+                value_type: existing_value_type,
+            },
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            },
+        )
+        | (
+            TAtomic::TList {
+                value_type: existing_value_type,
+            },
+            TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            },
+        )
+        | (
+            TAtomic::TNonEmptyList {
+                value_type: existing_value_type,
+            },
+            TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            },
+        ) => {
+            if !array_key_union_allows_int(key_type) {
+                return None;
+            }
             Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
-            })
-        }
-        (TAtomic::TNonEmptyList { value_type }, TAtomic::TNonEmptyArray { .. }) => {
-            Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
+                value_type: Box::new(
+                    intersect_union_with_union_with_codebase(
+                        existing_value_type,
+                        value_type,
+                        codebase,
+                    )
+                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
+                ),
             })
         }
 
-        // list types
-        (TAtomic::TList { .. }, TAtomic::TList { value_type }) => Some(TAtomic::TList {
-            value_type: value_type.clone(),
+        // An array asserted to be a list (array_is_list) intersects into a
+        // list of the intersected value type when its key type allows int
+        // keys; a string-only-keyed array is disjoint from list (None).
+        // Non-emptiness is preserved.
+        (
+            TAtomic::TArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
+            TAtomic::TList { value_type },
+        ) => {
+            if !array_key_union_allows_int(existing_key_type) {
+                return None;
+            }
+            Some(TAtomic::TList {
+                value_type: Box::new(
+                    intersect_union_with_union_with_codebase(
+                        existing_value_type,
+                        value_type,
+                        codebase,
+                    )
+                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
+                ),
+            })
+        }
+        // NB: (TArray, TNonEmptyList) intentionally absent — pzoom models
+        // the `!== []` non-empty assertion through a list type, and a
+        // string-keyed array must not collapse to int keys there.
+        (
+            TAtomic::TNonEmptyArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
+            TAtomic::TList { value_type },
+        )
+        | (
+            TAtomic::TNonEmptyArray {
+                key_type: existing_key_type,
+                value_type: existing_value_type,
+            },
+            TAtomic::TNonEmptyList { value_type },
+        ) => {
+            if !array_key_union_allows_int(existing_key_type) {
+                return None;
+            }
+            Some(TAtomic::TNonEmptyList {
+                value_type: Box::new(
+                    intersect_union_with_union_with_codebase(
+                        existing_value_type,
+                        value_type,
+                        codebase,
+                    )
+                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
+                ),
+            })
+        }
+
+        // list types — the value type is the intersection of both sides
+        // (asserting `non-empty-list` against `list<string>` keeps string,
+        // Psalm's filterTypeWithAnother).
+        (
+            TAtomic::TList {
+                value_type: existing_value,
+            },
+            TAtomic::TList {
+                value_type: assertion_value,
+            },
+        ) => Some(TAtomic::TList {
+            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
         }),
-        (TAtomic::TList { .. }, TAtomic::TNonEmptyList { value_type }) => {
-            Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
-            })
-        }
-        (TAtomic::TNonEmptyList { value_type }, TAtomic::TList { .. }) => {
-            Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
-            })
-        }
+        (
+            TAtomic::TList {
+                value_type: existing_value,
+            },
+            TAtomic::TNonEmptyList {
+                value_type: assertion_value,
+            },
+        ) => Some(TAtomic::TNonEmptyList {
+            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
+        }),
+        (
+            TAtomic::TNonEmptyList {
+                value_type: existing_value,
+            },
+            TAtomic::TList {
+                value_type: assertion_value,
+            },
+        ) => Some(TAtomic::TNonEmptyList {
+            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
+        }),
 
         // keyed array types
         (TAtomic::TKeyedArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. }) => {
-            // For keyed arrays, intersection requires careful property merging
-            // For now, just return the assertion type
+            // The union-level pre-step (`merge_disjoint_keyed_assertion`)
+            // covers Psalm's shape-merge; a member sharing keys with the
+            // assertion narrows to the assertion shape.
             Some(assertion_keyed.clone())
         }
-        (TAtomic::TArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. }) => {
+        (TAtomic::TArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. })
+        | (TAtomic::TNonEmptyArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. }) => {
             Some(assertion_keyed.clone())
         }
-        (existing_keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TArray { .. }) => {
+        (existing_keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TArray { .. })
+        | (existing_keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TNonEmptyArray { .. }) => {
             Some(existing_keyed.clone())
         }
 
@@ -680,11 +1239,11 @@ fn intersect_atomic_with_atomic_inner(
             },
         ) => Some(TAtomic::TArray {
             key_type: Box::new(
-                intersect_union_with_union(existing_key_type, key_type)
+                intersect_union_with_union_with_codebase(existing_key_type, key_type, codebase)
                     .unwrap_or_else(|| pick_more_specific_union(existing_key_type, key_type)),
             ),
             value_type: Box::new(
-                intersect_union_with_union(existing_value_type, value_type)
+                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
                     .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
             ),
         }),
@@ -706,7 +1265,7 @@ fn intersect_atomic_with_atomic_inner(
             TAtomic::TList { value_type },
         ) => Some(TAtomic::TList {
             value_type: Box::new(
-                intersect_union_with_union(existing_value_type, value_type)
+                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
                     .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
             ),
         }),
@@ -718,7 +1277,7 @@ fn intersect_atomic_with_atomic_inner(
             TAtomic::TNonEmptyList { value_type },
         ) => Some(TAtomic::TNonEmptyList {
             value_type: Box::new(
-                intersect_union_with_union(existing_value_type, value_type)
+                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
                     .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
             ),
         }),
@@ -743,12 +1302,12 @@ fn intersect_atomic_with_atomic_inner(
             },
         ) => Some(TAtomic::TIterable {
             key_type: Box::new(
-                intersect_union_with_union(existing_key_type, asserted_key_type).unwrap_or_else(
+                intersect_union_with_union_with_codebase(existing_key_type, asserted_key_type, codebase).unwrap_or_else(
                     || pick_more_specific_union(existing_key_type, asserted_key_type),
                 ),
             ),
             value_type: Box::new(
-                intersect_union_with_union(existing_value_type, asserted_value_type)
+                intersect_union_with_union_with_codebase(existing_value_type, asserted_value_type, codebase)
                     .unwrap_or_else(|| {
                         pick_more_specific_union(existing_value_type, asserted_value_type)
                     }),
@@ -764,30 +1323,156 @@ fn intersect_atomic_with_atomic_inner(
             name: *name,
             type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
         is_static: false, remapped_params: false }),
-        (named @ TAtomic::TNamedObject { name, .. }, TAtomic::TIterable { .. })
-            if codebase.is_some_and(|cb| {
-                object_type_comparator::is_class_subtype_of(*name, StrId::TRAVERSABLE, cb)
-            }) =>
+        (
+            named @ TAtomic::TNamedObject {
+                name, type_params, ..
+            },
+            TAtomic::TIterable {
+                key_type: asserted_key_type,
+                value_type: asserted_value_type,
+            },
+        ) if codebase.is_some_and(|cb| {
+            object_type_comparator::is_class_subtype_of(*name, StrId::TRAVERSABLE, cb)
+        }) =>
         {
-            Some(named.clone())
+            // Asserting `iterable<V>` on a Traversable implementor narrows its
+            // key/value params (Psalm's filterTypeWithAnother:
+            // `ArrayIterator<string, mixed>` asserted `iterable<string>` is
+            // `ArrayIterator<string, string>`) when the class's params map
+            // 1:1 onto Traversable's.
+            let codebase = codebase.unwrap();
+            if let Some(params) = type_params
+                && params.len() == 2
+                && object_type_comparator::get_mapped_generic_type_params(
+                    codebase,
+                    *name,
+                    params,
+                    StrId::TRAVERSABLE,
+                )
+                // Flag bits (from_docblock etc.) differ on the remapped copies;
+                // identity holds when the atomics match.
+                .is_some_and(|mapped| {
+                    mapped.len() == params.len()
+                        && mapped
+                            .iter()
+                            .zip(params.iter())
+                            .all(|(mapped_param, param)| mapped_param.types == param.types)
+                })
+            {
+                let narrowed_key = intersect_union_with_union_with_codebase(
+                    &params[0],
+                    asserted_key_type,
+                    Some(codebase),
+                )
+                .unwrap_or_else(|| pick_more_specific_union(&params[0], asserted_key_type));
+                let narrowed_value = intersect_union_with_union_with_codebase(
+                    &params[1],
+                    asserted_value_type,
+                    Some(codebase),
+                )
+                .unwrap_or_else(|| pick_more_specific_union(&params[1], asserted_value_type));
+                Some(TAtomic::TNamedObject {
+                    name: *name,
+                    type_params: Some(vec![narrowed_key, narrowed_value]),
+                    is_static: false,
+                    remapped_params: false,
+                })
+            } else {
+                Some(named.clone())
+            }
         }
 
         // template parameter types
-        (TAtomic::TTemplateParam { as_type, .. }, other) => {
+        (
+            TAtomic::TTemplateParam {
+                name,
+                defining_entity,
+                as_type,
+            },
+            other,
+        ) => {
+            // A template already inside the asserted type stays the template
+            // (Psalm's refineArrayKey / filterAtomicWithAnother keep the
+            // TTemplateParam, refining only its bound): asserting
+            // `is array-key` on `T as array-key` is a no-op on T.
+            if let Some(codebase) = codebase
+                && crate::type_comparator::atomic_type_comparator::is_contained_by_in_context(
+                    codebase,
+                    existing_atomic,
+                    other,
+                    true,
+                    &mut crate::type_comparator::type_comparison_result::TypeComparisonResult::new(
+                    ),
+                )
+            {
+                return Some(existing_atomic.clone());
+            }
+
             if as_type.is_mixed() {
-                Some(other.clone())
-            } else if is_objectish_atomic(other) {
+                // Psalm's SimpleAssertionReconciler narrows the template's
+                // *bound*, keeping the template:
+                // `$type->replaceAs(self::reconcile…($type->as))`.
+                Some(TAtomic::TTemplateParam {
+                    name: *name,
+                    defining_entity: *defining_entity,
+                    as_type: Box::new(TUnion::new(other.clone())),
+                })
+            } else if is_objectish_atomic(other)
+                && matches!(other, TAtomic::TTemplateParam { .. })
+            {
+                // Asserting one template against another (`is_a($item, $type)`
+                // binding T against S) keeps both as an intersection (T&S).
                 Some(make_intersection(existing_atomic.clone(), other.clone()))
             } else {
-                // Try to intersect with the constraint type
+                // Intersect with the constraint type, keeping the template
+                // wrapper around the narrowed bound (Psalm's replaceAs):
+                // `T of Node|null` after `instanceof NullableType` reads
+                // `T as NullableType`, not an intersection.
                 for constraint_atomic in &as_type.types {
                     if let Some(result) =
                         intersect_atomic_with_atomic_inner(constraint_atomic, other, codebase)
                     {
-                        return Some(result);
+                        return Some(TAtomic::TTemplateParam {
+                            name: *name,
+                            defining_entity: *defining_entity,
+                            as_type: Box::new(TUnion::new(result)),
+                        });
                     }
                 }
-                Some(existing_atomic.clone())
+                if is_objectish_atomic(other) {
+                    // The bound can't absorb the asserted object. An
+                    // intersection (Psalm's addIntersectionType) is only
+                    // possible when an interface is involved — two unrelated
+                    // concrete classes can't both apply, so the member drops.
+                    let other_is_interface = match other {
+                        TAtomic::TNamedObject { name, .. } => codebase
+                            .and_then(|codebase| codebase.get_class(*name))
+                            .is_some_and(|info| {
+                                info.kind
+                                    == pzoom_code_info::class_like_info::ClassLikeKind::Interface
+                            }),
+                        _ => true,
+                    };
+                    let bound_allows_intersection = as_type.types.iter().any(|constraint| {
+                        match constraint {
+                            TAtomic::TNamedObject { name, .. } => codebase
+                                .and_then(|codebase| codebase.get_class(*name))
+                                .is_none_or(|info| {
+                                    info.kind
+                                        == pzoom_code_info::class_like_info::ClassLikeKind::Interface
+                                }),
+                            TAtomic::TObject | TAtomic::TObjectWithProperties { .. } => true,
+                            _ => false,
+                        }
+                    });
+                    if other_is_interface || bound_allows_intersection {
+                        Some(make_intersection(existing_atomic.clone(), other.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(existing_atomic.clone())
+                }
             }
         }
         (other, TAtomic::TTemplateParam { as_type, .. }) => {
@@ -840,6 +1525,39 @@ fn intersect_atomic_with_atomic_inner(
         // null type
         (TAtomic::TNull, TAtomic::TNull) => Some(TAtomic::TNull),
 
+        // String-refinement pairs not covered by a dedicated arm intersect to
+        // the more specific side (Psalm's filterAtomicWithAnother containment
+        // probes): asserting `=non-empty-string` on a
+        // `non-empty-lowercase-string` keeps the lowercase string. Strings
+        // carry no int→float-style coercion hazard, so the comparator's
+        // verdict is safe here.
+        (existing, asserted)
+            if codebase.is_some()
+                && atomic_is_string_refinement(existing)
+                && atomic_is_string_refinement(asserted) =>
+        {
+            let codebase = codebase.unwrap();
+            let mut comparison_result =
+                crate::type_comparator::type_comparison_result::TypeComparisonResult::new();
+            if crate::type_comparator::atomic_type_comparator::is_contained_by(
+                codebase,
+                existing,
+                asserted,
+                &mut comparison_result,
+            ) {
+                Some(existing.clone())
+            } else if crate::type_comparator::atomic_type_comparator::is_contained_by(
+                codebase,
+                asserted,
+                existing,
+                &mut comparison_result,
+            ) {
+                Some(asserted.clone())
+            } else {
+                None
+            }
+        }
+
         // If we can't find a specific intersection, types are incompatible. (Like
         // hakana-core's intersect_atomic_with_atomic, which enumerates the
         // intersectable pairs and otherwise yields no intersection, rather than
@@ -847,6 +1565,21 @@ fn intersect_atomic_with_atomic_inner(
         // float for coercion, which must not count as a type intersection.)
         _ => None,
     }
+}
+
+/// The non-literal string refinements (literal/class-string pairs have
+/// dedicated intersection arms above).
+fn atomic_is_string_refinement(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TTruthyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+    )
 }
 
 fn atomic_can_be_callable_representation(atomic: &TAtomic) -> bool {
@@ -945,10 +1678,11 @@ fn specialize_assertion_named_object_from_existing(
         return Some(assertion_atomic.clone());
     };
 
-    let mut ancestor_template_replacements = TemplateMap::new();
+    let mut ancestor_template_replacements = TemplateResult::default();
     for (idx, template_type) in existing_class_info.template_types.iter().enumerate() {
         if let Some(type_param) = existing_type_params.get(idx) {
-            ancestor_template_replacements.insert(
+            crate::template::lower_bounds_insert(
+                &mut ancestor_template_replacements,
                 template_type.name,
                 template_type.defining_entity,
                 type_param.clone(),
@@ -956,7 +1690,7 @@ fn specialize_assertion_named_object_from_existing(
         }
     }
 
-    if ancestor_template_replacements.is_empty() {
+    if ancestor_template_replacements.lower_bounds.is_empty() {
         return Some(assertion_atomic.clone());
     }
 
@@ -973,15 +1707,19 @@ fn specialize_assertion_named_object_from_existing(
         .template_types
         .iter()
         .map(|template_type| {
-            inferred_template_replacements
-                .get(template_type.name, template_type.defining_entity)
-                .cloned()
-                .or_else(|| {
-                    ancestor_template_replacements
-                        .get(template_type.name, template_type.defining_entity)
-                        .cloned()
-                })
-                .unwrap_or_else(|| template_type.as_type.clone())
+            crate::template::lower_bounds_get(
+                &inferred_template_replacements,
+                template_type.name,
+                template_type.defining_entity,
+            )
+            .or_else(|| {
+                crate::template::lower_bounds_get(
+                    &ancestor_template_replacements,
+                    template_type.name,
+                    template_type.defining_entity,
+                )
+            })
+            .unwrap_or_else(|| template_type.as_type.clone())
         })
         .collect::<Vec<_>>();
 
@@ -993,8 +1731,8 @@ fn specialize_assertion_named_object_from_existing(
 
 fn infer_class_template_replacements_from_ancestors(
     class_info: &ClassLikeInfo,
-    template_replacements: &TemplateMap,
-) -> TemplateMap {
+    template_replacements: &TemplateResult,
+) -> TemplateResult {
     let mut propagated_replacements = template_replacements.clone();
 
     loop {
@@ -1002,10 +1740,11 @@ fn infer_class_template_replacements_from_ancestors(
 
         for (ancestor_class, template_map) in &class_info.template_extended_params {
             for (ancestor_template, mapped_type) in template_map {
-                let Some(ancestor_replacement) = propagated_replacements
-                    .get(*ancestor_template, *ancestor_class)
-                    .cloned()
-                else {
+                let Some(ancestor_replacement) = crate::template::lower_bounds_get(
+                    &propagated_replacements,
+                    *ancestor_template,
+                    pzoom_code_info::GenericParent::ClassLike(*ancestor_class),
+                ) else {
                     continue;
                 };
 
@@ -1028,19 +1767,22 @@ fn infer_class_template_replacements_from_ancestors(
                         continue;
                     };
 
-                    let should_propagate = propagated_replacements
-                        .get(mapped_template, mapped_entity)
+                    let existing = crate::template::lower_bounds_get(
+                        &propagated_replacements,
+                        mapped_template,
+                        mapped_entity,
+                    );
+                    let should_propagate = existing
+                        .as_ref()
                         .is_none_or(is_template_placeholder_union);
 
                     if !should_propagate {
                         continue;
                     }
 
-                    if propagated_replacements
-                        .get(mapped_template, mapped_entity)
-                        .is_none_or(|existing| existing != &ancestor_replacement)
-                    {
-                        propagated_replacements.insert(
+                    if existing.is_none_or(|existing| existing != ancestor_replacement) {
+                        crate::template::lower_bounds_insert(
+                            &mut propagated_replacements,
                             mapped_template,
                             mapped_entity,
                             ancestor_replacement.clone(),
@@ -1056,15 +1798,18 @@ fn infer_class_template_replacements_from_ancestors(
         }
     }
 
-    let mut inferred_replacements = TemplateMap::new();
+    let mut inferred_replacements = TemplateResult::default();
     for template_type in &class_info.template_types {
-        if let Some(replacement) =
-            propagated_replacements.get(template_type.name, template_type.defining_entity)
-        {
-            inferred_replacements.insert(
+        if let Some(replacement) = crate::template::lower_bounds_get(
+            &propagated_replacements,
+            template_type.name,
+            template_type.defining_entity,
+        ) {
+            crate::template::lower_bounds_insert(
+                &mut inferred_replacements,
                 template_type.name,
                 template_type.defining_entity,
-                replacement.clone(),
+                replacement,
             );
         }
     }
@@ -1077,17 +1822,21 @@ fn intersect_class_string_atomics(
     assertion_atomic: &TAtomic,
     codebase: Option<&CodebaseInfo>,
 ) -> Option<TAtomic> {
-    let existing_bound = class_string_atomic_to_bound(existing_atomic, codebase)?;
-    let assertion_bound = class_string_atomic_to_bound(assertion_atomic, codebase)?;
+    let existing_bound = class_string_atomic_to_bound(existing_atomic, codebase);
+    let assertion_bound = class_string_atomic_to_bound(assertion_atomic, codebase);
 
+    // When both bounds resolve, an empty bound intersection rules the pair out
+    // (e.g. `A::class` vs `class-string<UnrelatedB>`). A literal whose class
+    // cannot be resolved (no codebase available) stays permissive rather than
+    // failing the whole intersection.
     let bound = match (existing_bound, assertion_bound) {
-        (None, None) => None,
-        (Some(bound), None) | (None, Some(bound)) => Some(bound),
-        (Some(existing_bound), Some(asserted_bound)) => {
+        (Some(Some(existing_bound)), Some(Some(asserted_bound))) => {
             let intersected =
                 intersect_atomic_with_atomic_inner(&existing_bound, &asserted_bound, codebase)?;
             Some(intersected)
         }
+        (Some(Some(bound)), _) | (_, Some(Some(bound))) => Some(bound),
+        _ => None,
     };
 
     match (existing_atomic, assertion_atomic) {
@@ -1208,11 +1957,21 @@ fn can_named_objects_intersect(
 
 /// Intersects two union types.
 pub fn intersect_union_with_union(type1: &TUnion, type2: &TUnion) -> Option<TUnion> {
+    intersect_union_with_union_with_codebase(type1, type2, None)
+}
+
+/// Like [`intersect_union_with_union`], with a codebase for resolving literal
+/// class-string bounds during the intersection.
+pub fn intersect_union_with_union_with_codebase(
+    type1: &TUnion,
+    type2: &TUnion,
+    codebase: Option<&CodebaseInfo>,
+) -> Option<TUnion> {
     let mut result_types = Vec::new();
 
     for atomic1 in &type1.types {
         for atomic2 in &type2.types {
-            if let Some(intersected) = intersect_atomic_with_atomic(atomic1, atomic2) {
+            if let Some(intersected) = intersect_atomic_with_atomic_inner(atomic1, atomic2, codebase) {
                 // Avoid duplicates
                 if !result_types.iter().any(|t| t == &intersected) {
                     result_types.push(intersected);

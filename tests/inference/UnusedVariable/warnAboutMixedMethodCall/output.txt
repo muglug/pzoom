@@ -1,0 +1,2 @@
+MixedMethodCall - input.php:10:9 - Cannot determine the type of $a when calling method foo
+    input.php:2:24 - Consider improving the type here

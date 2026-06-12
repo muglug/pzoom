@@ -156,10 +156,23 @@ pub fn tokenize(string_type: &str) -> Result<Vec<TypeToken>, String> {
             && chars.get(i + 3) == Some(&'$');
 
         if was_space && (ch == '$' || next_is_variadic_dollar) {
-            // $type_tokens[++$rtc] = [' ', $i - 1];
-            type_tokens.push(TypeToken::new(" ", i.wrapping_sub(1)));
-            // $type_tokens[++$rtc] = ['', $i];
-            type_tokens.push(TypeToken::new("", i));
+            // "$this" in a type context is a type token (equivalent to
+            // "static"), not a parameter name (Psalm TypeTokenizer).
+            let is_this_token = ch == '$'
+                && chars[i..].starts_with(&['$', 't', 'h', 'i', 's'])
+                && chars
+                    .get(i + 5)
+                    .is_none_or(|next| !next.is_alphanumeric() && *next != '_');
+            if is_this_token {
+                if !type_tokens.last().unwrap().value.is_empty() {
+                    type_tokens.push(TypeToken::new("", i));
+                }
+            } else {
+                // $type_tokens[++$rtc] = [' ', $i - 1];
+                type_tokens.push(TypeToken::new(" ", i.wrapping_sub(1)));
+                // $type_tokens[++$rtc] = ['', $i];
+                type_tokens.push(TypeToken::new("", i));
+            }
         } else if was_space && {
             let slice: String = chars[i..(i + 3).min(c)].iter().collect();
             slice == "as " || slice == "is " || slice == "of "
@@ -310,6 +323,13 @@ pub fn tokenize(string_type: &str) -> Result<Vec<TypeToken>, String> {
         was_char = false;
         was_space = false;
         i += 1;
+    }
+
+    // `$this` as a type reads as `static` (Psalm's ParseTreeCreator).
+    for token in type_tokens.iter_mut() {
+        if token.value == "$this" {
+            token.value = "static".to_string();
+        }
     }
 
     Ok(type_tokens)

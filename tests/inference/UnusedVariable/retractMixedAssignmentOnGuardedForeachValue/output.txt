@@ -1,0 +1,1 @@
+MixedAssignment - input.php:27:22 - Unable to determine the type that $val is being assigned to

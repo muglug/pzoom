@@ -10,9 +10,11 @@ name = "pzoom"
 path = "src/main.rs"
 
 [dependencies]
+serde_json = "1"
 pzoom-str.workspace = true
 pzoom-code-info.workspace = true
 pzoom-analyzer.workspace = true
 pzoom-orchestrator.workspace = true
 clap.workspace = true
 rustc-hash.workspace = true
+libc = "0.2"

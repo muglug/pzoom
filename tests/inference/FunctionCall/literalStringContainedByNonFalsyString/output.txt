@@ -1,0 +1,2 @@
+InvalidArgument - input.php:6:15 - Argument 1 of takesNonFalsy expects non-falsy-string, but '0' provided
+InvalidArgument - input.php:7:15 - Argument 1 of takesNonFalsy expects non-falsy-string, but '' provided

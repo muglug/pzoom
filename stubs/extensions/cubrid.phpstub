@@ -1,0 +1,9 @@
+<?php
+
+/**
+ * @psalm-pure
+ *
+ * @psalm-taint-escape sql
+ * @psalm-flow ($string) -> return
+ */
+function cubrid_real_escape_string($string) {}

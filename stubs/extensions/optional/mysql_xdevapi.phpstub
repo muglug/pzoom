@@ -1,0 +1,1153 @@
+<?php
+
+namespace {
+    /**
+     * @version 0.3 2019-08-21
+     * @author Mathijs Giesbers
+     * @package mysql_xdevapi
+     */
+}
+
+namespace mysql_xdevapi {
+    define('MYSQLX_LOCK_DEFAULT', 0);
+    define('MYSQLX_TYPE_DECIMAL', 0);
+    define('MYSQLX_TYPE_TINY', 1);
+    define('MYSQLX_TYPE_SHORT', 2);
+    define('MYSQLX_TYPE_SMALLINT', 17);
+    define('MYSQLX_TYPE_MEDIUMINT', 18);
+    define('MYSQLX_TYPE_INT', 19);
+    define('MYSQLX_TYPE_BIGINT', 20);
+    define('MYSQLX_TYPE_LONG', 3);
+    define('MYSQLX_TYPE_FLOAT', 4);
+    define('MYSQLX_TYPE_DOUBLE', 5);
+    define('MYSQLX_TYPE_NULL', 6);
+    define('MYSQLX_TYPE_TIMESTAMP', 7);
+    define('MYSQLX_TYPE_LONGLONG', 8);
+    define('MYSQLX_TYPE_INT24', 9);
+    define('MYSQLX_TYPE_DATE', 10);
+    define('MYSQLX_TYPE_TIME', 11);
+    define('MYSQLX_TYPE_DATETIME', 12);
+    define('MYSQLX_TYPE_YEAR', 13);
+    define('MYSQLX_TYPE_NEWDATE', 14);
+    define('MYSQLX_TYPE_ENUM', 247);
+    define('MYSQLX_TYPE_SET', 248);
+    define('MYSQLX_TYPE_TINY_BLOB', 249);
+    define('MYSQLX_TYPE_MEDIUM_BLOB', 250);
+    define('MYSQLX_TYPE_LONG_BLOB', 251);
+    define('MYSQLX_TYPE_BLOB', 252);
+    define('MYSQLX_TYPE_VAR_STRING', 253);
+    define('MYSQLX_TYPE_STRING', 254);
+    define('MYSQLX_TYPE_CHAR', 1);
+    define('MYSQLX_TYPE_BYTES', 21);
+    define('MYSQLX_TYPE_INTERVAL', 247);
+    define('MYSQLX_TYPE_GEOMETRY', 255);
+    define('MYSQLX_TYPE_JSON', 245);
+    define('MYSQLX_TYPE_NEWDECIMAL', 246);
+    define('MYSQLX_TYPE_BIT', 16);
+    define('MYSQLX_LOCK_NOWAIT', 1);
+    define('MYSQLX_LOCK_SKIP_LOCKED', 2);
+
+    /**
+     * @param string $uri
+     * @return mysql_xdevapi\Session
+     */
+    function getSession($uri) {}
+
+    /**
+     * @param string $expression Bind prepared statement variables as parameters
+     * @return object
+     */
+    function expression($expression) {}
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface BaseResult
+    {
+        /**
+         * @return array
+         */
+        public function getWarnings(): array;
+
+        /**
+         * @return int
+         */
+        public function getWarningsCount(): int;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Collection
+    {
+            public function __construct() {}
+
+        /**
+         * @param mixed $document
+         * @return \mysql_xdevapi\CollectionAdd
+         */
+        public function add($document): CollectionAdd {}
+
+        /**
+         * @param string $id
+         * @param mixed $document
+         * @return \mysql_xdevapi\Result
+         */
+        public function addOrReplaceOne($id, $document): Result {}
+
+        /**
+         * @return int The number of documents in the collection.
+         */
+        public function count(): int {}
+
+        /**
+         * @param string $index_name
+         * @param string $index_desc_json
+         */
+        public function createIndex($index_name, $index_desc_json) {}
+
+        /**
+         * @param string $index_name
+         * @return bool
+         */
+        public function dropIndex($index_name): bool {}
+
+        /**
+         * @return bool
+         */
+        public function existsInDatabase(): bool {}
+
+        /**
+         * @param string $search_condition
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function find($search_condition): CollectionFind {}
+
+        /**
+         * @return string
+         */
+        public function getName(): string {}
+
+        /**
+         * @param string $id
+         * @return mixed Null if object is not found
+         */
+        public function getOne($id) {}
+
+        /**
+         * @return \mysql_xdevapi\Schema
+         */
+        public function getSchema(): Schema {}
+
+        /**
+         * @return \mysql_xdevapi\Session
+         */
+        public function getSession(): Session {}
+
+        /**
+         * @param string $search_condition
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function modify($search_condition): CollectionModify {}
+
+        /**
+         * @param string $search_condition
+         * @return \mysql_xdevapi\CollectionRemove
+         */
+        public function remove($search_condition): CollectionRemove {}
+
+        /**
+         * @param string $id
+         * @return \mysql_xdevapi\Result
+         */
+        public function removeOne($id): Result {}
+
+        /**
+         * @param string $id
+         * @param string $doc
+         * @return \mysql_xdevapi\Result
+         */
+        public function replaceOne($id, $doc): Result {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class CollectionAdd implements \mysql_xdevapi\Executable
+    {
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class CollectionFind implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSortable
+    {
+        /**
+         * @param array $placeholder_values
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function bind(array $placeholder_values): CollectionFind {}
+
+        /**
+         * @return \mysql_xdevapi\DocResult
+         */
+        public function execute(): DocResult {}
+
+        /**
+         * @param string $projection
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function fields(string $projection): CollectionFind {}
+
+        /**
+         * @param string $sort_expr
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function groupBy(string $sort_expr): CollectionFind {}
+
+        /**
+         * @param string $sort_expr
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function having(string $sort_expr): CollectionFind {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function limit(int $rows): CollectionFind {}
+
+        /**
+         * @param int $lock_waiting_option
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function lockExclusive(int $lock_waiting_option): CollectionFind {}
+
+        /**
+         * @param int $lock_waiting_option
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function lockShared(int $lock_waiting_option): CollectionFind {}
+
+        /**
+         * @param int $position
+         * @return \mysql_xdevapi\CollectionFind
+         */
+        public function offset(int $position): CollectionFind {}
+
+        /**
+         * @param string $sort_expr
+         * @return CollectionFind
+         */
+        public function sort(string $sort_expr): CollectionFind {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class CollectionModify implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSkippable, \mysql_xdevapi\CrudOperationSortable
+    {
+        /**
+         * @param string $collection_field
+         * @param string $expression_or_literal
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function arrayAppend(string $collection_field, string $expression_or_literal): CollectionModify {}
+
+        /**
+         * @param string $collection_field
+         * @param string $expression_or_literal
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function arrayInsert(string $collection_field, string $expression_or_literal): CollectionModify {}
+
+        /**
+         * @param array $placeholder_values
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function bind(array $placeholder_values): CollectionModify {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function limit(int $rows): CollectionModify {}
+
+        /**
+         * @param string $document
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function patch(string $document): CollectionModify {}
+
+        /**
+         * @param string $collection_field
+         * @param string $expression_or_literal
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function replace(string $collection_field, string $expression_or_literal): CollectionModify {}
+
+        /**
+         * @param string $collection_field
+         * @param string $expression_or_literal
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function set(string $collection_field, string $expression_or_literal): CollectionModify {}
+
+        /**
+         * @param int $position
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function skip(int $position): CollectionModify {}
+
+        /**
+         * @param string $sort_expr
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function sort(string $sort_expr): CollectionModify {}
+
+        /**
+         * @param array $fields
+         * @return \mysql_xdevapi\CollectionModify
+         */
+        public function unset(array $fields): CollectionModify {}
+    }
+
+    class CollectionRemove implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSortable
+    {
+        /**
+         * @param array $placeholder_values
+         * @return \mysql_xdevapi\CollectionRemove
+         */
+        public function bind(array $placeholder_values): CollectionRemove {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\CollectionRemove
+         */
+        public function limit(int $rows): CollectionRemove {}
+
+        /**
+         * @param string $sort_expr
+         * @return \mysql_xdevapi\CollectionRemove
+         */
+        public function sort(string $sort_expr): CollectionRemove {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class ColumnResult
+    {
+        /**
+         * @return string
+         */
+        public function getCharacterSetName(): string {}
+
+        /**
+         * @return string
+         */
+        public function getCollationName(): string {}
+
+        /**
+         * @return string
+         */
+        public function getColumnLabel(): string {}
+
+        /**
+         * @return string
+         */
+        public function getColumnName(): string {}
+
+        /**
+         * @return int
+         */
+        public function getFractionalDigits(): int {}
+
+        /**
+         * @return int
+         */
+        public function getLength(): int {}
+
+        /**
+         * @return string
+         */
+        public function getSchemaName(): string {}
+
+        /**
+         * @return string
+         */
+        public function getTableLabel(): string {}
+
+        /**
+         * @return string
+         */
+        public function getTableName(): string {}
+
+        /**
+         * @return int
+         */
+        public function getType(): int {}
+
+        /**
+         * @return int
+         */
+        public function isNumberSigned(): int {}
+
+        /**
+         * @return int
+         */
+        public function isPadded(): int {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface CrudOperationBindable
+    {
+        /**
+         * @param array $placeholder_values
+         * @return CrudOperationBindable
+         */
+        public function bind(array $placeholder_values): CrudOperationBindable;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface CrudOperationLimitable
+    {
+        /**
+         * @param int $rows
+         * @return CrudOperationLimitable
+         */
+        public function limit(int $rows): CrudOperationLimitable;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface CrudOperationSkippable
+    {
+        /**
+         * @param int $skip
+         * @return CrudOperationSkippable
+         */
+        public function skip(int $skip): CrudOperationSkippable;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface CrudOperationSortable
+    {
+        /**
+         * @param string $sort_expr
+         * @return CrudOperationSortable
+         */
+        public function sort(string $sort_expr): CrudOperationSortable;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface DatabaseObject
+    {
+        /**
+         * @return bool
+         */
+        public function existsInDatabase(): bool;
+
+        /**
+         * @return string
+         */
+        public function getName(): string;
+
+        /**
+         * @return  \mysql_xdevapi\Session
+         */
+        public function getSession(): Session;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class DocResult implements \mysql_xdevapi\BaseResult, \Traversable
+    {
+        /**
+         * @return array
+         */
+        public function fetchAll(): array {}
+
+        /**
+         * @return array
+         */
+        public function fetchOne(): array {}
+
+        /**
+         * @return \mysql_xdevapi\Warning[]
+         */
+        public function getWarnings(): array {}
+
+        /**
+         * @return int
+         */
+        public function getWarningsCount(): int {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Exception extends \RuntimeException implements \Throwable {}
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface Executable
+    {
+        /**
+         * @return Result
+         */
+        public function execute(): Result;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class ExecutionStatus
+    {
+        public $affectedItems;
+        public $matchedItems;
+        public $foundItems;
+        public $lastInsertId;
+        public $lastDocumentId;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Expression
+    {
+        /* Properties */
+        public $name;
+
+        /* Constructor */
+        public function __construct(string $expression) {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Result implements \mysql_xdevapi\BaseResult, \Traversable
+    {
+        /**
+         * @return int
+         */
+        public function getAutoIncrementValue(): int {}
+
+        /**
+         * @return string[]
+         */
+        public function getGeneratedIds(): array {}
+
+        /**
+         * @return \mysql_xdevapi\Warning[]
+         */
+        public function getWarnings(): array {}
+
+        /**
+         * @return int
+         */
+        public function getWarningsCount(): int {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class RowResult implements \mysql_xdevapi\BaseResult, \Traversable
+    {
+        /**
+         * @return array A numerical array with all results from the query; each result is an associative array. An empty array is returned if no rows are present.
+         */
+        public function fetchAll(): array {}
+
+        /**
+         * @return array The result, as an associative array or NULL if no results are present.
+         */
+        public function fetchOne(): array {}
+
+        /**
+         * @return int
+         */
+        public function getColumnsCount(): int {}
+
+        /**
+         * @return array
+         */
+        public function getColumnNames(): array {}
+
+        /**
+         * @return \mysql_xdevapi\FieldMetadata[]
+         */
+        public function getColumns(): array {}
+
+        /**
+         * @return \mysql_xdevapi\Warning[]
+         */
+        public function getWarnings(): array {}
+
+        /**
+         * @return int
+         */
+        public function getWarningsCount(): int {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Schema implements \mysql_xdevapi\DatabaseObject
+    {
+        /* Properties */
+        public $name;
+
+        /* Methods */
+        /**
+         * @param string $name
+         * @return \mysql_xdevapi\Collection
+         */
+        public function createCollection(string $name): Collection {}
+
+        /**
+         * @param string $collection_name
+         * @return bool
+         */
+        public function dropCollection(string $collection_name): bool {}
+
+        /**
+         * @return bool
+         */
+        public function existsInDatabase(): bool {}
+
+        /**
+         * @param string $name
+         * @return \mysql_xdevapi\Collection
+         */
+        public function getCollection(string $name): Collection {}
+
+        /**
+         * @param string $name
+         * @return \mysql_xdevapi\Table
+         */
+        public function getCollectionAsTable(string $name): Table {}
+
+        /**
+         * @return \mysql_xdevapi\Collection[] Array of all collections in this schema, where each array element value is a Collection object with the collection name as the key.
+         */
+        public function getCollections(): array {}
+
+        /**
+         * @return string
+         */
+        public function getName(): string {}
+
+        /**
+         * @return \mysql_xdevapi\Session
+         */
+        public function getSession(): Session {}
+
+        /**
+         * @param string $name
+         * @return \mysql_xdevapi\Table
+         */
+        public function getTable(string $name): Table {}
+
+        /**
+         * @return \mysql_xdevapi\Table[] Array of all tables in this schema, where each array element value is a Table object with the table name as the key.
+         */
+        public function getTables(): array {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    interface SchemaObject extends \mysql_xdevapi\DatabaseObject
+    {
+        /* Methods */
+        public function getSchema(): Schema;
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Session
+    {
+        /**
+         * @return bool
+         */
+        public function close(): bool {}
+
+        /**
+         * @return object
+         */
+        public function commit(): object {}
+
+        /**
+         * @param string $schema_name
+         * @return \mysql_xdevapi\Schema
+         */
+        public function createSchema(string $schema_name): Schema {}
+
+        /**
+         * @param string $schema_name
+         * @return bool
+         */
+        public function dropSchema(string $schema_name): bool {}
+
+        /**
+         * @return string
+         */
+        public function generateUUID(): string {}
+
+        /**
+         * @param string $schema_name
+         * @return \mysql_xdevapi\Schema
+         */
+        public function getSchema(string $schema_name): Schema {}
+
+        /**
+         * @return \mysql_xdevapi\Schema[]
+         */
+        public function getSchemas(): array {}
+
+        /**
+         * @return int
+         */
+        public function getServerVersion(): int {}
+
+        /**
+         * @return array
+         */
+        public function listClients(): array {}
+
+        /**
+         * @param string $name
+         * @return string
+         */
+        public function quoteName(string $name): string {}
+
+        /**
+         * @param string $name
+         */
+        public function releaseSavepoint(string $name): void {}
+
+            public function rollback(): void {}
+
+        /**
+         * @param string $name
+         */
+        public function rollbackTo(string $name): void {}
+
+        /**
+         * @param string $name
+         * @return string
+         */
+        public function setSavepoint(string $name): string {}
+
+        /**
+         * @param string $query
+         * @return SqlStatement
+         */
+        public function sql(string $query): SqlStatement {}
+
+            public function startTransaction(): void {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class SqlStatement
+    {
+        /* Constants */
+        public const EXECUTE_ASYNC = 1;
+        public const BUFFERED = 2;
+
+        /* Properties */
+        public $statement;
+
+        /* Methods */
+        /**
+         * @param string $param
+         * @return \mysql_xdevapi\SqlStatement
+         */
+        public function bind(string $param): SqlStatement {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function getNextResult(): Result {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function getResult(): Result {}
+
+        /**
+         * @return bool
+         */
+        public function hasMoreResults(): bool {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class SqlStatementResult implements \mysql_xdevapi\BaseResult, \Traversable
+    {
+        /* Methods */
+        /**
+         * @return array
+         */
+        public function fetchAll(): array {}
+
+        /**
+         * @return array
+         */
+        public function fetchOne(): array {}
+
+        /**
+         * @return int
+         */
+        public function getAffectedItemsCount(): int {}
+
+        /**
+         * @return int
+         */
+        public function getColumnsCount(): int {}
+
+        /**
+         * @return array
+         */
+        public function getColumnNames(): array {}
+
+        /**
+         * @return array
+         */
+        public function getColumns(): array {}
+
+        /**
+         * @return array
+         */
+        public function getGeneratedIds(): array {}
+
+        /**
+         * @return string
+         */
+        public function getLastInsertId(): string {}
+
+        /**
+         * @return \mysql_xdevapi\Warning[]
+         */
+        public function getWarnings(): array {}
+
+        /**
+         * @return int
+         */
+        public function getWarningCounts(): int {}
+
+        /**
+         * @return bool
+         */
+        public function hasData(): bool {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function nextResult(): Result {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Statement
+    {
+        /* Constants */
+        public const EXECUTE_ASYNC = 1;
+        public const BUFFERED = 2;
+
+        /* Methods */
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function getNextResult(): Result {}
+
+        /**
+         * @return Result
+         */
+        public function getResult(): Result {}
+
+        /**
+         * @return bool
+         */
+        public function hasMoreResults(): bool {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Table implements \mysql_xdevapi\SchemaObject
+    {
+        /* Properties */
+        public $name;
+
+        /* Methods */
+        /**
+         * @return int
+         */
+        public function count(): int {}
+
+        /**
+         * @return \mysql_xdevapi\TableDelete
+         */
+        public function delete(): TableDelete {}
+
+        /**
+         * @return bool
+         */
+        public function existsInDatabase(): bool {}
+
+        /**
+         * @return string
+         */
+        public function getName(): string {}
+
+        /**
+         * @return \mysql_xdevapi\Schema
+         */
+        public function getSchema(): Schema {}
+
+        /**
+         * @return \mysql_xdevapi\Session
+         */
+        public function getSession(): Session {}
+
+        /**
+         * @param string|string[] $columns The columns to insert data into. Can be an array with one or more values, or a string.
+         * @param string|string[] ...$additionalColumns Additional columns definitions.
+         * @return \mysql_xdevapi\TableInsert
+         */
+        public function insert($columns, ...$additionalColumns): TableInsert {}
+
+        /**
+         * @return bool
+         */
+        public function isView(): bool {}
+
+        /**
+         * @param string|string[] $columns The columns to select data from. Can be an array with one or more values, or a string.
+         * @param string|string[] ...$additionalColumns Additional columns parameter definitions.
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function select($columns, ...$additionalColumns): TableSelect {}
+
+        /**
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function update(): TableUpdate {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class TableDelete implements \mysql_xdevapi\Executable
+    {
+        /* Methods */
+        /**
+         * @param array $placeholder_values
+         * @return \mysql_xdevapi\TableDelete
+         */
+        public function bind(array $placeholder_values): TableDelete {}
+
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\TableDelete
+         */
+        public function limit(int $rows): TableDelete {}
+
+        /**
+         * @param string $orderby_expr
+         * @return \mysql_xdevapi\TableDelete
+         */
+        public function orderby(string $orderby_expr): TableDelete {}
+
+        /**
+         * @param string $where_expr
+         * @return \mysql_xdevapi\TableDelete
+         */
+        public function where(string $where_expr): TableDelete {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class TableInsert implements \mysql_xdevapi\Executable
+    {
+        /**
+         * @return \mysql_xdevapi\Result
+         */
+        public function execute(): Result {}
+
+        /**
+         * @param array $row_values
+         * @return \mysql_xdevapi\TableInsert
+         */
+        public function values(array $row_values): TableInsert {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class TableSelect implements \mysql_xdevapi\Executable
+    {
+        /**
+         * @param array $placeholder_values
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function bind(array $placeholder_values): TableSelect {}
+
+        /**
+         * @return \mysql_xdevapi\RowResult
+         */
+        public function execute(): RowResult {}
+
+        /**
+         * @param mixed $sort_expr
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function groupBy($sort_expr): TableSelect {}
+
+        /**
+         * @param string $sort_expr
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function having(string $sort_expr): TableSelect {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function limit(int $rows): TableSelect {}
+
+        /**
+         * @param int|null $lock_waiting_option
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function lockExclusive(?int $lock_waiting_option = null): TableSelect {}
+
+        /**
+         * @param int|null $lock_waiting_option
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function lockShared(?int $lock_waiting_option = null): TableSelect {}
+
+        /**
+         * @param int $position
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function offset(int $position): TableSelect {}
+
+        /**
+         * @param string|string[] ...$sort_expr
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function orderby(...$sort_expr): TableSelect {}
+
+        /**
+         * @param string $where_expr
+         * @return \mysql_xdevapi\TableSelect
+         */
+        public function where(string $where_expr): TableSelect {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class TableUpdate implements \mysql_xdevapi\Executable
+    {
+        /**
+         * @param array $placeholder_values The name of the placeholder, and the value to bind, defined as a JSON array.
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function bind(array $placeholder_values): TableUpdate {}
+
+        /**
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function execute(): TableUpdate {}
+
+        /**
+         * @param int $rows
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function limit(int $rows): TableUpdate {}
+
+        /**
+         * @param ?string|?string[] ...$orderby_expr The expressions that define the order by criteria. Can be an array with one or more expressions, or a string.
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function orderby(...$orderby_expr): TableUpdate {}
+
+        /**
+         * @param string $table_field
+         * @param string $expression_or_literal
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function set(string $table_field, string $expression_or_literal): TableUpdate {}
+
+        /**
+         * @param string $where_expr
+         * @return \mysql_xdevapi\TableUpdate
+         */
+        public function where(string $where_expr): TableUpdate {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class Warning
+    {
+        /* Properties */
+        public $message;
+        public $level;
+        public $code;
+
+        /* Constructor */
+        private function __construct() {}
+    }
+
+    /**
+     * @package mysql_xdevapi
+     */
+    class XSession {}
+}

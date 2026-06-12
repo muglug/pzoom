@@ -6,17 +6,28 @@ use mago_syntax::ast::ast::class_like::member::{ClassLikeConstantSelector, Class
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
+use pzoom_code_info::VarName;
 
 /// Builds a variable key string for expressions that can be tracked in context.
 ///
 /// Returned keys match the format expected by reconciler paths (e.g. `$a[0]`, `$this->prop`).
-pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<String> {
+pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<VarName> {
     match expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => Some(direct.name.to_string()),
+        Expression::Variable(Variable::Direct(direct)) => Some(VarName::new(direct.name)),
+        // Psalm's getExtendedVarId resolves a plain assignment to its target,
+        // so `($a = expr) instanceof C` narrows `$a`.
+        Expression::Assignment(assignment)
+            if matches!(
+                assignment.operator,
+                mago_syntax::ast::ast::assignment::AssignmentOperator::Assign(_)
+            ) =>
+        {
+            get_expression_var_key(assignment.lhs)
+        }
         Expression::ArrayAccess(access) => {
             let base = get_expression_var_key(access.array)?;
             let key = get_array_index_key(access.index)?;
-            Some(format!("{}[{}]", base, key))
+            Some(format!("{}[{}]", base, key).into())
         }
         Expression::Access(Access::Property(property_access)) => {
             let base = get_expression_var_key(property_access.object)?;
@@ -24,7 +35,7 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<String> {
                 ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
                 _ => return None,
             };
-            Some(format!("{}->{}", base, prop_name))
+            Some(format!("{}->{}", base, prop_name).into())
         }
         Expression::Access(Access::NullSafeProperty(property_access)) => {
             let base = get_expression_var_key(property_access.object)?;
@@ -32,7 +43,7 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<String> {
                 ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
                 _ => return None,
             };
-            Some(format!("{}->{}", base, prop_name))
+            Some(format!("{}->{}", base, prop_name).into())
         }
         Expression::Access(Access::StaticProperty(static_property_access)) => {
             let class_name = match static_property_access.class.unparenthesized() {
@@ -48,10 +59,10 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<String> {
                 _ => return None,
             };
 
-            Some(format!("{}::${}", class_name, property_name))
+            Some(format!("{}::${}", class_name, property_name).into())
         }
         Expression::Access(Access::ClassConstant(class_const_access)) => {
-            build_class_constant_key(class_const_access)
+            build_class_constant_key(class_const_access).map(Into::into)
         }
         Expression::Call(Call::Method(method_call)) => build_method_call_key(
             method_call.object,
@@ -71,7 +82,7 @@ fn build_method_call_key(
     object: &Expression<'_>,
     method: &ClassLikeMemberSelector<'_>,
     no_args: bool,
-) -> Option<String> {
+) -> Option<VarName> {
     if !no_args {
         return None;
     }
@@ -82,7 +93,10 @@ fn build_method_call_key(
         _ => return None,
     };
 
-    Some(format!("{}->{}()", base, method_name))
+    // PHP method names are case-insensitive; Psalm's getExtendedVarId
+    // lowercases them so `$a->getArray()` and a docblock's
+    // `$this->getarray()` key the same scope entry.
+    Some(format!("{}->{}()", base, method_name.to_ascii_lowercase()).into())
 }
 
 fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
@@ -103,7 +117,9 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
         | Expression::Access(Access::NullSafeProperty(_))
         | Expression::Access(Access::StaticProperty(_))
         | Expression::Call(Call::Method(_))
-        | Expression::Call(Call::NullSafeMethod(_)) => get_expression_var_key(expr),
+        | Expression::Call(Call::NullSafeMethod(_)) => {
+            get_expression_var_key(expr).map(|key| key.to_string())
+        }
         _ => None,
     }
 }

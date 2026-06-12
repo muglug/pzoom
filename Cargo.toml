@@ -8,6 +8,7 @@ members = [
     "crates/pzoom-orchestrator",
     "crates/pzoom-cli",
     "crates/pzoom-test-runner",
+    "crates/pzoom-wasm",
 ]
 
 [workspace.package]
@@ -34,7 +35,8 @@ mago-reporting = { git = "https://github.com/carthage-software/mago.git", rev = 
 
 # External dependencies
 rustc-hash = "2"
-serde = { version = "1", features = ["derive"] }
+compact_str = { version = "0.9", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 bumpalo = { version = "3", features = ["collections"] }
 parking_lot = "0.12"

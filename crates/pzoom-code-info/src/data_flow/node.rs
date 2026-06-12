@@ -487,10 +487,151 @@ pub enum SourceType {
     Unknown,
 }
 
+/// Psalm's `TaintKind` taxonomy: the taint categories an input source can
+/// carry and a sink can reject. (Psalm models these as a bitfield; pzoom uses
+/// an enum in `Vec`s like Hakana — the sets stay tiny.)
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SinkType {
     Unknown,
+    Callable,
+    Unserialize,
+    Include,
+    Eval,
+    Ldap,
+    Sql,
+    Html,
+    HasQuotes,
+    Shell,
+    Ssrf,
+    FileSink,
+    Cookie,
+    Header,
+    Xpath,
+    Sleep,
+    Extract,
+    UserSecret,
+    SystemSecret,
     Custom(String),
+}
+
+impl SinkType {
+    /// Psalm's `TaintKind::ALL_INPUT`: the taints carried by request
+    /// superglobals and `@psalm-taint-source input` returns.
+    pub fn all_input() -> Vec<SinkType> {
+        vec![
+            SinkType::Callable,
+            SinkType::Unserialize,
+            SinkType::Include,
+            SinkType::Eval,
+            SinkType::Ldap,
+            SinkType::Sql,
+            SinkType::Html,
+            SinkType::HasQuotes,
+            SinkType::Shell,
+            SinkType::Ssrf,
+            SinkType::FileSink,
+            SinkType::Cookie,
+            SinkType::Header,
+            SinkType::Xpath,
+            SinkType::Sleep,
+            SinkType::Extract,
+        ]
+    }
+
+    /// Psalm `TaintKind::TAINT_NAMES`: a docblock taint name expands to one
+    /// or more sink kinds ("input"/"tainted" cover the whole input group).
+    pub fn kinds_from_name(name: &str) -> Vec<SinkType> {
+        match name {
+            "input" | "tainted" => SinkType::all_input(),
+            "input_except_sleep" => SinkType::all_input()
+                .into_iter()
+                .filter(|kind| !matches!(kind, SinkType::Sleep))
+                .collect(),
+            other => match SinkType::from_name(other) {
+                Some(kind) => vec![kind],
+                None => SinkType::all_input(),
+            },
+        }
+    }
+
+    /// Psalm's TAINT_NAMES (used in `@psalm-taint-*` docblock annotations).
+    pub fn from_name(name: &str) -> Option<SinkType> {
+        Some(match name {
+            "input" => return None, // the whole input group — callers expand
+            "callable" => SinkType::Callable,
+            "unserialize" => SinkType::Unserialize,
+            "include" => SinkType::Include,
+            "eval" => SinkType::Eval,
+            "ldap" => SinkType::Ldap,
+            "sql" => SinkType::Sql,
+            "html" => SinkType::Html,
+            "has_quotes" => SinkType::HasQuotes,
+            "shell" => SinkType::Shell,
+            "ssrf" => SinkType::Ssrf,
+            "file" => SinkType::FileSink,
+            "cookie" => SinkType::Cookie,
+            "header" => SinkType::Header,
+            "xpath" => SinkType::Xpath,
+            "sleep" => SinkType::Sleep,
+            "extract" => SinkType::Extract,
+            "user_secret" => SinkType::UserSecret,
+            "system_secret" => SinkType::SystemSecret,
+            other => SinkType::Custom(other.to_string()),
+        })
+    }
+
+    /// The issue kind reported when tainted data reaches a sink of this type
+    /// (Psalm's TaintedHtml / TaintedSql / … issue classes).
+    pub fn issue_kind(&self) -> crate::issue::IssueKind {
+        use crate::issue::IssueKind;
+        match self {
+            SinkType::Callable => IssueKind::TaintedCallable,
+            SinkType::Unserialize => IssueKind::TaintedUnserialize,
+            SinkType::Include => IssueKind::TaintedInclude,
+            SinkType::Eval => IssueKind::TaintedEval,
+            SinkType::Ldap => IssueKind::TaintedLdap,
+            SinkType::Sql => IssueKind::TaintedSql,
+            SinkType::Html => IssueKind::TaintedHtml,
+            SinkType::HasQuotes => IssueKind::TaintedTextWithQuotes,
+            SinkType::Shell => IssueKind::TaintedShell,
+            SinkType::Ssrf => IssueKind::TaintedSSRF,
+            SinkType::FileSink => IssueKind::TaintedFile,
+            SinkType::Cookie => IssueKind::TaintedCookie,
+            SinkType::Header => IssueKind::TaintedHeader,
+            SinkType::Xpath => IssueKind::TaintedXpath,
+            SinkType::Sleep => IssueKind::TaintedSleep,
+            SinkType::Extract => IssueKind::TaintedExtract,
+            SinkType::UserSecret => IssueKind::TaintedUserSecret,
+            SinkType::SystemSecret => IssueKind::TaintedSystemSecret,
+            SinkType::Unknown | SinkType::Custom(_) => IssueKind::TaintedInput,
+        }
+    }
+
+    /// Human label used in issue messages ("Detected tainted html").
+    pub fn label(&self) -> &str {
+        match self {
+            SinkType::Unknown => "input",
+            SinkType::Callable => "callable",
+            SinkType::Unserialize => "unserialize",
+            SinkType::Include => "include",
+            SinkType::Eval => "eval",
+            SinkType::Ldap => "ldap",
+            SinkType::Sql => "SQL",
+            SinkType::Html => "HTML",
+            SinkType::HasQuotes => "text with possible quotes",
+            SinkType::Shell => "shell",
+            SinkType::Ssrf => "SSRF",
+            SinkType::FileSink => "file",
+            SinkType::Cookie => "cookie",
+            SinkType::Header => "header",
+            SinkType::Xpath => "xpath",
+            SinkType::Sleep => "sleep",
+            SinkType::Extract => "extract",
+            SinkType::UserSecret => "user secret",
+            SinkType::SystemSecret => "system secret",
+            SinkType::Custom(name) => name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, Serialize, Deserialize)]
@@ -532,10 +673,14 @@ pub enum DataFlowNodeKind {
     },
     TaintSource {
         pos: Option<DataFlowNodePosition>,
-        types: Vec<SourceType>,
+        /// The sink kinds this source can taint (Psalm's source taints are
+        /// expressed directly in the sink taxonomy).
+        types: Vec<SinkType>,
     },
     TaintSink {
-        pos: DataFlowNodePosition,
+        /// Psalm sink nodes may have no location (e.g. `echo#1`, builtin
+        /// param sinks); issues then fall back to the predecessor's position.
+        pos: Option<DataFlowNodePosition>,
         types: Vec<SinkType>,
     },
 }
@@ -955,8 +1100,8 @@ impl DataFlowNode {
             DataFlowNodeKind::Vertex { pos, .. } | DataFlowNodeKind::TaintSource { pos, .. } => {
                 *pos
             }
-            DataFlowNodeKind::TaintSink { pos, .. }
-            | DataFlowNodeKind::VariableUseSource { pos, .. }
+            DataFlowNodeKind::TaintSink { pos, .. } => *pos,
+            DataFlowNodeKind::VariableUseSource { pos, .. }
             | DataFlowNodeKind::DataSource { pos, .. }
             | DataFlowNodeKind::VariableUseSink { pos } => Some(*pos),
             DataFlowNodeKind::ForLoopInit { .. } => None,

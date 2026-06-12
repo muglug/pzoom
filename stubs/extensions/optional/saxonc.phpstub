@@ -1,0 +1,882 @@
+<?php
+
+namespace Saxon {
+    class SaxonProcessor
+    {
+        /**
+         * @param bool $license Indicates whether the Processor requires features of Saxon that need a license file. If false, the method will creates a Configuration appropriate for Saxon HE (Home edition). If true, the method will create a Configuration appropriate to the version of the software that is running Saxon-PE or Saxon-EE.
+         * @param string $cwd The cwd argument is used to manually set the current working directory used for executions of source files
+         */
+        public function __construct($license = false, $cwd = '') {}
+
+        /**
+         * @param bool|int|float|string $primitive_type_val
+         * @return XdmValue
+         */
+        public function createAtomicValue($primitive_type_val) {}
+
+        /**
+         * @param string $value The $value is a lexical representation of the XML document.
+         * @return XdmNode
+         */
+        public function parseXmlFromString($value) {}
+
+        /**
+         * @param string $fileName Value is a string type and the file name to the XML document. File name can be relative or absolute. IF relative the cwd is used to resolve the file.
+         * @return XdmNode
+         */
+        public function parseXmlFromFile($fileName) {}
+
+        /**
+         * @param string $cwd
+         * @return void
+         */
+        public function setcwd($cwd) {}
+
+        /**
+         * @param string $dir
+         * @return void
+         */
+        public function setResourceDirectory($dir) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setConfigurationProperty($name, $value) {}
+
+        /**
+         * @return XsltProcessor
+         */
+        public function newXsltProcessor() {}
+
+        /**
+         * @return Xslt30Processor
+         */
+        public function newXslt30Processor() {}
+
+        /**
+         * @return XQueryProcessor
+         */
+        public function newXQueryProcessor() {}
+
+        /**
+         * @return XPathProcessor
+         */
+        public function newXPathProcessor() {}
+
+        /**
+         * @return SchemaValidator
+         */
+        public function newSchemaValidator() {}
+
+        /**
+         * @return string
+         */
+        public function version() {}
+
+        /**
+         * @param string $library The full path of the Saxon/C PHP Extension library. This is needed to do the callbacks.
+         * @return void
+         */
+        public function registerPHPFunctions($library) {}
+    }
+
+    class XsltProcessor
+    {
+        /**
+         * @param string $sourceFileName
+         * @param string $stylesheetFileName
+         * @param string $outputfileName
+         * @return void
+         */
+        public function transformFileToFile($sourceFileName, $stylesheetFileName, $outputfileName) {}
+
+        /**
+         * @param string $sourceFileName
+         * @param string $stylesheetFileName
+         * @return string|null
+         */
+        public function transformFileToString($sourceFileName, $stylesheetFileName) {}
+
+        /**
+         * @param string $fileName
+         * @return XdmValue
+         */
+        public function transformFileToValue($fileName) {}
+
+        /**
+         * @return void
+         */
+        public function transformToFile() {}
+
+        /**
+         * @return string
+         */
+        public function transformToString() {}
+
+        /**
+         * @return XdmValue|null
+         */
+        public function transformToValue() {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function compileFromFile($fileName) {}
+
+        /**
+         * @param string $str
+         * @return void
+         */
+        public function compileFromString($str) {}
+
+        /**
+         * @param XdmNode $node
+         * @return void
+         */
+        public function compileFromValue($node) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setOutputFile($fileName) {}
+
+        /**
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setSourceFromXdmValue($value) {}
+
+        /**
+         * @param string $filename
+         * @return void
+         */
+        public function setSourceFromFile($filename) {}
+
+        /**
+         * @param string $name
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setParameter($name, $value) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setProperty($name, $value) {}
+
+        /**
+         * @return void
+         */
+        public function clearParameters() {}
+
+        /**
+         * @return void
+         */
+        public function clearProperties() {}
+
+        /**
+         * @return void
+         */
+        public function exceptionClear() {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorCode($i) {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorMessage($i) {}
+
+        /**
+         * @return int
+         */
+        public function getExceptionCount() {}
+    }
+
+    class Xslt30Processor
+    {
+        /**
+         * @param string[] $packageFileNames
+         * @return void
+         */
+        public function addPackages($packageFileNames) {}
+
+        /**
+         * @param string|null $stylesheetFileName
+         * @param string $fileName
+         * @return void
+         */
+        public function applyTemplatesReturningFile($stylesheetFileName, $fileName) {}
+
+        /**
+         * @param string $stylesheetFileName
+         * @return string
+         */
+        public function applyTemplatesReturningString($stylesheetFileName) {}
+
+        /**
+         * @param string $stylesheetFileName
+         * @return XdmValue
+         */
+        public function applyTemplatesReturningValue($stylesheetFileName) {}
+
+        /**
+         * @param string $xmlFileName
+         * @return void
+         */
+        public function compileFromAssociatedFile($xmlFileName) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function compileFromFile($fileName) {}
+
+        /**
+         * @param string $str
+         * @return void
+         */
+        public function compileFromString($str) {}
+
+        /**
+         * @param XdmValue $node
+         * @return string|null
+         */
+        public function compileFromValue($node) {}
+
+        /**
+         * @param string $fileName
+         * @param string $outputFileName
+         * @return void
+         */
+        public function compileFromFileAndSave($fileName, $outputFileName) {}
+
+        /**
+         * @param string $str
+         * @param string $outputFileName
+         * @return void
+         */
+        public function compileFromStringAndSave($str, $outputFileName) {}
+
+        /**
+         * @param XdmNode $node
+         * @param string $outputFileName
+         * @return void
+         */
+        public function compileFromValueAndSave($node, $outputFileName) {}
+
+        /**
+         * @param string $functionName
+         * @param XdmValue[] $arguments
+         * @param string $outputFileName
+         * @return void
+         */
+        public function callFunctionReturningFile($functionName, $arguments, $outputFileName) {}
+
+        /**
+         * @param string $functionName
+         * @param XdmValue[] $arguments
+         * @return string
+         */
+        public function callFunctionReturningString($functionName, $arguments) {}
+
+        /**
+         * @param string $functionName
+         * @param XdmValue[] $arguments
+         * @return XdmValue
+         */
+        public function callFunctionReturningValue($functionName, $arguments) {}
+
+        /**
+         * @param string $stylesheetFileName
+         * @param string|null $templateName
+         * @param string $outputFileName
+         * @return void
+         */
+        public function callTemplateReturningFile($stylesheetFileName, $templateName, $outputFileName) {}
+
+        /**
+         * @param string $stylesheetFileName
+         * @param string|null $templateName
+         * @return string
+         */
+        public function callTemplateReturningString($stylesheetFileName, $templateName) {}
+
+        /**
+         * @param string $stylesheetFileName
+         * @param string|null $templateName
+         * @return XdmValue
+         */
+        public function callTemplateReturningValue($stylesheetFileName, $templateName) {}
+
+        /**
+         * @param string $sourceFileName
+         * @param string $stylesheetFileName
+         * @param string $outputFileName
+         * @return void
+         */
+        public function transformFileToFile($sourceFileName, $stylesheetFileName, $outputFileName) {}
+
+        /**
+         * @param string $fileName
+         * @return XdmValue|null
+         */
+        public function transformFileToValue($fileName) {}
+
+        /**
+         * @param string $fileName
+         * @return string
+         */
+        public function transformFileToString($fileName) {}
+
+        /**
+         * @param XdmNode|null $context
+         * @return void
+         */
+        public function transformToFile($context = null) {}
+
+        /**
+         * @param XdmNode|null $context
+         * @return string
+         */
+        public function transformToString($context = null) {}
+
+        /**
+         * @param XdmNode|null $context
+         * @return XdmValue
+         */
+        public function transformToValue($context = null) {}
+
+        /**
+         * @param array $parameters
+         * @param bool $tunnel
+         * @return void
+         */
+        public function setInitialTemplateParameters($parameters, $tunnel) {}
+
+        /**
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setInitialMatchSelection($value) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setInitialMatchSelectionAsFile($fileName) {}
+
+        /**
+         * @param XdmItem $item
+         * @return void
+         */
+        public function setGlobalContextItem($item) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setGlobalContextFromFile($fileName) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setOutputFile($fileName) {}
+
+        /**
+         * @param string $name
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setParameter($name, $value) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setProperty($name, $value) {}
+
+        /**
+         * @param bool $value
+         * @return void
+         */
+        public function setJustInTimeCompilation($value) {}
+
+        /**
+         * @param bool $value
+         * @return void
+         */
+        public function setResultAsRawValue($value) {}
+
+        /**
+         * @return void
+         */
+        public function clearParameters() {}
+
+        /**
+         * @return void
+         */
+        public function clearProperties() {}
+
+        /**
+         * @return void
+         */
+        public function exceptionClear() {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorCode($i) {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorMessage($i) {}
+
+        /**
+         * @return int
+         */
+        public function getExceptionCount() {}
+    }
+
+    class XQueryProcessor
+    {
+        /**
+         * @return XdmValue|null
+         */
+        public function runQueryToValue() {}
+
+        /**
+         * @return string|null
+         */
+        public function runQueryToString() {}
+
+        /**
+         * @param string $outfilename
+         * @return void
+         */
+        public function runQueryToFile($outfilename) {}
+
+        /**
+         * @param string $str
+         * @return void
+         */
+        public function setQueryContent($str) {}
+
+        /**
+         * @param XdmItem $item
+         * @return void
+         */
+        public function setQueryItem($item) {}
+
+        /**
+         * @param string $filename
+         * @return void
+         */
+        public function setQueryFile($filename) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setContextItemFromFile($fileName) {}
+
+        /**
+         * @param XdmValue|XdmItem|XdmNode|XdmAtomicValue $obj
+         * @return void
+         */
+        public function setContextItem($obj) {}
+
+        /**
+         * @param string $uri
+         * @return void
+         */
+        public function setQueryBaseURI($uri) {}
+
+        /**
+         * @param string $prefix
+         * @param string $namespace
+         * @return void
+         */
+        public function declareNamespace($prefix, $namespace) {}
+
+        /**
+         * @param string $name
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setParameter($name, $value) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setProperty($name, $value) {}
+
+        /**
+         * @return void
+         */
+        public function clearParameters() {}
+
+        /**
+         * @return void
+         */
+        public function clearProperties() {}
+
+        /**
+         * @return void
+         */
+        public function exceptionClear() {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorCode($i) {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorMessage($i) {}
+
+        /**
+         * @return int
+         */
+        public function getExceptionCount() {}
+    }
+
+    class XPathProcessor
+    {
+        /**
+         * @param XdmItem $item
+         * @return void
+         */
+        public function setContextItem($item) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setContextFile($fileName) {}
+
+        /**
+         * @param string $xpathStr
+         * @return bool
+         */
+        public function effectiveBooleanValue($xpathStr) {}
+
+        /**
+         * @param string $xpathStr
+         * @return XdmValue
+         */
+        public function evaluate($xpathStr) {}
+
+        /**
+         * @param string $xpathStr
+         * @return XdmItem|null
+         */
+        public function evaluateSingle($xpathStr) {}
+
+        /**
+         * @param $prefix
+         * @param $namespace
+         * @return void
+         */
+        public function declareNamespace($prefix, $namespace) {}
+
+        /**
+         * @param string $uri
+         * @return void
+         */
+        public function setBaseURI($uri) {}
+
+        /**
+         * @param string $name
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setParameter($name, $value) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setProperty($name, $value) {}
+
+        /**
+         * @return void
+         */
+        public function clearParameters() {}
+
+        /**
+         * @return void
+         */
+        public function clearProperties() {}
+
+        /**
+         * @return void
+         */
+        public function exceptionClear() {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorCode($i) {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorMessage($i) {}
+
+        /**
+         * @return int
+         */
+        public function getExceptionCount() {}
+    }
+
+    class SchemaValidator
+    {
+        /**
+         * @param XdmNode $node
+         * @return void
+         */
+        public function setSourceNode($node) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function setOutputFile($fileName) {}
+
+        /**
+         * @param string $fileName
+         * @return void
+         */
+        public function registerSchemaFromFile($fileName) {}
+
+        /**
+         * @param string $schemaStr
+         * @return void
+         */
+        public function registerSchemaFromString($schemaStr) {}
+
+        /**
+         * @param string|null $filename The name of the file to be validated. $filename can be null, in that case it is assumed source document has already been supplied through accessor methods
+         * @return void
+         */
+        public function validate($filename = null) {}
+
+        /**
+         * @param string|null $filename The name of the file to be validated. $filename can be null, in that case it is assumed source document has already been supplied through accessor methods
+         * @return XdmNode
+         */
+        public function validateToNode($filename = null) {}
+
+        /**
+         * @return XdmNode
+         */
+        public function getValidationReport() {}
+
+        /**
+         * @param string $name
+         * @param XdmValue $value
+         * @return void
+         */
+        public function setParameter($name, $value) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return void
+         */
+        public function setProperty($name, $value) {}
+
+        /**
+         * @return void
+         */
+        public function clearParameters() {}
+
+        /**
+         * @return void
+         */
+        public function clearProperties() {}
+
+        /**
+         * @return void
+         */
+        public function exceptionClear() {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorCode($i) {}
+
+        /**
+         * @param int $i
+         * @return string
+         */
+        public function getErrorMessage($i) {}
+
+        /**
+         * @return int
+         */
+        public function getExceptionCount() {}
+    }
+
+    class XdmValue
+    {
+        /**
+         * @return XdmItem
+         */
+        public function getHead() {}
+
+        /**
+         * @param int $index
+         * @return XdmItem
+         */
+        public function itemAt($index) {}
+
+        /**
+         * @return int
+         */
+        public function size() {}
+
+        /**
+         * @param XdmItem $item
+         */
+        public function addXdmItem($item) {}
+    }
+
+    class XdmItem extends XdmValue
+    {
+        /**
+         * @return string
+         */
+        public function getStringValue() {}
+
+        /**
+         * @return bool
+         */
+        public function isNode() {}
+
+        /**
+         * @return bool
+         */
+        public function isAtomic() {}
+
+        /**
+         * @return XdmAtomicValue|null
+         */
+        public function getAtomicValue() {}
+
+        /**
+         * @return XdmNode|null
+         */
+        public function getNodeValue() {}
+    }
+
+    class XdmNode extends XdmItem
+    {
+        /**
+         * @return string
+         */
+        public function getStringValue() {}
+
+        /**
+         * @return int
+         */
+        public function getNodeKind() {}
+
+        /**
+         * @return string
+         */
+        public function getNodeName() {}
+
+        /**
+         * @return false
+         */
+        public function isAtomic() {}
+
+        /**
+         * @return int
+         */
+        public function getChildCount() {}
+
+        /**
+         * @return int
+         */
+        public function getAttributeCount() {}
+
+        /**
+         * @param int $index
+         * @return XdmNode|null
+         */
+        public function getChildNode($index) {}
+
+        /**
+         * @return XdmNode|null
+         */
+        public function getParent() {}
+
+        /**
+         * @param int $index
+         * @return XdmNode|null
+         */
+        public function getAttributeNode($index) {}
+
+        /**
+         * @param int $index
+         * @return string|null
+         */
+        public function getAttributeValue($index) {}
+    }
+
+    class XdmAtomicValue extends XdmItem
+    {
+        /**
+         * @return string
+         */
+        public function getStringValue() {}
+
+        /**
+         * @return bool
+         */
+        public function getBooleanValue() {}
+
+        /**
+         * @return float
+         */
+        public function getDoubleValue() {}
+
+        /**
+         * @return int
+         */
+        public function getLongValue() {}
+
+        /**
+         * @return true
+         */
+        public function isAtomic() {}
+    }
+}

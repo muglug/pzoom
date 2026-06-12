@@ -11,13 +11,14 @@ use pzoom_str::StrId;
 use serde::{Deserialize, Serialize};
 
 use crate::TUnion;
+use crate::ttype::template::GenericParent;
 
 /// A single in-scope template parameter: its name, the entity that defines it,
 /// and its upper-bound (`as`) type.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TemplateBinding {
     pub name: StrId,
-    pub defining_entity: StrId,
+    pub defining_entity: GenericParent,
     pub as_type: TUnion,
 }
 

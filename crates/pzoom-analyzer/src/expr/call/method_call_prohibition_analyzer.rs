@@ -63,8 +63,21 @@ pub(crate) fn analyze(
     }
 }
 
-pub(crate) fn class_has_sealed_methods(class_info: &ClassLikeInfo) -> bool {
-    class_info.sealed_methods.unwrap_or(false)
+/// Psalm `ClassLikeStorage::hasSealedMethods`: an explicit
+/// `@psalm-(no-)seal-methods` wins; otherwise only *user-defined* classes
+/// (project dirs) are sealed via config `sealAllMethods` (default true) —
+/// vendor/stub classes with `__call` accept any method.
+pub(crate) fn class_has_sealed_methods(
+    analyzer: &crate::statements_analyzer::StatementsAnalyzer<'_>,
+    class_info: &ClassLikeInfo,
+) -> bool {
+    class_info.sealed_methods.unwrap_or_else(|| {
+        analyzer
+            .codebase
+            .files
+            .get(&class_info.file_path)
+            .is_some_and(|file_info| file_info.is_in_project_dirs && !file_info.is_stub)
+    })
 }
 
 pub(crate) fn class_has_sealed_properties(class_info: &ClassLikeInfo) -> bool {

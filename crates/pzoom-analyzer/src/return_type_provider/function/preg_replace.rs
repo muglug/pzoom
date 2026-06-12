@@ -26,7 +26,7 @@ fn infer_preg_replace_return_type(
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
     let subject_pos = arg_positions.get(2).copied()?;
-    let subject_type = analysis_data.get_expr_type(subject_pos)?;
+    let subject_type = analysis_data.expr_types.get(&subject_pos).cloned()?;
     let mut inferred = fca::infer_string_transform_return_type(&subject_type)?;
     inferred.add_type(TAtomic::TNull);
     Some(inferred)

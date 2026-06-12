@@ -1,0 +1,235 @@
+<?php
+
+class Stomp
+{
+    /**
+     * @param string $broker The broker URI
+     * @param string $username The username
+     * @param string $password The password
+     * @param array  $headers additional headers (example: receipt).
+     */
+    public function __construct($broker = null, $username = null, $password = null, array $headers = []) {}
+
+    /**
+     * @return string|false stomp session ID if it exists, or FALSE otherwise
+     */
+    public function getSessionId() {}
+
+    /**
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function disconnect() {}
+
+    /**
+     * @param string            $destination indicates where to send the message
+     * @param string|StompFrame $msg message to be sent
+     * @param array             $headers additional headers (example: receipt).
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function send($destination, $msg, array $headers = []) {}
+
+    /**
+     * @param string $destination indicates which destination to subscribe to
+     * @param array  $headers additional headers (example: receipt).
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function subscribe($destination, array $headers = []) {}
+
+    /**
+     * @param string $destination indicates which subscription to remove
+     * @param array  $headers additional headers (example: receipt).
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function unsubscribe($destination, array $headers = []) {}
+
+    /**
+     * @return bool TRUE if there is one, or FALSE otherwise
+     */
+    public function hasFrame() {}
+
+    /**
+     * @param string $className name of the class to instantiate.
+     * @return object|false on success, or FALSE on failure
+     */
+    public function readFrame($className = 'stompFrame') {}
+
+    /**
+     * @param string $transaction_id transaction id
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function begin($transaction_id) {}
+
+    /**
+     * @param string $transaction_id transaction id
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function commit($transaction_id) {}
+
+    /**
+     * @param string $transaction_id transaction id
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function abort($transaction_id) {}
+
+    /**
+     * @param string|StompFrame $msg message/messageId to be acknowledged
+     * @param array             $headers additional headers (example: receipt).
+     * @return bool TRUE on success, or FALSE on failure
+     */
+    public function ack($msg, array $headers = []) {}
+
+    /**
+     * @return string|false Error message, or FALSE if no error
+     */
+    public function error() {}
+
+    /**
+     * @param int $seconds the seconds part of the timeout to be set
+     * @param int $microseconds the microseconds part of the timeout to be set
+     * @return void
+     */
+    public function setTimeout($seconds, $microseconds = 0) {}
+
+    /**
+     * @return array Array with timeout informations
+     */
+    public function getTimeout() {}
+}
+
+class StompFrame
+{
+    /**
+     * @var string
+     */
+    public $command;
+
+    /**
+     * @var array
+     */
+    public $headers;
+
+    /**
+     * @var string
+     */
+    public $body;
+}
+
+class StompException extends Exception
+{
+    /**
+     * @return string
+     */
+    public function getDetails() {}
+}
+
+/**
+ * @return string
+ */
+function stomp_version() {}
+
+/**
+ * @param resource $broker
+ * @param string $username
+ * @param string $password
+ * @param string $headers
+ * @return resource
+ */
+function stomp_connect($broker = null, $username = null, $password = null, array $headers = []) {}
+
+/**
+ * @param resource $link
+ * @return string
+ */
+function stomp_get_session_id($link) {}
+
+/**
+ * @param resource $link
+ * @return bool
+ */
+function stomp_close($link) {}
+
+/**
+ * @param resource $link
+ * @param string $destination
+ * @param mixed $msg
+ * @param array<array-key, mixed>|null $headers
+ * @return bool
+ */
+function stomp_send($link, $destination, $msg, array $headers = []) {}
+
+/**
+ * @param resource $link
+ * @param string $destination
+ * @param array<array-key, mixed>|null $headers
+ * @return bool
+ */
+function stomp_subscribe($link, $destination, array $headers = []) {}
+
+/**
+ * @param resource $link
+ * @param string $destination
+ * @param array<array-key, mixed>|null $headers
+ * @return bool
+ */
+function stomp_unsubscribe($link, $destination, array $headers = []) {}
+
+/**
+ * @param resource $link
+ * @return bool
+ */
+function stomp_has_frame($link) {}
+
+/**
+ * @param resource $link
+ * @return array<array-key, mixed>
+ */
+function stomp_read_frame($link) {}
+
+/**
+ * @param resource $link
+ * @param string $transaction_id
+ * @return bool
+ */
+function stomp_begin($link, $transaction_id) {}
+
+/**
+ * @param resource $link
+ * @param string $transaction_id
+ * @return bool
+ */
+function stomp_commit($link, $transaction_id) {}
+
+/**
+ * @param resource $link
+ * @param string $transaction_id
+ * @return bool
+ */
+function stomp_abort($link, $transaction_id) {}
+
+/**
+ * @param resource $link
+ * @param mixed $msg
+ * @param array<array-key, mixed>|null $headers
+ * @return bool
+ */
+function stomp_ack($link, $msg, array $headers = []) {}
+
+/**
+ * @param resource $link
+ * @return string
+ */
+function stomp_error($link) {}
+
+/**
+ * @param resource $link identifier returned by stomp_connect
+ * @param int       $seconds the seconds part of the timeout to be set
+ * @param int       $microseconds the microseconds part of the timeout to be set
+ * @return void
+ */
+function stomp_set_timeout($link, $seconds, $microseconds = 0) {}
+
+/**
+ * @param resource $link identifier returned by stomp_connect
+ * @return array Array with timeout informations
+ */
+function stomp_get_timeout($link) {}

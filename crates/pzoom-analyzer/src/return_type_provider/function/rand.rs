@@ -47,7 +47,7 @@ fn bound_from_arg(
     index: usize,
     is_min: bool,
 ) -> Option<i64> {
-    let arg_type = analysis_data.get_expr_type(event.arg_positions[index])?;
+    let arg_type = analysis_data.expr_types.get(&event.arg_positions[index]).cloned()?;
     let atomic = arg_type.get_single()?;
     match atomic {
         TAtomic::TLiteralInt { value } => Some(*value),

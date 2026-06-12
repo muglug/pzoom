@@ -1,0 +1,3 @@
+MixedAssignment - input.php:3:22 - Unable to determine the type that $key is being assigned to
+    input.php:2:23 - Consider improving the type here
+UnusedVariable - input.php:3:22 - $key is never referenced or the value is not used

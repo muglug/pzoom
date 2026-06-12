@@ -1,0 +1,4057 @@
+<?php
+
+namespace {
+    // Start of http v.1.6.6
+
+
+    class HttpException extends Exception
+    {
+        public $innerException;
+    }
+    class HttpRuntimeException extends HttpException {}
+    class HttpInvalidParamException extends HttpException {}
+    class HttpHeaderException extends HttpException {}
+    class HttpMalformedHeadersException extends HttpException {}
+    class HttpRequestMethodException extends HttpException {}
+    class HttpMessageTypeException extends HttpException {}
+    class HttpEncodingException extends HttpException {}
+    class HttpRequestException extends HttpException {}
+    class HttpRequestPoolException extends HttpException {}
+    class HttpSocketException extends HttpException {}
+    class HttpResponseException extends HttpException {}
+    class HttpUrlException extends HttpException {}
+    class HttpQueryStringException extends HttpException {}
+
+    class HttpDeflateStream
+    {
+        public const TYPE_GZIP = 16;
+        public const TYPE_ZLIB = 0;
+        public const TYPE_RAW = 32;
+        public const LEVEL_DEF = 0;
+        public const LEVEL_MIN = 1;
+        public const LEVEL_MAX = 9;
+        public const STRATEGY_DEF = 0;
+        public const STRATEGY_FILT = 256;
+        public const STRATEGY_HUFF = 512;
+        public const STRATEGY_RLE = 768;
+        public const STRATEGY_FIXED = 1024;
+        public const FLUSH_NONE = 0;
+        public const FLUSH_SYNC = 1048576;
+        public const FLUSH_FULL = 2097152;
+
+        /**
+         * @param int $flags [optional]
+         */
+        public function __construct($flags = null) {}
+
+        /**
+         * @param string $data
+         * @return string|false deflated data on success or false on failure.
+         */
+        public function update($data) {}
+
+        /**
+         * @param string $data [optional]
+         * @return string|false some deflated data as string on success or false on failure.
+         */
+        public function flush($data = null) {}
+
+        /**
+         * @param string $data [optional]
+         * @return string the final part of deflated data.
+         */
+        public function finish($data = null) {}
+
+        /**
+         * @param int $flags [optional]
+         * @param string $class_name [optional]
+         * @return HttpDeflateStream
+         */
+        public static function factory($flags = null, $class_name = null) {}
+    }
+
+    class HttpInflateStream
+    {
+        public const FLUSH_NONE = 0;
+        public const FLUSH_SYNC = 1048576;
+        public const FLUSH_FULL = 2097152;
+
+        /**
+         * @param int $flags [optional]
+         */
+        public function __construct($flags = null) {}
+
+        /**
+         * @param string $data
+         * @return string|false inflated data on success or false on failure.
+         */
+        public function update($data) {}
+
+        /**
+         * @param string $data [optional]
+         * @return string|false some inflated data as string on success or false on failure.
+         */
+        public function flush($data = null) {}
+
+        /**
+         * @param string $data [optional]
+         * @return string the final part of inflated data.
+         */
+        public function finish($data = null) {}
+
+        /**
+         * @param int $flags [optional]
+         * @param string $class_name [optional]
+         * @return HttpInflateStream
+         */
+        public static function factory($flags = null, $class_name = null) {}
+    }
+
+    class HttpMessage implements Countable, Serializable, Iterator
+    {
+        public const TYPE_NONE = 0;
+        public const TYPE_REQUEST = 1;
+        public const TYPE_RESPONSE = 2;
+        protected $type;
+        protected $body;
+        protected $requestMethod;
+        protected $requestUrl;
+        protected $responseStatus;
+        protected $responseCode;
+        protected $httpVersion;
+        protected $headers;
+        protected $parentMessage;
+
+        /**
+         * @param string $message [optional]
+         */
+        public function __construct($message = null) {}
+
+        /**
+         * @return string the message body as string.
+         */
+        #[Pure]
+        public function getBody() {}
+
+        /**
+         * @param string $body
+         * @return void
+         */
+        public function setBody($body) {}
+
+        /**
+         * @param string $header
+         * @return string|null the header value on success or NULL if the header does not exist.
+         */
+        #[Pure]
+        public function getHeader($header) {}
+
+        /**
+         * @return array an associative array containing the messages HTTP headers.
+         */
+        #[Pure]
+        public function getHeaders() {}
+
+        /**
+         * @param array $header
+         * @return void
+         */
+        public function setHeaders(array $header) {}
+
+        /**
+         * @param array $headers
+         * @param bool $append [optional]
+         * @return void
+         */
+        public function addHeaders(array $headers, $append = null) {}
+
+        /**
+         * @return int the HttpMessage::TYPE.
+         */
+        #[Pure]
+        public function getType() {}
+
+        /**
+         * @param int $type
+         * @return void
+         */
+        public function setType($type) {}
+
+        #[Pure]
+        public function getInfo() {}
+
+        /**
+         * @param $http_info
+         */
+        public function setInfo($http_info) {}
+
+        /**
+         * @return int|false the HTTP response code if the message is of type HttpMessage::TYPE_RESPONSE, else FALSE.
+         */
+        #[Pure]
+        public function getResponseCode() {}
+
+        /**
+         * @param int $code
+         * @return bool TRUE on success, or FALSE if the message is not of type
+         */
+        public function setResponseCode($code) {}
+
+        /**
+         * @return string the HTTP response status string if the message is of type
+         */
+        #[Pure]
+        public function getResponseStatus() {}
+
+        /**
+         * @param string $status
+         * @return bool TRUE on success or FALSE if the message is not of type
+         */
+        public function setResponseStatus($status) {}
+
+        /**
+         * @return string|false the request method name on success, or FALSE if the message is
+         */
+        #[Pure]
+        public function getRequestMethod() {}
+
+        /**
+         * @param string $method
+         * @return bool TRUE on success, or FALSE if the message is not of type
+         */
+        public function setRequestMethod($method) {}
+
+        /**
+         * @return string|false the request URL as string on success, or FALSE if the message
+         */
+        #[Pure]
+        public function getRequestUrl() {}
+
+        /**
+         * @param string $url
+         * @return bool TRUE on success, or FALSE if the message is not of type
+         */
+        public function setRequestUrl($url) {}
+
+        /**
+         * @return string the HTTP protocol version as string.
+         */
+        #[Pure]
+        public function getHttpVersion() {}
+
+        /**
+         * @param string $version
+         * @return bool TRUE on success, or FALSE if supplied version is out of range (1.0/1.1).
+         */
+        public function setHttpVersion($version) {}
+
+        /**
+         * @param string $magic_file
+         * @param int $magic_mode [optional]
+         * @return string|false the guessed content type on success or false on failure.
+         */
+        public function guessContentType($magic_file, $magic_mode = null) {}
+
+        /**
+         * @return HttpMessage the parent HttpMessage object.
+         */
+        #[Pure]
+        public function getParentMessage() {}
+
+        /**
+         * @return bool true on success or false on failure.
+         */
+        public function send() {}
+
+        /**
+         * @param bool $include_parent [optional]
+         * @return string the message as string.
+         */
+        public function toString($include_parent = null) {}
+
+        /**
+         * @return HttpRequest|HttpResponse|null either an HttpRequest or HttpResponse object on success, or NULL on failure.
+         */
+        public function toMessageTypeObject() {}
+
+        public function count() {}
+
+        public function serialize() {}
+
+        /**
+         * @param $serialized
+         */
+        public function unserialize($serialized) {}
+
+        public function rewind() {}
+
+        public function valid() {}
+
+        public function current() {}
+
+        public function key() {}
+
+        public function next() {}
+
+        /**
+         * @return string
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $raw_message [optional]
+         * @param string $class_name [optional]
+         * @return HttpMessage|null an HttpMessage object on success or NULL on failure.
+         */
+        public static function factory($raw_message = null, $class_name = null) {}
+
+        /**
+         * @param string $raw_message [optional]
+         * @param string $class_name [optional]
+         * @return HttpMessage|null an HttpMessage object on success or NULL on failure.
+         */
+        public static function fromString($raw_message = null, $class_name = null) {}
+
+        /**
+         * @param int $message_type
+         * @param string $class_name [optional]
+         * @return HttpMessage|null an HttpMessage object on success or NULL on failure.
+         */
+        public static function fromEnv($message_type, $class_name = null) {}
+
+        /**
+         * @return HttpMessage detached HttpMessage object copy.
+         */
+        public function detach() {}
+
+        /**
+         * @param HttpMessage $message
+         * @param bool $top [optional]
+         * @return void
+         */
+        public function prepend(HttpMessage $message, $top = null) {}
+
+        /**
+         * @return HttpMessage the most parent HttpMessage object.
+         */
+        public function reverse() {}
+    }
+
+    class HttpQueryString implements Serializable, ArrayAccess
+    {
+        public const TYPE_BOOL = 3;
+        public const TYPE_INT = 1;
+        public const TYPE_FLOAT = 2;
+        public const TYPE_STRING = 6;
+        public const TYPE_ARRAY = 4;
+        public const TYPE_OBJECT = 5;
+        private static $instance;
+        private $queryArray;
+        private $queryString;
+
+        /**
+         * @param bool $global [optional]
+         * @param mixed $add [optional]
+         */
+        final public function __construct($global = null, $add = null) {}
+
+        /**
+         * @return array the array representation of the query string.
+         */
+        public function toArray() {}
+
+        /**
+         * @return string the string representation of the query string.
+         */
+        public function toString() {}
+
+        /**
+         * @return string
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $key [optional]
+         * @param mixed $type [optional]
+         * @param mixed $defval [optional]
+         * @param bool $delete [optional]
+         * @return mixed the value of the query string param or the whole query string if no key was specified on success or defval if key does not exist.
+         */
+        #[Pure]
+        public function get($key = null, $type = null, $defval = null, $delete = null) {}
+
+        /**
+         * @param mixed $params
+         * @return string the current query string.
+         */
+        public function set($params) {}
+
+        /**
+         * @param mixed $params
+         * @return HttpQueryString a new HttpQueryString object
+         */
+        public function mod($params) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getBool($name, $defval, $delete) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getInt($name, $defval, $delete) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getFloat($name, $defval, $delete) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getString($name, $defval, $delete) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getArray($name, $defval, $delete) {}
+
+        /**
+         * @param $name
+         * @param $defval [optional]
+         * @param $delete [optional]
+         */
+        #[Pure]
+        public function getObject($name, $defval, $delete) {}
+
+        /**
+         * @param $global [optional]
+         * @param $params [optional]
+         * @param $class_name [optional]
+         */
+        public static function factory($global, $params, $class_name) {}
+
+        /**
+         * @param bool $global [optional]
+         * @return HttpQueryString always the same HttpQueryString instance regarding the global setting.
+         */
+        public static function singleton($global = null) {}
+
+        /**
+         * @param string $ie
+         * @param string $oe
+         * @return bool true on success or false on failure.
+         */
+        public function xlate($ie, $oe) {}
+
+        /**
+         * @return string the string representation of the object or null
+         * @since 5.1.0
+         */
+        public function serialize() {}
+
+        /**
+         * @param mixed $offset
+         * @return mixed Can return all value types.
+         * @since 5.0.0
+         */
+        public function offsetGet($offset) {}
+
+        /**
+         * @param string $serialized
+         * @return void
+         * @since 5.1.0
+         */
+        public function unserialize($serialized) {}
+
+        /**
+         * @param mixed $offset
+         * @return bool true on success or false on failure.
+         * @since 5.0.0
+         */
+        public function offsetExists($offset) {}
+
+        /**
+         * @param mixed $offset
+         * @param mixed $value
+         * @return void
+         * @since 5.0.0
+         */
+        public function offsetSet($offset, $value) {}
+
+        /**
+         * @param mixed $offset
+         * @return void
+         * @since 5.0.0
+         */
+        public function offsetUnset($offset) {}
+    }
+
+    class HttpRequest
+    {
+        public const METH_GET = 1;
+        public const METH_HEAD = 2;
+        public const METH_POST = 3;
+        public const METH_PUT = 4;
+        public const METH_DELETE = 5;
+        public const METH_OPTIONS = 6;
+        public const METH_TRACE = 7;
+        public const METH_CONNECT = 8;
+        public const METH_PROPFIND = 9;
+        public const METH_PROPPATCH = 10;
+        public const METH_MKCOL = 11;
+        public const METH_COPY = 12;
+        public const METH_MOVE = 13;
+        public const METH_LOCK = 14;
+        public const METH_UNLOCK = 15;
+        public const METH_VERSION_CONTROL = 16;
+        public const METH_REPORT = 17;
+        public const METH_CHECKOUT = 18;
+        public const METH_CHECKIN = 19;
+        public const METH_UNCHECKOUT = 20;
+        public const METH_MKWORKSPACE = 21;
+        public const METH_UPDATE = 22;
+        public const METH_LABEL = 23;
+        public const METH_MERGE = 24;
+        public const METH_BASELINE_CONTROL = 25;
+        public const METH_MKACTIVITY = 26;
+        public const METH_ACL = 27;
+        public const VERSION_1_0 = 1;
+        public const VERSION_1_1 = 2;
+        public const VERSION_NONE = 0;
+        public const VERSION_ANY = 0;
+        public const SSL_VERSION_TLSv1 = 1;
+        public const SSL_VERSION_SSLv2 = 2;
+        public const SSL_VERSION_SSLv3 = 3;
+        public const SSL_VERSION_ANY = 0;
+        public const IPRESOLVE_V4 = 1;
+        public const IPRESOLVE_V6 = 2;
+        public const IPRESOLVE_ANY = 0;
+        public const AUTH_BASIC = 1;
+        public const AUTH_DIGEST = 2;
+        public const AUTH_NTLM = 8;
+        public const AUTH_GSSNEG = 4;
+        public const AUTH_ANY = -1;
+        public const PROXY_SOCKS4 = 4;
+        public const PROXY_SOCKS5 = 5;
+        public const PROXY_HTTP = 0;
+        private $options;
+        private $postFields;
+        private $postFiles;
+        private $responseInfo;
+        private $responseMessage;
+        private $responseCode;
+        private $responseStatus;
+        private $method;
+        private $url;
+        private $contentType;
+        private $requestBody;
+        private $queryData;
+        private $putFile;
+        private $putData;
+        private $history;
+        public $recordHistory;
+
+        /**
+         * @param string $url [optional]
+         * @param int $request_method [optional]
+         * @param null|array $options [optional]
+         */
+        public function __construct($url = null, $request_method = null, ?array $options = null) {}
+
+        /**
+         * @param null|array $options [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setOptions(?array $options = null) {}
+
+        /**
+         * @return array an associative array containing currently set options.
+         */
+        #[Pure]
+        public function getOptions() {}
+
+        /**
+         * @param null|array $options [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setSslOptions(?array $options = null) {}
+
+        /**
+         * @return array an associative array containing any previously set SSL options.
+         */
+        #[Pure]
+        public function getSslOptions() {}
+
+        /**
+         * @param array $option
+         * @return bool true on success or false on failure.
+         */
+        public function addSslOptions(array $option) {}
+
+        /**
+         * @param array $headers
+         * @return bool true on success or false on failure.
+         */
+        public function addHeaders(array $headers) {}
+
+        /**
+         * @return array an associative array containing all currently set headers.
+         */
+        #[Pure]
+        public function getHeaders() {}
+
+        /**
+         * @param null|array $headers [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setHeaders(?array $headers = null) {}
+
+        /**
+         * @param array $cookies
+         * @return bool true on success or false on failure.
+         */
+        public function addCookies(array $cookies) {}
+
+        /**
+         * @return array an associative array containing any previously set cookies.
+         */
+        #[Pure]
+        public function getCookies() {}
+
+        /**
+         * @param null|array $cookies [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setCookies(?array $cookies = null) {}
+
+        /**
+         * @return bool true on success or false on failure.
+         */
+        public function enableCookies() {}
+
+        /**
+         * @param bool $session_only [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function resetCookies($session_only = null) {}
+
+        public function flushCookies() {}
+
+        /**
+         * @param int $request_method
+         * @return bool true on success or false on failure.
+         */
+        public function setMethod($request_method) {}
+
+        /**
+         * @return int the currently set request method.
+         */
+        #[Pure]
+        public function getMethod() {}
+
+        /**
+         * @param string $url
+         * @return bool true on success or false on failure.
+         */
+        public function setUrl($url) {}
+
+        /**
+         * @return string the currently set request url as string.
+         */
+        #[Pure]
+        public function getUrl() {}
+
+        /**
+         * @param string $content_type
+         * @return bool TRUE on success, or FALSE if the content type does not seem to
+         */
+        public function setContentType($content_type) {}
+
+        /**
+         * @return string the previously set content type as string.
+         */
+        #[Pure]
+        public function getContentType() {}
+
+        /**
+         * @param mixed $query_data
+         * @return bool true on success or false on failure.
+         */
+        public function setQueryData($query_data) {}
+
+        /**
+         * @return string a string containing the urlencoded query.
+         */
+        #[Pure]
+        public function getQueryData() {}
+
+        /**
+         * @param array $query_params
+         * @return bool true on success or false on failure.
+         */
+        public function addQueryData(array $query_params) {}
+
+        /**
+         * @param array $post_data
+         * @return bool true on success or false on failure.
+         */
+        public function setPostFields(array $post_data) {}
+
+        /**
+         * @return array the currently set post fields as associative array.
+         */
+        #[Pure]
+        public function getPostFields() {}
+
+        /**
+         * @param array $post_data
+         * @return bool true on success or false on failure.
+         */
+        public function addPostFields(array $post_data) {}
+
+        /**
+         * @param $request_body_data [optional]
+         */
+        public function setBody($request_body_data) {}
+
+        #[Pure]
+        public function getBody() {}
+
+        /**
+         * @param $request_body_data
+         */
+        public function addBody($request_body_data) {}
+
+        /**
+         * @param string $raw_post_data [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setRawPostData($raw_post_data = null) {}
+
+        /**
+         * @return string a string containing the currently set raw post data.
+         */
+        #[Pure]
+        public function getRawPostData() {}
+
+        /**
+         * @param string $raw_post_data
+         * @return bool true on success or false on failure.
+         */
+        public function addRawPostData($raw_post_data) {}
+
+        /**
+         * @param array $post_files
+         * @return bool true on success or false on failure.
+         */
+        public function setPostFiles(array $post_files) {}
+
+        /**
+         * @param string $name
+         * @param string $file
+         * @param string $content_type [optional]
+         * @return bool TRUE on success, or FALSE if the content type seems not to contain a
+         */
+        public function addPostFile($name, $file, $content_type = null) {}
+
+        /**
+         * @return array an array containing currently set post files.
+         */
+        #[Pure]
+        public function getPostFiles() {}
+
+        /**
+         * @param string $file [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setPutFile($file = null) {}
+
+        /**
+         * @return string a string containing the path to the currently set put file.
+         */
+        #[Pure]
+        public function getPutFile() {}
+
+        /**
+         * @param string $put_data [optional]
+         * @return bool true on success or false on failure.
+         */
+        public function setPutData($put_data = null) {}
+
+        /**
+         * @return string a string containing the currently set PUT data.
+         */
+        #[Pure]
+        public function getPutData() {}
+
+        /**
+         * @param string $put_data
+         * @return bool true on success or false on failure.
+         */
+        public function addPutData($put_data) {}
+
+        /**
+         * @return HttpMessage the received response as HttpMessage object.
+         */
+        public function send() {}
+
+        /**
+         * @return array an associative array with the key "headers" containing an associative
+         */
+        #[Pure]
+        public function getResponseData() {}
+
+        /**
+         * @param string $name [optional]
+         * @return mixed either a string with the value of the header matching name if requested,
+         */
+        #[Pure]
+        public function getResponseHeader($name = null) {}
+
+        /**
+         * @param int $flags [optional]
+         * @param null|array $allowed_extras [optional]
+         * @return stdClass[] an array of stdClass objects like http_parse_cookie would return.
+         */
+        #[Pure]
+        public function getResponseCookies($flags = null, ?array $allowed_extras = null) {}
+
+        /**
+         * @return int an int representing the response code.
+         */
+        #[Pure]
+        public function getResponseCode() {}
+
+        /**
+         * @return string a string containing the response status text.
+         */
+        #[Pure]
+        public function getResponseStatus() {}
+
+        /**
+         * @return string a string containing the response body.
+         */
+        #[Pure]
+        public function getResponseBody() {}
+
+        /**
+         * @param string $name [optional]
+         * @return mixed either a scalar containing the value of the info matching name if
+         */
+        #[Pure]
+        public function getResponseInfo($name = null) {}
+
+        /**
+         * @return HttpMessage an HttpMessage object of the response.
+         */
+        #[Pure]
+        public function getResponseMessage() {}
+
+        /**
+         * @return string the complete web server response, including the headers in a form of a string.
+         */
+        #[Pure]
+        public function getRawResponseMessage() {}
+
+        /**
+         * @return HttpMessage an HttpMessage object representing the sent request.
+         */
+        #[Pure]
+        public function getRequestMessage() {}
+
+        /**
+         * @return string an HttpMessage in a form of a string.
+         */
+        #[Pure]
+        public function getRawRequestMessage() {}
+
+        /**
+         * @return HttpMessage an HttpMessage object representing the complete request/response history.
+         */
+        #[Pure]
+        public function getHistory() {}
+
+        /**
+         * @return void
+         */
+        public function clearHistory() {}
+
+        /**
+         * @param $url [optional]
+         * @param $method [optional]
+         * @param $options [optional]
+         * @param $class_name [optional]
+         */
+        public static function factory($url, $method, $options, $class_name) {}
+
+        /**
+         * @param $url
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function get($url, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function head($url, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $data
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function postData($url, $data, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $data
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function postFields($url, $data, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $data
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function putData($url, $data, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $file
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function putFile($url, $file, $options, &$info) {}
+
+        /**
+         * @param $url
+         * @param $stream
+         * @param $options [optional]
+         * @param &$info [optional]
+         */
+        public static function putStream($url, $stream, $options, &$info) {}
+
+        /**
+         * @param $method_name
+         */
+        public static function methodRegister($method_name) {}
+
+        /**
+         * @param $method
+         */
+        public static function methodUnregister($method) {}
+
+        /**
+         * @param $method_id
+         */
+        public static function methodName($method_id) {}
+
+        /**
+         * @param $method
+         */
+        public static function methodExists($method) {}
+
+        /**
+         * @param $fields
+         * @param $files
+         */
+        public static function encodeBody($fields, $files) {}
+    }
+
+    class HttpRequestDataShare implements Countable
+    {
+        private static $instance;
+        public $cookie;
+        public $dns;
+        public $ssl;
+        public $connect;
+
+        public function __destruct() {}
+
+        public function count() {}
+
+        /**
+         * @param HttpRequest $request
+         */
+        public function attach(HttpRequest $request) {}
+
+        /**
+         * @param HttpRequest $request
+         */
+        public function detach(HttpRequest $request) {}
+
+        public function reset() {}
+
+        /**
+         * @param $global [optional]
+         * @param $class_name [optional]
+         */
+        public static function factory($global, $class_name) {}
+
+        /**
+         * @param $global [optional]
+         */
+        public static function singleton($global) {}
+    }
+
+    class HttpRequestPool implements Countable, Iterator
+    {
+        /**
+         * @param null|HttpRequest $request [optional]
+         */
+        public function __construct(?HttpRequest $request = null) {}
+
+        /**
+         * @return void
+         */
+        public function __destruct() {}
+
+        /**
+         * @param HttpRequest $request
+         * @return bool true on success or false on failure.
+         */
+        public function attach(HttpRequest $request) {}
+
+        /**
+         * @param HttpRequest $request
+         * @return bool true on success or false on failure.
+         */
+        public function detach(HttpRequest $request) {}
+
+        /**
+         * @return bool true on success or false on failure.
+         */
+        public function send() {}
+
+        /**
+         * @return void
+         */
+        public function reset() {}
+
+        /**
+         * @return bool TRUE until each request has finished its transaction.
+         */
+        protected function socketPerform() {}
+
+        /**
+         * @return bool true on success or false on failure.
+         */
+        protected function socketSelect() {}
+
+        public function valid() {}
+
+        public function current() {}
+
+        public function key() {}
+
+        public function next() {}
+
+        public function rewind() {}
+
+        public function count() {}
+
+        /**
+         * @return array an array containing all currently attached HttpRequest objects.
+         */
+        #[Pure]
+        public function getAttachedRequests() {}
+
+        /**
+         * @return array an array containing all attached HttpRequest objects that already have finished their work.
+         */
+        #[Pure]
+        public function getFinishedRequests() {}
+
+        /**
+         * @param $enable [optional]
+         */
+        public function enablePipelining($enable) {}
+
+        /**
+         * @param $enable [optional]
+         */
+        public function enableEvents($enable) {}
+    }
+
+    class HttpResponse
+    {
+        public const REDIRECT = 0;
+        public const REDIRECT_PERM = 301;
+        public const REDIRECT_FOUND = 302;
+        public const REDIRECT_POST = 303;
+        public const REDIRECT_PROXY = 305;
+        public const REDIRECT_TEMP = 307;
+        private static $sent;
+        private static $catch;
+        private static $mode;
+        private static $stream;
+        private static $file;
+        private static $data;
+        protected static $cache;
+        protected static $gzip;
+        protected static $eTag;
+        protected static $lastModified;
+        protected static $cacheControl;
+        protected static $contentType;
+        protected static $contentDisposition;
+        protected static $bufferSize;
+        protected static $throttleDelay;
+
+        /**
+         * @param string $name
+         * @param mixed $value [optional]
+         * @param bool $replace [optional]
+         * @return bool true on success or false on failure.
+         */
+        public static function setHeader($name, $value = null, $replace = null) {}
+
+        /**
+         * @param string $name [optional]
+         * @return mixed either a string containing the value of the header matching name,
+         */
+        public static function getHeader($name = null) {}
+
+        /**
+         * @param string $etag
+         * @return bool true on success or false on failure.
+         */
+        public static function setETag($etag) {}
+
+        /**
+         * @return string the calculated or previously set ETag as unquoted string.
+         */
+        public static function getETag() {}
+
+        /**
+         * @param int $timestamp
+         * @return bool true on success or false on failure.
+         */
+        public static function setLastModified($timestamp) {}
+
+        /**
+         * @return int the calculated or previously set Unix timestamp.
+         */
+        public static function getLastModified() {}
+
+        /**
+         * @param string $filename
+         * @param bool $inline [optional]
+         * @return bool true on success or false on failure.
+         */
+        public static function setContentDisposition($filename, $inline = null) {}
+
+        /**
+         * @return string the current content disposition as string like sent in a header.
+         */
+        public static function getContentDisposition() {}
+
+        /**
+         * @param string $content_type
+         * @return bool true on success, or false if the content type does not seem to
+         */
+        public static function setContentType($content_type) {}
+
+        /**
+         * @return string the currently set content type as string.
+         */
+        public static function getContentType() {}
+
+        /**
+         * @param string $magic_file
+         * @param int $magic_mode [optional]
+         * @return string|false the guessed content type on success or false on failure.
+         */
+        public static function guessContentType($magic_file, $magic_mode = null) {}
+
+        /**
+         * @param bool $cache
+         * @return bool true on success or false on failure.
+         */
+        public static function setCache($cache) {}
+
+        /**
+         * @return bool true if caching should be attempted, else false.
+         */
+        public static function getCache() {}
+
+        /**
+         * @param string $control
+         * @param int $max_age [optional]
+         * @param bool $must_revalidate [optional]
+         * @return bool true on success, or false if control does not match one of public, private or no-cache.
+         */
+        public static function setCacheControl($control, $max_age = null, $must_revalidate = null) {}
+
+        /**
+         * @return string the current cache control setting as a string like sent in a header.
+         */
+        public static function getCacheControl() {}
+
+        /**
+         * @param bool $gzip
+         * @return bool true on success or false on failure.
+         */
+        public static function setGzip($gzip) {}
+
+        /**
+         * @return bool true if GZip compression is enabled, else false.
+         */
+        public static function getGzip() {}
+
+        /**
+         * @param float $seconds
+         * @return bool true on success or false on failure.
+         */
+        public static function setThrottleDelay($seconds) {}
+
+        /**
+         * @return float a float representing the throttle delay in seconds.
+         */
+        public static function getThrottleDelay() {}
+
+        /**
+         * @param int $bytes
+         * @return bool true on success or false on failure.
+         */
+        public static function setBufferSize($bytes) {}
+
+        /**
+         * @return int an int representing the current buffer size in bytes.
+         */
+        public static function getBufferSize() {}
+
+        /**
+         * @param mixed $data
+         * @return bool true on success or false on failure.
+         */
+        public static function setData($data) {}
+
+        /**
+         * @return string a string containing the previously set data to send.
+         */
+        public static function getData() {}
+
+        /**
+         * @param string $file
+         * @return bool true on success or false on failure.
+         */
+        public static function setFile($file) {}
+
+        /**
+         * @return string the previously set path to the file to send as string.
+         */
+        public static function getFile() {}
+
+        /**
+         * @param resource $stream
+         * @return bool true on success or false on failure.
+         */
+        public static function setStream($stream) {}
+
+        /**
+         * @return resource the previously set resource.
+         */
+        public static function getStream() {}
+
+        /**
+         * @param bool $clean_ob [optional]
+         * @return bool true on success or false on failure.
+         */
+        public static function send($clean_ob = null) {}
+
+        /**
+         * @return void
+         */
+        public static function capture() {}
+
+        /**
+         * @param null|string $url [optional]
+         * @param null|array $params [optional]
+         * @param null|bool $session [optional]
+         * @param null|int $status [optional]
+         * @return void
+         */
+        public static function redirect($url = null, ?array $params = null, $session = null, $status = null) {}
+
+        /**
+         * @param int $status
+         * @return bool
+         */
+        public static function status($status) {}
+
+        /**
+         * @return array
+         */
+        public static function getRequestHeaders() {}
+
+        /**
+         * @return string
+         */
+        public static function getRequestBody() {}
+
+        /**
+         * @return resource
+         */
+        public static function getRequestBodyStream() {}
+    }
+
+    class HttpUtil
+    {
+        /**
+         * @param $timestamp [optional]
+         */
+        public static function date($timestamp) {}
+
+        /**
+         * @param $url
+         * @param $parts [optional]
+         * @param $flags [optional]
+         * @param &$composed [optional]
+         */
+        public static function buildUrl($url, $parts, $flags, &$composed) {}
+
+        /**
+         * @param $query
+         * @param $prefix [optional]
+         * @param $arg_sep [optional]
+         */
+        public static function buildStr($query, $prefix, $arg_sep) {}
+
+        /**
+         * @param $supported
+         * @param &$result [optional]
+         */
+        public static function negotiateLanguage($supported, &$result) {}
+
+        /**
+         * @param $supported
+         * @param &$result [optional]
+         */
+        public static function negotiateCharset($supported, &$result) {}
+
+        /**
+         * @param $supported
+         * @param &$result [optional]
+         */
+        public static function negotiateContentType($supported, &$result) {}
+
+        /**
+         * @param $last_modified
+         * @param $for_range [optional]
+         */
+        public static function matchModified($last_modified, $for_range) {}
+
+        /**
+         * @param $plain_etag
+         * @param $for_range [optional]
+         */
+        public static function matchEtag($plain_etag, $for_range) {}
+
+        /**
+         * @param $header_name
+         * @param $header_value
+         * @param $case_sensitive [optional]
+         */
+        public static function matchRequestHeader($header_name, $header_value, $case_sensitive) {}
+
+        /**
+         * @param $message_string
+         */
+        public static function parseMessage($message_string) {}
+
+        /**
+         * @param $headers_string
+         */
+        public static function parseHeaders($headers_string) {}
+
+        /**
+         * @param $cookie_string
+         */
+        public static function parseCookie($cookie_string) {}
+
+        /**
+         * @param $cookie_array
+         */
+        public static function buildCookie($cookie_array) {}
+
+        /**
+         * @param $param_string
+         * @param $flags [optional]
+         */
+        public static function parseParams($param_string, $flags) {}
+
+        /**
+         * @param $encoded_string
+         */
+        public static function chunkedDecode($encoded_string) {}
+
+        /**
+         * @param $plain
+         * @param $flags [optional]
+         */
+        public static function deflate($plain, $flags) {}
+
+        /**
+         * @param $encoded
+         */
+        public static function inflate($encoded) {}
+
+        /**
+         * @param $feature [optional]
+         */
+        public static function support($feature) {}
+    }
+
+    /**
+     * @param int $timestamp
+     * @return string
+     */
+    #[Pure]
+    function http_date($timestamp = null) {}
+
+    /**
+     * @param array<array-key, mixed>|string $url
+     * @param array<array-key, mixed>|string $parts
+     * @param int $flags
+     * @param array<array-key, mixed> $new_url
+     * @return string
+     */
+    function http_build_url($url = null, $parts = null, $flags = null, ?array &$new_url = null) {}
+
+    /**
+     * @param array<array-key, mixed> $query
+     * @param null|string $prefix
+     * @param string $arg_separator
+     * @return string
+     */
+    #[Pure]
+    function http_build_str(array $query, $prefix = null, $arg_separator = null) {}
+
+    /**
+     * @param array<array-key, mixed> $supported
+     * @param array<array-key, mixed> $result
+     * @return string
+     */
+    function http_negotiate_language(array $supported, ?array &$result = null) {}
+
+    /**
+     * @param array<array-key, mixed> $supported
+     * @param array<array-key, mixed> $result
+     * @return string
+     */
+    function http_negotiate_charset(array $supported, ?array &$result = null) {}
+
+    /**
+     * @param array<array-key, mixed> $supported
+     * @param array<array-key, mixed> $result
+     * @return string
+     */
+    function http_negotiate_content_type(array $supported, ?array &$result = null) {}
+
+    /**
+     * @param string $url
+     * @param array<array-key, mixed> $params
+     * @param bool $session
+     * @param int $status
+     * @return false|int
+     */
+    function http_redirect($url = null, ?array $params = null, $session = null, $status = null) {}
+
+    /**
+     * @param float $sec
+     * @param int $bytes
+     * @return void
+     */
+    function http_throttle($sec = null, $bytes = null) {}
+
+    /**
+     * @param int $status
+     * @return bool
+     */
+    function http_send_status($status) {}
+
+    /**
+     * @param int $timestamp
+     * @return bool
+     */
+    function http_send_last_modified($timestamp = null) {}
+
+    /**
+     * @param string $content_type
+     * @return bool
+     */
+    function http_send_content_type($content_type = null) {}
+
+    /**
+     * @param string $filename
+     * @param bool $inline
+     * @return bool
+     */
+    function http_send_content_disposition($filename, $inline = null) {}
+
+    /**
+     * @param int $timestamp
+     * @param bool $for_range
+     * @return bool
+     */
+    #[Pure]
+    function http_match_modified($timestamp = null, $for_range = null) {}
+
+    /**
+     * @param string $etag
+     * @param bool $for_range
+     * @return bool
+     */
+    #[Pure]
+    function http_match_etag($etag, $for_range = null) {}
+
+    /**
+     * @param int $timestamp_or_expires
+     * @return bool
+     */
+    #[Pure]
+    function http_cache_last_modified($timestamp_or_expires = null) {}
+
+    /**
+     * @param string $etag
+     * @return bool
+     */
+    #[Pure]
+    function http_cache_etag($etag = null) {}
+
+    /**
+     * @param string $data
+     * @return bool
+     */
+    function http_send_data($data) {}
+
+    /**
+     * @param string $file
+     * @return bool
+     */
+    function http_send_file($file) {}
+
+    /**
+     * @param resource $stream
+     * @return bool
+     */
+    function http_send_stream($stream) {}
+
+    /**
+     * @param string $encoded
+     * @return false|string
+     */
+    #[Pure]
+    function http_chunked_decode($encoded) {}
+
+    /**
+     * @param string $message
+     * @return object
+     */
+    #[Pure]
+    function http_parse_message($message) {}
+
+    /**
+     * @param string $header
+     * @return array<array-key, mixed>|false
+     */
+    #[Pure]
+    function http_parse_headers($header) {}
+
+    /**
+     * @param string $cookie
+     * @param int $flags
+     * @param array<array-key, mixed> $allowed_extras
+     * @return false|stdClass
+     */
+    #[Pure]
+    function http_parse_cookie($cookie, $flags = null, ?array $allowed_extras = null) {}
+
+    /**
+     * @param array<array-key, mixed> $cookie
+     * @return string
+     */
+    #[Pure]
+    function http_build_cookie(array $cookie) {}
+
+    /**
+     * @param string $param
+     * @param int $flags
+     * @return stdClass
+     */
+    #[Pure]
+    function http_parse_params($param, $flags = null) {}
+
+    /**
+     * @return array<array-key, mixed>
+     */
+    #[Pure]
+    function http_get_request_headers() {}
+
+    /**
+     * @return null|string
+     */
+    #[Pure]
+    function http_get_request_body() {}
+
+    /**
+     * @return null|resource
+     */
+    #[Pure]
+    function http_get_request_body_stream() {}
+
+    /**
+     * @param string $header
+     * @param string $value
+     * @param bool $match_case
+     * @return bool
+     */
+    #[Pure]
+    function http_match_request_header($header, $value, $match_case = null) {}
+
+    /**
+     * @return false|stdClass
+     */
+    function http_persistent_handles_count() {}
+
+    /**
+     * @param string $ident
+     * @return string
+     */
+    function http_persistent_handles_clean($ident = null) {}
+
+    /**
+     * @param string $ident
+     * @return false|string
+     */
+    function http_persistent_handles_ident($ident) {}
+
+    /**
+     * @param string $url
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_get($url, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_head($url = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param string $data
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_post_data($url, $data = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param array<array-key, mixed> $data
+     * @param array<array-key, mixed> $files
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_post_fields($url, ?array $data = null, ?array $files = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param string $data
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_put_data($url, $data = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param string $file
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_put_file($url, $file = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param string $url
+     * @param resource $stream
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_put_stream($url, $stream = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param int $method
+     * @param string $url
+     * @param string $body
+     * @param array<array-key, mixed> $options
+     * @param array<array-key, mixed> $info
+     * @return string
+     */
+    function http_request($method, $url = null, $body = null, ?array $options = null, ?array &$info = null) {}
+
+    /**
+     * @param array<array-key, mixed> $fields
+     * @param array<array-key, mixed> $files
+     * @return false|string
+     */
+    #[Pure]
+    function http_request_body_encode(array $fields, array $files) {}
+
+    /**
+     * @param string $method
+     * @return false|int
+     */
+    function http_request_method_register($method) {}
+
+    /**
+     * @param mixed $method
+     * @return bool
+     */
+    function http_request_method_unregister($method) {}
+
+    /**
+     * @param mixed $method
+     * @return bool
+     */
+    #[Pure]
+    function http_request_method_exists($method) {}
+
+    /**
+     * @param int $method
+     * @return false|string
+     */
+    #[Pure]
+    function http_request_method_name($method) {}
+
+    /**
+     * @param string $data
+     * @param int $mode
+     * @return string
+     */
+    #[Pure]
+    function ob_etaghandler($data, $mode) {}
+
+    /**
+     * @param string $data
+     * @param int $flags
+     * @return null|string
+     */
+    #[Pure]
+    function http_deflate($data, $flags = null) {}
+
+    /**
+     * @param string $data
+     * @return null|string
+     */
+    #[Pure]
+    function http_inflate($data) {}
+
+    /**
+     * @param string $data
+     * @param int $mode
+     * @return string
+     */
+    function ob_deflatehandler($data, $mode) {}
+
+    /**
+     * @param string $data
+     * @param int $mode
+     * @return string
+     */
+    function ob_inflatehandler($data, $mode) {}
+
+    /**
+     * @param int $feature
+     * @return int
+     */
+    #[Pure]
+    function http_support($feature = null) {}
+
+    define('HTTP_COOKIE_PARSE_RAW', 1);
+
+    define('HTTP_COOKIE_SECURE', 16);
+
+    define('HTTP_COOKIE_HTTPONLY', 32);
+    define('HTTP_DEFLATE_LEVEL_DEF', 0);
+    define('HTTP_DEFLATE_LEVEL_MIN', 1);
+    define('HTTP_DEFLATE_LEVEL_MAX', 9);
+    define('HTTP_DEFLATE_TYPE_ZLIB', 0);
+    define('HTTP_DEFLATE_TYPE_GZIP', 16);
+    define('HTTP_DEFLATE_TYPE_RAW', 32);
+    define('HTTP_DEFLATE_STRATEGY_DEF', 0);
+    define('HTTP_DEFLATE_STRATEGY_FILT', 256);
+    define('HTTP_DEFLATE_STRATEGY_HUFF', 512);
+    define('HTTP_DEFLATE_STRATEGY_RLE', 768);
+    define('HTTP_DEFLATE_STRATEGY_FIXED', 1024);
+
+    define('HTTP_ENCODING_STREAM_FLUSH_NONE', 0);
+
+    define('HTTP_ENCODING_STREAM_FLUSH_SYNC', 1048576);
+
+    define('HTTP_ENCODING_STREAM_FLUSH_FULL', 2097152);
+
+    define('HTTP_AUTH_BASIC', 1);
+
+    define('HTTP_AUTH_DIGEST', 2);
+
+    define('HTTP_AUTH_NTLM', 8);
+
+    define('HTTP_AUTH_GSSNEG', 4);
+
+    define('HTTP_AUTH_ANY', -1);
+    define('HTTP_VERSION_NONE', 0);
+
+    define('HTTP_VERSION_1_0', 1);
+
+    define('HTTP_VERSION_1_1', 2);
+
+    define('HTTP_VERSION_ANY', 0);
+
+    define('HTTP_SSL_VERSION_TLSv1', 1);
+
+    define('HTTP_SSL_VERSION_SSLv2', 2);
+
+    define('HTTP_SSL_VERSION_SSLv3', 3);
+
+    define('HTTP_SSL_VERSION_ANY', 0);
+
+    define('HTTP_IPRESOLVE_V4', 1);
+
+    define('HTTP_IPRESOLVE_V6', 2);
+
+    define('HTTP_IPRESOLVE_ANY', 0);
+
+    define('HTTP_PROXY_SOCKS4', 4);
+
+    define('HTTP_PROXY_SOCKS5', 5);
+
+    define('HTTP_PROXY_HTTP', 0);
+    define('HTTP_METH_GET', 1);
+    define('HTTP_METH_HEAD', 2);
+    define('HTTP_METH_POST', 3);
+    define('HTTP_METH_PUT', 4);
+    define('HTTP_METH_DELETE', 5);
+    define('HTTP_METH_OPTIONS', 6);
+    define('HTTP_METH_TRACE', 7);
+    define('HTTP_METH_CONNECT', 8);
+    define('HTTP_METH_PROPFIND', 9);
+    define('HTTP_METH_PROPPATCH', 10);
+    define('HTTP_METH_MKCOL', 11);
+    define('HTTP_METH_COPY', 12);
+    define('HTTP_METH_MOVE', 13);
+    define('HTTP_METH_LOCK', 14);
+    define('HTTP_METH_UNLOCK', 15);
+    define('HTTP_METH_VERSION_CONTROL', 16);
+    define('HTTP_METH_REPORT', 17);
+    define('HTTP_METH_CHECKOUT', 18);
+    define('HTTP_METH_CHECKIN', 19);
+    define('HTTP_METH_UNCHECKOUT', 20);
+    define('HTTP_METH_MKWORKSPACE', 21);
+    define('HTTP_METH_UPDATE', 22);
+    define('HTTP_METH_LABEL', 23);
+    define('HTTP_METH_MERGE', 24);
+    define('HTTP_METH_BASELINE_CONTROL', 25);
+    define('HTTP_METH_MKACTIVITY', 26);
+    define('HTTP_METH_ACL', 27);
+
+    define('HTTP_REDIRECT', 0);
+
+    define('HTTP_REDIRECT_PERM', 301);
+
+    define('HTTP_REDIRECT_FOUND', 302);
+
+    define('HTTP_REDIRECT_POST', 303);
+
+    define('HTTP_REDIRECT_PROXY', 305);
+
+    define('HTTP_REDIRECT_TEMP', 307);
+
+    define('HTTP_SUPPORT', 1);
+
+    define('HTTP_SUPPORT_REQUESTS', 2);
+
+    define('HTTP_SUPPORT_MAGICMIME', 4);
+
+    define('HTTP_SUPPORT_ENCODINGS', 8);
+
+    define('HTTP_SUPPORT_SSLREQUESTS', 32);
+    define('HTTP_SUPPORT_EVENTS', 128);
+
+    define('HTTP_PARAMS_ALLOW_COMMA', 1);
+
+    define('HTTP_PARAMS_ALLOW_FAILURE', 2);
+
+    define('HTTP_PARAMS_RAISE_ERROR', 4);
+
+    define('HTTP_PARAMS_DEFAULT', 7);
+
+    define('HTTP_URL_REPLACE', 0);
+
+    define('HTTP_URL_JOIN_PATH', 1);
+
+    define('HTTP_URL_JOIN_QUERY', 2);
+
+    define('HTTP_URL_STRIP_USER', 4);
+
+    define('HTTP_URL_STRIP_PASS', 8);
+
+    define('HTTP_URL_STRIP_AUTH', 12);
+
+    define('HTTP_URL_STRIP_PORT', 32);
+
+    define('HTTP_URL_STRIP_PATH', 64);
+
+    define('HTTP_URL_STRIP_QUERY', 128);
+
+    define('HTTP_URL_STRIP_FRAGMENT', 256);
+
+    define('HTTP_URL_STRIP_ALL', 492);
+    define('HTTP_URL_FROM_ENV', 4096);
+
+    define('HTTP_E_RUNTIME', 1);
+
+    define('HTTP_E_INVALID_PARAM', 2);
+
+    define('HTTP_E_HEADER', 3);
+
+    define('HTTP_E_MALFORMED_HEADERS', 4);
+
+    define('HTTP_E_REQUEST_METHOD', 5);
+
+    define('HTTP_E_MESSAGE_TYPE', 6);
+
+    define('HTTP_E_ENCODING', 7);
+
+    define('HTTP_E_REQUEST', 8);
+
+    define('HTTP_E_REQUEST_POOL', 9);
+
+    define('HTTP_E_SOCKET', 10);
+
+    define('HTTP_E_RESPONSE', 11);
+
+    define('HTTP_E_URL', 12);
+
+    define('HTTP_E_QUERYSTRING', 13);
+
+    define('HTTP_MSG_NONE', 0);
+
+    define('HTTP_MSG_REQUEST', 1);
+
+    define('HTTP_MSG_RESPONSE', 2);
+    define('HTTP_QUERYSTRING_TYPE_BOOL', 3);
+    define('HTTP_QUERYSTRING_TYPE_INT', 1);
+    define('HTTP_QUERYSTRING_TYPE_FLOAT', 2);
+    define('HTTP_QUERYSTRING_TYPE_STRING', 6);
+    define('HTTP_QUERYSTRING_TYPE_ARRAY', 4);
+    define('HTTP_QUERYSTRING_TYPE_OBJECT', 5);
+}
+
+namespace http {
+    use http;
+
+    class Client implements \SplSubject, \Countable
+    {
+            public const DEBUG_INFO = 0;
+
+            public const DEBUG_IN = 1;
+
+            public const DEBUG_OUT = 2;
+
+            public const DEBUG_HEADER = 16;
+
+            public const DEBUG_BODY = 32;
+
+            public const DEBUG_SSL = 64;
+
+        /**
+         * @var \SplObjectStorage
+         */
+        private $observers = null;
+
+        /**
+         * @var array
+         */
+        protected $options = null;
+
+        /**
+         * @var \http\Message
+         */
+        protected $history = null;
+
+        /**
+         * @var bool
+         */
+        public $recordHistory = false;
+
+        /**
+         * @param string $driver The HTTP client driver to employ. Currently only the default driver, "curl", is supported.
+         * @param string $persistent_handle_id If supplied, created curl handles will be persisted with this identifier for later reuse.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @throws \http\Exception\RuntimeException
+         */
+        public function __construct(?string $driver = null, ?string $persistent_handle_id = null) {}
+
+        /**
+         * @param array $cookies Custom cookies to add.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function addCookies(?array $cookies = null) {}
+
+        /**
+         * @param array $ssl_options Add this SSL options.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function addSslOptions(?array $ssl_options = null) {}
+
+        /**
+         * @param \SplObserver $observer An implementation of SplObserver.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+         */
+        public function attach(\SplObserver $observer) {}
+
+        /**
+         * @param array $configuration Key/value pairs of low level options.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+         */
+        public function configure(array $configuration) {}
+
+        /**
+         * @return int number of enqueued requests.
+         */
+        public function count() {}
+
+        /**
+         * @param \http\Client\Request $request The request to cancel.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Client self.
+         */
+        public function dequeue(Client\Request $request) {}
+
+        /**
+         * @param \SplObserver $observer Previously attached instance of SplObserver implementation.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+         */
+        public function detach(\SplObserver $observer) {}
+
+        /**
+         * @param bool $enable Whether to enable libevent usage.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+             * @deprecated This method has been deprecated in 2.3.0. Use httpClient::configure() instead
+         */
+            public function enableEvents(bool $enable = true) {}
+
+        /**
+         * @param bool $enable Whether to enable pipelining.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+             * @deprecated This method has been deprecated in 2.3.0. Use httpClient::configure() instead
+         */
+            public function enablePipelining(bool $enable = true) {}
+
+        /**
+         * @param \http\Client\Request $request The request to enqueue.
+         * @param callable $cb as function(\http\Response $response) : ?bool
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Client self.
+         */
+        public function enqueue(Client\Request $request, ?callable $cb = null) {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return array list of key/value pairs of available configuration options and their default values.
+         */
+        public function getAvailableConfiguration() {}
+
+        /**
+         * @return array list of supported drivers.
+         */
+        public function getAvailableDrivers() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return array list of key/value pairs of available request options and their default values.
+         */
+        public function getAvailableOptions() {}
+
+        /**
+         * @return array custom cookies.
+         */
+        public function getCookies() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Message the request/response message chain representing the client's history.
+         */
+        public function getHistory() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \SplObjectStorage observer storage.
+         */
+        public function getObservers() {}
+
+        /**
+         * @return array options.
+         */
+        public function getOptions() {}
+
+        /**
+         * @param \http\Client\Request $request The request to retrieve the current progress information for.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return object|null object stdClass instance holding progress information.
+         */
+        public function getProgressInfo(Client\Request $request) {}
+
+        /**
+         * @param \http\Client\Request $request The request to fetch the stored response for.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client\Response|null \http\Client\Response the stored response for the request, or the last that was received.
+         */
+        public function getResponse(Client\Request $request = null) {}
+
+        /**
+         * @return array SSL options.
+         */
+        public function getSslOptions() {}
+
+        /**
+         * @param \http\Client\Request $request The request to probe for transfer info.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return object stdClass instance holding transfer related information.
+         */
+        public function getTransferInfo(Client\Request $request) {}
+
+        /**
+         * @param \http\Client\Request $request The request to notify about.
+         * @param object $progress stdClass instance holding progress information.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client self.
+         */
+        public function notify(Client\Request $request = null, $progress = null) {}
+
+        /**
+         * @return bool true if there are more transfers to complete.
+         */
+        public function once() {}
+
+        /**
+         * @param \http\Client\Request $request The request to queue.
+         * @param callable $cb as function(\http\Response $response) : ?bool
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Client self.
+         */
+        public function requeue(Client\Request $request, ?callable $cb = null) {}
+
+        /**
+         * @return \http\Client self.
+         */
+        public function reset() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Client self.
+         */
+        public function send() {}
+
+        /**
+         * @param array $cookies Set the custom cookies to this array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function setCookies(?array $cookies = null) {}
+
+        /**
+         * @param callable $callback as function(http\Client $c, http\Client\Request $r, int $type, string $data)
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function setDebug(callable $callback) {}
+
+        /**
+         * @param array $options The options to set.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function setOptions(?array $options = null) {}
+
+        /**
+         * @param array $ssl_options Set SSL options to this array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client self.
+         */
+        public function setSslOptions(?array $ssl_options = null) {}
+
+        /**
+         * @param float $timeout Seconds to wait for data on open sockets.
+         * @return bool success.
+         */
+        public function wait(float $timeout = 0) {}
+    }
+    class Cookie
+    {
+            public const PARSE_RAW = 1;
+
+            public const SECURE = 16;
+
+            public const HTTPONLY = 32;
+
+        /**
+         * @param mixed $cookies The string or list of cookies to parse or set.
+         * @param int $flags Parse flags. See http\Cookie::PARSE_* constants.
+         * @param array $allowed_extras List of extra attribute names to recognize.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         */
+        public function __construct($cookies = null, int $flags = 0, ?array $allowed_extras = null) {}
+
+        /**
+         * @return string the cookie(s) represented as string.
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $cookie_name The key of the cookie.
+         * @param string $cookie_value The value of the cookie.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function addCookie(string $cookie_name, string $cookie_value) {}
+
+        /**
+         * @param array $cookies Add cookies of this array of form ["name" => "value"].
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function addCookies(array $cookies) {}
+
+        /**
+         * @param string $extra_name The key of the extra attribute.
+         * @param string $extra_value The value of the extra attribute.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function addExtra(string $extra_name, string $extra_value) {}
+
+        /**
+         * @param array $extras A list of extra attributes of the form ["key" => "value"].
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function addExtras(array $extras) {}
+
+        /**
+         * @param string $cookie_name The key of the cookie to look up.
+         * @return string|null string the cookie value.
+         */
+        public function getCookie(string $cookie_name) {}
+
+        /**
+         * @return array the list of cookies of form ["name" => "value"].
+         */
+        public function getCookies() {}
+
+        /**
+         * @return string the effective domain.
+         */
+        public function getDomain() {}
+
+        /**
+         * @return int the currently set expires attribute as seconds since the epoch.
+         */
+        public function getExpires() {}
+
+        /**
+         * @param string $name The key of the extra attribute.
+         * @return string the value of the extra attribute.
+         */
+        public function getExtra(string $name) {}
+
+        /**
+         * @return array the list of extra attributes of the form ["key" => "value"].
+         */
+        public function getExtras() {}
+
+        /**
+         * @return int the currently set flags bitmask.
+         */
+        public function getFlags() {}
+
+        /**
+         * @return int the currently set max-age.
+         */
+        public function getMaxAge() {}
+
+        /**
+         * @return string the effective path.
+         */
+        public function getPath() {}
+
+        /**
+         * @param string $cookie_name The key of the cookie.
+         * @param string $cookie_value The value of the cookie.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setCookie(string $cookie_name, string $cookie_value) {}
+
+        /**
+         * @param array $cookies Set the cookies to this array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setCookies(?array $cookies = null) {}
+
+        /**
+         * @param string $value The domain the cookie(s) belong to.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setDomain(?string $value = null) {}
+
+        /**
+         * @param int $value The expires timestamp as seconds since the epoch.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setExpires(int $value = -1) {}
+
+        /**
+         * @param string $extra_name The key of the extra attribute.
+         * @param string $extra_value The value of the extra attribute.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setExtra(string $extra_name, ?string $extra_value = null) {}
+
+        /**
+         * @param array $extras Set the extra attributes to this array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setExtras(?array $extras = null) {}
+
+        /**
+         * @param int $value The new flags bitmask.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setFlags(int $value = 0) {}
+
+        /**
+         * @param int $value The max-age in seconds.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setMaxAge(int $value = -1) {}
+
+        /**
+         * @param string $path The URL path the cookie(s) should take effect within.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Cookie self.
+         */
+        public function setPath(?string $path = null) {}
+
+        /**
+         * @return array the cookie list as array.
+         */
+        public function toArray() {}
+
+        /**
+         * @return string the cookie list as string.
+         */
+        public function toString() {}
+    }
+}
+
+namespace http {
+    class Env
+    {
+        /**
+         * @param string $body_class_name A user class extending http\Message\Body.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Message\Body instance representing the request body
+         */
+        public function getRequestBody(?string $body_class_name = null) {}
+
+        /**
+         * @param string $header_name The key of a header to retrieve.
+         * @return string|null|array NULL if $header_name was not found
+         */
+        public function getRequestHeader(?string $header_name = null) {}
+
+        /**
+         * @return int the HTTP response code.
+         */
+        public function getResponseCode() {}
+
+        /**
+         * @param string $header_name The name of the response header to retrieve.
+         * @return string|array|null string the compound value of the response header to send
+         */
+        public function getResponseHeader(?string $header_name = null) {}
+
+        /**
+         * @return array mapping of the form \[
+         */
+        public function getResponseStatusForAllCodes() {}
+
+        /**
+         * @param int $code The HTTP response code to get the string representation for.
+         * @return string the HTTP response status message (may be empty, if no message for this code was found)
+         */
+        public function getResponseStatusForCode(int $code) {}
+
+        /**
+         * @param string $params HTTP header parameter's value to negotiate.
+         * @param array $supported List of supported negotiation operands.
+         * @param string $prim_typ_sep A "primary type separator", i.e. that would be a hyphen for content language negotiation (en-US, de-DE, etc.).
+         * @param array &$result Out parameter recording negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiate(string $params, array $supported, ?string $prim_typ_sep = null, ?array &$result = null) {}
+
+        /**
+         * @param array $supported List of supported content character sets.
+         * @param array &$result Out parameter recording negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiateCharset(array $supported, array &$result = null) {}
+
+        /**
+         * @param array $supported List of supported MIME content types.
+         * @param array &$result Out parameter recording negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiateContentType(array $supported, array &$result = null) {}
+
+        /**
+         * @param array $supported List of supported content encodings.
+         * @param array &$result Out parameter recording negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiateEncoding(array $supported, array &$result = null) {}
+
+        /**
+         * @param array $supported List of supported content languages.
+         * @param array &$result Out parameter recording negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiateLanguage(array $supported, array &$result = null) {}
+
+        /**
+         * @param int $code The HTTP response status code.
+         * @return bool Success.
+         */
+        public function setResponseCode(int $code) {}
+
+        /**
+         * @param string $header_name
+         * @param mixed $header_value
+         * @param int $response_code
+         * @param bool $replace
+         * @return bool Success.
+         */
+        public function setResponseHeader(string $header_name, $header_value = null, ?int $response_code = null, ?bool $replace = null) {}
+    }
+    interface Exception {}
+    class Header implements \Serializable
+    {
+            public const MATCH_LOOSE = 0;
+
+            public const MATCH_CASE = 1;
+
+            public const MATCH_WORD = 16;
+
+            public const MATCH_FULL = 32;
+
+            public const MATCH_STRICT = 33;
+
+        /**
+         * @var string
+         */
+        public $name = null;
+
+        /**
+         * @var mixed
+         */
+        public $value = null;
+
+        /**
+         * @param string $name The HTTP header name.
+         * @param mixed $value The value of the header.
+         */
+        public function __construct(?string $name = null, $value = null) {}
+
+        /**
+         * @return string the serialized form of the HTTP header (i.e. "Name: value").
+         */
+        public function __toString() {}
+
+        /**
+         * @param mixed $ps The parameter separator(s).
+         * @param mixed $as The argument separator(s).
+         * @param mixed $vs The value separator(s).
+         * @param int $flags The modus operandi. See http\Params constants.
+         * @return \http\Params instance
+         */
+        public function getParams($ps = null, $as = null, $vs = null, ?int $flags = null) {}
+
+        /**
+         * @param string $value The comparison value.
+         * @param int $flags The modus operandi. See http\Header constants.
+         * @return bool whether $value matches the header value according to $flags.
+         */
+        public function match(string $value, ?int $flags = null) {}
+
+        /**
+         * @param array $supported The list of supported values to negotiate.
+         * @param array &$result Out parameter recording the negotiation results.
+         * @return string|null NULL if negotiation fails.
+         */
+        public function negotiate(array $supported, array &$result = null) {}
+
+        /**
+         * @param string $header The complete string of headers.
+         * @param string $header_class A class extending http\Header.
+         * @return array|false array of parsed headers, where the elements are instances of $header_class if specified.
+         */
+        public function parse(string $header, ?string $header_class = null) {}
+
+        /**
+         * @return string serialized representation of HTTP header (i.e. "Name: value")
+         */
+        public function serialize() {}
+
+        /**
+         * @return string the serialized form of the HTTP header (i.e. "Name: value").
+         */
+        public function toString() {}
+
+        /**
+         * @param string $serialized The serialized HTTP header (i.e. "Name: value")
+         */
+        public function unserialize($serialized) {}
+    }
+    class Message implements \Countable, \Serializable, \Iterator
+    {
+            public const TYPE_NONE = 0;
+
+            public const TYPE_REQUEST = 1;
+
+            public const TYPE_RESPONSE = 2;
+
+        /**
+         * @var int
+         */
+        protected $type = \http\Message::TYPE_NONE;
+
+        /**
+         * @var \http\Message\Body
+         */
+        protected $body = null;
+
+        /**
+         * @var string
+         */
+        protected $requestMethod = "";
+
+        /**
+         * @var string
+         */
+        protected $requestUrl = "";
+
+        /**
+         * @var string
+         */
+        protected $responseStatus = "";
+
+        /**
+         * @var int
+         */
+        protected $responseCode = 0;
+
+        /**
+         * @var string
+         */
+        protected $httpVersion = null;
+
+        /**
+         * @var array
+         */
+        protected $headers = null;
+
+        /**
+         * @var \http\Message
+         */
+        protected $parentMessage;
+
+        /**
+         * @param mixed $message Either a resource or a string, representing the HTTP message.
+         * @param bool $greedy Whether to read from a $message resource until EOF.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMessageException
+         */
+        public function __construct($message = null, bool $greedy = true) {}
+
+        /**
+         * @return string the single serialized HTTP message.
+         */
+        public function __toString() {}
+
+        /**
+         * @param \http\Message\Body $body The message body to add.
+         * @return \http\Message self.
+         */
+        public function addBody(Message\Body $body) {}
+
+        /**
+         * @param string $name The header name.
+         * @param mixed $value The header value.
+         * @return \http\Message self.
+         */
+        public function addHeader(string $name, $value) {}
+
+        /**
+         * @param array $headers The HTTP headers to add.
+         * @param bool $append Whether to append values for existing headers.
+         * @return \http\Message self.
+         */
+        public function addHeaders(array $headers, bool $append = false) {}
+
+        /**
+         * @return int the count of messages in the chain above the current message.
+         */
+        public function count() {}
+
+        /**
+         * @return \http\Message the current message in the iterated message chain.
+         */
+        public function current() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Message clone.
+         */
+        public function detach() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Message\Body the message body.
+         */
+        public function getBody() {}
+
+        /**
+         * @param string $header The header's name.
+         * @param string $into_class The name of a class extending http\Header.
+         * @return mixed|\http\Header mixed the header value if $into_class is NULL.
+         */
+        public function getHeader(string $header, ?string $into_class = null) {}
+
+        /**
+         * @return array the message's headers.
+         */
+        public function getHeaders() {}
+
+        /**
+         * @return string the HTTP protocol version, e.g. "1.0"; defaults to "1.1".
+         */
+        public function getHttpVersion() {}
+
+        /**
+         * @return string|null string the HTTP message information.
+         */
+        public function getInfo() {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @return \http\Message the parent message.
+         */
+        public function getParentMessage() {}
+
+        /**
+         * @return string|false string the request method.
+         */
+        public function getRequestMethod() {}
+
+        /**
+         * @return string|false string the request URL; usually the path and the querystring.
+         */
+        public function getRequestUrl() {}
+
+        /**
+         * @return int|false int the response status code.
+         */
+        public function getResponseCode() {}
+
+        /**
+         * @return string|false string the response status phrase.
+         */
+        public function getResponseStatus() {}
+
+        /**
+         * @return int the message type. See http\Message::TYPE_* constants.
+         */
+        public function getType() {}
+
+        /**
+         * @param string &$boundary A reference where the boundary string will be stored.
+         * @return bool whether this is a message with a multipart "Content-Type".
+         */
+        public function isMultipart(string &$boundary = null) {}
+
+        /**
+         * @return int a non-sequential integer key.
+         */
+        public function key() {}
+
+            public function next() {}
+
+        /**
+         * @param \http\Message $message The message (chain) to prepend as parent messages.
+         * @param bool $top Whether to prepend to the top-most parent message.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Message self.
+         */
+        public function prepend(Message $message, bool $top = true) {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Message the other end of the message chain.
+         */
+        public function reverse() {}
+
+            public function rewind() {}
+
+        /**
+         * @return string the serialized HTTP message.
+         */
+        public function serialize() {}
+
+        /**
+         * @param \http\Message\Body $body The new message body.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Message self.
+         */
+        public function setBody(Message\Body $body) {}
+
+        /**
+         * @param string $header The header's name.
+         * @param mixed $value The header's value. Removes the header if NULL.
+         * @return \http\Message self.
+         */
+        public function setHeader(string $header, $value = null) {}
+
+        /**
+         * @param array $headers The message's headers.
+         * @return \http\Message null.
+         */
+        public function setHeaders(?array $headers = null) {}
+
+        /**
+         * @param string $http_version The protocol version, e.g. "1.1", optionally prefixed by "HTTP/".
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadHeaderException
+         * @return \http\Message self.
+         */
+        public function setHttpVersion(string $http_version) {}
+
+        /**
+         * @param string $http_info The message info (first line of an HTTP message).
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadHeaderException
+         * @return \http\Message self.
+         */
+        public function setInfo(string $http_info) {}
+
+        /**
+         * @param string $method The request method.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @return \http\Message self.
+         */
+        public function setRequestMethod(string $method) {}
+
+        /**
+         * @param string $url The request URL.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @return \http\Message self.
+         */
+        public function setRequestUrl(string $url) {}
+
+        /**
+         * @param int $response_code The response code.
+         * @param bool $strict Whether to check that the response code is between 100 and 599 inclusive.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @return \http\Message self.
+         */
+        public function setResponseCode(int $response_code, bool $strict = true) {}
+
+        /**
+         * @param string $response_status The status phrase.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @return \http\Message self.
+         */
+        public function setResponseStatus(string $response_status) {}
+
+        /**
+         * @param int $type The desired message type. See the http\Message::TYPE_* constants.
+         * @return \http\Message self.
+         */
+        public function setType(int $type) {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @throws \http\Exception\BadMessageException
+         * @return \http\Message a message chain of all messages of the multipart body.
+         */
+        public function splitMultipartBody() {}
+
+        /**
+         * @param callable $callback The callback of the form function(http\Message $from, string $data).
+         * @return \http\Message self.
+         */
+        public function toCallback(callable $callback) {}
+
+        /**
+         * @param resource $stream The resource to write to.
+         * @return \http\Message self.
+         */
+        public function toStream($stream) {}
+
+        /**
+         * @param bool $include_parent Whether to include all parent messages.
+         * @return string the HTTP message chain serialized to a string.
+         */
+        public function toString(bool $include_parent = false) {}
+
+        /**
+         * @param string $data The serialized message.
+         */
+        public function unserialize($data) {}
+
+        /**
+         * @return bool whether http\Message::current() would not return NULL.
+         */
+        public function valid() {}
+    }
+    class Params implements \ArrayAccess
+    {
+            public const DEF_PARAM_SEP = ',';
+
+            public const DEF_ARG_SEP = ';';
+
+            public const DEF_VAL_SEP = '=';
+
+            public const COOKIE_PARAM_SEP = '';
+
+            public const PARSE_RAW = 0;
+
+            public const PARSE_DEFAULT = 17;
+
+            public const PARSE_ESCAPED = 1;
+
+            public const PARSE_URLENCODED = 4;
+
+            public const PARSE_DIMENSION = 8;
+
+            public const PARSE_QUERY = 12;
+
+            public const PARSE_RFC5987 = 16;
+
+            public const PARSE_RFC5988 = 32;
+
+        /**
+         * @var array
+         */
+        public $params = null;
+
+        /**
+         * @var array
+         */
+        public $param_sep = \http\Params::DEF_PARAM_SEP;
+
+        /**
+         * @var array
+         */
+        public $arg_sep = \http\Params::DEF_ARG_SEP;
+
+        /**
+         * @var array
+         */
+        public $val_sep = \http\Params::DEF_VAL_SEP;
+
+        /**
+         * @var int
+         */
+        public $flags = \http\Params::PARSE_DEFAULT;
+
+        /**
+         * @param mixed $params Pre-parsed parameters or a string to be parsed.
+         * @param mixed $ps The parameter separator(s).
+         * @param mixed $as The argument separator(s).
+         * @param mixed $vs The value separator(s).
+         * @param int $flags The modus operandi. See http\Params::PARSE_* constants.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         */
+        public function __construct($params = null, $ps = null, $as = null, $vs = null, ?int $flags = null) {}
+
+        /**
+         * @return string version of the parameters.
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $name The offset to look after.
+         * @return bool Existence.
+         */
+        public function offsetExists($name) {}
+
+        /**
+         * @param string $name The offset to retrieve.
+         * @return mixed contents at offset.
+         */
+        public function offsetGet($name) {}
+
+        /**
+         * @param string $name The offset to modify.
+         * @param mixed $value The value to set.
+         */
+        public function offsetSet($name, $value) {}
+
+        /**
+         * @param string $name The offset to delete.
+         */
+        public function offsetUnset($name) {}
+
+        /**
+         * @return array of parameters.
+         */
+        public function toArray() {}
+
+        /**
+         * @return string version of the parameters.
+         */
+        public function toString() {}
+    }
+    class QueryString implements \Serializable, \ArrayAccess, \IteratorAggregate
+    {
+            public const TYPE_BOOL = 16;
+
+            public const TYPE_INT = 4;
+
+            public const TYPE_FLOAT = 5;
+
+            public const TYPE_STRING = 6;
+
+            public const TYPE_ARRAY = 7;
+
+            public const TYPE_OBJECT = 8;
+
+        /**
+         * @var \http\QueryString
+         */
+        private $instance = null;
+
+        /**
+         * @var array
+         */
+        private $queryArray = null;
+
+        /**
+         * @param mixed $params The query parameters to use or parse.
+         * @throws \http\Exception\BadQueryStringException
+         */
+        public function __construct($params = null) {}
+
+        /**
+         * @return string the x-www-form-urlencoded querystring.
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $name The key to retrieve the value for.
+         * @param mixed $type The type to cast the value to. See http\QueryString::TYPE_* constants.
+         * @param mixed $defval The default value to return if the key $name does not exist.
+         * @param bool $delete Whether to delete the entry from the querystring after retrieval.
+         * @return \http\QueryString|string|mixed|mixed|string \http\QueryString if called without arguments.
+         */
+        public function get(?string $name = null, $type = null, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return array|mixed array the (casted) value.
+         */
+        public function getArray(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return bool|mixed bool the (casted) value.
+         */
+        public function getBool(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return float|mixed float the (casted) value.
+         */
+        public function getFloat(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\QueryString the http\QueryString::$instance
+         */
+        public function getGlobalInstance() {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return int|mixed int the (casted) value.
+         */
+        public function getInt(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \InvalidArgumentException
+         */
+        public function getIterator() {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return object|mixed object the (casted) value.
+         */
+        public function getObject(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param string $name The key to look up.
+         * @param mixed $defval The default value to return if the offset $name does not exist.
+         * @param bool $delete Whether to remove the key and value from the querystring after retrieval.
+         * @return string|mixed string the (casted) value.
+         */
+        public function getString(string $name, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param mixed $params Additional params as object, array or string to parse.
+         * @throws \http\Exception\BadQueryStringException
+         * @return \http\QueryString clone.
+         */
+        public function mod($params = null) {}
+
+        /**
+         * @param string $name The offset to look up.
+         * @return bool whether the key $name isset.
+         */
+        public function offsetExists($name) {}
+
+        /**
+         * @param mixed $offset The offset to look up.
+         * @return mixed|null mixed the value locate at offset $name.
+         */
+        public function offsetGet($offset) {}
+
+        /**
+         * @param string $name The key to set the value for.
+         * @param mixed $data The data to place at offset $name.
+         */
+        public function offsetSet($name, $data) {}
+
+        /**
+         * @param string $name The offset to look up.
+         */
+        public function offsetUnset($name) {}
+
+        /**
+         * @return string the x-www-form-urlencoded querystring.
+         */
+        public function serialize() {}
+
+        /**
+         * @param mixed $params Additional params as object, array or string to parse.
+         * @return \http\QueryString self.
+         */
+        public function set($params) {}
+
+        /**
+         * @return array the $queryArray property.
+         */
+        public function toArray() {}
+
+        /**
+         * @return string the x-www-form-urlencoded querystring.
+         */
+        public function toString() {}
+
+        /**
+         * @param string $serialized The x-www-form-urlencoded querystring.
+         * @throws \http\Exception
+         */
+        public function unserialize($serialized) {}
+
+        /**
+         * @param string $from_enc The encoding to convert from.
+         * @param string $to_enc The encoding to convert to.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadConversionException
+         * @return \http\QueryString self.
+         */
+        public function xlate(string $from_enc, string $to_enc) {}
+    }
+    class Url
+    {
+            public const REPLACE = 0;
+
+            public const JOIN_PATH = 1;
+
+            public const JOIN_QUERY = 2;
+
+            public const STRIP_USER = 4;
+
+            public const STRIP_PASS = 8;
+
+            public const STRIP_AUTH = 12;
+
+            public const STRIP_PORT = 32;
+
+            public const STRIP_PATH = 64;
+
+            public const STRIP_QUERY = 128;
+
+            public const STRIP_FRAGMENT = 256;
+
+            public const STRIP_ALL = 492;
+
+            public const FROM_ENV = 4096;
+
+            public const SANITIZE_PATH = 8192;
+
+            public const PARSE_MBUTF8 = 131072;
+
+            public const PARSE_MBLOC = 65536;
+
+            public const PARSE_TOIDN = 1048576;
+
+            public const PARSE_TOIDN_2003 = 9437184;
+
+            public const PARSE_TOIDN_2008 = 5242880;
+
+            public const PARSE_TOPCT = 2097152;
+
+            public const IGNORE_ERRORS = 268435456;
+
+            public const SILENT_ERRORS = 536870912;
+
+            public const STDFLAGS = 3350531;
+
+        /**
+         * @var string
+         */
+        public $scheme = null;
+
+        /**
+         * @var string
+         */
+        public $user = null;
+
+        /**
+         * @var string
+         */
+        public $pass = null;
+
+        /**
+         * @var string
+         */
+        public $host = null;
+
+        /**
+         * @var string
+         */
+        public $port = null;
+
+        /**
+         * @var string
+         */
+        public $path = null;
+
+        /**
+         * @var string
+         */
+        public $query = null;
+
+        /**
+         * @var string
+         */
+        public $fragment = null;
+
+        /**
+         * @param mixed $old_url Initial URL parts. Either an array, object, http\Url instance or string to parse.
+         * @param mixed $new_url Overriding URL parts. Either an array, object, http\Url instance or string to parse.
+         * @param int $flags The modus operandi of constructing the url. See http\Url constants.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadUrlException
+         */
+        public function __construct($old_url = null, $new_url = null, int $flags = 0) {}
+
+        /**
+         * @return string the URL as string.
+         */
+        public function __toString() {}
+
+        /**
+         * @param mixed $parts New URL parts.
+         * @param int $flags Modus operandi of URL construction. See http\Url constants.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadUrlException
+         * @return \http\Url clone.
+         */
+        public function mod($parts, int $flags = \http\Url::JOIN_PATH|\http\Url::JOIN_QUERY|\http\Url::SANITIZE_PATH) {}
+
+        /**
+         * @return array the URL parts.
+         */
+        public function toArray() {}
+
+        /**
+         * @return string the URL as string.
+         */
+        public function toString() {}
+    }
+}
+
+namespace http\Client\Curl {
+    const FEATURES = 4179869;
+    const VERSIONS = 'libcurl/7.64.0 OpenSSL/1.1.1b zlib/1.2.11 libidn2/2.0.5 libpsl/0.20.2 (+libidn2/2.0.5) libssh2/1.8.0 nghttp2/1.36.0 librtmp/2.3';
+    const HTTP_VERSION_1_0 = 1;
+    const HTTP_VERSION_1_1 = 2;
+    const HTTP_VERSION_2_0 = 3;
+    const HTTP_VERSION_2TLS = 4;
+    const HTTP_VERSION_ANY = 0;
+    const SSL_VERSION_TLSv1_0 = 4;
+    const SSL_VERSION_TLSv1_1 = 5;
+    const SSL_VERSION_TLSv1_2 = 6;
+    const SSL_VERSION_TLSv1 = 1;
+    const SSL_VERSION_SSLv2 = 2;
+    const SSL_VERSION_SSLv3 = 3;
+    const SSL_VERSION_ANY = 0;
+    const TLSAUTH_SRP = 1;
+    const IPRESOLVE_V4 = 1;
+    const IPRESOLVE_V6 = 2;
+    const IPRESOLVE_ANY = 0;
+    const AUTH_BASIC = 1;
+    const AUTH_DIGEST = 2;
+    const AUTH_DIGEST_IE = 16;
+    const AUTH_NTLM = 8;
+    const AUTH_GSSNEG = 4;
+    const AUTH_SPNEGO = 4;
+    const AUTH_ANY = -17;
+    const PROXY_SOCKS4 = 4;
+    const PROXY_SOCKS4A = 5;
+    const PROXY_SOCKS5_HOSTNAME = 5;
+    const PROXY_SOCKS5 = 5;
+    const PROXY_HTTP = 0;
+    const PROXY_HTTP_1_0 = 1;
+    const POSTREDIR_301 = 1;
+    const POSTREDIR_302 = 2;
+    const POSTREDIR_303 = 4;
+    const POSTREDIR_ALL = 7;
+}
+
+namespace http\Client {
+    class Request extends \http\Message
+    {
+        /**
+         * @var array
+         */
+        protected $options = null;
+
+        /**
+         * @param string $meth The request method.
+         * @param string $url The request URL.
+         * @param array $headers HTTP headers.
+         * @param \http\Message\Body $body Request body.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         */
+        public function __construct(?string $meth = null, ?string $url = null, ?array $headers = null, ?\http\Message\Body $body = null) {}
+
+        /**
+         * @param mixed $query_data Additional querystring data.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadQueryStringException
+         * @return \http\Client\Request self.
+         */
+        public function addQuery($query_data) {}
+
+        /**
+         * @param array $ssl_options Add this SSL options.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client\Request self.
+         */
+        public function addSslOptions(?array $ssl_options = null) {}
+
+        /**
+         * @return string|null string the currently set content type.
+         */
+        public function getContentType() {}
+
+        /**
+         * @return array options.
+         */
+        public function getOptions() {}
+
+        /**
+         * @return string|null string the currently set querystring.
+         */
+        public function getQuery() {}
+
+        /**
+         * @return array SSL options.
+         */
+        public function getSslOptions() {}
+
+        /**
+         * @param string $content_type The MIME type used as "Content-Type".
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Client\Request self.
+         */
+        public function setContentType(string $content_type) {}
+
+        /**
+         * @param array $options The options to set.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client\Request self.
+         */
+        public function setOptions(?array $options = null) {}
+
+        /**
+         * @param mixed $query_data
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadQueryStringException
+         * @return \http\Client\Request self.
+         */
+        public function setQuery($query_data) {}
+
+        /**
+         * @param array $ssl_options Set SSL options to this array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Client\Request self.
+         */
+        public function setSslOptions(?array $ssl_options = null) {}
+    }
+    class Response extends \http\Message
+    {
+        /**
+         * @param int $flags Cookie parser flags.
+         * @param array $allowed_extras List of keys treated as extras.
+         * @return array list of http\Cookie instances.
+         */
+        public function getCookies(int $flags = 0, ?array $allowed_extras = null) {}
+
+        /**
+         * @param string $name A key to retrieve out of the transfer info.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\BadMethodCallException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return object|mixed object stdClass instance with all transfer info if $name was not given.
+         */
+        public function getTransferInfo(?string $name = null) {}
+    }
+}
+
+namespace http\Client\Curl {
+    interface User
+    {
+            public const POLL_NONE = 0;
+
+            public const POLL_IN = 1;
+
+            public const POLL_OUT = 2;
+
+            public const POLL_INOUT = 3;
+
+            public const POLL_REMOVE = 4;
+
+        /**
+         * @param callable $run as function(http\Client $c, resource $s = null, int $action = http\Client\Curl\User::POLL_NONE) : int
+         */
+        public function init(callable $run);
+
+            public function once();
+
+            public function send();
+
+        /**
+         * @param resource $socket The socket descriptor to watch.
+         * @param int $poll http\Client\Curl\User::POLL_* constant.
+         */
+        public function socket($socket, int $poll);
+
+        /**
+         * @param int $timeout_ms Desired maximum timeout in milliseconds.
+         */
+        public function timer(int $timeout_ms);
+
+        /**
+         * @param int $timeout_ms Block for at most this milliseconds.
+         */
+        public function wait(?int $timeout_ms = null);
+    }
+}
+
+namespace http\Client\Curl\Features {
+    const ASYNCHDNS = 128;
+    const GSSAPI = 131072;
+    const GSSNEGOTIATE = 32;
+    const HTTP2 = 65536;
+    const IDN = 1024;
+    const IPV6 = 1;
+    const KERBEROS4 = 2;
+    const KERBEROS5 = 262144;
+    const LARGEFILE = 512;
+    const LIBZ = 8;
+    const NTLM = 16;
+    const NTLM_WB = 32768;
+    const PSL = 1048576;
+    const SPNEGO = 256;
+    const SSL = 4;
+    const SSPI = 2048;
+    const TLSAUTH_SRP = 16384;
+    const UNIX_SOCKETS = 524288;
+}
+
+namespace http\Client\Curl\Versions {
+    const CURL = '7.64.0';
+    const SSL = 'OpenSSL/1.1.1b';
+    const LIBZ = '1.2.11';
+    const ARES = null;
+    const IDN = null;
+}
+
+namespace http\Encoding {
+    abstract class Stream
+    {
+            public const FLUSH_NONE = 0;
+
+            public const FLUSH_SYNC = 1048576;
+
+            public const FLUSH_FULL = 2097152;
+
+        /**
+         * @param int $flags See http\Encoding\Stream and implementation specific constants.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         */
+        public function __construct(int $flags = 0) {}
+
+        /**
+         * @return bool whether the encoding stream is completed.
+         */
+        public function done() {}
+
+        /**
+         * @return string any pending data.
+         */
+        public function finish() {}
+
+        /**
+         * @return string any pending data.
+         */
+        public function flush() {}
+
+        /**
+         * @param string $data The data to pass through the stream.
+         * @return string processed data.
+         */
+        public function update(string $data) {}
+    }
+}
+
+namespace http\Encoding\Stream {
+    class Debrotli extends \http\Encoding\Stream
+    {
+        /**
+         * @param string $data The data to uncompress.
+         * @return string the uncompressed data.
+         */
+        public function decode(string $data) {}
+    }
+    class Dechunk extends \http\Encoding\Stream
+    {
+        /**
+         * @param string $data The data to decode.
+         * @param int &$decoded_len Out parameter with the length of $data that's been decoded.
+         * @return string|string|string|false string the decoded data.
+         */
+        public function decode(string $data, int &$decoded_len = 0) {}
+    }
+    class Deflate extends \http\Encoding\Stream
+    {
+            public const TYPE_GZIP = 16;
+
+            public const TYPE_ZLIB = 0;
+
+            public const TYPE_RAW = 32;
+
+            public const LEVEL_DEF = 0;
+
+            public const LEVEL_MIN = 1;
+
+            public const LEVEL_MAX = 9;
+
+            public const STRATEGY_DEF = 0;
+
+            public const STRATEGY_FILT = 256;
+
+            public const STRATEGY_HUFF = 512;
+
+            public const STRATEGY_RLE = 768;
+
+            public const STRATEGY_FIXED = 1024;
+
+        /**
+         * @param string $data The data to compress.
+         * @param int $flags Any compression tuning flags. See http\Encoding\Stream\Deflate and http\Encoding\Stream constants.
+         * @return string the compressed data.
+         */
+        public function encode(string $data, int $flags = 0) {}
+    }
+    class Enbrotli extends \http\Encoding\Stream
+    {
+            public const LEVEL_DEF = null;
+
+            public const LEVEL_MIN = null;
+
+            public const LEVEL_MAX = null;
+
+            public const WBITS_DEF = null;
+
+            public const WBITS_MIN = null;
+
+            public const WBITS_MAX = null;
+
+            public const MODE_GENERIC = null;
+
+            public const MODE_TEXT = null;
+
+            public const MODE_FONT = null;
+
+        /**
+         * @param string $data The data to compress.
+         * @param int $flags Any compression tuning flags. See http\Encoding\Stream\Enbrotli and http\Encoding\Stream constants.
+         * @return string the compressed data.
+         */
+        public function encode(string $data, int $flags = 0) {}
+    }
+    class Inflate extends \http\Encoding\Stream
+    {
+        /**
+         * @param string $data The data to uncompress.
+         * @return string the uncompressed data.
+         */
+        public function decode(string $data) {}
+    }
+}
+
+namespace http\Env {
+    class Request extends \http\Message
+    {
+        /**
+         * @var \http\QueryString
+         */
+        protected $query = null;
+
+        /**
+         * @var \http\QueryString
+         */
+        protected $form = null;
+
+        /**
+         * @var array
+         */
+        protected $files = null;
+
+        /**
+         * @var array
+         */
+        protected $cookie = null;
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         */
+        public function __construct() {}
+
+        /**
+         * @param string $name The key to retrieve the value for.
+         * @param mixed $type The type to cast the value to. See http\QueryString::TYPE_* constants.
+         * @param mixed $defval The default value to return if the key $name does not exist.
+         * @param bool $delete Whether to delete the entry from the querystring after retrieval.
+         * @return \http\QueryString|string|mixed|mixed|string \http\QueryString if called without arguments.
+         */
+        public function getCookie(?string $name = null, $type = null, $defval = null, bool $delete = false) {}
+
+        /**
+         * @return array the consolidated upload files array.
+         */
+        public function getFiles() {}
+
+        /**
+         * @param string $name The key to retrieve the value for.
+         * @param mixed $type The type to cast the value to. See http\QueryString::TYPE_* constants.
+         * @param mixed $defval The default value to return if the key $name does not exist.
+         * @param bool $delete Whether to delete the entry from the querystring after retrieval.
+         * @return \http\QueryString|string|mixed|mixed|string \http\QueryString if called without arguments.
+         */
+        public function getForm(?string $name = null, $type = null, $defval = null, bool $delete = false) {}
+
+        /**
+         * @param string $name The key to retrieve the value for.
+         * @param mixed $type The type to cast the value to. See http\QueryString::TYPE_* constants.
+         * @param mixed $defval The default value to return if the key $name does not exist.
+         * @param bool $delete Whether to delete the entry from the querystring after retrieval.
+         * @return \http\QueryString|string|mixed|mixed|string \http\QueryString if called without arguments.
+         */
+        public function getQuery(?string $name = null, $type = null, $defval = null, bool $delete = false) {}
+    }
+    class Response extends \http\Message
+    {
+            public const CONTENT_ENCODING_NONE = 0;
+
+            public const CONTENT_ENCODING_GZIP = 1;
+
+            public const CACHE_NO = 0;
+
+            public const CACHE_HIT = 1;
+
+            public const CACHE_MISS = 2;
+
+        /**
+         * @var \http\Env\Request
+         */
+        protected $request = null;
+
+        /**
+         * @var string
+         */
+        protected $contentType = null;
+
+        /**
+         * @var string
+         */
+        protected $contentDisposition = null;
+
+        /**
+         * @var int
+         */
+        protected $contentEncoding = null;
+
+        /**
+         * @var string
+         */
+        protected $cacheControl = null;
+
+        /**
+         * @var string
+         */
+        protected $etag = null;
+
+        /**
+         * @var int
+         */
+        protected $lastModified = null;
+
+        /**
+         * @var int
+         */
+        protected $throttleDelay = null;
+
+        /**
+         * @var int
+         */
+        protected $throttleChunk = null;
+
+        /**
+         * @var array
+         */
+        protected $cookies = null;
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         */
+        public function __construct() {}
+
+        /**
+         * @param string $data The data output.
+         * @param int $ob_flags Output buffering flags passed from the output buffering control layer.
+         * @return bool success.
+         */
+        public function __invoke(string $data, int $ob_flags = 0) {}
+
+        /**
+         * @param string $header_name The request header to test.
+         * @return int a http\Env\Response::CACHE_* constant.
+         */
+        public function isCachedByEtag(string $header_name = "If-None-Match") {}
+
+        /**
+         * @param string $header_name The request header to test.
+         * @return int a http\Env\Response::CACHE_* constant.
+         */
+        public function isCachedByLastModified(string $header_name = "If-Modified-Since") {}
+
+        /**
+         * @param resource $stream A writable stream to send the response through.
+         * @return bool success.
+         */
+        public function send($stream = null) {}
+
+        /**
+         * @param string $cache_control (A) "Cache-Control" header value(s).
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setCacheControl(string $cache_control) {}
+
+        /**
+         * @param array $disposition_params MIME content disposition as http\Params array.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setContentDisposition(array $disposition_params) {}
+
+        /**
+         * @param int $content_encoding See http\Env\Response::CONTENT_ENCODING_* constants.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setContentEncoding(int $content_encoding) {}
+
+        /**
+         * @param string $content_type The response's content type.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setContentType(string $content_type) {}
+
+        /**
+         * @param mixed $cookie The cookie to send.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return \http\Env\Response self.
+         */
+        public function setCookie($cookie) {}
+
+        /**
+         * @param \http\Message $env_request The overriding request message.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setEnvRequest(\http\Message $env_request) {}
+
+        /**
+         * @param string $etag A ETag.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setEtag(string $etag) {}
+
+        /**
+         * @param int $last_modified A unix timestamp.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return \http\Env\Response self.
+         */
+        public function setLastModified(int $last_modified) {}
+
+        /**
+         * @param int $chunk_size Bytes to send.
+         * @param float $delay Seconds to sleep.
+         * @return \http\Env\Response self.
+         */
+        public function setThrottleRate(int $chunk_size, float $delay = 1) {}
+    }
+    class Url extends \http\Url {}
+}
+
+namespace http\Exception {
+    class BadConversionException extends \DomainException implements \http\Exception {}
+    class BadHeaderException extends \DomainException implements \http\Exception {}
+    class BadMessageException extends \DomainException implements \http\Exception {}
+    class BadMethodCallException extends \BadMethodCallException implements \http\Exception {}
+    class BadQueryStringException extends \DomainException implements \http\Exception {}
+    class BadUrlException extends \DomainException implements \http\Exception {}
+    class InvalidArgumentException extends \InvalidArgumentException implements \http\Exception {}
+    class RuntimeException extends \RuntimeException implements \http\Exception {}
+    class UnexpectedValueException extends \UnexpectedValueException implements \http\Exception {}
+}
+
+namespace http\Header {
+    class Parser
+    {
+            public const CLEANUP = 1;
+
+            public const STATE_FAILURE = -1;
+
+            public const STATE_START = 0;
+
+            public const STATE_KEY = 1;
+
+            public const STATE_VALUE = 2;
+
+            public const STATE_VALUE_EX = 3;
+
+            public const STATE_HEADER_DONE = 4;
+
+            public const STATE_DONE = 5;
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return int http\Header\Parser::STATE_* constant.
+         */
+        public function getState() {}
+
+        /**
+         * @param string $data The (part of the) header to parse.
+         * @param int $flags Any combination of [parser flags](http/Header/Parser#Parser.flags:).
+         * @param array &$header Successfully parsed headers.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return int http\Header\Parser::STATE_* constant.
+         */
+        public function parse(string $data, int $flags, array &$header = null) {}
+
+        /**
+         * @param resource $stream The header stream to parse from.
+         * @param int $flags Any combination of [parser flags](http/Header/Parser#Parser.flags:).
+         * @param array &$headers The headers parsed.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return int http\Header\Parser::STATE_* constant.
+         */
+        public function stream($stream, int $flags, array &$headers) {}
+    }
+}
+
+namespace http\Message {
+    class Body implements \Serializable
+    {
+        /**
+         * @param resource $stream A stream to be used as message body.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         */
+        public function __construct($stream = null) {}
+
+        /**
+         * @return string the message body.
+         */
+        public function __toString() {}
+
+        /**
+         * @param array $fields List of form fields to add.
+         * @param array $files List of form files to add.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Message\Body self.
+         */
+        public function addForm(?array $fields = null, ?array $files = null) {}
+
+        /**
+         * @param \http\Message $part The message part.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Message\Body self.
+         */
+        public function addPart(\http\Message $part) {}
+
+        /**
+         * @param string $data The data to append to the body.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\RuntimeException
+         * @return \http\Message\Body self.
+         */
+        public function append(string $data) {}
+
+        /**
+         * @return string|string|false string an Apache style ETag of inode, mtime and size in hex concatenated by hyphens if the message body stream is stat-able.
+         */
+        public function etag() {}
+
+        /**
+         * @return string|null string the message body boundary.
+         */
+        public function getBoundary() {}
+
+        /**
+         * @return resource the underlying stream.
+         */
+        public function getResource() {}
+
+        /**
+         * @return string serialized message body.
+         */
+        public function serialize() {}
+
+        /**
+         * @param string $field A single stat field to retrieve.
+         * @return int|object int the requested stat field.
+         */
+        public function stat(?string $field = null) {}
+
+        /**
+         * @param callable $callback The callback of the form function(http\Message\Body $from, string $data).
+         * @param int $offset Start to stream from this offset.
+         * @param int $maxlen Stream at most $maxlen bytes, or all if $maxlen is less than 1.
+         * @return \http\Message\Body self.
+         */
+        public function toCallback(callable $callback, int $offset = 0, int $maxlen = 0) {}
+
+        /**
+         * @param resource $stream The resource to write to.
+         * @param int $offset The starting offset.
+         * @param int $maxlen The maximum amount of data to stream. All content if less than 1.
+         * @return \http\Message\Body self.
+         */
+        public function toStream($stream, int $offset = 0, int $maxlen = 0) {}
+
+        /**
+         * @return string message body.
+         */
+        public function toString() {}
+
+        /**
+         * @param string $serialized The serialized message body.
+         */
+        public function unserialize($serialized) {}
+    }
+    class Parser
+    {
+            public const CLEANUP = 1;
+
+            public const DUMB_BODIES = 2;
+
+            public const EMPTY_REDIRECTS = 4;
+
+            public const GREEDY = 8;
+
+            public const STATE_FAILURE = -1;
+
+            public const STATE_START = 0;
+
+            public const STATE_HEADER = 1;
+
+            public const STATE_HEADER_DONE = 2;
+
+            public const STATE_BODY = 3;
+
+            public const STATE_BODY_DUMB = 4;
+
+            public const STATE_BODY_LENGTH = 5;
+
+            public const STATE_BODY_CHUNKED = 6;
+
+            public const STATE_BODY_DONE = 7;
+
+            public const STATE_UPDATE_CL = 8;
+
+            public const STATE_DONE = 9;
+
+        /**
+         * @throws \http\Exception\InvalidArgumentException
+         * @return int http\Message\Parser::STATE_* constant.
+         */
+        public function getState() {}
+
+        /**
+         * @param string $data The (part of the) message to parse.
+         * @param int $flags Any combination of [parser flags](http/Message/Parser#Parser.flags:).
+         * @param \http\Message $message The current state of the message parsed.
+         * @throws \http\Exception\InvalidArgumentException
+         * @return int http\Message\Parser::STATE_* constant.
+         */
+        public function parse(string $data, int $flags, \http\Message $message) {}
+
+        /**
+         * @param resource $stream The message stream to parse from.
+         * @param int $flags Any combination of [parser flags](http/Message/Parser#Parser.flags:).
+         * @param \http\Message $message The current state of the message parsed.
+         * @throws \http\Exception\InvalidArgumentException
+         * @throws \http\Exception\UnexpectedValueException
+         * @return int http\Message\Parser::STATE_* constant.
+         */
+        public function stream($stream, int $flags, \http\Message $message) {}
+    }
+}

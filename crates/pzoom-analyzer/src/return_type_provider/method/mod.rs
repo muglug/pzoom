@@ -7,6 +7,7 @@ mod date_time;
 mod dom_document;
 mod dom_node;
 mod message_formatter;
+mod mockery_mock;
 mod pdo_statement;
 mod simple_xml_element;
 
@@ -52,6 +53,7 @@ fn providers() -> &'static [&'static (dyn MethodReturnTypeProvider + 'static)] {
         &dom_node::DomNodeReturnTypeProvider,
         &simple_xml_element::SimpleXmlElementReturnTypeProvider,
         &message_formatter::MessageFormatterReturnTypeProvider,
+        &mockery_mock::MockeryMockReturnTypeProvider,
     ]
 }
 

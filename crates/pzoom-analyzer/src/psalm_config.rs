@@ -126,9 +126,33 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             config.add_issue_handler_suppression_pattern(issue_name, name);
                         }
                     }
+                    [.., "issueHandlers", issue_name, "errorLevel", "referencedProperty"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_property_suppression(issue_name, name);
+                        }
+                    }
                     [.., "stubs", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             stubs.push(name);
+                        }
+                    }
+                    [.., "plugins", "pluginClass"] => {
+                        if let Some(class) = get_attribute(e, "class")? {
+                            config
+                                .plugin_stubs
+                                .extend(known_plugin_stub_files(&class));
+                        }
+                    }
+                    [.., "enableExtensions", "extension"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.enabled_extensions.push(name);
+                        }
+                    }
+                    [.., "disableExtensions", "extension"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.disabled_extensions.push(name);
                         }
                     }
                     _ => {}
@@ -195,14 +219,38 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             config.add_issue_handler_suppression_pattern(issue_name, name);
                         }
                     }
+                    [.., "issueHandlers", issue_name, "errorLevel", "referencedProperty"] => {
+                        if active_issue_handler_suppression.as_deref() == Some(issue_name)
+                            && let Some(name) = get_attribute(e, "name")?
+                        {
+                            config.add_issue_property_suppression(issue_name, name);
+                        }
+                    }
                     [.., "stubs", "file"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             stubs.push(name);
                         }
                     }
+                    [.., "plugins", "pluginClass"] => {
+                        if let Some(class) = get_attribute(e, "class")? {
+                            config
+                                .plugin_stubs
+                                .extend(known_plugin_stub_files(&class));
+                        }
+                    }
                     [.., "forbiddenFunctions", "function"] => {
                         if let Some(name) = get_attribute(e, "name")? {
                             forbidden_functions.insert(name);
+                        }
+                    }
+                    [.., "enableExtensions", "extension"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.enabled_extensions.push(name);
+                        }
+                    }
+                    [.., "disableExtensions", "extension"] => {
+                        if let Some(name) = get_attribute(e, "name")? {
+                            config.disabled_extensions.push(name);
                         }
                     }
                     _ => {}
@@ -257,6 +305,7 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
         match key.as_str() {
             "phpVersion" => {
                 config.php_version = value;
+                config.php_version_explicit = true;
             }
             "errorLevel" => {
                 if let Ok(n) = value.parse::<u8>() {
@@ -268,6 +317,9 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             }
             "findUnusedPsalmSuppress" => {
                 config.find_unused_suppress = value == "true";
+            }
+            "allConstantsGlobal" => {
+                config.all_constants_global = value == "true";
             }
             "findUnusedBaselineEntry" => {
                 config.find_unused_baseline_entry = value == "true";
@@ -287,6 +339,11 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             "errorBaseline" => {
                 config.error_baseline = Some(value);
             }
+            "maxStringLength" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    config.max_string_length = n;
+                }
+            }
             "threads" => {
                 if let Ok(n) = value.parse::<usize>() {
                     config.threads = n;
@@ -301,6 +358,22 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
 }
 
 /// Get an attribute value from an element.
+/// Stub files registered programmatically by well-known first-party Psalm
+/// plugins (their entry points call `addStubFile`). pzoom has no plugin
+/// runtime, so a `<pluginClass>` for one of these maps to the stub files the
+/// plugin would have registered; missing files are skipped at load time.
+fn known_plugin_stub_files(plugin_class: &str) -> Vec<String> {
+    match plugin_class.trim_start_matches('\\') {
+        "Psalm\\MockeryPlugin\\Plugin" => {
+            vec!["vendor/psalm/plugin-mockery/stubs/Mockery.php".to_string()]
+        }
+        "Psalm\\PhpUnitPlugin\\Plugin" => {
+            vec!["vendor/psalm/plugin-phpunit/stubs/TestCase.phpstub".to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn get_attribute(e: &BytesStart<'_>, name: &str) -> Result<Option<String>, PsalmConfigError> {
     for attr in e.attributes() {
         let attr = attr.map_err(|e| PsalmConfigError::InvalidAttribute(format!("{:?}", e)))?;
@@ -312,11 +385,112 @@ fn get_attribute(e: &BytesStart<'_>, name: &str) -> Result<Option<String>, Psalm
     Ok(None)
 }
 
+/// Psalm's `Config::getPHPVersionFromComposerJson`: read `require.php`
+/// from composer.json in the base directory and pick the lowest
+/// major.minor PHP release that satisfies the constraint.
+pub fn php_version_from_composer_json(base_dir: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(base_dir.join("composer.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let constraint = json.get("require")?.get("php")?.as_str()?;
+    php_version_from_constraint(constraint)
+}
+
+/// Pick the lowest PHP major.minor from Psalm's candidate list whose
+/// release range intersects the composer version constraint. Psalm checks
+/// each candidate ascending against `<= X.Y.999`, so the answer is the
+/// first candidate at or above the constraint's lower bound.
+fn php_version_from_constraint(constraint: &str) -> Option<String> {
+    const CANDIDATES: &[(u32, u32)] = &[
+        (5, 4),
+        (5, 5),
+        (5, 6),
+        (7, 0),
+        (7, 1),
+        (7, 2),
+        (7, 3),
+        (7, 4),
+        (8, 0),
+        (8, 1),
+        (8, 2),
+        (8, 3),
+        (8, 4),
+        (8, 5),
+    ];
+
+    // The constraint's lower bound: the minimum over OR groups of each
+    // group's combined (max) lower bound.
+    let mut overall: Option<(u32, u32, u32)> = None;
+    for group in constraint.replace("||", "|").split('|') {
+        let mut group_bound = (0, 0, 0);
+        let mut tokens = group
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|t| !t.is_empty())
+            .peekable();
+        while let Some(token) = tokens.next() {
+            if token == "-" {
+                // Hyphen range: the token before was the lower bound; the
+                // next token is the upper bound, which never raises it.
+                tokens.next();
+                continue;
+            }
+            // An upper-bound token followed by "-" was already counted as
+            // a lower bound; constraint_lower_bound treats "<"/"!=" as 0.
+            group_bound = group_bound.max(constraint_lower_bound(token));
+        }
+        overall = Some(match overall {
+            Some(existing) => existing.min(group_bound),
+            None => group_bound,
+        });
+    }
+
+    let (major, minor, _) = overall?;
+    CANDIDATES
+        .iter()
+        .find(|&&(cm, cn)| (cm, cn) >= (major, minor))
+        .map(|&(cm, cn)| format!("{cm}.{cn}"))
+}
+
+/// Lower version bound implied by a single constraint token (`>=8.1`,
+/// `^7.4`, `~8.1.31`, `8.1.*`, bare versions). Upper-bound and
+/// not-equal operators contribute no lower bound.
+fn constraint_lower_bound(token: &str) -> (u32, u32, u32) {
+    let token = token.trim();
+    if token.is_empty() || token == "*" || token.starts_with('<') || token.starts_with("!=") {
+        return (0, 0, 0);
+    }
+    let version = token
+        .strip_prefix(">=")
+        .or_else(|| token.strip_prefix('>'))
+        .or_else(|| token.strip_prefix('^'))
+        .or_else(|| token.strip_prefix('~'))
+        .or_else(|| token.strip_prefix('='))
+        .unwrap_or(token);
+    let version = version.trim().trim_start_matches('v');
+    let mut parts = [0u32; 3];
+    for (i, piece) in version.split('.').take(3).enumerate() {
+        let digits: String = piece
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        parts[i] = digits.parse().unwrap_or(0);
+    }
+    (parts[0], parts[1], parts[2])
+}
+
 /// Load a Psalm config from a file path.
 pub fn load_psalm_config<P: AsRef<Path>>(path: P) -> Result<Config, PsalmConfigError> {
     let config_path = path.as_ref();
     let content = std::fs::read_to_string(config_path)?;
     let mut config = parse_psalm_xml(&content)?;
+
+    // Psalm's version precedence: CLI flag, then psalm.xml phpVersion,
+    // then composer.json require.php (CliUtils::initPhpVersion).
+    if !config.php_version_explicit
+        && let Some(config_dir) = config_path.parent()
+        && let Some(version) = php_version_from_composer_json(config_dir)
+    {
+        config.php_version = version;
+    }
 
     if let Some(error_baseline) = config.error_baseline.clone() {
         let error_baseline_path = Path::new(&error_baseline);
@@ -355,6 +529,33 @@ pub fn find_and_load_psalm_config<P: AsRef<Path>>(dir: P) -> Option<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_php_version_from_composer_constraint() {
+        assert_eq!(
+            php_version_from_constraint("~8.1.31 || ~8.2.27 || ~8.3.16 || ~8.4.3 || ~8.5.0"),
+            Some("8.1".to_string())
+        );
+        assert_eq!(
+            php_version_from_constraint("^7.4 || ^8.0"),
+            Some("7.4".to_string())
+        );
+        assert_eq!(
+            php_version_from_constraint(">=8.1"),
+            Some("8.1".to_string())
+        );
+        assert_eq!(
+            php_version_from_constraint("7.1 - 8.0"),
+            Some("7.1".to_string())
+        );
+        assert_eq!(php_version_from_constraint("8.2.*"), Some("8.2".to_string()));
+        assert_eq!(php_version_from_constraint("*"), Some("5.4".to_string()));
+        assert_eq!(
+            php_version_from_constraint(">=7.2, <8.0"),
+            Some("7.2".to_string())
+        );
+        assert_eq!(php_version_from_constraint("^9.0"), None);
+    }
 
     #[test]
     fn test_parse_basic_psalm_xml() {

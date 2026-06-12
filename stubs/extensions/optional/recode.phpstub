@@ -1,0 +1,33 @@
+<?php
+
+// Start of recode v.
+
+/**
+ * @removed 7.4
+ *
+ * @param string $request
+ * @param string $string
+ * @return false|string
+ */
+function recode_string($request, $string) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param string $request
+ * @param resource $input
+ * @param resource $output
+ * @return bool
+ */
+function recode_file($request, $input, $output) {}
+
+/**
+ * @removed 7.4
+ *
+ * @param string $request
+ * @param string $str
+ * @return string
+ */
+function recode($request, $str) {}
+
+// End of recode v.

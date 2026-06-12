@@ -76,7 +76,8 @@ function mb_detect_order(array|string|null $encoding = null): array|true
 }
 
 /**
- * @return ($substitute_character is null ? string|int : bool)
+ * @param int|"none"|"long"|"entity"|null $substitute_character
+ * @return ($substitute_character is null ? (int|"none"|"long"|"entity") : bool)
  */
 function mb_substitute_character(string|int|null $substitute_character = null): string|int|bool
 {
@@ -100,6 +101,9 @@ function mb_output_handler(string $string, int $status): string
 
 /**
  * @pure
+ *
+ * @param string $encoding
+ * @return false|string
  */
 function mb_preferred_mime_name(string $encoding): string|false
 {
@@ -235,10 +239,12 @@ function mb_strimwidth(
 }
 
 /**
- * @param string|array<string> $string
- * @param string|array<string>|null $from_encoding
+ * @template T of array|string
+ * @param T $string
+ * @return (T is array<int, string> ? array<int, string> : T is array ? array : string|false)
+ * @psalm-ignore-falsable-return
  *
- * @return ($string is string ? string|false : array|false)
+ * @param string|array<string>|null $from_encoding
  *
  * @pure
  */
@@ -259,9 +265,9 @@ function mb_detect_encoding(string $string, array|string|null $encodings = null,
 }
 
 /**
- * @return list<string>
- *
  * @pure
+ *
+ * @return list<string>
  */
 function mb_list_encodings(): array
 {
@@ -297,13 +303,20 @@ function mb_encode_mimeheader(
 
 /**
  * @pure
+ *
+ * @param string $string
+ * @return string
  */
 function mb_decode_mimeheader(string $string): string
 {
 }
 
 /**
- * @param string|string[] $from_encoding
+ * @param string $to_encoding
+ * @param array<array-key, mixed>|string $from_encoding
+ * @param array<array-key, mixed>|object|string $var
+ * @param array<array-key, mixed>|object|string $vars
+ * @return false|string
  */
 function mb_convert_variables(
     string $to_encoding,
@@ -425,8 +438,12 @@ function mb_eregi_replace(
 }
 
 /**
- * @return string[]|false
  * @pure
+ *
+ * @param string $pattern
+ * @param string $string
+ * @param int $limit
+ * @return false|list<string>
  */
 function mb_split(string $pattern, string $string, int $limit = -1): array|false
 {
@@ -469,9 +486,9 @@ function mb_ereg_search_init(string $string, null|string $pattern, null|string $
 }
 
 /**
- * @return list<string>|false
- *
  * @pure
+ *
+ * @return array<array-key, string>|false
  */
 function mb_ereg_search_getregs(): array|false
 {
@@ -479,6 +496,8 @@ function mb_ereg_search_getregs(): array|false
 
 /**
  * @pure
+ *
+ * @return int
  */
 function mb_ereg_search_getpos(): int
 {

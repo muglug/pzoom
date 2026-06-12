@@ -6,8 +6,10 @@ use mago_syntax::ast::ast::function_like::closure::Closure;
 use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter as MagoParameter;
 
 use pzoom_code_info::{
-    FunctionLikeParameter, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
+    FunctionLikeParameter, Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind,
+    combine_union_types,
 };
+use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 use pzoom_syntax::resolve_hint;
 use rustc_hash::FxHashSet;
@@ -20,6 +22,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::stmt_analyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
+use std::rc::Rc;
 
 /// Analyze a closure expression.
 pub fn analyze(
@@ -45,23 +48,32 @@ pub fn analyze(
 
     // Create a new scope for the closure body
     let mut closure_context = context.clone();
+    // The body is a fresh statement scope: expression-position flags from
+    // the enclosing expression (e.g. a closure returned or passed as an
+    // argument) must not leak into it — Psalm builds a new Context.
+    closure_context.inside_return = false;
+    closure_context.inside_call = false;
+    closure_context.inside_conditional = false;
+    closure_context.inside_general_use = false;
+    closure_context.inside_throw = false;
+    closure_context.inside_isset = false;
     if closure.r#static.is_some() {
-        closure_context.strip_this_assumptions(analyzer.interner);
+        closure_context.strip_this_assumptions();
     }
-    closure_context.strip_property_path_assumptions(analyzer.interner);
+    closure_context.strip_property_path_assumptions();
 
-    let param_ids: FxHashSet<StrId> = closure
+    let param_ids: FxHashSet<VarName> = closure
         .parameter_list
         .parameters
         .iter()
-        .map(|param| analyzer.interner.intern(param.variable.name))
+        .map(|param| VarName::new(param.variable.name))
         .collect();
 
     // Handle use() clause for captured variables
     if let Some(ref use_clause) = closure.use_clause {
         for use_var in use_clause.variables.iter() {
             let var_name = use_var.variable.name;
-            let var_id = analyzer.interner.intern(var_name);
+            let var_id = VarName::new(var_name);
             let normalized_name = var_name.trim_start_matches('$');
 
             if param_ids.contains(&var_id) {
@@ -79,16 +91,38 @@ pub fn analyze(
             if let Some(var_type) = context.locals.get(&var_id) {
                 // For &$var (by reference), the inner changes affect outer
                 // For $var (by value), it's a copy
-                closure_context.locals.insert(var_id, var_type.clone());
+                closure_context
+                    .locals
+                    .insert(var_id.clone(), var_type.clone());
                 if use_var.ampersand.is_some() {
-                    context.mark_external_reference(var_id);
-                    closure_context.mark_external_reference(var_id);
+                    context.mark_external_reference(var_id.clone());
+                    closure_context.mark_external_reference(var_id.clone());
+                }
+                // Psalm also carries property/array paths rooted at the
+                // captured var (`preg_match('/^\$name[\[\-]/', $var_id)`), so
+                // a narrowing like `$arg->name !== null` made before the
+                // closure holds inside it.
+                let property_prefix = format!("{}->", var_name);
+                let offset_prefix = format!("{}[", var_name);
+                for (outer_id, outer_type) in context.locals.iter() {
+                    if outer_id.starts_with(property_prefix.as_str())
+                        || outer_id.starts_with(offset_prefix.as_str())
+                    {
+                        closure_context
+                            .locals
+                            .insert(outer_id.clone(), outer_type.clone());
+                    }
                 }
             } else if use_var.ampersand.is_some() {
                 // Allow recursive self-capture patterns like `$f = function () use (&$f) { ... }`.
-                closure_context.locals.insert(var_id, TUnion::mixed());
-                context.mark_external_reference(var_id);
-                closure_context.mark_external_reference(var_id);
+                // Psalm leaves the variable typeless; mark the placeholder so
+                // checks that skip typeless values (e.g. MixedFunctionCall)
+                // can do the same.
+                let mut placeholder = TUnion::mixed();
+                placeholder.from_undefined_by_ref = true;
+                closure_context.locals.insert(var_id.clone(), placeholder);
+                context.mark_external_reference(var_id.clone());
+                closure_context.mark_external_reference(var_id.clone());
             } else if context.check_variables
                 && normalized_name != "argv"
                 && normalized_name != "argc"
@@ -101,7 +135,7 @@ pub fn analyze(
                     IssueKind::UndefinedVariable,
                     format!("Undefined variable ${}", normalized_name),
                 );
-                closure_context.locals.insert(var_id, TUnion::mixed());
+                closure_context.locals.insert(var_id.clone(), TUnion::mixed());
             }
         }
     }
@@ -122,21 +156,88 @@ pub fn analyze(
             inline_annotation,
         );
     }
+    // Psalm's closure storage keeps only the DECLARED param types — context-
+    // seeded types power the body analysis, but an untyped param stays mixed
+    // for callable-compatibility comparison (input param type null -> mixed).
+    let declared_params = params.clone();
     if let Some(expected_callable_type) = context.expected_callable_arg_types.get(&closure_offset) {
         apply_expected_callable_param_types(
+            analyzer,
             &closure.parameter_list.parameters,
             &mut params,
             expected_callable_type,
         );
     }
 
-    // Add parameters to the closure context
-    for (param, param_info) in closure.parameter_list.parameters.iter().zip(params.iter()) {
+    // Add parameters to the closure context. Hakana's `functionlike_analyzer`
+    // seeds each closure parameter with a `ClosureParam` variable-use source
+    // node (by-ref params become `InoutParam` sources).
+    for (param_index, (param, param_info)) in closure.parameter_list.parameters.iter().zip(params.iter()).enumerate() {
         let param_name = param.variable.name;
-        let param_id = analyzer.interner.intern(param_name);
-        closure_context
-            .locals
-            .insert(param_id, param_info.param_type.clone());
+        let param_id = VarName::new(param_name);
+        let mut param_type = param_info.param_type.clone();
+        // A variadic param collects its arguments (Psalm wraps in
+        // array<array-key, T> since variadics accept named arguments).
+        if param_info.is_variadic {
+            param_type = TUnion::new(TAtomic::TArray {
+                key_type: Box::new(TUnion::array_key()),
+                value_type: Box::new(param_type),
+            });
+        }
+        let param_span = param.variable.span();
+        let parent_node = crate::data_flow::add_param_dataflow_node(
+            &mut analysis_data.data_flow_graph,
+            if param_info.by_ref {
+                VariableSourceKind::InoutParam
+            } else {
+                VariableSourceKind::ClosureParam
+            },
+            VarId(analyzer.interner.intern(&param_id)),
+            crate::data_flow::make_data_flow_node_position(
+                analyzer,
+                (param_span.start.offset, param_span.end.offset),
+            ),
+            Some(&pzoom_code_info::data_flow::node::FunctionLikeIdentifier::Closure(
+                analyzer.file_path,
+                closure.span().start.offset,
+            )),
+            param_index,
+            Some(&param_info.param_type),
+        );
+        analysis_data
+            .param_sources
+            .push(crate::function_analysis_data::ParamSourceInfo {
+                node_id: parent_node.id.clone(),
+                function_key: closure.span().start.offset,
+                param_index,
+                is_closure: true,
+                reportable: true,
+                is_promoted: false,
+                by_ref: param_info.by_ref,
+                function_end: closure.span().end.offset,
+                name: param_name.to_string(),
+                span: (param_span.start.offset, param_span.end.offset),
+                method_param_meta: None,
+            });
+        param_type.parent_nodes.push(parent_node);
+        let param_var = VarName::new(param_name);
+        if param_info.by_ref {
+            // Writes to a by-ref param are visible to the caller.
+            closure_context.mark_external_reference(param_var.clone());
+        }
+        closure_context.locals.insert(param_var.clone(), param_type);
+
+        // Parameters are definitely assigned: clear any possibly-assigned
+        // demotion inherited from the enclosing scope (both key spellings).
+        closure_context.possibly_assigned_var_ids.remove(&param_var);
+        closure_context.assigned_var_ids.entry(param_var).or_insert(1);
+        let alternate = if let Some(stripped) = param_name.strip_prefix('$') {
+            VarName::new(stripped)
+        } else {
+            VarName::from(format!("${}", param_name))
+        };
+        closure_context.possibly_assigned_var_ids.remove(&alternate);
+        closure_context.assigned_var_ids.entry(alternate).or_insert(1);
     }
 
     let hinted_return_type = closure.return_type_hint.as_ref().map(|rth| {
@@ -169,22 +270,69 @@ pub fn analyze(
     closure_function_info.signature_return_type = closure_expected_return_type.clone();
     closure_function_info.returns_by_ref = closure.ampersand.is_some();
 
-    let closure_stmt_analyzer = analyzer.for_nested_function(Some(&closure_function_info));
+    let mut closure_stmt_analyzer = analyzer.for_nested_function(Some(&closure_function_info));
+    closure_stmt_analyzer.inside_closure = true;
 
-    let issue_count_before = analysis_data.issues.len();
+    // Psalm models by-ref closure uses by analyzing the body inside a virtual
+    // `while` loop (FunctionLikeAnalyzer's $byref_uses block): assignments
+    // from "previous invocations" widen the use vars before the real pass, so
+    // a narrowing check against the widened type isn't reported as redundant.
+    // pzoom approximates the fixed point with one discarded widening pre-pass.
+    let byref_use_vars: Vec<VarName> = closure
+        .use_clause
+        .as_ref()
+        .map(|use_clause| {
+            use_clause
+                .variables
+                .iter()
+                .filter(|use_var| use_var.ampersand.is_some())
+                .map(|use_var| VarName::new(use_var.variable.name))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !byref_use_vars.is_empty() && !closure.body.statements.is_empty() {
+        let mut scratch_context = closure_context.clone();
+        let return_types_mark = analysis_data.inferred_return_types.len();
+        let yield_types_mark = analysis_data.inferred_yield_types.len();
+        analysis_data.start_recording_issues();
+        let _ = stmt_analyzer::analyze_stmts(
+            &closure_stmt_analyzer,
+            closure.body.statements.as_slice(),
+            analysis_data,
+            &mut scratch_context,
+        );
+        let _ = analysis_data.clear_currently_recorded_issues();
+        analysis_data.stop_recording_issues();
+        analysis_data.inferred_return_types.truncate(return_types_mark);
+        analysis_data.inferred_yield_types.truncate(yield_types_mark);
+
+        for var_id in &byref_use_vars {
+            if let (Some(seed_type), Some(widened_type)) = (
+                closure_context.locals.get(var_id),
+                scratch_context.locals.get(var_id),
+            ) {
+                let combined = combine_union_types(seed_type, widened_type, false);
+                closure_context.locals.insert(var_id.clone(), combined);
+            }
+        }
+    }
+
+    let issue_marks_before = analysis_data.issue_emission_marks();
     let prev_is_generator = analysis_data.current_function_is_generator;
-    analysis_data.current_function_is_generator =
-        stmt_analyzer::body_contains_yield(closure.body.statements.as_slice());
+    let body_contains_yield = stmt_analyzer::body_contains_yield(closure.body.statements.as_slice());
+    analysis_data.current_function_is_generator = body_contains_yield;
+    let saved_var_appearances = std::mem::take(&mut analysis_data.first_var_appearances);
     let _ = stmt_analyzer::analyze_stmts(
         &closure_stmt_analyzer,
         closure.body.statements.as_slice(),
         analysis_data,
         &mut closure_context,
     );
+    analysis_data.first_var_appearances = saved_var_appearances;
     analysis_data.current_function_is_generator = prev_is_generator;
     let saw_impure_issue = function_like_analyzer::strip_inferred_impure_issues(
         analysis_data,
-        issue_count_before,
+        issue_marks_before,
         !infer_purity,
     );
     let has_obvious_side_effect_stmt = function_like_analyzer::body_has_obvious_side_effect_statements(
@@ -194,29 +342,73 @@ pub fn analyze(
         && !has_obvious_side_effect_stmt
         && (closure_function_info.is_pure || closure_function_info.is_mutation_free);
 
-    let yielded_return_type = infer_yielded_return_type(analysis_data, yield_types_start);
-    let inferred_return_type = if yielded_return_type.is_some() {
-        yielded_return_type.clone()
+    let inferred_return_type = if body_contains_yield {
+        // A yielding closure returns a Generator (Psalm's ReturnTypeCollector):
+        // key/value from the recorded yields (mixed when only bare `yield;`),
+        // send mixed, return from the body's return statements.
+        Some(infer_generator_return_type(
+            analysis_data,
+            yield_types_start,
+            return_types_start,
+        ))
     } else {
-        Some(analysis_data.combine_inferred_return_types(return_types_start))
+        let mut combined = analysis_data.combine_inferred_return_types(return_types_start);
+        // A body that always exits (exit/throw on every path, no returns)
+        // infers `never`, not void — Psalm's never ⊂ any declared callable
+        // return (`set_error_handler(function () { exit(1); })`).
+        if combined.is_void() {
+            let control_actions = crate::stmt::scope_analyzer::get_control_actions(
+                closure.body.statements.as_slice(),
+                analysis_data,
+                &[],
+                true,
+            );
+            if control_actions.len() == 1
+                && control_actions.contains(&crate::stmt::scope_analyzer::ControlAction::End)
+            {
+                combined = TUnion::nothing();
+            }
+        }
+        Some(combined)
     };
 
+    // Psalm skips MissingClosureReturnType for closures inside calls
+    // (ReturnTypeAnalyzer's \$closure_inside_call, which MatchAnalyzer also
+    // sets for match arms) unless the inferred return is mixed.
     let has_expected_callable_context = context
         .expected_callable_arg_types
-        .contains_key(&closure_offset);
+        .contains_key(&closure_offset)
+        || (context.inside_call
+            && !inferred_return_type
+                .as_ref()
+                .is_some_and(|inferred| inferred.is_mixed()));
+
+    let closure_body_always_leaves = closure_context.has_returned
+        || (!closure.body.statements.is_empty()
+            && !crate::stmt::scope_analyzer::get_control_actions(
+                closure.body.statements.as_slice(),
+                analysis_data,
+                &[],
+                true,
+            )
+            .contains(&crate::stmt::scope_analyzer::ControlAction::None));
 
     emit_closure_return_issues(
         analyzer,
         analysis_data,
         closure.span().start.offset,
         closure.span().end.offset,
-        closure_context.has_returned,
+        closure_body_always_leaves,
         closure_expected_return_type.as_ref(),
         inferred_return_type.as_ref(),
         has_expected_callable_context,
     );
 
-    let return_type = if let Some(hinted_return_type) = hinted_return_type {
+    // Psalm precedence: a docblock `@return` overrides the native hint; a
+    // bare native hint defers to the inferred body type when contained.
+    let return_type = if let Some(inline_return_type) = inline_return_type {
+        Some(inline_return_type)
+    } else if let Some(hinted_return_type) = hinted_return_type {
         if let Some(inferred_return_type) = inferred_return_type {
             let mut comparison_result = TypeComparisonResult::new();
             if union_type_comparator::is_contained_by(
@@ -235,16 +427,73 @@ pub fn analyze(
             Some(hinted_return_type)
         }
     } else {
-        inline_return_type.or(inferred_return_type)
+        inferred_return_type
     };
 
-    let expr_type = TUnion::new(TAtomic::TClosure {
-        params: Some(params),
+    // The closure's recorded return/yield types are consumed above; drop them
+    // so the enclosing function-like's slice (everything since its own start
+    // mark) only sees its own returns (Psalm's ReturnTypeCollector never
+    // descends into nested function expressions).
+    analysis_data
+        .inferred_return_types
+        .truncate(return_types_start);
+    analysis_data
+        .inferred_yield_types
+        .truncate(yield_types_start);
+
+    let mut expr_type = TUnion::new(TAtomic::TClosure {
+        params: Some(declared_params),
         return_type: return_type.map(Box::new),
         is_pure: Some(closure_is_pure),
     });
 
-    analysis_data.set_expr_type(pos, expr_type);
+    add_closure_reference_dataflow(analyzer, analysis_data, &mut expr_type, closure_offset, pos);
+
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
+}
+
+/// Port of Hakana `closure_analyzer`'s whole-program dataflow: the closure
+/// expression's type is parented by a `ReferenceTo(closure)` node fed by the
+/// closure's `CallTo` return node, so taints returned by the closure reach
+/// uses of the closure value. Function-body graphs get no closure nodes in
+/// Hakana, so this is gated to whole-program mode.
+fn add_closure_reference_dataflow(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    closure_type: &mut TUnion,
+    closure_offset: u32,
+    pos: Pos,
+) {
+    if !matches!(
+        analysis_data.data_flow_graph.kind,
+        pzoom_code_info::GraphKind::WholeProgram(_)
+    ) {
+        return;
+    }
+
+    let closure_id =
+        pzoom_code_info::FunctionLikeIdentifier::Closure(analyzer.file_path, closure_offset);
+    let closure_pos = crate::data_flow::make_data_flow_node_position(analyzer, pos);
+
+    let application_node =
+        pzoom_code_info::DataFlowNode::get_for_method_reference(&closure_id, Some(closure_pos));
+
+    let closure_return_node =
+        pzoom_code_info::DataFlowNode::get_for_method_return(&closure_id, Some(closure_pos), None);
+
+    analysis_data.data_flow_graph.add_path(
+        &closure_return_node.id,
+        &application_node.id,
+        pzoom_code_info::PathKind::Default,
+        vec![],
+        vec![],
+    );
+
+    analysis_data
+        .data_flow_graph
+        .add_node(application_node.clone());
+
+    closure_type.parent_nodes = vec![application_node];
 }
 
 /// Analyze an arrow function expression.
@@ -274,10 +523,18 @@ pub fn analyze_arrow_function(
 
     // Add parameters to context
     let mut arrow_context = context.clone();
+    // Fresh statement scope (see the closure path above) — except that an
+    // arrow body IS its return value, so it analyzes inside a return.
+    arrow_context.inside_return = true;
+    arrow_context.inside_call = false;
+    arrow_context.inside_conditional = false;
+    arrow_context.inside_general_use = false;
+    arrow_context.inside_throw = false;
+    arrow_context.inside_isset = false;
     if arrow.r#static.is_some() {
-        arrow_context.strip_this_assumptions(analyzer.interner);
+        arrow_context.strip_this_assumptions();
     }
-    arrow_context.strip_property_path_assumptions(analyzer.interner);
+    arrow_context.strip_property_path_assumptions();
 
     // Extract parameter types
     let mut params = extract_param_types(
@@ -295,20 +552,85 @@ pub fn analyze_arrow_function(
             inline_annotation,
         );
     }
+    // See the closure path: the TClosure atomic keeps declared param types.
+    let declared_params = params.clone();
     if let Some(expected_callable_type) = context.expected_callable_arg_types.get(&arrow_offset) {
         apply_expected_callable_param_types(
+            analyzer,
             &arrow.parameter_list.parameters,
             &mut params,
             expected_callable_type,
         );
     }
 
-    for (param, param_info) in arrow.parameter_list.parameters.iter().zip(params.iter()) {
+    // Hakana's `functionlike_analyzer` seeds each closure parameter with a
+    // `ClosureParam` variable-use source node (by-ref params → `InoutParam`).
+    for (param_index, (param, param_info)) in arrow.parameter_list.parameters.iter().zip(params.iter()).enumerate() {
         let param_name = param.variable.name;
-        let param_id = analyzer.interner.intern(param_name);
-        arrow_context
-            .locals
-            .insert(param_id, param_info.param_type.clone());
+        let param_id = VarName::new(param_name);
+        let mut param_type = param_info.param_type.clone();
+        // A variadic param collects its arguments (Psalm wraps in
+        // array<array-key, T> since variadics accept named arguments).
+        if param_info.is_variadic {
+            param_type = TUnion::new(TAtomic::TArray {
+                key_type: Box::new(TUnion::array_key()),
+                value_type: Box::new(param_type),
+            });
+        }
+        let param_span = param.variable.span();
+        let parent_node = crate::data_flow::add_param_dataflow_node(
+            &mut analysis_data.data_flow_graph,
+            if param_info.by_ref {
+                VariableSourceKind::InoutParam
+            } else {
+                VariableSourceKind::ClosureParam
+            },
+            VarId(analyzer.interner.intern(&param_id)),
+            crate::data_flow::make_data_flow_node_position(
+                analyzer,
+                (param_span.start.offset, param_span.end.offset),
+            ),
+            Some(&pzoom_code_info::data_flow::node::FunctionLikeIdentifier::Closure(
+                analyzer.file_path,
+                arrow.span().start.offset,
+            )),
+            param_index,
+            Some(&param_info.param_type),
+        );
+        analysis_data
+            .param_sources
+            .push(crate::function_analysis_data::ParamSourceInfo {
+                node_id: parent_node.id.clone(),
+                function_key: arrow.span().start.offset,
+                param_index,
+                is_closure: true,
+                reportable: true,
+                is_promoted: false,
+                by_ref: param_info.by_ref,
+                function_end: arrow.span().end.offset,
+                name: param_name.to_string(),
+                span: (param_span.start.offset, param_span.end.offset),
+                method_param_meta: None,
+            });
+        param_type.parent_nodes.push(parent_node);
+        let param_var = VarName::new(param_name);
+        if param_info.by_ref {
+            // Writes to a by-ref param are visible to the caller.
+            arrow_context.mark_external_reference(param_var.clone());
+        }
+        arrow_context.locals.insert(param_var.clone(), param_type);
+
+        // Parameters are definitely assigned: clear any possibly-assigned
+        // demotion inherited from the enclosing scope (both key spellings).
+        arrow_context.possibly_assigned_var_ids.remove(&param_var);
+        arrow_context.assigned_var_ids.entry(param_var).or_insert(1);
+        let alternate = if let Some(stripped) = param_name.strip_prefix('$') {
+            VarName::new(stripped)
+        } else {
+            VarName::from(format!("${}", param_name))
+        };
+        arrow_context.possibly_assigned_var_ids.remove(&alternate);
+        arrow_context.assigned_var_ids.entry(alternate).or_insert(1);
     }
 
     let mut arrow_function_info = analyzer.function_info.cloned().unwrap_or_default();
@@ -318,10 +640,11 @@ pub fn analyze_arrow_function(
     arrow_function_info.is_pure = has_explicit_pure_annotation || infer_purity;
     arrow_function_info.is_mutation_free = false;
 
-    let arrow_expr_analyzer = analyzer.for_nested_function(Some(&arrow_function_info));
+    let mut arrow_expr_analyzer = analyzer.for_nested_function(Some(&arrow_function_info));
+    arrow_expr_analyzer.inside_closure = true;
 
     // Analyze the body expression to infer return type
-    let issue_count_before = analysis_data.issues.len();
+    let issue_marks_before = analysis_data.issue_emission_marks();
     let body_pos = expression_analyzer::analyze(
         &arrow_expr_analyzer,
         arrow.expression,
@@ -330,12 +653,21 @@ pub fn analyze_arrow_function(
     );
     let saw_impure_issue = function_like_analyzer::strip_inferred_impure_issues(
         analysis_data,
-        issue_count_before,
+        issue_marks_before,
         !infer_purity,
     );
     let arrow_is_pure =
         !saw_impure_issue && (arrow_function_info.is_pure || arrow_function_info.is_mutation_free);
-    let inferred_return_type = analysis_data.get_expr_type(body_pos).map(|t| (*t).clone());
+    // An arrow body IS its return statement, so an inline unnamed `@var`
+    // docblock on the body expression overrides the inferred value type —
+    // Psalm's ReturnAnalyzer `$var_comment_type` (e.g. `fn(): array =>
+    // /** @var string[] */ require $path`).
+    let inferred_return_type = crate::stmt::return_analyzer::get_inline_return_annotation_type(
+        analyzer,
+        arrow.expression,
+        None,
+    )
+    .or_else(|| analysis_data.expr_types.get(&body_pos).cloned().map(|t| (*t).clone()));
 
     let hinted_return = arrow.return_type_hint.as_ref().map(|rth| {
         resolve_hint(
@@ -375,30 +707,56 @@ pub fn analyze_arrow_function(
         inferred_return_type.as_ref(),
         context
             .expected_callable_arg_types
-            .contains_key(&arrow_offset),
+            .contains_key(&arrow_offset)
+            // Psalm's \$closure_inside_call (also set by MatchAnalyzer for
+            // match arms) skips MissingClosureReturnType unless the inferred
+            // return is mixed.
+            || (context.inside_call
+                && !inferred_return_type
+                    .as_ref()
+                    .is_some_and(|inferred| inferred.is_mixed())),
     );
 
-    let return_type = hinted_return
-        .or(inline_return_type)
-        .or(inferred_return_type);
+    // Psalm precedence: a docblock `@return` overrides the native hint; a
+    // bare native hint defers to the inferred body type when that's more
+    // specific (contained) — `fn(...): array => [...]` keeps the list shape.
+    let return_type = if let Some(inline_return_type) = inline_return_type {
+        Some(inline_return_type)
+    } else if let Some(hinted_return) = hinted_return {
+        match inferred_return_type {
+            Some(inferred_return_type)
+                if union_type_comparator::is_contained_by(
+                    analyzer.codebase,
+                    &inferred_return_type,
+                    &hinted_return,
+                    false,
+                    false,
+                    &mut TypeComparisonResult::new(),
+                ) =>
+            {
+                Some(inferred_return_type)
+            }
+            _ => Some(hinted_return),
+        }
+    } else {
+        inferred_return_type
+    };
 
     let expr_type = TUnion::new(TAtomic::TClosure {
-        params: Some(params),
+        params: Some(declared_params),
         return_type: return_type.map(Box::new),
         is_pure: Some(arrow_is_pure),
     });
 
-    analysis_data.set_expr_type(pos, expr_type);
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
 }
 
-fn infer_yielded_return_type(
+fn infer_generator_return_type(
     analysis_data: &FunctionAnalysisData,
-    start_index: usize,
-) -> Option<TUnion> {
-    let new_yield_types = &analysis_data.inferred_yield_types[start_index..];
-    if new_yield_types.is_empty() {
-        return None;
-    }
+    yield_types_start: usize,
+    return_types_start: usize,
+) -> TUnion {
+    let new_yield_types = &analysis_data.inferred_yield_types[yield_types_start..];
 
     let mut key_type: Option<TUnion> = None;
     let mut value_type: Option<TUnion> = None;
@@ -418,10 +776,19 @@ fn infer_yielded_return_type(
         });
     }
 
-    Some(TUnion::new(TAtomic::TIterable {
-        key_type: Box::new(key_type.unwrap_or_else(TUnion::array_key)),
-        value_type: Box::new(value_type.unwrap_or_else(TUnion::mixed)),
-    }))
+    let generator_return_type = analysis_data.combine_inferred_return_types(return_types_start);
+
+    TUnion::new(TAtomic::TNamedObject {
+        name: StrId::GENERATOR,
+        type_params: Some(vec![
+            key_type.unwrap_or_else(TUnion::mixed),
+            value_type.unwrap_or_else(TUnion::mixed),
+            TUnion::mixed(),
+            generator_return_type,
+        ]),
+        is_static: false,
+        remapped_params: false,
+    })
 }
 
 fn apply_inline_callable_param_types<'a, I>(
@@ -433,11 +800,15 @@ fn apply_inline_callable_param_types<'a, I>(
     I: IntoIterator<Item = &'a MagoParameter<'a>>,
 {
     for (index, (param, param_info)) in parameters.into_iter().zip(params.iter_mut()).enumerate() {
-        let param_id = analyzer.interner.intern(param.variable.name);
+        let param_id = VarName::new(param.variable.name);
         let by_name = inline_annotation
             .params
             .iter()
-            .find(|inline_param| inline_param.param_name == Some(param_id));
+            .find(|inline_param| {
+                inline_param
+                    .param_name
+                    .is_some_and(|name| analyzer.interner.lookup(name).as_ref() == param_id.as_str())
+            });
         let by_position = inline_annotation
             .params
             .get(index)
@@ -450,6 +821,7 @@ fn apply_inline_callable_param_types<'a, I>(
 }
 
 fn apply_expected_callable_param_types<'a, I>(
+    analyzer: &StatementsAnalyzer<'_>,
     parameters: I,
     params: &mut [FunctionLikeParameter],
     expected_callable_type: &TUnion,
@@ -459,15 +831,38 @@ fn apply_expected_callable_param_types<'a, I>(
     let expected_param_types = extract_expected_callable_param_types(expected_callable_type);
 
     for (index, (param, param_info)) in parameters.into_iter().zip(params.iter_mut()).enumerate() {
-        if param.hint.is_some() || !param_info.param_type.is_mixed() {
-            continue;
-        }
-
         let Some(expected_param_type) = expected_param_types.get(index) else {
             continue;
         };
 
         if expected_param_type.is_mixed() {
+            continue;
+        }
+
+        if param.hint.is_some() || !param_info.param_type.is_mixed() {
+            // Psalm's handleClosureArg also NARROWS a signature-typed closure
+            // param when the expected arg element type is contained by the
+            // declared hint (`fn(Atomic $a) => $a->value` over a list of
+            // literal atomics analyzes with the literal type). A docblock'd
+            // param keeps its type — pzoom applies inline callable
+            // annotations before this, leaving the type non-mixed and the
+            // containment check to decide.
+            let mut comparison_result =
+                crate::type_comparator::TypeComparisonResult::default();
+            if !param_info.param_type.is_mixed()
+                && !expected_param_type.is_nothing()
+                && union_type_comparator::is_contained_by(
+                    analyzer.codebase,
+                    expected_param_type,
+                    &param_info.param_type,
+                    false,
+                    false,
+                    &mut comparison_result,
+                )
+                && expected_param_type != &param_info.param_type
+            {
+                param_info.param_type = expected_param_type.clone();
+            }
             continue;
         }
 
@@ -598,7 +993,7 @@ fn emit_closure_return_issues(
             && !expected_return_type.is_void()
             && !expected_return_type.is_mixed()
             && !expected_return_type.is_nothing()
-            && !expected_return_type.is_nullable
+            && !expected_return_type.is_nullable()
             && !union_allows_implicit_yield_return(expected_return_type)
         {
             add_issue(

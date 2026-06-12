@@ -259,6 +259,9 @@ namespace {
 
     const P_PIDFD = 3;
 
+    /**
+     * @return int
+     */
     function pcntl_fork(): int
     {
     }
@@ -285,22 +288,41 @@ namespace {
     {
     }
 
+    /**
+     * @return bool
+     */
     function pcntl_signal_dispatch(): bool
     {
     }
 
+    /**
+     * @param int $status
+     * @return bool
+     */
     function pcntl_wifexited(int $status): bool
     {
     }
 
+    /**
+     * @param int $status
+     * @return bool
+     */
     function pcntl_wifstopped(int $status): bool
     {
     }
 
+    /**
+     * @param int $status
+     * @return bool
+     */
     function pcntl_wifsignaled(int $status): bool
     {
     }
 
+    /**
+     * @param int $status
+     * @return int
+     */
     function pcntl_wexitstatus(int $status): int|false
     {
     }
@@ -309,10 +331,18 @@ namespace {
     {
     }
 
+    /**
+     * @param int $status
+     * @return int
+     */
     function pcntl_wtermsig(int $status): int|false
     {
     }
 
+    /**
+     * @param int $status
+     * @return int
+     */
     function pcntl_wstopsig(int $status): int|false
     {
     }
@@ -321,14 +351,24 @@ namespace {
     {
     }
 
+    /**
+     * @param int $seconds
+     * @return int
+     */
     function pcntl_alarm(int $seconds): int
     {
     }
 
+    /**
+     * @return int
+     */
     function pcntl_get_last_error(): int
     {
     }
 
+    /**
+     * @return int
+     */
     function pcntl_errno(): int
     {
     }

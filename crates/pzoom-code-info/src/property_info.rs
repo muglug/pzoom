@@ -21,10 +21,30 @@ pub struct PropertyInfo {
     pub visibility: Visibility,
     pub is_static: bool,
     pub is_readonly: bool,
+    /// Whether `readonly` came from the native modifier (vs a docblock
+    /// `@readonly`). Psalm's readonly-default check (`$stmt->isReadonly()`)
+    /// applies only to the native form.
+    #[serde(default)]
+    pub is_readonly_native: bool,
     pub readonly_allow_private_mutation: bool,
     pub has_default: bool,
     pub is_promoted: bool,
+    /// Property hooks (`get`/`set` blocks) make the property virtual — it
+    /// needs no constructor initialization.
+    #[serde(default)]
+    pub is_hooked: bool,
     pub is_deprecated: bool,
+    /// True for properties conjured without a source location (Psalm's
+    /// PropertyMap entries get a bare `PropertyStorage` with `location`
+    /// null); the initialization checks skip location-less properties.
+    #[serde(default)]
+    pub location_free: bool,
+    /// A `@psalm-suppress PropertyNotSetInConstructor` on the property's own
+    /// docblock marks it initialized at scan time (Psalm's
+    /// `ClassLikeNodeScanner` puts it in `initialized_properties`), exempting
+    /// it - and every inheritor - from the initialization checks.
+    #[serde(default)]
+    pub marked_initialized: bool,
     /// Internal visibility scopes for this property (`@internal` / `@psalm-internal`).
     /// Empty means the property is publicly accessible.
     pub internal: Vec<StrId>,

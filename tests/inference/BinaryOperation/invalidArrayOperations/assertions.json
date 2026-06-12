@@ -1,0 +1,1 @@
+{"$a1": "float|int", "$a2": "float|int", "$a3": "array<never, never>", "$b1": "float|int", "$b2": "float|int", "$b3": "float|int", "$c1": "float|int", "$c2": "float|int", "$c3": "float|int", "$d1": "float|int", "$d2": "float|int", "$d3": "float|int", "$e1": "float|int", "$e2": "float|int", "$e3": "float|int", "$f1": "float|int", "$f2": "float|int", "$f3": "float|int"}

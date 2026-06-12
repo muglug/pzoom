@@ -1,1 +1,1 @@
-UndefinedVariable
+PossiblyUndefinedVariable - input.php:13:9 - Possibly undefined variable $a

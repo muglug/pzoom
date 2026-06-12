@@ -40,6 +40,20 @@ pub struct StatementsAnalyzer<'a> {
     /// (e.g. rewriting a statement-level `A && B` to `if (A) { B; }`, mirroring
     /// Psalm's AndAnalyzer from_stmt path).
     pub arena: Option<&'a bumpalo::Bump>,
+
+    /// Byte offset of each line start (`[0]` is 0), built once per file so
+    /// line/column lookups are a binary search instead of an O(file) scan.
+    line_starts: std::rc::Rc<Vec<u32>>,
+
+    /// Whether the file opens with `declare(strict_types=1)`, computed once
+    /// per file (the argument analyzer consults this per argument).
+    pub file_uses_strict_types: bool,
+
+    /// Whether this analyzer runs a closure/arrow-function body. Closures
+    /// clone the enclosing function's info (name included), so checks keyed
+    /// on the function NAME (e.g. returning a value from `__construct`) must
+    /// not fire inside them.
+    pub inside_closure: bool,
 }
 
 impl<'a> StatementsAnalyzer<'a> {
@@ -51,6 +65,23 @@ impl<'a> StatementsAnalyzer<'a> {
         resolved_names: &'a ResolvedNames,
         config: &'a Config,
     ) -> Self {
+        let mut line_starts = Vec::with_capacity(source.len() / 32 + 1);
+        line_starts.push(0u32);
+        for (index, byte) in source.bytes().enumerate() {
+            if byte == b'\n' {
+                line_starts.push(index as u32 + 1);
+            }
+        }
+
+        // Same predicate callable_validation previously evaluated per call:
+        // the first 512 chars, whitespace removed, contain the declare.
+        let file_uses_strict_types = source
+            .chars()
+            .take(512)
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .contains("declare(strict_types=1)");
+
         Self {
             codebase,
             interner,
@@ -60,6 +91,9 @@ impl<'a> StatementsAnalyzer<'a> {
             resolved_names,
             config,
             arena: None,
+            line_starts: std::rc::Rc::new(line_starts),
+            file_uses_strict_types,
+            inside_closure: false,
         }
     }
 
@@ -90,6 +124,9 @@ impl<'a> StatementsAnalyzer<'a> {
             resolved_names: self.resolved_names,
             config: self.config,
             arena: self.arena,
+            line_starts: std::rc::Rc::clone(&self.line_starts),
+            file_uses_strict_types: self.file_uses_strict_types,
+            inside_closure: false,
         }
     }
 
@@ -120,26 +157,27 @@ impl<'a> StatementsAnalyzer<'a> {
 
     /// Get the line number (1-indexed) for a byte offset.
     pub fn get_line_number(&self, offset: u32) -> u32 {
-        let offset = offset as usize;
-        self.source[..offset.min(self.source.len())]
-            .bytes()
-            .filter(|&b| b == b'\n')
-            .count() as u32
-            + 1
+        let offset = offset.min(self.source.len() as u32);
+        // partition_point counts line starts at or before `offset`; the count
+        // is exactly the 1-indexed line number (line_starts[0] is always 0).
+        self.line_starts.partition_point(|&start| start <= offset) as u32
     }
 
     /// Get the column number (1-indexed) for a byte offset.
     pub fn get_column_number(&self, offset: u32) -> u32 {
-        let offset = offset as usize;
-        let source_prefix = &self.source[..offset.min(self.source.len())];
-        // Find the last newline before this offset
-        let last_newline = source_prefix.rfind('\n').map_or(0, |pos| pos + 1);
-        (offset - last_newline) as u32 + 1
+        let offset = offset.min(self.source.len() as u32);
+        let line_index = self.line_starts.partition_point(|&start| start <= offset) - 1;
+        offset - self.line_starts[line_index] + 1
     }
 
     /// Get both line and column for a byte offset.
     pub fn get_line_column(&self, offset: u32) -> (u32, u32) {
-        (self.get_line_number(offset), self.get_column_number(offset))
+        let offset = offset.min(self.source.len() as u32);
+        let line_index = self.line_starts.partition_point(|&start| start <= offset) - 1;
+        (
+            line_index as u32 + 1,
+            offset - self.line_starts[line_index] + 1,
+        )
     }
 
     /// Look up a resolved name by its AST node offset.
@@ -172,6 +210,15 @@ impl<'a> StatementsAnalyzer<'a> {
             .files
             .get(&self.file_path)
             .and_then(|file| file.inline_annotations.trace_annotations.get(&offset))
+    }
+
+    /// Get the `@psalm-scope-this` class for a statement offset.
+    pub fn get_inline_scope_this_annotation(&self, offset: u32) -> Option<StrId> {
+        self.codebase
+            .files
+            .get(&self.file_path)
+            .and_then(|file| file.inline_annotations.scope_this_annotations.get(&offset))
+            .copied()
     }
 }
 

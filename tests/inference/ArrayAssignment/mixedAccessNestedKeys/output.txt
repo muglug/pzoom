@@ -1,0 +1,1 @@
+MixedArgument - input.php:6:42 - Argument 1 of takesString cannot be mixed, expecting string

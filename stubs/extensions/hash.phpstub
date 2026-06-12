@@ -26,6 +26,10 @@ function hash(string $algo, string $data, bool $binary = false, array $options =
 
 /**
  * @pure
+ *
+ * @param string $known_string
+ * @param string $user_string
+ * @return bool
  */
 function hash_equals(string $known_string, string $user_string): bool
 {
@@ -89,8 +93,9 @@ function hash_copy(HashContext $context): HashContext
 }
 
 /**
- * @return non-empty-list<non-empty-string>
  * @pure
+ *
+ * @return list<string>
  */
 function hash_algos(): array
 {
@@ -161,10 +166,10 @@ function mhash_get_hash_name(int $algo): string|false
 }
 
 /**
- * @return int<0, max>
- *
  * @deprecated
  * @pure
+ *
+ * @return int
  */
 function mhash_count(): int
 {

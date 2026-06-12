@@ -1,0 +1,2 @@
+TaintedHtml - input.php:2:6 - Detected tainted HTML in path: $_GET -> $_GET['name'] (input.php:2:7) -> print#1 (input.php:2:6)
+TaintedTextWithQuotes - input.php:2:6 - Detected tainted text with possible quotes in path: $_GET -> $_GET['name'] (input.php:2:7) -> print#1 (input.php:2:6)

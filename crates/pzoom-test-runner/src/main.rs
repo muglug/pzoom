@@ -54,6 +54,11 @@ struct BaseCodebase {
     stub_files: FxHashSet<pzoom_str::StrId>,
 }
 
+/// The PHP version the reused base codebase's CallMap was applied for
+/// (the harness default, 7.4). Tests pinning another version via
+/// php_version.txt re-apply the right CallMap onto their clone.
+const BASE_CALLMAP_PHP_VERSION_ID: u32 = 70_400;
+
 fn main() {
     let cli = Cli::parse();
 
@@ -80,6 +85,7 @@ fn main() {
     }
 
     // Pre-scan stubs if reusing codebase
+    let t_prescan = Instant::now();
     let base_codebase = if cli.reuse_codebase && test_folders.len() > 1 {
         let start = Instant::now();
         if cli.verbose {
@@ -88,9 +94,25 @@ fn main() {
 
         let mut scanner = Scanner::new();
         if Path::new(&stubs_path).exists() {
-            scanner.scan_stub_directory(Path::new(&stubs_path));
+            scanner.scan_stub_directory(Path::new(&stubs_path), &test_enabled_extensions());
         }
-        let scan_result = scanner.finish();
+        let mut scan_result = scanner.finish();
+
+        // Builtin signatures come from Psalm's CallMap for the harness default
+        // PHP version; per-test version pins re-apply on their clone.
+        pzoom_orchestrator::apply_call_map(
+            &mut scan_result.codebase,
+            &scan_result.interner,
+            BASE_CALLMAP_PHP_VERSION_ID,
+        );
+
+        // Populate the stub codebase once here: per-test populate then only
+        // touches the test file's own symbols (is_populated flags skip the
+        // rest), mirroring how Hakana reuses its pre-built core codebase.
+        {
+            let mut populator = Populator::new(&mut scan_result.codebase, &scan_result.interner);
+            populator.populate();
+        }
 
         if cli.verbose {
             eprintln!(
@@ -108,6 +130,9 @@ fn main() {
     } else {
         None
     };
+    if std::env::var("PZOOM_TEST_TIMING").is_ok() {
+        eprintln!("TIMING prescan={:.0}ms", t_prescan.elapsed().as_secs_f64() * 1000.0);
+    }
 
     let mut passed = 0;
     let mut failed = 0;
@@ -295,20 +320,52 @@ fn run_test_with_base(
     };
 
     // Clone the base codebase and interner
+    let t_clone = Instant::now();
     let mut codebase = base.codebase.clone();
-    let mut interner = base.interner.clone();
+    let interner = base.interner.clone();
     let stub_files = base.stub_files.clone();
+    let clone_ms = t_clone.elapsed().as_secs_f64() * 1000.0;
+    let t_scan = Instant::now();
 
-    // Scan just the test file
-    let file_path_id = interner.intern(&input_path);
+    // Scan just the test file (through a single-thread ThreadedInterner
+    // handle, as the declaration collector requires).
+    let interner_arc = std::sync::Arc::new(interner);
+    let threaded_interner = pzoom_str::ThreadedInterner::new(interner_arc.clone());
+    let file_path_id = threaded_interner.intern(&input_path);
     let file_id = pzoom_syntax::FileId::new(&input_path);
 
     let arena = bumpalo::Bump::new();
-    let (program, _parse_error) =
+    let (program, parse_error) =
         pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
+    let parse_errors: Vec<(u32, String)> = parse_error
+        .map(|error| {
+            use pzoom_syntax::HasSpan;
+            vec![(error.span().start.offset, format!("{}", error))]
+        })
+        .unwrap_or_default();
+
+    // Pre-wave (mirrors Scanner::scan_file): harvest type-alias definitions
+    // first so `@psalm-import-type` resolves even when the defining class
+    // appears later in the file.
+    if input_contents.contains("@psalm-type") || input_contents.contains("@phpstan-type") {
+        let harvest_collector = pzoom_syntax::DeclarationCollector::new(
+            &threaded_interner,
+            file_path_id,
+            &input_contents,
+            &codebase.type_aliases,
+            &program.trivia,
+        );
+        let harvested = harvest_collector.collect(program);
+        for type_alias in harvested.type_aliases {
+            codebase
+                .type_aliases
+                .entry(type_alias.name)
+                .or_insert(type_alias);
+        }
+    }
 
     let collector = pzoom_syntax::DeclarationCollector::new(
-        &mut interner,
+        &threaded_interner,
         file_path_id,
         &input_contents,
         &codebase.type_aliases,
@@ -316,6 +373,26 @@ fn run_test_with_base(
     );
     let mut declarations = collector.collect(program);
     let inline_annotations = std::mem::take(&mut declarations.inline_annotations);
+    let docblock_parse_issues = std::mem::take(&mut declarations.docblock_parse_issues);
+
+    // Record file info first so symbol registration can resolve stub/project
+    // precedence (mirrors Scanner::register_collected_file).
+    let file_info = pzoom_code_info::codebase_info::FileInfo {
+        path: file_path_id,
+        classes: Vec::new(),
+        functions: Vec::new(),
+        constants: Vec::new(),
+        content_hash: compute_hash(&input_contents),
+        contents: input_contents,
+        parse_errors,
+        docblock_parse_issues,
+        is_stub: false,
+        is_low_precedence_stub: false,
+        is_in_project_dirs: true,
+        inline_annotations,
+        type_alias_imports: std::mem::take(&mut declarations.type_alias_imports),
+    };
+    codebase.files.insert(file_path_id, file_info);
 
     // Track what's defined in this file
     let mut file_classes = Vec::new();
@@ -341,19 +418,22 @@ fn run_test_with_base(
         codebase.type_aliases.insert(type_alias.name, type_alias);
     }
 
-    // Record file info
-    let file_info = pzoom_code_info::codebase_info::FileInfo {
-        path: file_path_id,
-        classes: file_classes,
-        functions: file_functions,
-        constants: file_constants,
-        content_hash: compute_hash(&input_contents),
-        contents: input_contents,
-        is_stub: false,
-        is_low_precedence_stub: false,
-        inline_annotations,
-    };
-    codebase.files.insert(file_path_id, file_info);
+    codebase.global_defines.extend(declarations.global_defines);
+
+    if let Some(file_info) = codebase.files.get_mut(&file_path_id) {
+        file_info.classes = file_classes;
+        file_info.functions = file_functions;
+        file_info.constants = file_constants;
+    }
+    let scan_ms = t_scan.elapsed().as_secs_f64() * 1000.0;
+
+    if std::env::var("PZOOM_TEST_TIMING").is_ok() {
+        eprintln!("TIMING clone={:.1}ms scan={:.1}ms {}", clone_ms, scan_ms, test_folder);
+    }
+
+    drop(threaded_interner);
+    let interner = std::sync::Arc::try_unwrap(interner_arc)
+        .expect("single-thread interner handle dropped above");
 
     // Run analysis
     run_analysis_and_compare(
@@ -363,7 +443,14 @@ fn run_test_with_base(
         &input_path,
         &output_path,
         update,
+        BASE_CALLMAP_PHP_VERSION_ID,
     )
+}
+
+/// Optional extensions enabled when scanning stubs for tests: none, mirroring
+/// Psalm's test suite, which runs without PECL/third-party extension stubs.
+fn test_enabled_extensions() -> rustc_hash::FxHashSet<String> {
+    rustc_hash::FxHashSet::default()
 }
 
 /// Run a test without a pre-scanned base codebase (slower, scans stubs each time).
@@ -393,7 +480,7 @@ fn run_test(test_folder: &str, stubs_path: &str, update: bool, verbose: bool) ->
 
     // Scan stubs first (using the stub-specific method to properly handle .phpstub files)
     if Path::new(stubs_path).exists() {
-        scanner.scan_stub_directory(Path::new(stubs_path));
+        scanner.scan_stub_directory(Path::new(stubs_path), &test_enabled_extensions());
     }
 
     // Scan the test file
@@ -412,6 +499,7 @@ fn run_test(test_folder: &str, stubs_path: &str, update: bool, verbose: bool) ->
         &input_path,
         &output_path,
         update,
+        0, // fresh scan: the CallMap has not been applied yet
     )
 }
 
@@ -423,39 +511,134 @@ fn run_analysis_and_compare(
     input_path: &str,
     output_path: &str,
     update: bool,
+    applied_callmap_php_version_id: u32,
 ) -> TestResult {
     let mut config = Config::default();
+    // Psalm's test harness pins PHP 7.4 (TestCase::setUp); individual tests
+    // opt into newer versions via 'php_version' (ported as php_version.txt).
+    config.php_version = "7.4".to_string();
     config
         .forbidden_functions
         .extend(["var_dump".to_string(), "shell_exec".to_string()]);
     config
         .suppressed_issues
         .extend(load_test_suppressed_issues(input_path));
+    // Psalm's OverrideTest runs with ensureOverrideAttribute enabled; every
+    // other test class keeps the default (false).
+    config.ensure_override_attribute = input_path.contains("/Override/");
+    // Psalm's test harness always tracks unused suppressions
+    // (TestCase::analyzeFile defaults $track_unused_suppressions = true).
+    config.find_unused_suppress = true;
+    // Psalm's UnusedVariableTest enables reportUnusedVariables() in setUp.
+    config.report_unused = input_path.contains("/UnusedVariable/")
+        || input_path.contains("/UnusedCode/");
+    // Psalm's UnusedCodeTest calls reportUnusedCode(), enabling declaration
+    // usage tracking on top of unused-variable reporting.
+    config.find_unused_code = input_path.contains("/UnusedCode/");
+    // Psalm's TaintTest calls trackTaintedInputs(). Its expectations only ever
+    // assert taint issues (the harness suppresses a long legacy list of
+    // analysis kinds), so taint mode reports Tainted* issues exclusively.
+    config.taint_analysis = input_path.contains("/Taint/");
+    // Psalm-on-Psalm runs with allConstantsGlobal; the GlobalConstants suite
+    // covers the define()-anywhere registration it enables.
+    config.all_constants_global = input_path.contains("/GlobalConstants/");
+    // Psalm tests can pin a PHP version per test case; the pzoom port keeps it
+    // in a php_version.txt sidecar next to input.php.
+    if let Some(test_dir) = Path::new(input_path).parent() {
+        if let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt")) {
+            let version = version.trim();
+            if !version.is_empty() {
+                config.php_version = version.to_string();
+            }
+        }
+    }
+
+    // Builtin signatures come from Psalm's CallMap for the analysis version;
+    // skip when the (reused) base codebase was already applied for it.
+    if applied_callmap_php_version_id != config.php_version_id() {
+        pzoom_orchestrator::apply_call_map(codebase, interner, config.php_version_id());
+    }
 
     // Populate
+    let t_pop = Instant::now();
     {
         let mut populator = Populator::new(codebase, interner);
         populator.populate();
     }
+    if config.all_constants_global {
+        pzoom_orchestrator::register_global_defined_constants(codebase);
+    }
+    let pop_ms = t_pop.elapsed().as_secs_f64() * 1000.0;
 
-    // Analyze
+    // Analyze only non-stub files (the test file): stubs provide type
+    // information but are never analyzed — Psalm's harness does the same, and
+    // analyzing the whole stub set per test dominated the runtime (~165ms of
+    // a ~170ms test).
+    let t_an = Instant::now();
     let analyzer = Analyzer::new(codebase, interner, &config);
-    let result = analyzer.analyze();
+    let files_to_analyze: Vec<pzoom_str::StrId> = codebase
+        .files
+        .iter()
+        .filter(|(file_id, file_info)| !file_info.is_stub && !_stub_files.contains(*file_id))
+        .map(|(file_id, _)| *file_id)
+        .collect();
+    let result = analyzer.analyze_files(&files_to_analyze);
+    let an_ms = t_an.elapsed().as_secs_f64() * 1000.0;
+    if std::env::var("PZOOM_TEST_TIMING").is_ok() {
+        eprintln!("TIMING populate={:.1}ms analyze={:.1}ms {}", pop_ms, an_ms, input_path);
+    }
 
     // Format output in Psalm style: IssueKind - file:line:column - message
     let mut output_lines: Vec<String> = Vec::new();
     for issue in &result.issues {
-        if config.is_issue_suppressed(&format!("{:?}", issue.kind)) {
+        let kind_name = format!("{:?}", issue.kind);
+        if config.is_issue_suppressed(&kind_name) {
+            continue;
+        }
+
+        // Taint mode is an allowlist: only taint findings are asserted.
+        if config.taint_analysis && !kind_name.starts_with("Tainted") {
             continue;
         }
 
         let file_path = interner.lookup(issue.location.file_path);
         // Only include issues from the test file, not stubs
         if file_path.contains(input_path) || file_path.ends_with("input.php") {
-            output_lines.push(format!(
+            // Taint traces embed file positions; Psalm prints them relative
+            // to the project root (`input.php:3:12`), so strip the test
+            // directory prefix from the message.
+            let mut message = issue.message.clone();
+            if let Some(dir) = Path::new(file_path.as_ref()).parent() {
+                message = message.replace(&format!("{}/", dir.display()), "");
+            }
+            // Secondary locations stay attached to their issue (one multi-line
+            // entry), so sorting keeps each block together.
+            let mut entry = format!(
                 "{:?} - {}:{}:{} - {}",
-                issue.kind, "input.php", issue.location.start_line, issue.location.start_column, issue.message
-            ));
+                issue.kind, "input.php", issue.location.start_line, issue.location.start_column, message
+            );
+            for secondary in &issue.secondary_locations {
+                let secondary_file = interner.lookup(secondary.location.file_path);
+                let secondary_label = if secondary_file.contains(input_path)
+                    || secondary_file.ends_with("input.php")
+                {
+                    "input.php".to_string()
+                } else {
+                    secondary_file
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&secondary_file)
+                        .to_string()
+                };
+                entry.push_str(&format!(
+                    "\n    {}:{}:{} - {}",
+                    secondary_label,
+                    secondary.location.start_line,
+                    secondary.location.start_column,
+                    secondary.message
+                ));
+            }
+            output_lines.push(entry);
         }
     }
     output_lines.sort();

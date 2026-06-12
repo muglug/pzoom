@@ -74,6 +74,23 @@ impl Scanner {
             self.insert(var_id.clone(), Some(var_id));
         }
     }
+
+    /// Psalm's `AssignmentMapVisitor` counts calls: each argument's root var
+    /// may be mutated (by-ref), and a method call may mutate its receiver
+    /// (recorded as `receiver -> isset`, like Psalm).
+    fn record_call_args(&mut self, argument_list: &mago_syntax::ast::ast::argument::ArgumentList<'_>) {
+        for argument in argument_list.arguments.iter() {
+            if let Some(arg_var_id) = get_root_var_id(argument.value()) {
+                self.insert(arg_var_id.clone(), Some(arg_var_id));
+            }
+        }
+    }
+
+    fn record_method_receiver(&mut self, object: &Expression<'_>) {
+        if let Some(var_id) = get_root_var_id(object) {
+            self.insert(var_id, None);
+        }
+    }
 }
 
 /// Resolve the root variable of an assignable expression (e.g. `$this->a[$x]` -> `$this`).
@@ -86,7 +103,7 @@ fn get_root_var_id(expr: &Expression<'_>) -> Option<String> {
 
     match split_at {
         Some(offset) if offset > 0 => Some(var_key[..offset].to_string()),
-        _ => Some(var_key),
+        _ => Some(var_key.to_string()),
     }
 }
 
@@ -116,6 +133,23 @@ fn scan_node(node: Node<'_, '_>, scanner: &mut Scanner) {
                 UnaryPostfixOperator::PostIncrement(_) | UnaryPostfixOperator::PostDecrement(_)
             ) {
                 scanner.record_incdec(unary.operand);
+            }
+        }
+        Node::FunctionCall(call) => scanner.record_call_args(&call.argument_list),
+        Node::StaticMethodCall(call) => scanner.record_call_args(&call.argument_list),
+        Node::MethodCall(call) => {
+            scanner.record_call_args(&call.argument_list);
+            scanner.record_method_receiver(call.object);
+        }
+        Node::NullSafeMethodCall(call) => {
+            scanner.record_call_args(&call.argument_list);
+            scanner.record_method_receiver(call.object);
+        }
+        Node::Unset(unset) => {
+            for value in unset.values.iter() {
+                if let Some(var_id) = get_root_var_id(value) {
+                    scanner.insert(var_id.clone(), Some(var_id));
+                }
             }
         }
         _ => {}

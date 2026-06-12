@@ -23,10 +23,43 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
         event: &FunctionReturnTypeProviderEvent<'_, '_>,
         analysis_data: &mut FunctionAnalysisData,
     ) -> Option<TUnion> {
-        if event.args.is_empty() || event.args.iter().any(|arg| arg.is_unpacked()) {
+        if event.args.is_empty() {
             return None;
         }
         let is_replace = event.function_id.eq_ignore_ascii_case("array_replace");
+
+        // Spread args contribute their ELEMENT types (Psalm's provider
+        // unpacks them); only provably non-empty spreads are handled
+        // precisely — anything else falls back to the templated stub.
+        let mut arg_unit_types: Vec<TUnion> = Vec::with_capacity(event.args.len());
+        for (idx, arg) in event.args.iter().enumerate() {
+            let pos = event.arg_positions.get(idx).copied()?;
+            let arg_type = crate::expr::call::arguments_analyzer::get_argument_value_type(
+                analysis_data,
+                arg,
+                pos,
+            )?;
+            if arg.is_unpacked() {
+                let spread_nonempty = arg_type.types.iter().all(|atomic| match atomic {
+                    TAtomic::TNonEmptyList { .. } | TAtomic::TNonEmptyArray { .. } => true,
+                    TAtomic::TKeyedArray { properties, .. } => properties
+                        .values()
+                        .any(|value| !value.possibly_undefined),
+                    _ => false,
+                });
+                if !spread_nonempty {
+                    return None;
+                }
+                let element =
+                    crate::expr::call::arguments_analyzer::unpacked_element_type_for_templates(
+                        event.analyzer.codebase,
+                        &arg_type,
+                    )?;
+                arg_unit_types.push(element);
+            } else {
+                arg_unit_types.push((*arg_type).clone());
+            }
+        }
 
         let mut generic: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
         let mut inner_keys: Vec<TAtomic> = Vec::new();
@@ -38,8 +71,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
         let mut all_empty = true;
         let mut max_keyed_array_size = 0usize;
 
-        for pos in event.arg_positions {
-            let arg_type = analysis_data.get_expr_type(*pos)?;
+        for arg_type in &arg_unit_types {
             for atomic in &arg_type.types {
                 match atomic {
                     TAtomic::TKeyedArray {
@@ -52,7 +84,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                         all_empty = false;
                         max_keyed_array_size = max_keyed_array_size.max(properties.len());
 
-                        for (key, value) in properties {
+                        for (key, value) in properties.iter() {
                             if !value.possibly_undefined {
                                 any_nonempty = true;
                             }
@@ -126,6 +158,11 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                         inner_keys.push(TAtomic::TInt);
                         inner_values.extend(value_type.types.iter().cloned());
                     }
+                    // A first-pass `isset($acc[$k])` artifact inside a loop:
+                    // Psalm's from_loop_isset mixed never holds a real value
+                    // by merge time, so it contributes nothing (keeping the
+                    // other args' non-emptiness intact).
+                    TAtomic::TMixedFromLoopIsset => {}
                     // mixed / anything else: defer to the stub.
                     _ => return None,
                 }
@@ -152,7 +189,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                 };
 
             return Some(TUnion::new(TAtomic::TKeyedArray {
-                properties: generic,
+                properties: std::sync::Arc::new(generic),
                 is_list: all_nonempty_lists || all_int_offsets,
                 sealed,
                 fallback_key_type,

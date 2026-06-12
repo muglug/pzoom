@@ -26,7 +26,7 @@ fn infer_array_keys_return_type(
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
     let array_pos = arg_positions.first().copied()?;
-    let array_type = analysis_data.get_expr_type(array_pos)?;
+    let array_type = analysis_data.expr_types.get(&array_pos).cloned()?;
     let array_info = fca::extract_array_like_info_from_union(&array_type)?;
 
     let key_type = fca::normalize_array_key_union(&array_info.key_type);

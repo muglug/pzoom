@@ -5,7 +5,9 @@
 
 pub mod clause;
 
-pub use clause::{Clause, ClauseKey};
+pub use clause::{AssertionSet, Clause, ClauseKey};
+
+use crate::var_name::VarName;
 
 use std::collections::BTreeMap;
 
@@ -16,9 +18,9 @@ use rustc_hash::FxHashSet;
 use crate::assertion::Assertion;
 
 /// Checks if two IndexMaps have the same keys.
-fn index_keys_match<T: Eq + std::hash::Hash, U, V>(
-    map1: &IndexMap<T, U>,
-    map2: &IndexMap<T, V>,
+fn index_keys_match<T: Eq + std::hash::Hash, U, V, S1: std::hash::BuildHasher, S2: std::hash::BuildHasher>(
+    map1: &IndexMap<T, U, S1>,
+    map2: &IndexMap<T, V, S2>,
 ) -> bool {
     map1.len() == map2.len() && map1.keys().all(|k| map2.contains_key(k))
 }
@@ -62,137 +64,42 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
         }
     }
 
-    let mut working_clauses: Vec<Clause> = clauses.into_iter().cloned().collect();
-    let mut max_iterations = 10; // Prevent infinite loops
+    // Unit propagation to fixpoint over deduplicated clauses. Each round
+    // operates on references (clauses are cloned only when rewritten or when
+    // they survive into the materialized working set), instead of cloning the
+    // whole working set per round.
+    let mut unique_ref_clauses: Vec<&Clause> = clauses.into_iter().unique().collect();
 
-    // Iterate until no more changes (fixpoint)
-    loop {
-        if max_iterations == 0 {
-            break;
-        }
-        max_iterations -= 1;
+    let (removed_clause_hashes, added_clauses) = unit_propagation_round(&unique_ref_clauses);
 
-        // Clone to avoid borrow conflicts
-        let unique_clauses: Vec<Clause> = working_clauses.iter().unique().cloned().collect();
-        let mut removed_clause_hashes = FxHashSet::default();
-        let mut added_clauses = vec![];
+    let working_clauses: Vec<Clause> = if removed_clause_hashes.is_empty()
+        && added_clauses.is_empty()
+    {
+        unique_ref_clauses.into_iter().cloned().collect()
+    } else {
+        unique_ref_clauses.retain(|f| !removed_clause_hashes.contains(&f.hash));
+        let mut working: Vec<Clause> = unique_ref_clauses.into_iter().cloned().collect();
+        working.extend(added_clauses);
+        working = working.into_iter().unique().collect();
 
-        // Unit propagation: for each unit clause, remove its negation from other clauses
-        'outer: for clause_a in &unique_clauses {
-            if !clause_a.reconcilable || clause_a.wedge {
-                continue;
+        // Iterate to fixpoint (bounded, mirroring the prior 10-round cap).
+        let mut max_iterations = 9;
+        while max_iterations > 0 {
+            max_iterations -= 1;
+
+            let refs: Vec<&Clause> = working.iter().collect();
+            let (removed, added) = unit_propagation_round(&refs);
+            if removed.is_empty() && added.is_empty() {
+                break;
             }
 
-            let mut is_clause_a_simple: bool = true;
-
-            if clause_a.possibilities.len() != 1 {
-                is_clause_a_simple = false;
-            } else {
-                for var_possibilities in clause_a.possibilities.values() {
-                    if var_possibilities.len() != 1 {
-                        is_clause_a_simple = false;
-                    }
-                }
-            }
-
-            if !is_clause_a_simple {
-                'inner: for clause_b in &unique_clauses {
-                    if clause_a == clause_b || !clause_b.reconcilable || clause_b.wedge {
-                        continue;
-                    }
-
-                    if keys_match(&clause_a.possibilities, &clause_b.possibilities) {
-                        let mut opposing_keys = vec![];
-
-                        for (key, a_possibilities) in clause_a.possibilities.iter() {
-                            let b_possibilities = &clause_b.possibilities[key];
-                            if index_keys_match(a_possibilities, b_possibilities) {
-                                continue;
-                            }
-
-                            if a_possibilities.len() == 1
-                                && b_possibilities.len() == 1
-                                && a_possibilities
-                                    .values()
-                                    .next()
-                                    .unwrap()
-                                    .is_negation_of(b_possibilities.values().next().unwrap())
-                            {
-                                opposing_keys.push(key.clone());
-                                continue;
-                            }
-
-                            continue 'inner;
-                        }
-
-                        if opposing_keys.len() == 1 {
-                            removed_clause_hashes.insert(clause_a.hash);
-
-                            let maybe_new_clause = clause_a.remove_possibilities(&opposing_keys[0]);
-
-                            if maybe_new_clause.is_none() {
-                                continue 'outer;
-                            }
-
-                            added_clauses.push(maybe_new_clause.unwrap());
-                        }
-                    }
-                }
-
-                continue;
-            }
-
-            // Unit clause: propagate to remove negations from other clauses
-            for (clause_var, var_possibilities) in &clause_a.possibilities {
-                let only_type = &var_possibilities.values().next().unwrap();
-                let negated_clause_type = only_type.get_negation();
-                let negated_hash = negated_clause_type.to_hash();
-
-                for clause_b in &unique_clauses {
-                    if clause_a == clause_b || !clause_b.reconcilable || clause_b.wedge {
-                        continue;
-                    }
-
-                    if let Some(matching_clause_possibilities) =
-                        clause_b.possibilities.get(clause_var)
-                    {
-                        if matching_clause_possibilities.contains_key(&negated_hash) {
-                            let mut clause_var_possibilities =
-                                matching_clause_possibilities.clone();
-
-                            clause_var_possibilities.retain(|k, _| k != &negated_hash);
-
-                            removed_clause_hashes.insert(clause_b.hash);
-
-                            if clause_var_possibilities.is_empty() {
-                                let maybe_updated_clause =
-                                    clause_b.remove_possibilities(clause_var);
-
-                                if let Some(x) = maybe_updated_clause {
-                                    added_clauses.push(x);
-                                }
-                            } else {
-                                let updated_clause = clause_b
-                                    .add_possibility(clause_var.clone(), clause_var_possibilities);
-
-                                added_clauses.push(updated_clause);
-                            }
-                        }
-                    }
-                }
-            }
+            working.retain(|f| !removed.contains(&f.hash));
+            working.extend(added);
+            working = working.into_iter().unique().collect();
         }
 
-        // If no changes, we've reached fixpoint
-        if removed_clause_hashes.is_empty() && added_clauses.is_empty() {
-            break;
-        }
-
-        // Apply changes
-        working_clauses.retain(|f| !removed_clause_hashes.contains(&f.hash));
-        working_clauses.extend(added_clauses);
-        working_clauses = working_clauses.into_iter().unique().collect();
-    }
+        working
+    };
 
     // Remove redundant clauses (clauses that subsume others)
     let mut simplified_clauses = vec![];
@@ -261,25 +168,25 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
                     if !common_negated_keys.is_empty() {
                         let mut new_possibilities = BTreeMap::new();
 
-                        for (var_id, possibilities) in &clause_a.possibilities {
+                        for (var_id, possibilities) in clause_a.possibilities.iter() {
                             if common_negated_keys.contains(var_id) {
                                 continue;
                             }
 
                             new_possibilities
                                 .entry(var_id.clone())
-                                .or_insert_with(IndexMap::new)
+                                .or_insert_with(AssertionSet::default)
                                 .extend(possibilities.clone());
                         }
 
-                        for (var_id, possibilities) in &clause_b.possibilities {
+                        for (var_id, possibilities) in clause_b.possibilities.iter() {
                             if common_negated_keys.contains(var_id) {
                                 continue;
                             }
 
                             new_possibilities
                                 .entry(var_id.clone())
-                                .or_insert_with(IndexMap::new)
+                                .or_insert_with(AssertionSet::default)
                                 .extend(possibilities.clone());
                         }
 
@@ -304,6 +211,119 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
     simplified_clauses
 }
 
+/// One unit-propagation round over a deduplicated clause set: returns the
+/// hashes of clauses to drop and the rewritten clauses to add. Pure with
+/// respect to its input; the caller applies the changes and re-runs to
+/// fixpoint.
+fn unit_propagation_round(unique_clauses: &[&Clause]) -> (FxHashSet<u32>, Vec<Clause>) {
+    let mut removed_clause_hashes = FxHashSet::default();
+    let mut added_clauses = vec![];
+
+    'outer: for clause_a in unique_clauses {
+        if !clause_a.reconcilable || clause_a.wedge {
+            continue;
+        }
+
+        let mut is_clause_a_simple: bool = true;
+
+        if clause_a.possibilities.len() != 1 {
+            is_clause_a_simple = false;
+        } else {
+            for var_possibilities in clause_a.possibilities.values() {
+                if var_possibilities.len() != 1 {
+                    is_clause_a_simple = false;
+                }
+            }
+        }
+
+        if !is_clause_a_simple {
+            'inner: for clause_b in unique_clauses {
+                if clause_a == clause_b || !clause_b.reconcilable || clause_b.wedge {
+                    continue;
+                }
+
+                if keys_match(&clause_a.possibilities, &clause_b.possibilities) {
+                    let mut opposing_keys = vec![];
+
+                    for (key, a_possibilities) in clause_a.possibilities.iter() {
+                        let b_possibilities = &clause_b.possibilities[key];
+                        if index_keys_match(a_possibilities, b_possibilities) {
+                            continue;
+                        }
+
+                        if a_possibilities.len() == 1
+                            && b_possibilities.len() == 1
+                            && a_possibilities
+                                .values()
+                                .next()
+                                .unwrap()
+                                .is_negation_of(b_possibilities.values().next().unwrap())
+                        {
+                            opposing_keys.push(key.clone());
+                            continue;
+                        }
+
+                        continue 'inner;
+                    }
+
+                    if opposing_keys.len() == 1 {
+                        removed_clause_hashes.insert(clause_a.hash);
+
+                        let maybe_new_clause = clause_a.remove_possibilities(&opposing_keys[0]);
+
+                        if maybe_new_clause.is_none() {
+                            continue 'outer;
+                        }
+
+                        added_clauses.push(maybe_new_clause.unwrap());
+                    }
+                }
+            }
+
+            continue;
+        }
+
+        // Unit clause: propagate to remove negations from other clauses
+        for (clause_var, var_possibilities) in clause_a.possibilities.iter() {
+            let only_type = &var_possibilities.values().next().unwrap();
+            let negated_clause_type = only_type.get_negation();
+            let negated_hash = negated_clause_type.to_hash();
+
+            for clause_b in unique_clauses {
+                if clause_a == clause_b || !clause_b.reconcilable || clause_b.wedge {
+                    continue;
+                }
+
+                if let Some(matching_clause_possibilities) = clause_b.possibilities.get(clause_var)
+                {
+                    if matching_clause_possibilities.contains_key(&negated_hash) {
+                        let mut clause_var_possibilities = matching_clause_possibilities.clone();
+
+                        clause_var_possibilities.retain(|k, _| k != &negated_hash);
+
+                        removed_clause_hashes.insert(clause_b.hash);
+
+                        if clause_var_possibilities.is_empty() {
+                            let maybe_updated_clause = clause_b.remove_possibilities(clause_var);
+
+                            if let Some(x) = maybe_updated_clause {
+                                added_clauses.push(x);
+                            }
+                        } else {
+                            let updated_clause = clause_b
+                                .add_possibility(clause_var.clone(), clause_var_possibilities);
+
+                            added_clauses.push(updated_clause);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (removed_clause_hashes, added_clauses)
+}
+
 /// Extracts definite facts from CNF clauses.
 ///
 /// Returns a map of variable names to their possible assertion lists,
@@ -311,10 +331,10 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
 pub fn get_truths_from_formula(
     clauses: Vec<&Clause>,
     creating_conditional_id: Option<(u32, u32)>,
-    cond_referenced_var_ids: &mut FxHashSet<String>,
+    cond_referenced_var_ids: &mut FxHashSet<VarName>,
 ) -> (
-    BTreeMap<String, Vec<Vec<Assertion>>>,
-    BTreeMap<String, FxHashSet<usize>>,
+    BTreeMap<VarName, Vec<Vec<Assertion>>>,
+    BTreeMap<VarName, FxHashSet<usize>>,
 ) {
     let mut truths = BTreeMap::new();
     let mut active_truths = BTreeMap::new();
@@ -324,7 +344,7 @@ pub fn get_truths_from_formula(
             continue;
         }
 
-        for (clause_key, possible_types) in &clause.possibilities {
+        for (clause_key, possible_types) in clause.possibilities.iter() {
             let var_name = match clause_key {
                 ClauseKey::Name(name) => name,
                 ClauseKey::Range(_, _) => {
@@ -335,10 +355,18 @@ pub fn get_truths_from_formula(
             if possible_types.len() == 1 {
                 let possible_type = possible_types.values().next().unwrap();
 
-                truths
-                    .entry(var_name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(vec![possible_type.clone()]);
+                // A clause whose conditional reassigned the var supersedes
+                // earlier (pre-assignment) truths instead of conjoining with
+                // them (Psalm's redefined_vars check in getTruthsFromFormula).
+                if clause.redefined_vars.contains(var_name) {
+                    truths.insert(var_name.clone(), vec![vec![possible_type.clone()]]);
+                    active_truths.remove(var_name);
+                } else {
+                    truths
+                        .entry(var_name.clone())
+                        .or_insert_with(Vec::new)
+                        .push(vec![possible_type.clone()]);
+                }
 
                 if let Some(creating_conditional_id) = creating_conditional_id {
                     if creating_conditional_id == clause.creating_conditional_id {
@@ -399,16 +427,21 @@ fn group_impossibilities(mut clauses: Vec<Clause>) -> Result<Vec<Clause>, String
                 let mut seed_clause_possibilities = BTreeMap::new();
                 seed_clause_possibilities.insert(
                     var.clone(),
-                    IndexMap::from([(impossible_type.to_hash(), impossible_type.clone())]),
+                    AssertionSet::from_iter([(impossible_type.to_hash(), impossible_type.clone())]),
                 );
 
+                // Psalm's seed clauses default to generated=false; pzoom
+                // additionally inherits a generated source's flag so that
+                // assertions marked generated to avoid false duplicate
+                // reports (class-string flavors collapsing to one atom)
+                // stay exempt after negation.
                 let seed_clause = Clause::new(
                     seed_clause_possibilities,
                     clause.creating_conditional_id,
                     clause.creating_object_id,
                     None,
                     None,
-                    None,
+                    if clause.generated { Some(true) } else { None },
                 );
 
                 seed_clauses.push(seed_clause);
@@ -438,25 +471,28 @@ fn group_impossibilities(mut clauses: Vec<Clause>) -> Result<Vec<Clause>, String
     while let Some(clause) = clauses.pop() {
         let mut new_clauses = vec![];
 
-        for grouped_clause in &seed_clauses {
-            let clause_impossibilities = clause.get_impossibilities();
+        // `get_impossibilities` is pure and depends only on `clause`; computing
+        // it once per popped clause (instead of once per seed clause) avoids
+        // re-negating every assertion |seed_clauses| times.
+        let clause_impossibilities = clause.get_impossibilities();
 
-            for (var, impossible_types) in clause_impossibilities {
+        for grouped_clause in &seed_clauses {
+            for (var, impossible_types) in &clause_impossibilities {
                 'next: for impossible_type in impossible_types {
-                    if let Some(new_insert_value) = grouped_clause.possibilities.get(&var) {
+                    if let Some(new_insert_value) = grouped_clause.possibilities.get(var) {
                         for (_, a) in new_insert_value {
-                            if a.is_negation_of(&impossible_type) {
+                            if a.is_negation_of(impossible_type) {
                                 break 'next;
                             }
                         }
                     }
 
-                    let mut new_clause_possibilities = grouped_clause.possibilities.clone();
+                    let mut new_clause_possibilities = (*grouped_clause.possibilities).clone();
 
                     new_clause_possibilities
                         .entry(var.clone())
-                        .or_insert_with(IndexMap::new)
-                        .insert(impossible_type.to_hash(), impossible_type);
+                        .or_insert_with(AssertionSet::default)
+                        .insert(impossible_type.to_hash(), impossible_type.clone());
 
                     new_clauses.push(Clause::new(
                         new_clause_possibilities,
@@ -543,17 +579,25 @@ pub fn combine_ored_clauses(
                 && left_clause.reconcilable
                 && right_clause.reconcilable;
 
-            for (var, possible_types) in &left_clause.possibilities {
+            for (var, possible_types) in left_clause.possibilities.iter() {
+                // The right clause's conditional reassigned this var, so the
+                // left clause's pre-assignment facts no longer describe it
+                // (Psalm skips redefined vars when merging ored clauses).
+                if let ClauseKey::Name(var_name) = var
+                    && right_clause.redefined_vars.contains(var_name)
+                {
+                    continue;
+                }
                 possibilities
                     .entry(var.clone())
-                    .or_insert_with(IndexMap::new)
+                    .or_insert_with(AssertionSet::default)
                     .extend(possible_types.clone());
             }
 
-            for (var, possible_types) in &right_clause.possibilities {
+            for (var, possible_types) in right_clause.possibilities.iter() {
                 possibilities
                     .entry(var.clone())
-                    .or_insert_with(IndexMap::new)
+                    .or_insert_with(AssertionSet::default)
                     .extend(possible_types.clone());
             }
 

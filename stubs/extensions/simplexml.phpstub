@@ -1,0 +1,271 @@
+<?php
+
+/**
+ * @implements RecursiveIterator<string, SimpleXMLElement>
+ * @psalm-no-seal-properties
+ */
+class SimpleXMLElement implements ArrayAccess, Countable, Stringable, RecursiveIterator
+{
+    /**
+     * @throws Exception
+     */
+    public function __construct(
+        string $data,
+        int $options = 0,
+        bool $dataIsURL = false,
+        string $namespaceOrPrefix = '',
+        bool $isPrefix = false,
+    ) {}
+
+    public function __get(string $name): SimpleXMLElement {}
+
+    public function __set(string $name, $value): void {}
+
+    /** @return ($filename is null ? string|false : bool) */
+    public function asXML(string|null $filename = null): string|bool
+    {
+    }
+
+    /**
+     * @return ($filename is null ? string|false : bool)
+     * @alias SimpleXMLElement::asXML
+     */
+    public function saveXML(string|null $filename = null): string|bool
+    {
+    }
+
+    /**
+     * @return list<SimpleXMLElement>|false|null
+     *
+     * @psalm-taint-sink xpath $expression
+     */
+    public function xpath(string $expression): array|false|null
+    {
+    }
+
+    public function registerXPathNamespace(string $prefix, string $namespace): bool
+    {
+    }
+
+    public function attributes(string|null $namespaceOrPrefix = null, bool $isPrefix = false): null|static
+    {
+    }
+
+    public function children(string|null $namespaceOrPrefix = null, bool $isPrefix = false): null|static
+    {
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function getNamespaces(bool $recursive = false): array
+    {
+    }
+
+    /**
+     * @return array<string, string>|false
+     */
+    public function getDocNamespaces(bool $recursive = false, bool $fromRoot = true): array|false
+    {
+    }
+
+    public function getName(): string
+    {
+    }
+
+    /** @psalm-ignore-nullable-return */
+    public function addChild(
+        string $qualifiedName,
+        string|null $value = null,
+        string|null $namespace = null,
+    ): null|static {
+    }
+
+    public function addAttribute(string $qualifiedName, string $value, string|null $namespace = null): void
+    {
+    }
+
+    public function __toString(): string
+    {
+    }
+
+    /**
+     * @return int<0, max>
+     */
+    public function count(): int
+    {
+    }
+
+    /**
+     * @param string|int $offset
+     *
+     * @return bool
+     */
+    public function offsetExists($offset)
+    {
+    }
+
+    /**
+     * @param string|int $offset
+     *
+     * @return static
+     */
+    public function offsetGet($offset)
+    {
+    }
+
+    /**
+     * @param string|int $offset
+     *
+     * @param mixed $value
+     */
+    public function offsetSet($offset, $value)
+    {
+    }
+
+    /**
+     * @param string|int $offset
+     *
+     * @return void
+     */
+    public function offsetUnset($offset)
+    {
+    }
+
+    public function rewind(): void
+    {
+    }
+
+    public function valid(): bool
+    {
+    }
+
+    public function current(): SimpleXMLElement
+    {
+    }
+
+    public function key(): null|string
+    {
+    }
+
+    public function next(): void
+    {
+    }
+
+    public function hasChildren(): bool
+    {
+    }
+
+    public function getChildren(): null|SimpleXMLElement
+    {
+    }
+}
+
+/**
+ * @implements RecursiveIterator<string, SimpleXMLElement>
+ */
+class SimpleXMLIterator extends SimpleXMLElement implements RecursiveIterator, Countable, Stringable
+{
+    /**
+     * @return void
+     */
+    public function rewind()
+    {
+    }
+
+    /**
+     * @return bool
+     */
+    public function valid()
+    {
+    }
+
+    /**
+     * @return SimpleXMLElement
+     */
+    public function current()
+    {
+    }
+
+    /**
+     * @return string|false
+     */
+    public function key()
+    {
+    }
+
+    /**
+     * @return void
+     */
+    public function next()
+    {
+    }
+
+    /**
+     * @return bool
+     */
+    public function hasChildren()
+    {
+    }
+
+    /**
+     * @return SimpleXMLIterator
+     */
+    public function getChildren()
+    {
+    }
+
+    /**
+     * @return string
+     */
+    public function __toString()
+    {
+    }
+
+    public function count()
+    {
+    }
+}
+
+/**
+ * @template T of SimpleXMLElement
+ *
+ * @param class-string<T>|null $class_name
+ *
+ * @return T|false
+ */
+function simplexml_load_file(
+    string $filename,
+    null|string $class_name = SimpleXMLElement::class,
+    int $options = 0,
+    string $namespace_or_prefix = '',
+    bool $is_prefix = false,
+): SimpleXMLElement|false {
+}
+
+/**
+ * @template T of SimpleXMLElement
+ *
+ * @param class-string<T>|null $class_name
+ *
+ * @return T|false
+ */
+function simplexml_load_string(
+    string $data,
+    null|string $class_name = SimpleXMLElement::class,
+    int $options = 0,
+    string $namespace_or_prefix = '',
+    bool $is_prefix = false,
+): SimpleXMLElement|false {
+}
+
+/**
+ * @template T of SimpleXMLElement
+ *
+ * @param class-string<T>|null $class_name
+ *
+ * @return T|null
+ */
+function simplexml_import_dom(object $node, null|string $class_name = SimpleXMLElement::class): null|SimpleXMLElement
+{
+}

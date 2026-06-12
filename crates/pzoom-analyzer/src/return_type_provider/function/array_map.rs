@@ -35,13 +35,23 @@ fn infer_array_map_return_type(
         return None;
     }
 
-    let callback_type = analysis_data.get_expr_type(arg_positions[0])?;
+    let callback_type = analysis_data.expr_types.get(&arg_positions[0]).cloned()?;
+
+    // Psalm's null-callback (zip) path is only precise for sealed keyed-shape
+    // arguments; everything else — including spreads — returns the plain
+    // possibly-empty array (Type::getArray()).
+    if callback_type.is_null() {
+        return Some(TUnion::new(TAtomic::TArray {
+            key_type: Box::new(TUnion::array_key()),
+            value_type: Box::new(TUnion::mixed()),
+        }));
+    }
 
     let mut input_array_infos = Vec::new();
     let mut callback_input_types = Vec::new();
     let mut first_array_type = None;
     for arg_pos in arg_positions.iter().skip(1) {
-        let array_type = analysis_data.get_expr_type(*arg_pos)?;
+        let array_type = analysis_data.expr_types.get(&*arg_pos).cloned()?;
         if first_array_type.is_none() {
             first_array_type = Some(array_type.clone());
         }
@@ -50,13 +60,18 @@ fn infer_array_map_return_type(
         input_array_infos.push(info);
     }
 
-    let callback_return_type = fca::infer_array_map_callable_return_type(
+    let mut callback_return_type = fca::infer_array_map_callable_return_type(
         analyzer,
         &callback_type,
         &callback_input_types,
         context,
     )
     .unwrap_or_else(TUnion::mixed);
+    // A void callback produces null elements (Psalm converts a consumed void
+    // value to null).
+    if callback_return_type.is_void() {
+        callback_return_type = TUnion::new(pzoom_code_info::TAtomic::TNull);
+    }
 
     let first_info = input_array_infos.first()?;
 
@@ -74,7 +89,7 @@ fn infer_array_map_return_type(
             }) = first_array_type.get_single()
             {
                 let mut new_properties: FxHashMap<_, TUnion> = FxHashMap::default();
-                for (key, prop) in properties {
+                for (key, prop) in properties.iter() {
                     let mut mapped = callback_return_type.clone();
                     mapped.possibly_undefined = prop.possibly_undefined;
                     new_properties.insert(key.clone(), mapped);
@@ -89,7 +104,7 @@ fn infer_array_map_return_type(
                     };
 
                 return Some(TUnion::new(TAtomic::TKeyedArray {
-                    properties: new_properties,
+                    properties: std::sync::Arc::new(new_properties),
                     is_list: *is_list,
                     sealed: *sealed,
                     fallback_key_type: new_fallback_key,

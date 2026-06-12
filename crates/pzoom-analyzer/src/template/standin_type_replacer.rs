@@ -5,33 +5,31 @@
 //! (or their declared defaults), expanding `class-string<T>`, indexed-access, and
 //! template-param atomics along the way.
 
-use pzoom_code_info::{TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{GenericParent, TAtomic, TUnion, TemplateResult, combine_union_types};
 use pzoom_str::StrId;
 
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::template::{
+    lower_bounds_get, lower_bounds_get_by_name, lower_bounds_insert_combined,
+    template_types_contains_name, template_types_entity_for_name, template_types_get,
+    template_types_get_by_name,
+};
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
-use crate::template::TemplateMap;
 
 /// Replaces template params in a union with inferred/default concrete types.
-pub fn replace(
-    union_type: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
-) -> TUnion {
-    substitute_templates_in_union(union_type, template_replacements, template_defaults)
+pub fn replace(union_type: &TUnion, template_result: &TemplateResult) -> TUnion {
+    substitute_templates_in_union(union_type, template_result)
 }
 
-pub(crate) fn substitute_templates_in_union(
-    union: &TUnion,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
-) -> TUnion {
+pub(crate) fn substitute_templates_in_union(union: &TUnion, template_result: &TemplateResult) -> TUnion {
     let mut replaced_types = Vec::new();
+    let mut bound_ignore_nullable = false;
+    let mut bound_ignore_falsable = false;
 
     for atomic in &union.types {
         if let Some(indexed_access_union) =
-            resolve_indexed_access_template_union(atomic, template_replacements, template_defaults)
+            resolve_indexed_access_template_union(atomic, template_result)
         {
             for replacement_atomic in indexed_access_union.types {
                 if !replaced_types.contains(&replacement_atomic) {
@@ -42,7 +40,7 @@ pub(crate) fn substitute_templates_in_union(
         }
 
         if let Some(key_value_of_union) =
-            resolve_template_key_value_of_union(atomic, template_replacements)
+            resolve_template_key_value_of_union(atomic, template_result)
         {
             for replacement_atomic in key_value_of_union.types {
                 if !replaced_types.contains(&replacement_atomic) {
@@ -52,7 +50,7 @@ pub(crate) fn substitute_templates_in_union(
             continue;
         }
 
-        if let Some(properties_of) = resolve_template_properties_of(atomic, template_replacements) {
+        if let Some(properties_of) = resolve_template_properties_of(atomic, template_result) {
             if !replaced_types.contains(&properties_of) {
                 replaced_types.push(properties_of);
             }
@@ -65,8 +63,7 @@ pub(crate) fn substitute_templates_in_union(
             } => {
                 if let Some(class_replacement) = resolve_class_string_template_replacement(
                     as_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 ) {
                     for replacement_atomic in class_replacement.types {
                         let class_string_atomic = TAtomic::TClassString {
@@ -81,8 +78,7 @@ pub(crate) fn substitute_templates_in_union(
 
                 let replaced_atomic = substitute_templates_in_atomic(
                     atomic,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 );
                 if !replaced_types.contains(&replaced_atomic) {
                     replaced_types.push(replaced_atomic);
@@ -93,11 +89,18 @@ pub(crate) fn substitute_templates_in_union(
                 defining_entity,
                 as_type,
             } => {
-                let replacement = template_replacements
-                    .get(*name, *defining_entity)
-                    .cloned()
-                    .or_else(|| template_defaults.get(*name, *defining_entity).cloned())
+                let replacement = lower_bounds_get(template_result, *name, *defining_entity)
+                    .or_else(|| {
+                        template_types_get(template_result, *name, *defining_entity)
+                            .map(|mapped_type| (**mapped_type).clone())
+                    })
                     .unwrap_or_else(|| (**as_type).clone());
+
+                // The inferred bound's ignore flags travel with it into the
+                // substituted union (e.g. a falsable-but-ignored array element
+                // bound to a callable's param template).
+                bound_ignore_nullable |= replacement.ignore_nullable_issues;
+                bound_ignore_falsable |= replacement.ignore_falsable_issues;
 
                 for replacement_atomic in replacement.types {
                     if !replaced_types.contains(&replacement_atomic) {
@@ -108,8 +111,7 @@ pub(crate) fn substitute_templates_in_union(
             _ => {
                 let replaced_atomic = substitute_templates_in_atomic(
                     atomic,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 );
                 if !replaced_types.contains(&replaced_atomic) {
                     replaced_types.push(replaced_atomic);
@@ -126,15 +128,17 @@ pub(crate) fn substitute_templates_in_union(
     result.from_docblock = union.from_docblock;
     result.is_resolved = union.is_resolved;
     result.parent_nodes = union.parent_nodes.clone();
-    result.ignore_nullable_issues = union.ignore_nullable_issues;
-    result.ignore_falsable_issues = union.ignore_falsable_issues;
+    result.ignore_nullable_issues = union.ignore_nullable_issues || bound_ignore_nullable;
+    result.ignore_falsable_issues = union.ignore_falsable_issues || bound_ignore_falsable;
+    // Shape property unions pass through here: an optional key must stay
+    // optional after substitution.
+    result.possibly_undefined = union.possibly_undefined;
     result
 }
 
 fn resolve_class_string_template_replacement(
     as_type: &TAtomic,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> Option<TUnion> {
     match as_type {
         TAtomic::TTemplateParam {
@@ -146,17 +150,17 @@ fn resolve_class_string_template_replacement(
             name,
             defining_entity,
             ..
-        } => template_replacements
-            .get(*name, *defining_entity)
-            .cloned()
-            .or_else(|| template_defaults.get(*name, *defining_entity).cloned()),
+        } => lower_bounds_get(template_result, *name, *defining_entity).or_else(|| {
+            template_types_get(template_result, *name, *defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
+        }),
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } => template_replacements
-            .get_by_name(*name)
-            .cloned()
-            .or_else(|| template_defaults.get_by_name(*name).cloned()),
+        .. } => lower_bounds_get_by_name(template_result, *name).or_else(|| {
+            template_types_get_by_name(template_result, *name)
+                .map(|mapped_type| (**mapped_type).clone())
+        }),
         _ => None,
     }
 }
@@ -166,7 +170,7 @@ fn resolve_class_string_template_replacement(
 /// template is still unbound, leaving the deferred atomic in place.
 fn resolve_template_key_value_of_union(
     atomic: &TAtomic,
-    template_replacements: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> Option<TUnion> {
     let (param_name, defining_entity, is_key_of) = match atomic {
         TAtomic::TTemplateKeyOf {
@@ -182,13 +186,16 @@ fn resolve_template_key_value_of_union(
         _ => return None,
     };
 
-    // Only resolve against a concrete inferred binding (call-site `template_replacements`),
+    // Only resolve against a concrete inferred binding (the lower bounds),
     // never against a template's declared bound. During body analysis only the bound is
     // known and `key-of<T>` must stay deferred so a concrete key cannot satisfy it.
-    let replacement = template_replacements.get(param_name, defining_entity)?;
+    let replacement = lower_bounds_get(template_result, param_name, defining_entity)?;
 
-    let resolved =
-        substitute_templates_in_union(replacement, template_replacements, &TemplateMap::new());
+    let inferred_only = TemplateResult {
+        lower_bounds: template_result.lower_bounds.clone(),
+        ..Default::default()
+    };
+    let resolved = substitute_templates_in_union(&replacement, &inferred_only);
 
     Some(if is_key_of {
         pzoom_code_info::ttype::get_key_of_union(&resolved)
@@ -202,7 +209,7 @@ fn resolve_template_key_value_of_union(
 /// Psalm's `TTemplatePropertiesOf::replaceTemplateTypesWithArgTypes`.
 fn resolve_template_properties_of(
     atomic: &TAtomic,
-    template_replacements: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> Option<TAtomic> {
     let TAtomic::TTemplatePropertiesOf {
         param_name,
@@ -213,8 +220,8 @@ fn resolve_template_properties_of(
         return None;
     };
 
-    let replacement = template_replacements.get(*param_name, *defining_entity)?;
-    let classlike_name = single_named_object_name(replacement)?;
+    let replacement = lower_bounds_get(template_result, *param_name, *defining_entity)?;
+    let classlike_name = single_named_object_name(&replacement)?;
 
     Some(TAtomic::TPropertiesOf {
         classlike_name,
@@ -238,8 +245,7 @@ fn single_named_object_name(union: &TUnion) -> Option<StrId> {
 
 fn resolve_indexed_access_template_union(
     atomic: &TAtomic,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> Option<TUnion> {
     let TAtomic::TNamedObject {
         name,
@@ -254,7 +260,7 @@ fn resolve_indexed_access_template_union(
     }
 
     let array_type =
-        substitute_templates_in_union(&type_params[0], template_replacements, template_defaults);
+        substitute_templates_in_union(&type_params[0], template_result);
 
     Some(extract_indexed_access_value_type(&array_type))
 }
@@ -304,8 +310,7 @@ fn extract_indexed_access_value_type(array_type: &TUnion) -> TUnion {
 
 fn substitute_templates_in_atomic(
     atomic: &TAtomic,
-    template_replacements: &TemplateMap,
-    template_defaults: &TemplateMap,
+    template_result: &TemplateResult,
 ) -> TAtomic {
     match atomic {
         TAtomic::TTemplateParam {
@@ -313,10 +318,11 @@ fn substitute_templates_in_atomic(
             defining_entity,
             as_type,
         } => {
-            let replacement = template_replacements
-                .get(*name, *defining_entity)
-                .cloned()
-                .or_else(|| template_defaults.get(*name, *defining_entity).cloned())
+            let replacement = lower_bounds_get(template_result, *name, *defining_entity)
+                .or_else(|| {
+                    template_types_get(template_result, *name, *defining_entity)
+                        .map(|mapped_type| (**mapped_type).clone())
+                })
                 .unwrap_or_else(|| (**as_type).clone());
 
             replacement
@@ -330,13 +336,11 @@ fn substitute_templates_in_atomic(
         } => TAtomic::TArray {
             key_type: Box::new(substitute_templates_in_union(
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
             value_type: Box::new(substitute_templates_in_union(
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
         },
         TAtomic::TNonEmptyArray {
@@ -345,13 +349,11 @@ fn substitute_templates_in_atomic(
         } => TAtomic::TNonEmptyArray {
             key_type: Box::new(substitute_templates_in_union(
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
             value_type: Box::new(substitute_templates_in_union(
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
         },
         TAtomic::TIterable {
@@ -360,37 +362,36 @@ fn substitute_templates_in_atomic(
         } => TAtomic::TIterable {
             key_type: Box::new(substitute_templates_in_union(
                 key_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
             value_type: Box::new(substitute_templates_in_union(
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
         },
         TAtomic::TList { value_type } => TAtomic::TList {
             value_type: Box::new(substitute_templates_in_union(
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
         },
         TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
             value_type: Box::new(substitute_templates_in_union(
                 value_type,
-                template_replacements,
-                template_defaults,
+                template_result,
             )),
         },
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } if template_replacements.contains_name(*name) || template_defaults.contains_name(*name) => {
-            let replacement = template_replacements
-                .get_by_name(*name)
-                .cloned()
-                .or_else(|| template_defaults.get_by_name(*name).cloned())
+        .. } if template_result.lower_bounds.contains_key(name)
+            || template_types_contains_name(template_result, *name) =>
+        {
+            let replacement = lower_bounds_get_by_name(template_result, *name)
+                .or_else(|| {
+                    template_types_get_by_name(template_result, *name)
+                        .map(|mapped_type| (**mapped_type).clone())
+                })
                 .unwrap_or_else(TUnion::mixed);
 
             replacement
@@ -411,8 +412,7 @@ fn substitute_templates_in_atomic(
                     .map(|param| {
                         substitute_templates_in_union(
                             param,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                         )
                     })
                     .collect()
@@ -420,13 +420,29 @@ fn substitute_templates_in_atomic(
             is_static: *is_static,
             remapped_params: *remapped_params,
         },
+        TAtomic::TObjectWithProperties {
+            properties,
+            is_stringable,
+            is_invokable,
+        } => TAtomic::TObjectWithProperties {
+            properties: properties
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        substitute_templates_in_union(value, template_result),
+                    )
+                })
+                .collect(),
+            is_stringable: *is_stringable,
+            is_invokable: *is_invokable,
+        },
         TAtomic::TObjectIntersection { types } => {
             let mut replaced_types = Vec::with_capacity(types.len());
             for nested_type in types {
                 let replaced_type = substitute_templates_in_atomic(
                     nested_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 );
                 if !replaced_types.contains(&replaced_type) {
                     replaced_types.push(replaced_type);
@@ -449,29 +465,27 @@ fn substitute_templates_in_atomic(
             fallback_value_type,
         } => {
             let mut new_properties = rustc_hash::FxHashMap::default();
-            for (key, value) in properties {
+            for (key, value) in properties.iter() {
                 new_properties.insert(
                     key.clone(),
-                    substitute_templates_in_union(value, template_replacements, template_defaults),
+                    substitute_templates_in_union(value, template_result),
                 );
             }
 
             TAtomic::TKeyedArray {
-                properties: new_properties,
+                properties: std::sync::Arc::new(new_properties),
                 is_list: *is_list,
                 sealed: *sealed,
                 fallback_key_type: fallback_key_type.as_ref().map(|key_type| {
                     Box::new(substitute_templates_in_union(
                         key_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                     ))
                 }),
                 fallback_value_type: fallback_value_type.as_ref().map(|value_type| {
                     Box::new(substitute_templates_in_union(
                         value_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                     ))
                 }),
             }
@@ -488,8 +502,7 @@ fn substitute_templates_in_atomic(
                         name: param.name,
                         param_type: substitute_templates_in_union(
                             &param.param_type,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                         ),
                         is_optional: param.is_optional,
                         is_variadic: param.is_variadic,
@@ -500,8 +513,7 @@ fn substitute_templates_in_atomic(
             return_type: return_type.as_ref().map(|return_type| {
                 Box::new(substitute_templates_in_union(
                     return_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 ))
             }),
             is_pure: *is_pure,
@@ -518,8 +530,7 @@ fn substitute_templates_in_atomic(
                         name: param.name,
                         param_type: substitute_templates_in_union(
                             &param.param_type,
-                            template_replacements,
-                            template_defaults,
+                            template_result,
                         ),
                         is_optional: param.is_optional,
                         is_variadic: param.is_variadic,
@@ -530,8 +541,7 @@ fn substitute_templates_in_atomic(
             return_type: return_type.as_ref().map(|return_type| {
                 Box::new(substitute_templates_in_union(
                     return_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 ))
             }),
             is_pure: *is_pure,
@@ -540,8 +550,7 @@ fn substitute_templates_in_atomic(
             as_type: as_type.as_ref().map(|as_type| {
                 Box::new(substitute_templates_in_atomic(
                     as_type,
-                    template_replacements,
-                    template_defaults,
+                    template_result,
                 ))
             }),
         },
@@ -550,10 +559,11 @@ fn substitute_templates_in_atomic(
             defining_entity,
             as_type,
         } => {
-            if let Some(replacement) = template_replacements
-                .get(*name, *defining_entity)
-                .cloned()
-                .or_else(|| template_defaults.get(*name, *defining_entity).cloned())
+            if let Some(replacement) = lower_bounds_get(template_result, *name, *defining_entity)
+                .or_else(|| {
+                    template_types_get(template_result, *name, *defining_entity)
+                        .map(|mapped_type| (**mapped_type).clone())
+                })
                 && let Some(single_replacement) = replacement.get_single()
             {
                 single_replacement.clone()
@@ -563,8 +573,7 @@ fn substitute_templates_in_atomic(
                     defining_entity: *defining_entity,
                     as_type: Box::new(substitute_templates_in_atomic(
                         as_type,
-                        template_replacements,
-                        template_defaults,
+                        template_result,
                     )),
                 }
             }
@@ -598,8 +607,7 @@ pub(crate) fn infer_template_replacements_from_union(
     analyzer: &StatementsAnalyzer<'_>,
     param_type: &TUnion,
     arg_type: &TUnion,
-    template_defaults: &TemplateMap,
-    template_replacements: &mut TemplateMap,
+    template_result: &mut TemplateResult,
 ) {
     // When a parameter union mixes explicit non-template branches with top-level template
     // branches (e.g. `T|int`), infer templates from the unmatched argument remainder.
@@ -642,8 +650,7 @@ pub(crate) fn infer_template_replacements_from_union(
                         analyzer,
                         template_branch,
                         arg_atomic,
-                        template_defaults,
-                        template_replacements,
+                        template_result,
                     );
                 }
             }
@@ -652,25 +659,85 @@ pub(crate) fn infer_template_replacements_from_union(
     }
 
     for param_atomic in &param_type.types {
+        // A union carrying ignore-nullable/falsable flags binds whole, so the
+        // flags survive into the bound (Psalm binds the entire input union as
+        // `$generic_param`, flags included); splitting per atomic would shed
+        // them.
+        if (arg_type.ignore_nullable_issues || arg_type.ignore_falsable_issues)
+            && let TAtomic::TTemplateParam {
+                name,
+                defining_entity,
+                as_type,
+            } = param_atomic
+        {
+            bind_template_param_to_arg_union(
+                analyzer,
+                *name,
+                *defining_entity,
+                as_type,
+                arg_type,
+                template_result,
+            );
+            continue;
+        }
         for arg_atomic in &arg_type.types {
             infer_template_replacements_from_atomic(
                 analyzer,
                 param_atomic,
                 arg_atomic,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
         }
     }
 }
 
-pub(crate) fn infer_template_replacements_from_atomic(
+fn bind_template_param_to_arg_union(
+    analyzer: &StatementsAnalyzer<'_>,
+    name: StrId,
+    defining_entity: GenericParent,
+    as_type: &TUnion,
+    arg_union: &TUnion,
+    template_result: &mut TemplateResult,
+) {
+    let bound = template_types_get(template_result, name, defining_entity)
+        .map(|mapped_type| (**mapped_type).clone())
+        .unwrap_or_else(|| as_type.clone());
+
+    bind_template_replacement(
+        analyzer,
+        name,
+        defining_entity,
+        arg_union,
+        &bound,
+        template_result,
+    );
+}
+
+fn infer_template_replacements_from_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     param_atomic: &TAtomic,
     arg_atomic: &TAtomic,
-    template_defaults: &TemplateMap,
-    template_replacements: &mut TemplateMap,
+    template_result: &mut TemplateResult,
 ) {
+    // Hakana's `find_matching_atomic_types_for_template`: a type-variable
+    // argument matches a same-named type-variable parameter as itself, and
+    // anything else as mixed ("todo we can probably do better here").
+    if let TAtomic::TTypeVariable { name: arg_name } = arg_atomic {
+        if let TAtomic::TTypeVariable { name: param_name } = param_atomic
+            && arg_name == param_name
+        {
+            return;
+        }
+
+        infer_template_replacements_from_atomic(
+            analyzer,
+            param_atomic,
+            &TAtomic::TMixed,
+            template_result,
+        );
+        return;
+    }
+
     if let TAtomic::TTemplateParam {
         as_type: arg_as_type,
         ..
@@ -682,22 +749,23 @@ pub(crate) fn infer_template_replacements_from_atomic(
             as_type: param_as_type,
         } = param_atomic
         {
-            let bound = template_defaults.get(*name, *defining_entity).unwrap_or(param_as_type);
+            let bound = template_types_get(template_result, *name, *defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
+                .unwrap_or_else(|| (**param_as_type).clone());
             let arg_union = TUnion::new(arg_atomic.clone());
             bind_template_replacement(
                 analyzer,
                 *name,
                 *defining_entity,
                 &arg_union,
-                bound,
-                template_replacements,
+                &bound,
+                template_result,
             );
             infer_template_replacements_from_union(
                 analyzer,
-                bound,
+                &bound,
                 arg_as_type,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
             return;
         }
@@ -706,8 +774,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
             analyzer,
             &TUnion::new(param_atomic.clone()),
             arg_as_type,
-            template_defaults,
-            template_replacements,
+            template_result,
         );
         return;
     }
@@ -717,8 +784,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
             analyzer,
             param_atomic,
             as_type,
-            template_defaults,
-            template_replacements,
+            template_result,
         );
         return;
     }
@@ -729,9 +795,8 @@ pub(crate) fn infer_template_replacements_from_atomic(
             defining_entity,
             as_type,
         } => {
-            let bound = template_defaults
-                .get(*name, *defining_entity)
-                .cloned()
+            let bound = template_types_get(template_result, *name, *defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
                 .unwrap_or_else(|| TUnion::new((**as_type).clone()));
             let arg_union = TUnion::new(arg_atomic.clone());
 
@@ -741,15 +806,14 @@ pub(crate) fn infer_template_replacements_from_atomic(
                 *defining_entity,
                 &arg_union,
                 &bound,
-                template_replacements,
+                template_result,
             );
 
             infer_template_replacements_from_union(
                 analyzer,
                 &bound,
                 &arg_union,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
         }
         TAtomic::TTemplateParam {
@@ -757,7 +821,9 @@ pub(crate) fn infer_template_replacements_from_atomic(
             defining_entity,
             as_type,
         } => {
-            let bound = template_defaults.get(*name, *defining_entity).unwrap_or(as_type);
+            let bound = template_types_get(template_result, *name, *defining_entity)
+                .map(|mapped_type| (**mapped_type).clone())
+                .unwrap_or_else(|| (**as_type).clone());
             let arg_union = TUnion::new(arg_atomic.clone());
 
             bind_template_replacement(
@@ -765,35 +831,52 @@ pub(crate) fn infer_template_replacements_from_atomic(
                 *name,
                 *defining_entity,
                 &arg_union,
-                bound,
-                template_replacements,
+                &bound,
+                template_result,
             );
 
+            // Bounds mined from a NOMINAL as-clause (`TIterator as
+            // RecursiveIterator<TKey, TValue>`, matched against the arg's
+            // @implements chain) are FALLBACKS: they insert at depth 1 so a
+            // direct bound from another argument position (a callable's
+            // declared param types) takes precedence in get_relevant_bounds
+            // instead of unioning with the iterator's element types.
+            // Structural as-clauses (`TArray as array<T>`) stay authoritative
+            // — Psalm's usort tests expect the array's element type to win.
+            let bound_is_nominal = bound
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TNamedObject { type_params: Some(_), .. }));
+            let previous_depth = template_result.bound_insertion_depth;
+            if bound_is_nominal {
+                template_result.bound_insertion_depth = previous_depth + 1;
+            }
             infer_template_replacements_from_union(
                 analyzer,
-                bound,
+                &bound,
                 &arg_union,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
+            template_result.bound_insertion_depth = previous_depth;
         }
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } if template_defaults.contains_name(*name) => {
+        .. } if template_types_contains_name(template_result, *name) => {
             // A template name that parsed as a plain object reference: the
-            // defaults map knows which entity declared it.
+            // declared template types know which entity declared it.
             if let (Some(bound), Some(defining_entity)) = (
-                template_defaults.get_by_name(*name),
-                template_defaults.entity_for_name(*name),
+                template_types_get_by_name(template_result, *name)
+                    .map(|mapped_type| (**mapped_type).clone()),
+                template_types_entity_for_name(template_result, *name),
             ) {
                 bind_template_replacement(
                     analyzer,
                     *name,
                     defining_entity,
                     &TUnion::new(arg_atomic.clone()),
-                    bound,
-                    template_replacements,
+                    &bound,
+                    template_result,
                 );
             }
         }
@@ -801,12 +884,69 @@ pub(crate) fn infer_template_replacements_from_atomic(
             as_type: Some(param_as_type),
         } => {
             if let Some(arg_as_type) = extract_class_string_atomic(analyzer, arg_atomic) {
+                // `class-string<T>` naming a *concrete* class names `T`
+                // exactly (`new ReflectionClass(Foo::class)` is a reflection
+                // *of* Foo): record the binding as an equality bound, which
+                // pins any type variable minted for `T` to precise bounds. A
+                // template-valued class-string (forwarding a generic) is not
+                // an exact naming and binds normally.
+                if let TAtomic::TTemplateParam {
+                    name,
+                    defining_entity,
+                    as_type,
+                } = param_as_type.as_ref()
+                    && let TAtomic::TNamedObject {
+                        name: equality_classlike,
+                        ..
+                    } = &arg_as_type
+                {
+                    let bound = template_types_get(template_result, *name, *defining_entity)
+                        .map(|mapped_type| (**mapped_type).clone())
+                        .unwrap_or_else(|| (**as_type).clone());
+                    let arg_union = TUnion::new(arg_as_type.clone());
+                    bind_template_replacement_as_equality(
+                        analyzer,
+                        *name,
+                        *defining_entity,
+                        &arg_union,
+                        &bound,
+                        *equality_classlike,
+                        template_result,
+                    );
+
+                    // A nominal as-clause carrying sibling templates
+                    // (`TWrapper of Wrapper<TInner>`) mines them from the
+                    // named class's inheritance chain, exactly as the
+                    // TTemplateParam arm below does for non-class-string
+                    // arguments.
+                    let bound_is_nominal = bound.types.iter().any(|atomic| {
+                        matches!(
+                            atomic,
+                            TAtomic::TNamedObject {
+                                type_params: Some(_),
+                                ..
+                            }
+                        )
+                    });
+                    let previous_depth = template_result.bound_insertion_depth;
+                    if bound_is_nominal {
+                        template_result.bound_insertion_depth = previous_depth + 1;
+                    }
+                    infer_template_replacements_from_union(
+                        analyzer,
+                        &bound,
+                        &arg_union,
+                        template_result,
+                    );
+                    template_result.bound_insertion_depth = previous_depth;
+                    return;
+                }
+
                 infer_template_replacements_from_atomic(
                     analyzer,
                     param_as_type,
                     &arg_as_type,
-                    template_defaults,
-                    template_replacements,
+                    template_result,
                 );
             }
         }
@@ -822,7 +962,14 @@ pub(crate) fn infer_template_replacements_from_atomic(
             key_type,
             value_type,
         } => {
+            // A mixed argument binds the nested templates to mixed (Psalm's
+            // standin replacer adds a mixed lower bound, the source of
+            // `type_coerced_from_mixed`).
             let Some((arg_key_type, arg_value_type)) = extract_array_like_key_value(arg_atomic)
+                .or_else(|| {
+                    matches!(arg_atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
+                        .then(|| (TUnion::mixed(), TUnion::mixed()))
+                })
             else {
                 return;
             };
@@ -831,15 +978,13 @@ pub(crate) fn infer_template_replacements_from_atomic(
                 analyzer,
                 key_type,
                 &arg_key_type,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
             infer_template_replacements_from_union(
                 analyzer,
                 value_type,
                 &arg_value_type,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
         }
         TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
@@ -866,6 +1011,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
 
                     combined
                 }
+                TAtomic::TMixed | TAtomic::TNonEmptyMixed => TUnion::mixed(),
                 _ => return,
             };
 
@@ -873,9 +1019,57 @@ pub(crate) fn infer_template_replacements_from_atomic(
                 analyzer,
                 value_type,
                 &arg_value_type,
-                template_defaults,
-                template_replacements,
+                template_result,
             );
+        }
+        // `object{value: T}` params bind T from the argument's matching
+        // property — a shape property or a (possibly templated) class
+        // property read through the argument's type params.
+        TAtomic::TObjectWithProperties {
+            properties: param_properties,
+            ..
+        } => {
+            for (key, param_property_type) in param_properties {
+                let arg_property_type = match arg_atomic {
+                    TAtomic::TObjectWithProperties {
+                        properties: arg_properties,
+                        ..
+                    } => arg_properties.get(key).cloned(),
+                    TAtomic::TNamedObject {
+                        name: arg_name,
+                        type_params: arg_type_params,
+                        ..
+                    } => {
+                        let pzoom_code_info::ArrayKey::String(property_name) = key else {
+                            continue;
+                        };
+                        analyzer.codebase.get_class(*arg_name).and_then(|class_info| {
+                            let property_id =
+                                class_info.property_name_lookup.get(property_name).copied()?;
+                            let property_info = class_info.properties.get(&property_id)?;
+                            Some(
+                                crate::expr::fetch::atomic_property_fetch_analyzer::substitute_class_template_params(
+                                    class_info,
+                                    arg_type_params.as_deref(),
+                                    &property_info
+                                        .get_type()
+                                        .cloned()
+                                        .unwrap_or_else(TUnion::mixed),
+                                ),
+                            )
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(arg_property_type) = arg_property_type {
+                    infer_template_replacements_from_union(
+                        analyzer,
+                        param_property_type,
+                        &arg_property_type,
+                        template_result,
+                    );
+                }
+            }
         }
         TAtomic::TNamedObject {
             name,
@@ -896,8 +1090,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                                 analyzer,
                                 param,
                                 arg,
-                                template_defaults,
-                                template_replacements,
+                                template_result,
                             );
                         }
                     }
@@ -908,8 +1101,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                         param_type_params,
                         *arg_name,
                         arg_type_params.as_deref(),
-                        template_defaults,
-                        template_replacements,
+                        template_result,
                     );
                 }
             }
@@ -922,8 +1114,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                             analyzer,
                             param_type,
                             arg_type,
-                            template_defaults,
-                            template_replacements,
+                            template_result,
                         );
                     }
                 }
@@ -933,8 +1124,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                         analyzer,
                         param_type,
                         arg_atomic,
-                        template_defaults,
-                        template_replacements,
+                        template_result,
                     );
                 }
             }
@@ -960,6 +1150,24 @@ pub(crate) fn infer_template_replacements_from_atomic(
                     return_type,
                     ..
                 } => (params, return_type),
+                // A signature-less `callable`/`Closure` could return anything:
+                // its return binds the param's return templates to mixed
+                // (Psalm infers mixed for `call_user_func($plain_callable)`),
+                // never leaving them unbound (which would resolve to never
+                // and cut control flow after the call).
+                TAtomic::TCallable { params: None, .. }
+                | TAtomic::TClosure { params: None, .. }
+                | TAtomic::TCallableString => {
+                    if let Some(param_return_type) = param_return_type {
+                        infer_template_replacements_from_union(
+                            analyzer,
+                            param_return_type,
+                            &TUnion::mixed(),
+                            template_result,
+                        );
+                    }
+                    return;
+                }
                 _ => return,
             };
 
@@ -968,8 +1176,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                     analyzer,
                     &param_param.param_type,
                     &arg_param.param_type,
-                    template_defaults,
-                    template_replacements,
+                    template_result,
                 );
             }
 
@@ -980,8 +1187,7 @@ pub(crate) fn infer_template_replacements_from_atomic(
                     analyzer,
                     param_return_type,
                     arg_return_type,
-                    template_defaults,
-                    template_replacements,
+                    template_result,
                 );
             }
         }
@@ -989,78 +1195,248 @@ pub(crate) fn infer_template_replacements_from_atomic(
     }
 }
 
-pub(crate) fn infer_named_object_template_replacements_from_extended_params(
+fn infer_named_object_template_replacements_from_extended_params(
     analyzer: &StatementsAnalyzer<'_>,
     param_class_name: StrId,
     param_type_params: &[TUnion],
     arg_class_name: StrId,
     arg_type_params: Option<&[TUnion]>,
-    template_defaults: &TemplateMap,
-    template_replacements: &mut TemplateMap,
+    template_result: &mut TemplateResult,
 ) {
     let Some(arg_class_info) = analyzer.codebase.get_class(arg_class_name) else {
         return;
     };
-    let Some(param_class_info) = analyzer.codebase.get_class(param_class_name) else {
-        return;
-    };
-    let Some(extended_param_map) = arg_class_info
+    // Psalm's findMatchingAtomicTypesForTemplate only treats a named object as
+    // matching a generic container of another class when the extends chain
+    // links them — without that, no standin bound is recorded.
+    if !arg_class_info
         .template_extended_params
-        .get(&param_class_name)
-    else {
+        .contains_key(&param_class_name)
+    {
         return;
-    };
+    }
 
-    let arg_template_defaults = crate::expr::call::function_call_analyzer::get_class_template_defaults(arg_class_info);
-    let arg_template_replacements =
-        crate::expr::call::function_call_analyzer::infer_class_template_replacements_from_type_params(arg_class_info, arg_type_params);
+    // Psalm remaps the input's type params onto the container class
+    // (GenericTrait::replaceTypeParamsTemplateTypesWithStandins →
+    // getMappedGenericTypeParams), then matches the container's written params
+    // against the mapped input params by offset.
+    let mapped_arg_type_params = get_mapped_generic_type_params(
+        analyzer.codebase,
+        arg_class_name,
+        arg_type_params,
+        param_class_name,
+    );
 
-    for (idx, template_type) in param_class_info.template_types.iter().enumerate() {
-        let Some(param_type_param) = param_type_params.get(idx) else {
+    for (idx, param_type_param) in param_type_params.iter().enumerate() {
+        let Some(mapped_arg_type) = mapped_arg_type_params.get(idx) else {
             continue;
         };
-
-        let mapped_arg_type = extended_param_map
-            .get(&template_type.name)
-            .cloned()
-            .unwrap_or_else(|| template_type.as_type.clone());
-
-        let resolved_arg_type =
-            if arg_template_defaults.is_empty() && arg_template_replacements.is_empty() {
-                mapped_arg_type
-            } else {
-                crate::expr::call::function_call_analyzer::replace_templates_in_union(
-                    &mapped_arg_type,
-                    &arg_template_replacements,
-                    &arg_template_defaults,
-                )
-            };
 
         infer_template_replacements_from_union(
             analyzer,
             param_type_param,
-            &resolved_arg_type,
-            template_defaults,
-            template_replacements,
+            mapped_arg_type,
+            template_result,
         );
     }
 }
 
-pub(crate) fn is_traversable_template_target(name: StrId) -> bool {
+/// Resolves a template atomic through the `@extends`/`@implements` chain to
+/// its terminal atomics (the input class's own templates, or concrete types) —
+/// a faithful port of Psalm's `Methods::getExtendedTemplatedTypes`.
+fn get_extended_templated_types<'a>(
+    atomic: &'a TAtomic,
+    extends: &'a indexmap::IndexMap<StrId, indexmap::IndexMap<StrId, TUnion>>,
+) -> Vec<&'a TAtomic> {
+    let mut extra_added_types = Vec::new();
+
+    let TAtomic::TTemplateParam {
+        name,
+        defining_entity,
+        ..
+    } = atomic
+    else {
+        return extra_added_types;
+    };
+
+    if let Some(extended_param) = defining_entity
+        .classlike_name()
+        .and_then(|entity_class| extends.get(&entity_class))
+        .and_then(|map| map.get(name))
+    {
+        for extended_atomic_type in &extended_param.types {
+            if matches!(extended_atomic_type, TAtomic::TTemplateParam { .. }) {
+                extra_added_types
+                    .extend(get_extended_templated_types(extended_atomic_type, extends));
+            } else {
+                extra_added_types.push(extended_atomic_type);
+            }
+        }
+    } else {
+        extra_added_types.push(atomic);
+    }
+
+    extra_added_types
+}
+
+/// Maps an input object's type params onto a container class's template
+/// params — a faithful port of Psalm's
+/// `TemplateStandinTypeReplacer::getMappedGenericTypeParams`.
+///
+/// (Psalm's `iterable` → `Traversable` container aliasing is omitted: pzoom
+/// models `iterable` as `TIterable`, which never reaches the named-object
+/// container arm.)
+pub(crate) fn get_mapped_generic_type_params(
+    codebase: &pzoom_code_info::CodebaseInfo,
+    input_name: StrId,
+    input_given_type_params: Option<&[TUnion]>,
+    container_name: StrId,
+) -> Vec<TUnion> {
+    let input_class_info = codebase.get_class(input_name);
+
+    let mut input_type_params: Vec<TUnion> = if let Some(params) = input_given_type_params {
+        params.to_vec()
+    } else if let Some(input_class_info) = input_class_info {
+        if input_name == container_name {
+            input_class_info
+                .template_types
+                .iter()
+                .map(|template_type| {
+                    TUnion::new(TAtomic::TTemplateParam {
+                        name: template_type.name,
+                        defining_entity: template_type.defining_entity,
+                        as_type: Box::new(template_type.as_type.clone()),
+                    })
+                })
+                .collect()
+        } else if let Some(extended) = input_class_info
+            .template_extended_params
+            .get(&container_name)
+            .filter(|map| !map.is_empty())
+        {
+            extended.values().cloned().collect()
+        } else {
+            vec![TUnion::mixed(); input_class_info.template_types.len()]
+        }
+    } else {
+        Vec::new()
+    };
+
+    if input_name != container_name
+        && let Some(input_class_info) = input_class_info
+    {
+        // The input class's own templates map to its given type params, ready
+        // to substitute into the extends chain's parameterizations.
+        let mut replacement_templates = TemplateResult::default();
+        for (i, template_type) in input_class_info.template_types.iter().enumerate() {
+            let Some(input_type_param) = input_type_params.get(i) else {
+                break;
+            };
+            crate::template::lower_bounds_insert(
+                &mut replacement_templates,
+                template_type.name,
+                GenericParent::ClassLike(input_name),
+                input_type_param.clone(),
+            );
+        }
+
+        let template_extends = &input_class_info.template_extended_params;
+
+        if let Some(params) = template_extends.get(&container_name) {
+            let mut new_input_params = Vec::with_capacity(params.len());
+
+            for extended_input_param_type in params.values() {
+                let mut new_input_param: Option<TUnion> = None;
+
+                for extended_template in &extended_input_param_type.types {
+                    let extended_templates: Vec<&TAtomic> = if matches!(
+                        extended_template,
+                        TAtomic::TTemplateParam { .. }
+                    ) {
+                        get_extended_templated_types(extended_template, template_extends)
+                            .into_iter()
+                            .filter(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let mut candidate_param_types: Vec<TUnion> = Vec::new();
+
+                    for template in extended_templates {
+                        let TAtomic::TTemplateParam {
+                            name: template_name,
+                            defining_entity: template_defining_entity,
+                            ..
+                        } = template
+                        else {
+                            continue;
+                        };
+
+                        let Some(old_params_offset) =
+                            input_class_info.template_types.iter().position(|t| {
+                                t.name == *template_name
+                                    && t.defining_entity == *template_defining_entity
+                            })
+                        else {
+                            continue;
+                        };
+
+                        let mut candidate_param_type = input_type_params
+                            .get(old_params_offset)
+                            .cloned()
+                            .unwrap_or_else(TUnion::mixed);
+                        candidate_param_type.from_template_default = true;
+                        candidate_param_types.push(candidate_param_type);
+                    }
+
+                    let candidate = if candidate_param_types.is_empty() {
+                        let mut kept = TUnion::new(extended_template.clone());
+                        kept.from_template_default = true;
+                        kept
+                    } else {
+                        let mut combined = candidate_param_types[0].clone();
+                        for candidate_param_type in &candidate_param_types[1..] {
+                            combined = combine_union_types(&combined, candidate_param_type, false);
+                        }
+                        combined
+                    };
+
+                    new_input_param = Some(match new_input_param {
+                        Some(existing) => combine_union_types(&existing, &candidate, false),
+                        None => candidate,
+                    });
+                }
+
+                let new_input_param = new_input_param.unwrap_or_else(TUnion::mixed);
+                new_input_params.push(crate::template::inferred_type_replacer::replace(
+                    &new_input_param,
+                    &replacement_templates,
+                ));
+            }
+
+            input_type_params = new_input_params;
+        }
+    }
+
+    input_type_params
+}
+
+fn is_traversable_template_target(name: StrId) -> bool {
     name == StrId::TRAVERSABLE
         || name == StrId::ITERATOR
         || name == StrId::ITERATOR_AGGREGATE
         || name == StrId::GENERATOR
 }
 
-pub(crate) fn is_top_level_template_atomic(atomic: &TAtomic) -> bool {
+fn is_top_level_template_atomic(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
         TAtomic::TTemplateParam { .. } | TAtomic::TTemplateParamClass { .. }
     )
 }
 
-pub(crate) fn extract_class_string_atomic(
+fn extract_class_string_atomic(
     analyzer: &StatementsAnalyzer<'_>,
     arg_atomic: &TAtomic,
 ) -> Option<TAtomic> {
@@ -1068,6 +1444,9 @@ pub(crate) fn extract_class_string_atomic(
         TAtomic::TClassString {
             as_type: Some(as_type),
         } => Some((**as_type).clone()),
+        // A plain `class-string` names *some* object (Psalm's
+        // handleTemplateParamClassStandin binds `new TObject(true)`).
+        TAtomic::TClassString { as_type: None } => Some(TAtomic::TObject),
         TAtomic::TLiteralClassString { name } => Some(TAtomic::TNamedObject {
             name: analyzer.interner.intern(name),
             type_params: None,
@@ -1080,7 +1459,7 @@ pub(crate) fn extract_class_string_atomic(
     }
 }
 
-pub(crate) fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)> {
+fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)> {
     match arg_atomic {
         TAtomic::TArray {
             key_type,
@@ -1112,7 +1491,7 @@ pub(crate) fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUni
                 .map(|value_type| (**value_type).clone())
                 .unwrap_or_else(TUnion::nothing);
 
-            for (key, value) in properties {
+            for (key, value) in properties.iter() {
                 let key_union_part = match key {
                     pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                         TUnion::new(TAtomic::TLiteralInt { value: *value })
@@ -1214,7 +1593,7 @@ pub(crate) fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUni
     }
 }
 
-pub(crate) fn extract_array_like_key_value_from_union(arg_union: &TUnion) -> Option<(TUnion, TUnion)> {
+fn extract_array_like_key_value_from_union(arg_union: &TUnion) -> Option<(TUnion, TUnion)> {
     let mut key_type: Option<TUnion> = None;
     let mut value_type: Option<TUnion> = None;
 
@@ -1241,39 +1620,252 @@ pub(crate) fn extract_array_like_key_value_from_union(arg_union: &TUnion) -> Opt
     }
 }
 
-pub(crate) fn bind_template_replacement(
+fn bind_template_replacement(
     analyzer: &StatementsAnalyzer<'_>,
     template_name: StrId,
-    defining_entity: StrId,
+    defining_entity: GenericParent,
     arg_type: &TUnion,
     bound: &TUnion,
-    template_replacements: &mut TemplateMap,
+    template_result: &mut TemplateResult,
 ) {
-    let candidate_arg_type = widen_template_argument_to_bound(arg_type, bound);
+    let candidate_arg_type = if template_keeps_literals(analyzer, template_name, &defining_entity) {
+        arg_type.clone()
+    } else {
+        widen_template_argument_to_bound(arg_type, bound)
+    };
 
-    if !bound.is_mixed() {
-        let mut bound_comparison_result = TypeComparisonResult::new();
-        if !union_type_comparator::is_contained_by(
-            analyzer.codebase,
-            &candidate_arg_type,
-            bound,
-            false,
-            false,
-            &mut bound_comparison_result,
-        ) {
-            return;
+    let Some(candidate_arg_type) = filter_bindable_candidate(analyzer, candidate_arg_type, bound)
+    else {
+        return;
+    };
+
+    lower_bounds_insert_combined(template_result, template_name, defining_entity, candidate_arg_type);
+}
+
+/// Psalm's `handleTemplateParamStandin` bind gate: the input binds when it
+/// *can* be contained by the template's bound (`canBeContainedBy` — any
+/// overlap), keeping only the overlapping union members
+/// (`$matching_input_keys`). A strict containment gate would refuse to bind
+/// `Key as mixed` to a `TKey as array-key` standin, which Psalm accepts.
+fn filter_bindable_candidate(
+    analyzer: &StatementsAnalyzer<'_>,
+    candidate_arg_type: TUnion,
+    bound: &TUnion,
+) -> Option<TUnion> {
+    if bound.is_mixed() {
+        return Some(candidate_arg_type);
+    }
+
+    // A bound that itself mentions sibling templates (`TArray as
+    // array<TKey, mixed>`) must be checked against their constraints —
+    // Psalm's comparison effectively sees the templates' as-types, so
+    // `array<string, int>` binds to that TArray.
+    let bound = dissolve_nested_template_params(bound);
+    let bound = &bound;
+
+    let matching: Vec<TAtomic> = candidate_arg_type
+        .types
+        .iter()
+        .filter(|atomic| {
+            union_type_comparator::can_be_contained_by(
+                analyzer.codebase,
+                &TUnion::new((*atomic).clone()),
+                bound,
+            )
+        })
+        .cloned()
+        .collect();
+
+    if matching.is_empty() {
+        return None;
+    }
+
+    if matching.len() == candidate_arg_type.types.len() {
+        return Some(candidate_arg_type);
+    }
+
+    let mut filtered = candidate_arg_type;
+    filtered.types = matching;
+    Some(filtered)
+}
+
+/// Replace template-param atomics with their constraints, recursing through
+/// generic containers, so a bound can be compared against concrete inputs.
+fn dissolve_nested_template_params(union: &TUnion) -> TUnion {
+    fn dissolve_atomics(atomics: &[TAtomic], out: &mut Vec<TAtomic>, depth: usize) {
+        for atomic in atomics {
+            match atomic {
+                TAtomic::TTemplateParam { as_type, .. } if depth < 8 => {
+                    dissolve_atomics(&as_type.types, out, depth + 1);
+                }
+                TAtomic::TArray {
+                    key_type,
+                    value_type,
+                } => out.push(TAtomic::TArray {
+                    key_type: Box::new(dissolve_union(key_type, depth + 1)),
+                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
+                }),
+                TAtomic::TNonEmptyArray {
+                    key_type,
+                    value_type,
+                } => out.push(TAtomic::TNonEmptyArray {
+                    key_type: Box::new(dissolve_union(key_type, depth + 1)),
+                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
+                }),
+                TAtomic::TList { value_type } => out.push(TAtomic::TList {
+                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
+                }),
+                TAtomic::TNonEmptyList { value_type } => out.push(TAtomic::TNonEmptyList {
+                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
+                }),
+                TAtomic::TIterable {
+                    key_type,
+                    value_type,
+                } => out.push(TAtomic::TIterable {
+                    key_type: Box::new(dissolve_union(key_type, depth + 1)),
+                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
+                }),
+                TAtomic::TNamedObject {
+                    name,
+                    type_params: Some(type_params),
+                    is_static,
+                    remapped_params,
+                } => out.push(TAtomic::TNamedObject {
+                    name: *name,
+                    type_params: Some(
+                        type_params
+                            .iter()
+                            .map(|param| dissolve_union(param, depth + 1))
+                            .collect(),
+                    ),
+                    is_static: *is_static,
+                    remapped_params: *remapped_params,
+                }),
+                other => out.push(other.clone()),
+            }
         }
     }
 
-    template_replacements.insert_combined(template_name, defining_entity, candidate_arg_type);
+    fn dissolve_union(union: &TUnion, depth: usize) -> TUnion {
+        if depth >= 8 {
+            return union.clone();
+        }
+        let mut atomics = Vec::with_capacity(union.types.len());
+        dissolve_atomics(&union.types, &mut atomics, depth);
+        if atomics.is_empty() {
+            union.clone()
+        } else {
+            let mut dissolved = union.clone();
+            dissolved.types = atomics;
+            dissolved
+        }
+    }
+
+    dissolve_union(union, 0)
 }
 
-pub(crate) fn widen_template_argument_to_bound(arg_type: &TUnion, bound: &TUnion) -> TUnion {
+/// [`bind_template_replacement`] recording an equality bound (Hakana's
+/// `equality_bound_classlike`): the argument names the template's type
+/// exactly rather than providing a value of it.
+fn bind_template_replacement_as_equality(
+    analyzer: &StatementsAnalyzer<'_>,
+    template_name: StrId,
+    defining_entity: GenericParent,
+    arg_type: &TUnion,
+    bound: &TUnion,
+    equality_classlike: StrId,
+    template_result: &mut TemplateResult,
+) {
+    let candidate_arg_type = if template_keeps_literals(analyzer, template_name, &defining_entity) {
+        arg_type.clone()
+    } else {
+        widen_template_argument_to_bound(arg_type, bound)
+    };
+
+    let Some(candidate_arg_type) = filter_bindable_candidate(analyzer, candidate_arg_type, bound)
+    else {
+        return;
+    };
+
+    template_result
+        .lower_bounds
+        .entry(template_name)
+        .or_default()
+        .entry(defining_entity)
+        .or_default()
+        .push(pzoom_code_info::TemplateBound {
+            bound_type: candidate_arg_type,
+            appearance_depth: 0,
+            arg_offset: None,
+            equality_bound_classlike: Some(equality_classlike),
+            pos: None,
+        });
+}
+
+/// Whether bounds for this template must keep argument literals: PHP's
+/// conditional types (`(T is 1 ? ... : ...)`, a feature Hack lacks)
+/// discriminate branches on values, so a template used as a conditional
+/// subject is exempt from Hakana's `generalize_literals`.
+fn template_keeps_literals(
+    analyzer: &StatementsAnalyzer<'_>,
+    template_name: StrId,
+    defining_entity: &GenericParent,
+) -> bool {
+    let GenericParent::FunctionLike(id) = defining_entity else {
+        return false;
+    };
+
+    let template_types = if let Some(function_info) = analyzer.codebase.get_function(*id) {
+        &function_info.template_types
+    } else {
+        // Method templates' defining entity is the combined "Class::method".
+        let combined = analyzer.interner.lookup(*id);
+        let Some((class_name, method_name)) = combined.split_once("::") else {
+            return false;
+        };
+        let Some(class_id) = analyzer.interner.find(class_name) else {
+            return false;
+        };
+        let Some(method_id) = analyzer.interner.find(method_name) else {
+            return false;
+        };
+        let Some(method_info) = analyzer
+            .codebase
+            .get_class(class_id)
+            .and_then(|class_info| class_info.methods.get(&method_id))
+        else {
+            return false;
+        };
+        return method_info
+            .template_types
+            .iter()
+            .any(|t| t.name == template_name && t.conditional_subject);
+    };
+
+    template_types
+        .iter()
+        .any(|t| t.name == template_name && t.conditional_subject)
+}
+
+fn widen_template_argument_to_bound(arg_type: &TUnion, bound: &TUnion) -> TUnion {
     let mut widened_types = Vec::with_capacity(arg_type.types.len());
 
     for atomic in &arg_type.types {
         let widened_atomic = match atomic {
-            TAtomic::TLiteralInt { .. } if bound_accepts_int_like(bound) => TAtomic::TInt,
+            // A bound carrying literal ints (e.g. preg_match's
+            // `TFlags as int-mask<0, 256, 512>`) discriminates on values —
+            // keep a matching literal so conditional types can pick a branch
+            // (a PHP-side need Hack doesn't have; Psalm's lower bounds keep
+            // the arg's literal type). Everything else generalizes at bound
+            // insertion (Hakana's `generalize_literals`), including
+            // unconstrained (mixed-bounded) templates: binding `T` from
+            // `[1, 2, 3]` yields `int`, not `1|2|3`.
+            TAtomic::TLiteralInt { value }
+                if bound_accepts_int_like(bound)
+                    && !bound_contains_literal_int(bound, *value) =>
+            {
+                TAtomic::TInt
+            }
             TAtomic::TLiteralString { value }
                 if bound_accepts_string_like(bound)
                     && !bound_contains_literal_string(bound, value) =>
@@ -1293,23 +1885,26 @@ pub(crate) fn widen_template_argument_to_bound(arg_type: &TUnion, bound: &TUnion
     if widened_types.is_empty() {
         arg_type.clone()
     } else {
-        TUnion::from_types(widened_types)
+        let mut widened = TUnion::from_types(widened_types);
+        widened.ignore_nullable_issues = arg_type.ignore_nullable_issues;
+        widened.ignore_falsable_issues = arg_type.ignore_falsable_issues;
+        widened
     }
 }
 
-pub(crate) fn bound_accepts_int_like(bound: &TUnion) -> bool {
+fn bound_accepts_int_like(bound: &TUnion) -> bool {
+    // `array-key` bounds keep literal keys (Psalm binds `TKey as array-key`
+    // to literal `0` from a list argument, and its generic invariance check
+    // then exempts the literal param).
     bound.types.iter().any(|atomic| {
         matches!(
             atomic,
-            TAtomic::TInt
-                | TAtomic::TLiteralInt { .. }
-                | TAtomic::TIntRange { .. }
-                | TAtomic::TArrayKey
+            TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
         )
     })
 }
 
-pub(crate) fn bound_accepts_string_like(bound: &TUnion) -> bool {
+fn bound_accepts_string_like(bound: &TUnion) -> bool {
     bound.types.iter().any(|atomic| {
         matches!(
             atomic,
@@ -1328,21 +1923,31 @@ pub(crate) fn bound_accepts_string_like(bound: &TUnion) -> bool {
     })
 }
 
-pub(crate) fn bound_contains_literal_string(bound: &TUnion, value: &str) -> bool {
+fn bound_contains_literal_string(bound: &TUnion, value: &str) -> bool {
     bound.types.iter().any(|atomic| match atomic {
         TAtomic::TLiteralString { value: bound_value } => bound_value == value,
         _ => false,
     })
 }
 
-pub(crate) fn bound_accepts_float_like(bound: &TUnion) -> bool {
+fn bound_contains_literal_int(bound: &TUnion, value: i64) -> bool {
+    bound.types.iter().any(|atomic| match atomic {
+        TAtomic::TLiteralInt { value: bound_value } => *bound_value == value,
+        TAtomic::TIntRange { min, max } => {
+            min.is_none_or(|min| min <= value) && max.is_none_or(|max| value <= max)
+        }
+        _ => false,
+    })
+}
+
+fn bound_accepts_float_like(bound: &TUnion) -> bool {
     bound
         .types
         .iter()
         .any(|atomic| matches!(atomic, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
 }
 
-pub(crate) fn bound_accepts_bool_like(bound: &TUnion) -> bool {
+fn bound_accepts_bool_like(bound: &TUnion) -> bool {
     bound
         .types
         .iter()

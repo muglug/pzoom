@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use pzoom_code_info::algebra::Clause;
 use pzoom_code_info::{Assertion, TUnion};
-use pzoom_str::StrId;
+use pzoom_code_info::VarName;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::stmt::scope_analyzer::ControlAction;
@@ -17,38 +17,38 @@ use crate::stmt::scope_analyzer::ControlAction;
 #[derive(Clone, Debug, Default)]
 pub struct IfScope {
     /// New variables that definitely exist after the if.
-    pub new_vars: Option<BTreeMap<StrId, TUnion>>,
+    pub new_vars: Option<BTreeMap<VarName, TUnion>>,
 
     /// Variables that might be in scope after the if.
-    pub new_vars_possibly_in_scope: FxHashSet<StrId>,
+    pub new_vars_possibly_in_scope: FxHashSet<VarName>,
 
     /// Variables that were redefined in the if.
-    pub redefined_vars: Option<FxHashMap<StrId, TUnion>>,
+    pub redefined_vars: Option<FxHashMap<VarName, TUnion>>,
 
     /// Variables that were removed in the if.
-    pub removed_var_ids: FxHashSet<StrId>,
+    pub removed_var_ids: FxHashSet<VarName>,
 
     /// Variables assigned in the if with their assignment counts.
-    pub assigned_var_ids: Option<FxHashMap<StrId, usize>>,
+    pub assigned_var_ids: Option<FxHashMap<VarName, usize>>,
 
     /// Variables that might have been assigned.
-    pub possibly_assigned_var_ids: FxHashSet<StrId>,
+    pub possibly_assigned_var_ids: FxHashSet<VarName>,
 
     /// Variables that might have been redefined.
-    pub possibly_redefined_vars: FxHashMap<StrId, TUnion>,
+    pub possibly_redefined_vars: FxHashMap<VarName, TUnion>,
 
     /// Variables that were updated.
-    pub updated_vars: FxHashSet<StrId>,
+    pub updated_vars: FxHashSet<VarName>,
 
     /// Negated type assertions for the else branch.
-    pub negated_types: BTreeMap<String, Vec<Vec<Assertion>>>,
+    pub negated_types: BTreeMap<VarName, Vec<Vec<Assertion>>>,
 
     /// Variable IDs changed by the if condition.
-    pub if_cond_changed_var_ids: FxHashSet<StrId>,
+    pub if_cond_changed_var_ids: FxHashSet<VarName>,
 
     /// Variables the if condition narrowed that can be negated in the fallthrough
     /// branches — the `vars_to_update` set passed to `BlockContext::update`.
-    pub negatable_if_types: FxHashSet<StrId>,
+    pub negatable_if_types: FxHashSet<VarName>,
 
     /// Negated clauses (the if condition was false).
     pub negated_clauses: Vec<Clause>,

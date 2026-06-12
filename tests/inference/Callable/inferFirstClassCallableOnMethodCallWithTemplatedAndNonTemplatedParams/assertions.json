@@ -1,0 +1,1 @@
+{"$result1===": "array{param1: int, param2: 42}", "$result2===": "array{param1: 42, param2: int}", "$result3===": "array{param1: int, param2: int}"}

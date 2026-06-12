@@ -1,0 +1,3840 @@
+<?php
+
+namespace {
+    define('YAF_VERSION', '3.3.5', true);
+    define('YAF_ENVIRON', 'product', true);
+    define('YAF_ERR_STARTUP_FAILED', 512, true);
+    define('YAF_ERR_ROUTE_FAILED', 513, true);
+    define('YAF_ERR_DISPATCH_FAILED', 514, true);
+    define('YAF_ERR_NOTFOUND_MODULE', 515, true);
+    define('YAF_ERR_NOTFOUND_CONTROLLER', 516, true);
+    define('YAF_ERR_NOTFOUND_ACTION', 517, true);
+    define('YAF_ERR_NOTFOUND_VIEW', 518, true);
+    define('YAF_ERR_CALL_FAILED', 519, true);
+    define('YAF_ERR_AUTOLOAD_FAILED', 520, true);
+    define('YAF_ERR_TYPE_ERROR', 521, true);
+    define('YAF_ERR_ACCESS_ERROR', 522);
+
+    //================================================
+
+    final class Yaf_Application
+    {
+        /**
+         * @var Yaf_Application
+         */
+        protected static $_app;
+
+        /**
+         * @var Yaf_Config_Abstract
+         */
+        protected $config;
+
+        /**
+         * @var Yaf_Dispatcher
+         */
+        protected $dispatcher;
+
+        /**
+         * @var array
+         */
+        protected $_modules;
+
+        /**
+         * @var string
+         */
+        protected $_running = "";
+
+        /**
+         * @var string
+         */
+        protected $_environ = YAF_ENVIRON;
+
+        /**
+         * @since 2.1.2
+         * @var int
+         */
+        protected $_err_no = 0;
+
+        /**
+         * @since 2.1.2
+         * @var string
+         */
+        protected $_err_msg = "";
+
+        /**
+         * @param string|array $config A ini config file path, or a config array
+         * @param string $environ Which section will be loaded as the final config
+         * @throws Yaf_Exception_TypeError|Yaf_Exception_StartupError
+         */
+        public function __construct($config, $environ = null) {}
+
+        /**
+         * @return Yaf_Application
+         */
+        public function getInstance() {}
+
+        /**
+         * @return void
+         * @throws Yaf_Exception_StartupError
+         */
+        public function run() {}
+
+        /**
+         * @param callable $entry a valid callback
+         * @param string ...$_ parameters will pass to the callback
+         * @return void
+         */
+        public function execute(callable $entry, ...$_) {}
+
+        /**
+         * @return Yaf_Application
+         */
+        public static function app() {}
+
+        /**
+         * @return string
+         */
+        public function environ() {}
+
+        /**
+         * @param Yaf_Bootstrap_Abstract $bootstrap A Yaf_Bootstrap_Abstract instance
+         * @return Yaf_Application
+         */
+        public function bootstrap($bootstrap = null) {}
+
+        /**
+         * @return Yaf_Config_Abstract
+         */
+        public function getConfig() {}
+
+        /**
+         * @return array
+         */
+        public function getModules() {}
+
+        /**
+         * @return Yaf_Dispatcher
+         */
+        public function getDispatcher() {}
+
+        /**
+         * @param string $directory
+         * @return Yaf_Application
+         * @since 2.1.4
+         */
+        public function setAppDirectory($directory) {}
+
+        /**
+         * @return string
+         * @since 2.1.4
+         */
+        public function getAppDirectory() {}
+
+        /**
+         * @return int
+         * @since 2.1.2
+         */
+        public function getLastErrorNo() {}
+
+        /**
+         * @return string
+         * @since 2.1.2
+         */
+        public function getLastErrorMsg() {}
+
+        /**
+         * @return void
+         * @since 2.1.2
+         */
+        public function clearLastError() {}
+
+            public function __destruct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+    }
+
+    final class Yaf_Dispatcher
+    {
+        /**
+         * @var Yaf_Dispatcher
+         */
+        protected static $_instance;
+
+        /**
+         * @var Yaf_Router
+         */
+        protected $_router;
+
+        /**
+         * @var Yaf_View_Interface
+         */
+        protected $_view;
+
+        /**
+         * @var Yaf_Request_Abstract
+         */
+        protected $_request;
+
+        /**
+         * @var Yaf_Plugin_Abstract
+         */
+        protected $_plugins;
+
+        /**
+         * @var bool
+         */
+        protected $_auto_render = true;
+
+        /**
+         * @var string
+         */
+        protected $_return_response = "";
+
+        /**
+         * @var string
+         */
+        protected $_instantly_flush = "";
+
+        /**
+         * @var string
+         */
+        protected $_default_module;
+
+        /**
+         * @var string
+         */
+        protected $_default_controller;
+
+        /**
+         * @var string
+         */
+        protected $_default_action;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @return Yaf_Dispatcher
+         */
+        public function enableView() {}
+
+        /**
+         * @return Yaf_Response_Abstract|null
+         */
+        public function getResponse() {}
+
+        /**
+         * @return string|null
+         */
+        public function getDefaultModule() {}
+
+        /**
+         * @return string|null
+         */
+        public function getDefaultController() {}
+
+        /**
+         * @return string|null
+         */
+        public function getDefaultAction() {}
+
+        /**
+         * @return bool
+         */
+        public function disableView() {}
+
+        /**
+         * @param string $templates_dir
+         * @param array|null $options
+         * @return Yaf_View_Interface
+         */
+        public function initView($templates_dir, ?array $options = null) {}
+
+        /**
+         * @param Yaf_View_Interface $view A Yaf_View_Interface instance
+         * @return Yaf_Dispatcher
+         */
+        public function setView($view) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return Yaf_Dispatcher
+         */
+        public function setRequest($request) {}
+
+        /**
+         * @return Yaf_Application
+         */
+        public function getApplication() {}
+
+        /**
+         * @return Yaf_Router
+         */
+        public function getRouter() {}
+
+        /**
+         * @return Yaf_Request_Abstract
+         */
+        public function getRequest() {}
+
+        /**
+         * @param callable $callback a callable callback
+         * @param int $error_types YAF_ERR_* constants mask
+         * @return Yaf_Dispatcher
+         */
+        public function setErrorHandler($callback, $error_types = YAF_ERR_TYPE_ERROR) {}
+
+        /**
+         * @param string $module
+         * @return Yaf_Dispatcher
+         */
+        public function setDefaultModule($module) {}
+
+        /**
+         * @param string $controller
+         * @return Yaf_Dispatcher
+         */
+        public function setDefaultController($controller) {}
+
+        /**
+         * @param string $action
+         * @return Yaf_Dispatcher
+         */
+        public function setDefaultAction($action) {}
+
+        /**
+         * @param bool $flag
+         * @return Yaf_Dispatcher
+         */
+        public function returnResponse($flag) {}
+
+        /**
+         * @param bool $flag since 2.2.0, if this parameter is not given, then the current state will be set
+         * @return Yaf_Dispatcher
+         */
+        public function autoRender($flag = null) {}
+
+        /**
+         * @param bool $flag since 2.2.0, if this parameter is not given, then the current state will be set
+         * @return Yaf_Dispatcher
+         */
+        public function flushInstantly($flag = null) {}
+
+        /**
+         * @return Yaf_Dispatcher
+         */
+        public static function getInstance() {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @throws Yaf_Exception_TypeError
+         * @throws Yaf_Exception_RouterFailed
+         * @throws Yaf_Exception_DispatchFailed
+         * @throws Yaf_Exception_LoadFailed
+         * @throws Yaf_Exception_LoadFailed_Action
+         * @throws Yaf_Exception_LoadFailed_Controller
+         * @return Yaf_Response_Abstract
+         */
+        public function dispatch($request) {}
+
+        /**
+         * @param bool $flag
+         * @return Yaf_Dispatcher
+         */
+        public function throwException($flag = null) {}
+
+        /**
+         * @param bool $flag
+         * @return Yaf_Dispatcher
+         */
+        public function catchException($flag = null) {}
+
+        /**
+         * @param Yaf_Plugin_Abstract $plugin
+         * @return Yaf_Dispatcher
+         */
+        public function registerPlugin($plugin) {}
+
+        /**
+         * @param Yaf_Response_Abstract $response
+         * @return Yaf_Dispatcher|null
+         */
+        public function setResponse($response) {}
+    }
+
+    class Yaf_Loader
+    {
+        /**
+         * @var string
+         */
+        protected $_local_ns;
+
+        /**
+         * @var string
+         */
+        protected $_library;
+
+        /**
+         * @var string
+         */
+        protected $_global_library;
+
+        /**
+         * @var Yaf_Loader
+         */
+        protected static $_instance;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @param string $class_name
+         * @return bool
+         */
+        public function autoload($class_name) {}
+
+        /**
+         * @param string $local_library_path
+         * @param string $global_library_path
+         * @return Yaf_Loader
+         */
+        public static function getInstance($local_library_path = null, $global_library_path = null) {}
+
+        /**
+         * @param string|string[] $namespace a string or a array of class name prefix. all class prefix with these prefix will be loaded in local library path.
+         * @param string $path
+         * @return bool
+         */
+        public function registerLocalNamespace($namespace, $path = '') {}
+
+        /**
+         * @return string
+         */
+        public function getLocalNamespace() {}
+
+        /**
+         * @return string
+         */
+        public function getNamespaces() {}
+
+        /**
+         * @return bool
+         */
+        public function clearLocalNamespace() {}
+
+        /**
+         * @param string $class_name
+         * @return bool
+         */
+        public function isLocalName($class_name) {}
+
+        /**
+         * @param string $file
+         * @return bool
+         */
+        public static function import($file) {}
+
+        /**
+         * @param string $library_path
+         * @param bool $is_global
+         * @return Yaf_Loader
+         * @since 2.1.4
+         */
+        public function setLibraryPath($library_path, $is_global = false) {}
+
+        /**
+         * @param bool $is_global
+         * @return string
+         * @since 2.1.4
+         */
+        public function getLibraryPath($is_global = false) {}
+
+        /**
+         * @param string|array $namespace
+         * @param string $path
+         * @return Yaf_Loader|null|false
+         */
+        public function registerNamespace($namespace, $path = '') {}
+
+        /**
+         * @param string $class_name
+         * @return string
+         */
+        public function getNamespacePath($class_name) {}
+    }
+
+    final class Yaf_Registry
+    {
+        /**
+         * @var Yaf_Registry
+         */
+        protected static $_instance;
+
+        /**
+         * @var array
+         */
+        protected $_entries;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public static function get($name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public static function has($name) {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @return bool
+         */
+        public static function set($name, $value) {}
+
+        /**
+         * @param string $name
+         * @return void|bool
+         */
+        public static function del($name) {}
+    }
+
+    /**
+     * @version 2.2.9
+     */
+    final class Yaf_Session implements Iterator, ArrayAccess, Countable
+    {
+        /**
+         * @var Yaf_Session
+         */
+        protected static $_instance;
+
+        /**
+         * @var array
+         */
+        protected $_session;
+
+        /**
+         * @var bool
+         */
+        protected $_started = true;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @return Yaf_Session
+         */
+        public static function getInstance() {}
+
+        /**
+         * @return Yaf_Session
+         */
+        public function start() {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function get($name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function has($name) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         * @return Yaf_Session|false return FALSE on failure
+         */
+        public function set($name, $value) {}
+
+        /**
+         * @param string $name
+         * @return Yaf_Session|false return FALSE on failure
+         */
+        public function del($name) {}
+
+        /**
+         * @return int
+         */
+        public function count(): int {}
+
+        /**
+         * @return void
+         */
+        public function rewind() {}
+
+            public function current() {}
+
+        /**
+         * @return void
+         */
+        public function next() {}
+
+        /**
+         * @return bool
+         */
+        public function valid() {}
+
+            public function key() {}
+
+        /**
+         * @param mixed $offset
+         * @return void
+         */
+        public function offsetUnset($offset) {}
+
+        /**
+         * @param mixed $offset
+         * @return mixed
+         */
+        public function offsetGet($offset) {}
+
+        /**
+         * @param mixed $offset
+         * @return bool
+         */
+        public function offsetExists($offset) {}
+
+        /**
+         * @param mixed $offset
+         * @param mixed $value
+         * @return void
+         */
+        public function offsetSet($offset, $value) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function __get($name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function __isset($name) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         * @return void
+         */
+        public function __set($name, $value) {}
+
+        /**
+         * @param string $name
+         * @return void
+         */
+        public function __unset($name) {}
+
+        /**
+         * @return Yaf_Session|null|false
+         */
+        public function clear() {}
+    }
+
+    class Yaf_Router
+    {
+        /**
+         * @var Yaf_Route_Interface[] registered routes stack
+         */
+        protected $_routes;
+
+        /**
+         * @var string after routing phase, this indicated the name of which route is used to route current request. you can get this name by Yaf_Router::getCurrentRoute()
+         */
+        protected $_current;
+
+            public function __construct() {}
+
+        /**
+         * @param string $name
+         * @param Yaf_Route_Interface $route
+         * @return Yaf_Router|false return FALSE on failure
+         */
+        public function addRoute($name, $route) {}
+
+        /**
+         * @param Yaf_Config_Abstract $config
+         * @return Yaf_Router|false return FALSE on failure
+         */
+        public function addConfig($config) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool
+         */
+        public function route($request) {}
+
+        /**
+         * @param string $name
+         * @return Yaf_Route_Interface
+         */
+        public function getRoute($name) {}
+
+        /**
+         * @return Yaf_Route_Interface[]
+         */
+        public function getRoutes() {}
+
+        /**
+         * @return string the name of the effective route.
+         */
+        public function getCurrentRoute() {}
+    }
+
+    abstract class Yaf_Bootstrap_Abstract {}
+
+    abstract class Yaf_Controller_Abstract
+    {
+        /**
+         * @var array You can also define a action method in a separate PHP script by using this property and Yaf_Action_Abstract.
+         */
+        public $actions;
+
+        /**
+         * @var string module name
+         */
+        protected $_module;
+
+        /**
+         * @var string controller name
+         */
+        protected $_name;
+
+        /**
+         * @var Yaf_Request_Abstract current request object
+         */
+        protected $_request;
+
+        /**
+         * @var Yaf_Response_Abstract current response object
+         */
+        protected $_response;
+
+        /**
+         * @var array
+         */
+        protected $_invoke_args;
+
+        /**
+         * @var Yaf_View_Interface view engine object
+         */
+        protected $_view;
+
+        /**
+         * @param string $tpl
+         * @param array|null $parameters
+         * @return string|null|bool
+         */
+        protected function render($tpl, ?array $parameters = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array|null $parameters
+         * @return bool
+         */
+        protected function display($tpl, ?array $parameters = null) {}
+
+        /**
+         * @return Yaf_Request_Abstract
+         */
+        public function getRequest() {}
+
+        /**
+         * @return Yaf_Response_Abstract
+         */
+        public function getResponse() {}
+
+        /**
+         * @return string
+         */
+        public function getModuleName() {}
+
+        /**
+         * @return Yaf_View_Interface
+         */
+        public function getView() {}
+
+        /**
+         * @return string|null
+         */
+        public function getName() {}
+
+        /**
+         * @param array|null $options
+         * @return Yaf_Response_Abstract
+         * @deprecated not_implemented
+         */
+        public function initView(?array $options = null) {}
+
+        /**
+         * @param string $view_directory
+         * @return bool
+         */
+        public function setViewpath($view_directory) {}
+
+        /**
+         * @return string
+         */
+        public function getViewpath() {}
+
+        /**
+         * @param string $module destination module name, if NULL was given, then default module name is assumed
+         * @param string $controller destination controller name
+         * @param string $action destination action name
+         * @param array|null $parameters calling arguments
+         * @return bool return FALSE on failure
+         */
+        public function forward($module, $controller = null, $action = null, ?array $parameters = null) {}
+
+        /**
+         * @param string $url a location URL
+         * @return bool
+         */
+        public function redirect($url) {}
+
+        /**
+         * @return array
+         */
+        public function getInvokeArgs() {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function getInvokeArg($name) {}
+
+        /**
+         * @return void
+         */
+        public function init() {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @param Yaf_View_Interface $view
+         * @param array|null $args
+         */
+        public function __construct($request, $response, $view, ?array $args = null) {}
+
+            private function __clone() {}
+    }
+
+    abstract class Yaf_Action_Abstract extends Yaf_Controller_Abstract
+    {
+        /**
+         * @var Yaf_Controller_Abstract
+         */
+        protected $_controller;
+
+        /**
+         * @param mixed ...$args
+         * @return mixed
+         */
+        abstract public function execute(...$args);
+
+        /**
+         * @return Yaf_Controller_Abstract
+         */
+        public function getController() {}
+
+        /**
+         * @return string
+         */
+        public function getControllerName() {}
+    }
+
+    abstract class Yaf_Config_Abstract implements Iterator, ArrayAccess, Countable
+    {
+        /**
+         * @var array
+         */
+        protected $_config = null;
+
+        /**
+         * @var bool
+         */
+        protected $_readonly = true;
+
+        /**
+         * @param ?string $name
+         * @return mixed
+         */
+        abstract public function get(?string $name = null);
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         */
+        abstract public function set(string $name, $value): bool;
+
+        /**
+         * @return int
+         */
+        public function count(): int {}
+
+        /**
+         * @return void
+         */
+        public function rewind(): void {}
+
+        /**
+         * @return mixed
+         */
+        public function current() {}
+
+        /**
+         * @return mixed
+         */
+        public function key() {}
+
+        /**
+         * @return void
+         */
+        public function next(): void {}
+
+        /**
+         * @return bool
+         */
+        public function valid(): bool {}
+
+        /**
+         * @return bool
+         */
+        abstract public function readonly(): bool;
+
+        /**
+         * @return array
+         */
+        abstract public function toArray(): array;
+
+        /**
+         * @param mixed $offset
+         * @param mixed $value
+         * @return void
+         */
+        public function offsetSet($offset, $value): void {}
+
+        /**
+         * @param mixed $name
+         * @return void
+         */
+        public function offsetUnset($name): void {}
+
+        /**
+         * @param mixed $name
+         * @return bool
+         */
+        public function offsetExists($name): bool {}
+
+        /**
+         * @param mixed $name
+         * @return mixed
+         */
+        public function offsetGet($name) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function __get(string $name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function __isset(string $name): bool {}
+    }
+
+    abstract class Yaf_Request_Abstract
+    {
+        public const SCHEME_HTTP = 'http';
+        public const SCHEME_HTTPS = 'https';
+
+        /**
+         * @var string
+         */
+        public $module;
+
+        /**
+         * @var string
+         */
+        public $controller;
+
+        /**
+         * @var string
+         */
+        public $action;
+
+        /**
+         * @var string
+         */
+        public $method;
+
+        /**
+         * @var array
+         */
+        protected $params;
+
+        /**
+         * @var string
+         */
+        protected $language;
+
+        /**
+         * @var Yaf_Exception
+         */
+        protected $_exception;
+
+        /**
+         * @var string
+         */
+        protected $_base_uri = "";
+
+        /**
+         * @var string
+         */
+        protected $uri = "";
+
+        /**
+         * @var string
+         */
+        protected $dispatched = "";
+
+        /**
+         * @var string
+         */
+        protected $routed = "";
+
+        /**
+         * @return bool
+         */
+        public function isGet() {}
+
+        /**
+         * @return bool
+         */
+        public function isDelete() {}
+
+        /**
+         * @return bool
+         */
+        public function isPatch() {}
+
+        /**
+         * @return string|null
+         */
+        public function getRaw() {}
+
+        /**
+         * @return Yaf_Request_Abstract|null
+         */
+        public function clearParams() {}
+
+        /**
+         * @return bool
+         */
+        public function isPost() {}
+
+        /**
+         * @return bool
+         */
+        public function isPut() {}
+
+        /**
+         * @return bool
+         */
+        public function isHead() {}
+
+        /**
+         * @return bool
+         */
+        public function isOptions() {}
+
+        /**
+         * @return bool
+         */
+        public function isCli() {}
+
+        /**
+         * @return bool
+         */
+        final public function isDispatched() {}
+
+        /**
+         * @return bool
+         */
+        final public function isRouted() {}
+
+        /**
+         * @return bool
+         */
+        public function isXmlHttpRequest() {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getServer($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getEnv($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getParam(string $name, $default = '') {}
+
+        /**
+         * @return array
+         */
+        public function getParams() {}
+
+        /**
+         * @return Yaf_Exception
+         */
+        public function getException() {}
+
+        /**
+         * @return string
+         */
+        public function getModuleName() {}
+
+        /**
+         * @return string
+         */
+        public function getControllerName() {}
+
+        /**
+         * @return string
+         */
+        public function getActionName() {}
+
+        /**
+         * @param string|array $name the variable name, or an array of key=>value pairs
+         * @param string $value
+         * @return Yaf_Request_Abstract|bool|null
+         */
+        public function setParam($name, $value = null) {}
+
+        /**
+         * @param string $module
+         * @param bool $format_name
+         * @return Yaf_Request_Abstract|bool
+         */
+        public function setModuleName($module, $format_name = true) {}
+
+        /**
+         * @param string $controller
+         * @param bool $format_name
+         * @return Yaf_Request_Abstract|bool
+         */
+        public function setControllerName($controller, $format_name = true) {}
+
+        /**
+         * @param string $action
+         * @param bool $format_name
+         * @return Yaf_Request_Abstract|bool
+         */
+        public function setActionName($action, $format_name = true) {}
+
+        /**
+         * @return string
+         */
+        public function getMethod() {}
+
+        /**
+         * @return string
+         */
+        public function getLanguage() {}
+
+        /**
+         * @param string $uri base URI
+         * @return bool
+         */
+        public function setBaseUri($uri) {}
+
+        /**
+         * @return string
+         */
+        public function getBaseUri() {}
+
+        /**
+         * @return string
+         */
+        public function getRequestUri() {}
+
+        /**
+         * @param string $uri request URI
+         * @return Yaf_Request_Abstract|null
+         * @since 2.1.0
+         */
+        public function setRequestUri($uri) {}
+
+        /**
+         * @param bool $dispatched
+         * @return Yaf_Request_Abstract|null
+         */
+        final public function setDispatched($dispatched = null) {}
+
+        /**
+         * @param bool $flag
+         * @return Yaf_Request_Abstract|null
+         */
+        final public function setRouted($flag = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function get($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getFiles($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getCookie($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getPost(string $name = '', $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getRequest($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getQuery($name = null, $default = null) {}
+    }
+
+    abstract class Yaf_Plugin_Abstract
+    {
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function routerStartup(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function routerShutdown(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function dispatchLoopStartup(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function dispatchLoopShutdown(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function preDispatch(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function postDispatch(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @param Yaf_Response_Abstract $response
+         * @return bool true
+         */
+        public function preResponse(Yaf_Request_Abstract $request, Yaf_Response_Abstract $response) {}
+    }
+
+    abstract class Yaf_Response_Abstract
+    {
+        public const DEFAULT_BODY = "content";
+
+        /**
+         * @var string
+         */
+        protected $_header;
+
+        /**
+         * @var string
+         */
+        protected $_body;
+
+        /**
+         * @var bool
+         */
+        protected $_sendheader;
+
+            public function __construct() {}
+
+            public function __destruct() {}
+
+            private function __clone() {}
+
+            public function __toString() {}
+
+        /**
+         * @return void
+         */
+        public function response() {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @param bool $rep
+         * @return bool
+         */
+        public function setHeader(string $name, string $value, bool $rep = false) {}
+
+        /**
+         * @param string $body content string
+         * @param string $name the content key, you can set a content with a key, if you don't specific, then Yaf_Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function setBody($body, $name = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $body content string
+         * @param string $name the content key, you can set a content with a key, if you don't specific, then Yaf_Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function appendBody($body, $name = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $body content string
+         * @param string $name the content key, you can set a content with a key, if you don't specific, then Yaf_Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function prependBody($body, $name = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $name the content key, you can set a content with a key, if you don't specific, then Yaf_Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function clearBody($name = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string|null $name the content key, if you don't specific, then Yaf_Response_Abstract::DEFAULT_BODY will be used. if you pass in a NULL, then all contents will be returned as a array
+         * @return mixed
+         */
+        public function getBody($name = self::DEFAULT_BODY) {}
+    }
+
+    interface Yaf_View_Interface
+    {
+        /**
+         * @param string|array $name
+         * @param mixed $value
+         * @return Yaf_View_Interface|bool
+         */
+        public function assign($name, $value = '');
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @return bool
+         */
+        public function display($tpl, $tpl_vars = null);
+
+        /**
+         * @return string
+         */
+        public function getScriptPath();
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @return string|bool
+         */
+        public function render($tpl, $tpl_vars = null);
+
+        /**
+         * @param string $template_dir An absolute path to the template directory, by default, Yaf_Dispatcher use application.directory . "/views" as this parameter.
+         * @return bool
+         */
+        public function setScriptPath($template_dir);
+    }
+
+    interface Yaf_Route_Interface
+    {
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool
+         */
+        public function route($request);
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null);
+    }
+
+    class Yaf_Exception extends Exception
+    {
+        /**
+         * @var string
+         */
+        protected $message;
+
+        /**
+         * @var string
+         */
+        protected $code;
+
+        /**
+         * @var string
+         */
+        protected $previous;
+    }
+
+    class Yaf_Response_Http extends Yaf_Response_Abstract
+    {
+        /**
+         * @var int
+         */
+        protected $_response_code = 0;
+
+        private function __clone() {}
+
+        /**
+         * @return string
+         */
+        public function __toString() {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @param bool $rep
+         * @param int $response_code
+         * @return bool
+         */
+        public function setHeader(string $name = '', string $value = '', bool $rep = false, int $response_code = 0) {}
+
+        /**
+         * @param array $headers
+         * @return bool
+         */
+        public function setAllHeaders($headers) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function getHeader($name = null) {}
+
+        /**
+         * @return Yaf_Response_Abstract|false
+         */
+        public function clearHeaders() {}
+
+        /**
+         * @param string $url
+         * @return bool
+         */
+        public function setRedirect($url) {}
+
+        /**
+         * @return bool
+         */
+        public function response() {}
+    }
+
+    class Yaf_Response_Cli extends Yaf_Response_Abstract
+    {
+        private function __clone() {}
+
+        /**
+         * @return string
+         */
+        public function __toString() {}
+    }
+
+    class Yaf_Request_Http extends Yaf_Request_Abstract
+    {
+        /**
+         * @param string $request_uri
+         * @param string $base_uri
+         */
+        public function __construct($request_uri = '', $base_uri = '') {}
+    }
+
+    class Yaf_Request_Simple extends Yaf_Request_Abstract
+    {
+        /**
+         * @return bool
+         */
+        public function isXmlHttpRequest() {}
+
+        /**
+         * @param string $method
+         * @param string $module
+         * @param string $controller
+         * @param string $action
+         * @param array $params
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($method = '', $module = '', $controller = '', $action = '', $params = null) {}
+    }
+
+    class Yaf_Config_Ini extends Yaf_Config_Abstract implements Iterator, ArrayAccess, Countable
+    {
+        /**
+         * @param array|string $config_file
+         * @param ?string $section
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($config_file, ?string $section = null) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function __get($name = null) {}
+
+        /**
+         * @param mixed $name
+         * @param mixed $value
+         */
+        public function __set($name, $value) {}
+
+        /**
+         * @param ?string $name
+         * @return mixed
+         */
+        public function get(?string $name = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         */
+        public function set(string $name, $value): bool {}
+
+        /**
+         * @return array
+         */
+        public function toArray(): array {}
+
+        /**
+         * @return bool
+         */
+        public function readonly(): bool {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function __isset(string $name): bool {}
+
+        /**
+         * @return int
+         */
+        public function count(): int {}
+
+        /**
+         * @return void
+         */
+        public function rewind(): void {}
+
+        /**
+         * @return mixed
+         */
+        public function current() {}
+
+        /**
+         * @return void
+         */
+        public function next(): void {}
+
+        /**
+         * @return bool
+         */
+        public function valid(): bool {}
+
+        /**
+         * @return mixed
+         */
+        public function key() {}
+
+        /**
+         * @param mixed $name
+         * @return void
+         * @deprecated not_implemented
+         */
+        public function offsetUnset($name): void {}
+
+        /**
+         * @param mixed $name
+         * @return mixed
+         */
+        public function offsetGet($name) {}
+
+        /**
+         * @param mixed $name
+         * @return bool
+         */
+        public function offsetExists($name): bool {}
+
+        /**
+         * @param mixed $offset
+         * @param mixed $value
+         * @return void
+         */
+        public function offsetSet($offset, $value): void {}
+    }
+
+    class Yaf_Config_Simple extends Yaf_Config_Abstract implements Iterator, ArrayAccess, Countable
+    {
+        /**
+         * @param array|string $config_file
+         * @param ?string $section
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($config_file, ?string $section = null) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function __get($name = null) {}
+
+        /**
+         * @param mixed $name
+         * @param mixed $value
+         */
+        public function __set($name, $value) {}
+
+        /**
+         * @param ?string $name
+         * @return mixed
+         */
+        public function get(?string $name = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         */
+        public function set(string $name, $value): bool {}
+
+        /**
+         * @return array
+         */
+        public function toArray(): array {}
+
+        /**
+         * @return bool
+         */
+        public function readonly(): bool {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function __isset($name): bool {}
+
+        /**
+         * @return int
+         */
+        public function count(): int {}
+
+        /**
+         * @return void
+         */
+        public function rewind(): void {}
+
+        /**
+         * @return mixed
+         */
+        public function current() {}
+
+        /**
+         * @return void
+         */
+        public function next(): void {}
+
+        /**
+         * @return bool
+         */
+        public function valid(): bool {}
+
+        /**
+         * @return mixed
+         */
+        public function key() {}
+
+        /**
+         * @param mixed $name
+         * @return void
+         */
+        public function offsetUnset($name): void {}
+
+        /**
+         * @param mixed $name
+         * @return mixed
+         */
+        public function offsetGet($name) {}
+
+        /**
+         * @param mixed $name
+         * @return bool
+         */
+        public function offsetExists($name): bool {}
+
+        /**
+         * @param mixed $offset
+         * @param mixed $value
+         * @return void
+         */
+        public function offsetSet($offset, $value): void {}
+    }
+
+    class Yaf_View_Simple implements Yaf_View_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_tpl_dir;
+
+        /**
+         * @var array
+         */
+        protected $_tpl_vars;
+
+        /**
+         * @var array
+         */
+        protected $_options;
+
+        /**
+         * @param string $template_dir The base directory of the templates, by default, it is APPLICATION . "/views" for Yaf.
+         * @param array|null $options Options for the engine, as of Yaf 2.1.13, you can use short tag
+         * @throws Yaf_Exception_TypeError
+         */
+        final public function __construct($template_dir, ?array $options = null) {}
+
+        /**
+         * @param string $name
+         */
+        public function __isset($name) {}
+
+        /**
+         * @param string|array $name A string or an array.if is string, then the next argument $value is required.
+         * @param mixed $value mixed value
+         * @return Yaf_View_Interface|bool
+         */
+        public function assign($name, $value = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @throws Yaf_Exception_LoadFailed_View
+         * @return string|bool
+         */
+        public function render($tpl, $tpl_vars = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @throws Yaf_Exception_LoadFailed_View
+         * @return bool
+         */
+        public function display($tpl, $tpl_vars = null) {}
+
+        /**
+         * @param string $name A string name which will be used to access the value in the template.
+         * @param mixed &$value mixed value
+         * @return Yaf_View_Simple
+         */
+        public function assignRef($name, &$value) {}
+
+        /**
+         * @param string $name assigned variable name. if empty, will clear all assigned variables.
+         * @return Yaf_View_Simple
+         */
+        public function clear($name = null) {}
+
+        /**
+         * @param string $template_dir An absolute path to the template directory, by default, Yaf_Dispatcher use application.directory . "/views" as this parameter.
+         * @return bool
+         */
+        public function setScriptPath($template_dir) {}
+
+        /**
+         * @return string
+         */
+        public function getScriptPath() {}
+
+        /**
+         * @param string $name the assigned variable name
+         * @return mixed
+         */
+        public function __get($name = null) {}
+
+        /**
+         * @param string $name A string value name.
+         * @param mixed $value mixed value
+         */
+        public function __set($name, $value = null) {}
+
+        /**
+         * @param string $tpl_str string template
+         * @param array $vars
+         * @return void|false return FALSE on failure
+         */
+        public function eval($tpl_str, $vars = null) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function get($name = '') {}
+    }
+
+    class Yaf_Route_Static implements Yaf_Route_Interface
+    {
+        /**
+         * @param string $uri
+         * @return bool
+         * @deprecated not_implemented
+         */
+        public function match($uri) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool always TRUE
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+
+    final class Yaf_Route_Simple implements Yaf_Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $controller;
+
+        /**
+         * @var string
+         */
+        protected $module;
+
+        /**
+         * @var string
+         */
+        protected $action;
+
+        /**
+         * @param string $module_name
+         * @param string $controller_name
+         * @param string $action_name
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($module_name, $controller_name, $action_name) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool always TRUE
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+
+    final class Yaf_Route_Supervar implements Yaf_Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_var_name;
+
+        /**
+         * @param string $supervar_name The name of key.
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($supervar_name) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool If there is a key(which was defined in Yaf_Route_Supervar::__construct()) in $_GET, return TRUE. otherwise return FALSE.
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+
+    final class Yaf_Route_Rewrite extends Yaf_Router implements Yaf_Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_route;
+
+        /**
+         * @var array
+         */
+        protected $_default;
+
+        /**
+         * @var array
+         */
+        protected $_verify;
+
+        /**
+         * @param string $match A pattern, will be used to match a request uri, if doesn't matched, Yaf_Route_Rewrite will return FALSE.
+         * @param array $route When the match pattern matches the request uri, Yaf_Route_Rewrite will use this to decide which m/c/a to routed.
+         * @param array|null $verify
+         * @param string|null $reverse
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($match, array $route, ?array $verify = null, $reverse = null) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+
+        /**
+         * @param string $uri
+         * @return bool
+         */
+        public function match($uri) {}
+    }
+
+    final class Yaf_Route_Regex extends Yaf_Router implements Yaf_Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_route;
+
+        /**
+         * @var array
+         */
+        protected $_default;
+
+        /**
+         * @var array
+         */
+        protected $_maps;
+
+        /**
+         * @var array
+         */
+        protected $_verify;
+
+        /**
+         * @var string
+         */
+        protected $_reverse;
+
+        /**
+         * @param string $match A complete Regex pattern, will be used to match a request uri, if doesn't matched, Yaf_Route_Regex will return FALSE.
+         * @param array $route When the match pattern matches the request uri, Yaf_Route_Regex will use this to decide which m/c/a to routed.
+         * @param array|null $map A array to assign name to the captures in the match result.
+         * @param array|null $verify
+         * @param string $reverse
+         * @throws Yaf_Exception_TypeError
+         */
+        public function __construct($match, array $route, ?array $map = null, ?array $verify = null, $reverse = null) {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool If the pattern given by the first parameter of Yaf_Route_Regex::_construct() matches the request uri, return TRUE, otherwise return FALSE.
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+
+        /**
+         * @param string $uri
+         * @return bool
+         */
+        public function match($uri) {}
+    }
+
+    final class Yaf_Route_Map implements Yaf_Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_ctl_router = '';
+
+        /**
+         * @var string
+         */
+        protected $_delimiter;
+
+        /**
+         * @param bool $controller_prefer Whether the result should considering as controller or action
+         * @param string $delimiter
+         */
+        public function __construct($controller_prefer = false, $delimiter = '') {}
+
+        /**
+         * @param Yaf_Request_Abstract $request
+         * @return bool
+         */
+        public function route($request) {}
+
+        /**
+         * @param array $info
+         * @param array|null $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+
+    class Yaf_Exception_TypeError extends Yaf_Exception {}
+
+    class Yaf_Exception_StartupError extends Yaf_Exception {}
+
+    class Yaf_Exception_RouterFailed extends Yaf_Exception {}
+
+    class Yaf_Exception_DispatchFailed extends Yaf_Exception {}
+
+    class Yaf_Exception_LoadFailed extends Yaf_Exception {}
+
+    class Yaf_Exception_LoadFailed_Module extends Yaf_Exception_LoadFailed {}
+
+    class Yaf_Exception_LoadFailed_Controller extends Yaf_Exception_LoadFailed {}
+
+    class Yaf_Exception_LoadFailed_Action extends Yaf_Exception_LoadFailed {}
+
+    class Yaf_Exception_LoadFailed_View extends Yaf_Exception_LoadFailed {}
+}
+
+namespace {
+        define('YAF\VERSION', '3.0.8', true);
+        define('YAF\ENVIRON', 'product', true);
+        define('YAF\ERR\STARTUP\FAILED', 512, true);
+        define('YAF\ERR\ROUTE\FAILED', 513, true);
+        define('YAF\ERR\DISPATCH\FAILED', 514, true);
+        define('YAF\ERR\NOTFOUND\MODULE', 515, true);
+        define('YAF\ERR\NOTFOUND\CONTROLLER', 516, true);
+        define('YAF\ERR\NOTFOUND\ACTION', 517, true);
+        define('YAF\ERR\NOTFOUND\VIEW', 518, true);
+        define('YAF\ERR\CALL\FAILED', 519, true);
+        define('YAF\ERR\AUTOLOAD\FAILED', 520, true);
+        define('YAF\ERR\TYPE\ERROR', 521, true);
+}
+
+namespace Yaf {
+        use Yaf;
+
+    final class Application
+    {
+        /**
+         * @var \Yaf\Application
+         */
+        protected static $_app;
+
+        /**
+         * @var \Yaf\Config_Abstract
+         */
+        protected $config;
+
+        /**
+         * @var \Yaf\Dispatcher
+         */
+        protected $dispatcher;
+
+        /**
+         * @var array
+         */
+        protected $_modules;
+
+        /**
+         * @var string
+         */
+        protected $_running = "";
+
+        /**
+         * @var string
+         */
+        protected $_environ = YAF_ENVIRON;
+
+        /**
+         * @since 2.1.2
+         * @var int
+         */
+        protected $_err_no = 0;
+
+        /**
+         * @since 2.1.2
+         * @var string
+         */
+        protected $_err_msg = "";
+
+        /**
+         * @param string|array $config A ini config file path, or a config array
+         * @param string $envrion Which section will be loaded as the final config
+         * @throws \Yaf\Exception\TypeError|\Yaf\Exception\StartupError
+         */
+        public function __construct($config, $envrion = null) {}
+
+        /**
+         * @throws \Yaf\Exception\StartupError
+         */
+        public function run() {}
+
+        /**
+         * @param callable $entry a valid callback
+         * @param string ...$_ parameters will pass to the callback
+         */
+        public function execute(callable $entry, ...$_) {}
+
+        /**
+         * @return \Yaf\Application|null an \Yaf\Application instance, if no \Yaf\Application initialized before, NULL will be returned.
+         */
+        public static function app() {}
+
+        /**
+         * @return string
+         */
+        public function environ() {}
+
+        /**
+         * @param \Yaf\Bootstrap_Abstract $bootstrap A \Yaf\Bootstrap_Abstract instance
+         * @return \Yaf\Application
+         */
+        public function bootstrap(Bootstrap_Abstract $bootstrap = null) {}
+
+        /**
+         * @return \Yaf\Config_Abstract
+         */
+        public function getConfig() {}
+
+        /**
+         * @return array
+         */
+        public function getModules() {}
+
+        /**
+         * @return \Yaf\Dispatcher
+         */
+        public function getDispatcher() {}
+
+        /**
+         * @since 2.1.4
+         * @param string $directory
+         * @return \Yaf\Application
+         */
+        public function setAppDirectory($directory) {}
+
+        /**
+         * @since 2.1.4
+         * @return string
+         */
+        public function getAppDirectory() {}
+
+        /**
+         * @since 2.1.2
+         * @return int
+         */
+        public function getLastErrorNo() {}
+
+        /**
+         * @since 2.1.2
+         * @return string
+         */
+        public function getLastErrorMsg() {}
+
+        /**
+         * @since 2.1.2
+         */
+        public function clearLastError() {}
+
+            public function __destruct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+    }final class Dispatcher
+    {
+        /**
+         * @var \Yaf\Dispatcher
+         */
+        protected static $_instance;
+
+        /**
+         * @var \Yaf\Router
+         */
+        protected $_router;
+
+        /**
+         * @var \Yaf\View_Interface
+         */
+        protected $_view;
+
+        /**
+         * @var \Yaf\Request_Abstract
+         */
+        protected $_request;
+
+        /**
+         * @var \Yaf\Plugin_Abstract
+         */
+        protected $_plugins;
+
+        /**
+         * @var bool
+         */
+        protected $_auto_render = true;
+
+        /**
+         * @var string
+         */
+        protected $_return_response = "";
+
+        /**
+         * @var string
+         */
+        protected $_instantly_flush = "";
+
+        /**
+         * @var string
+         */
+        protected $_default_module;
+
+        /**
+         * @var string
+         */
+        protected $_default_controller;
+
+        /**
+         * @var string
+         */
+        protected $_default_action;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @return \Yaf\Dispatcher
+         */
+        public function enableView() {}
+
+        /**
+         * @return bool
+         */
+        public function disableView() {}
+
+        /**
+         * @param string $templates_dir
+         * @param array $options
+         * @return \Yaf\View_Interface
+         */
+        public function initView($templates_dir, ?array $options = null) {}
+
+        /**
+         * @param \Yaf\View_Interface $view A \Yaf\View_Interface instance
+         * @return \Yaf\Dispatcher
+         */
+        public function setView(View_Interface $view) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return \Yaf\Dispatcher
+         */
+        public function setRequest(Request_Abstract $request) {}
+
+        /**
+         * @return \Yaf\Application
+         */
+        public function getApplication() {}
+
+        /**
+         * @return \Yaf\Router
+         */
+        public function getRouter() {}
+
+        /**
+         * @return \Yaf\Request_Abstract
+         */
+        public function getRequest() {}
+
+        /**
+         * @param callable $callback a callable callback
+         * @param int $error_types YAF_ERR_* constants mask
+         * @return \Yaf\Dispatcher
+         */
+        public function setErrorHandler(callable $callback, $error_types) {}
+
+        /**
+         * @param string $module
+         * @return \Yaf\Dispatcher
+         */
+        public function setDefaultModule($module) {}
+
+        /**
+         * @param string $controller
+         * @return \Yaf\Dispatcher
+         */
+        public function setDefaultController($controller) {}
+
+        /**
+         * @param string $action
+         * @return \Yaf\Dispatcher
+         */
+        public function setDefaultAction($action) {}
+
+        /**
+         * @param bool $flag
+         * @return \Yaf\Dispatcher
+         */
+        public function returnResponse($flag) {}
+
+        /**
+         * @param bool $flag since 2.2.0, if this parameter is not given, then the current state will be set
+         * @return \Yaf\Dispatcher
+         */
+        public function autoRender($flag = null) {}
+
+        /**
+         * @param bool $flag since 2.2.0, if this parameter is not given, then the current state will be set
+         * @return \Yaf\Dispatcher
+         */
+        public function flushInstantly($flag = null) {}
+
+        /**
+         * @return \Yaf\Dispatcher
+         */
+        public static function getInstance() {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @throws \Yaf\Exception\TypeError
+         * @throws \Yaf\Exception\RouterFailed
+         * @throws \Yaf\Exception\DispatchFailed
+         * @throws \Yaf\Exception\LoadFailed
+         * @throws \Yaf\Exception\LoadFailed\Action
+         * @throws \Yaf\Exception\LoadFailed\Controller
+         * @return \Yaf\Response_Abstract
+         */
+        public function dispatch(Request_Abstract $request) {}
+
+        /**
+         * @param bool $flag
+         * @return \Yaf\Dispatcher
+         */
+        public function throwException($flag = null) {}
+
+        /**
+         * @param bool $flag
+         * @return \Yaf\Dispatcher
+         */
+        public function catchException($flag = null) {}
+
+        /**
+         * @param \Yaf\Plugin_Abstract $plugin
+         * @return \Yaf\Dispatcher
+         */
+        public function registerPlugin(Plugin_Abstract $plugin) {}
+    }class Loader
+    {
+        /**
+         * @var string
+         */
+        protected $_local_ns;
+
+        /**
+         * @var string
+         */
+        protected $_library;
+
+        /**
+         * @var string
+         */
+        protected $_global_library;
+
+        /**
+         * @var \Yaf\Loader
+         */
+        protected static $_instance;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @param string $class_name
+         * @return bool
+         */
+        public function autoload($class_name) {}
+
+        /**
+         * @param string $local_library_path
+         * @param string $global_library_path
+         * @return \Yaf\Loader
+         */
+        public static function getInstance($local_library_path = null, $global_library_path = null) {}
+
+        /**
+         * @param string|string[] $name_prefix a string or a array of class name prefix. all class prefix with these prefix will be loaded in local library path.
+         * @return bool
+         */
+        public function registerLocalNamespace($name_prefix) {}
+
+        /**
+         * @return string
+         */
+        public function getLocalNamespace() {}
+
+            public function clearLocalNamespace() {}
+
+        /**
+         * @param string $class_name
+         * @return bool
+         */
+        public function isLocalName($class_name) {}
+
+        /**
+         * @param string $file
+         * @return bool
+         */
+        public static function import($file) {}
+
+        /**
+         * @since 2.1.4
+         * @param string $directory
+         * @param bool $global
+         * @return \Yaf\Loader
+         */
+        public function setLibraryPath($directory, $global = false) {}
+
+        /**
+         * @since 2.1.4
+         * @param bool $is_global
+         * @return string
+         */
+        public function getLibraryPath($is_global = false) {}
+    }final class Registry
+    {
+        /**
+         * @var \Yaf\Registry
+         */
+        protected static $_instance;
+
+        /**
+         * @var array
+         */
+        protected $_entries;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public static function get($name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public static function has($name) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         * @return bool
+         */
+        public static function set($name, $value) {}
+
+        /**
+         * @param string $name
+         * @return void|bool
+         */
+        public static function del($name) {}
+    }/**
+     * @version 2.2.9
+     */
+    final class Session implements \Iterator, \Traversable, \ArrayAccess, \Countable
+    {
+        /**
+         * @var \Yaf\Session
+         */
+        protected static $_instance;
+
+        /**
+         * @var array
+         */
+        protected $_session;
+
+        /**
+         * @var bool
+         */
+        protected $_started = true;
+
+            private function __construct() {}
+
+            private function __clone() {}
+
+            private function __sleep() {}
+
+            private function __wakeup() {}
+
+        /**
+         * @return \Yaf\Session
+         */
+        public static function getInstance() {}
+
+        /**
+         * @return \Yaf\Session
+         */
+        public function start() {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function get($name) {}
+
+        /**
+         * @param string $name
+         * @return bool
+         */
+        public function has($name) {}
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         * @return \Yaf\Session|false return FALSE on failure
+         */
+        public function set($name, $value) {}
+
+        /**
+         * @param string $name
+         * @return \Yaf\Session|false return FALSE on failure
+         */
+        public function del($name) {}
+
+            public function count() {}
+
+            public function rewind() {}
+
+            public function current() {}
+
+            public function next() {}
+
+            public function valid() {}
+
+            public function key() {}
+
+            public function offsetUnset($name) {}
+
+            public function offsetGet($name) {}
+
+            public function offsetExists($name) {}
+
+            public function offsetSet($name, $value) {}
+
+            public function __get($name) {}
+
+            public function __isset($name) {}
+
+            public function __set($name, $value) {}
+
+            public function __unset($name) {}
+    }class Router
+    {
+        /**
+         * @var \Yaf\Route_Interface[] registered routes stack
+         */
+        protected $_routes;
+
+        /**
+         * @var string after routing phase, this indicated the name of which route is used to route current request. you can get this name by \Yaf\Router::getCurrentRoute()
+         */
+        protected $_current;
+
+            public function __construct() {}
+
+        /**
+         * @param string $name
+         * @param \Yaf\Route_Interface $route
+         * @return \Yaf\Router|false return FALSE on failure
+         */
+        public function addRoute($name, Route_Interface $route) {}
+
+        /**
+         * @param \Yaf\Config_Abstract $config
+         * @return \Yaf\Router|false return FALSE on failure
+         */
+        public function addConfig(Config_Abstract $config) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return \Yaf\Router|false return FALSE on failure
+         */
+        public function route(Request_Abstract $request) {}
+
+        /**
+         * @param string $name
+         * @return \Yaf\Route_Interface
+         */
+        public function getRoute($name) {}
+
+        /**
+         * @return \Yaf\Route_Interface[]
+         */
+        public function getRoutes() {}
+
+        /**
+         * @return string the name of the effective route.
+         */
+        public function getCurrentRoute() {}
+    }abstract class Bootstrap_Abstract {}abstract class Controller_Abstract
+    {
+        /**
+         * @var array You can also define a action method in a separate PHP script by using this property and \Yaf\Action_Abstract.
+         */
+        public $actions;
+
+        /**
+         * @var string module name
+         */
+        protected $_module;
+
+        /**
+         * @var string controller name
+         */
+        protected $_name;
+
+        /**
+         * @var \Yaf\Request_Abstract current request object
+         */
+        protected $_request;
+
+        /**
+         * @var \Yaf\Response_Abstract current response object
+         */
+        protected $_response;
+
+        /**
+         * @var array
+         */
+        protected $_invoke_args;
+
+        /**
+         * @var \Yaf\View_Interface view engine object
+         */
+        protected $_view;
+
+        /**
+         * @param string $tpl
+         * @param array $parameters
+         * @return string
+         */
+        protected function render($tpl, ?array $parameters = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array $parameters
+         * @return bool
+         */
+        protected function display($tpl, ?array $parameters = null) {}
+
+        /**
+         * @return \Yaf\Request_Abstract
+         */
+        public function getRequest() {}
+
+        /**
+         * @return \Yaf\Response_Abstract
+         */
+        public function getResponse() {}
+
+        /**
+         * @return string
+         */
+        public function getModuleName() {}
+
+        /**
+         * @return \Yaf\View_Interface
+         */
+        public function getView() {}
+
+        /**
+         * @deprecated not_implemented
+         * @param array $options
+         * @return \Yaf\Response_Abstract
+         */
+        public function initView(?array $options = null) {}
+
+        /**
+         * @param string $view_directory
+         * @return bool
+         */
+        public function setViewpath($view_directory) {}
+
+        /**
+         * @return string
+         */
+        public function getViewpath() {}
+
+        /**
+         * @param string $module destination module name, if NULL was given, then default module name is assumed
+         * @param string $controller destination controller name
+         * @param string $action destination action name
+         * @param array $parameters calling arguments
+         * @return bool return FALSE on failure
+         */
+        public function forward($module, $controller = null, $action = null, ?array $parameters = null) {}
+
+        /**
+         * @param string $url a location URL
+         * @return bool
+         */
+        public function redirect($url) {}
+
+        /**
+         * @return array
+         */
+        public function getInvokeArgs() {}
+
+        /**
+         * @param string $name
+         * @return mixed|null
+         */
+        public function getInvokeArg($name) {}
+
+            public function init() {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @param \Yaf\View_Interface $view
+         * @param array $invokeArgs
+         */
+        final public function __construct(Request_Abstract $request, Response_Abstract $response, View_Interface $view, ?array $invokeArgs = null) {}
+
+            final private function __clone() {}
+    }abstract class Action_Abstract extends \Yaf\Controller_Abstract
+    {
+        /**
+         * @var \Yaf\Controller_Abstract
+         */
+        protected $_controller;
+
+        /**
+         * @param mixed ... unlimited number of arguments
+         * @return mixed
+         */
+        abstract public function execute();
+
+        /**
+         * @return \Yaf\Controller_Abstract
+         */
+        public function getController() {}
+    }abstract class Config_Abstract
+    {
+        /**
+         * @var array
+         */
+        protected $_config = null;
+
+        /**
+         * @var bool
+         */
+        protected $_readonly = true;
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        abstract public function get($name = null);
+
+        /**
+         * @param string $name
+         * @param mixed $value
+         * @return \Yaf\Config_Abstract
+         */
+        abstract public function set($name, $value);
+
+        /**
+         * @return bool
+         */
+        abstract public function readonly();
+
+        /**
+         * @return array
+         */
+        abstract public function toArray();
+    }abstract class Request_Abstract
+    {
+        public const SCHEME_HTTP = 'http';
+        public const SCHEME_HTTPS = 'https';
+
+        /**
+         * @var string
+         */
+        public $module;
+
+        /**
+         * @var string
+         */
+        public $controller;
+
+        /**
+         * @var string
+         */
+        public $action;
+
+        /**
+         * @var string
+         */
+        public $method;
+
+        /**
+         * @var array
+         */
+        protected $params;
+
+        /**
+         * @var string
+         */
+        protected $language;
+
+        /**
+         * @var \Yaf\Exception
+         */
+        protected $_exception;
+
+        /**
+         * @var string
+         */
+        protected $_base_uri = "";
+
+        /**
+         * @var string
+         */
+        protected $uri = "";
+
+        /**
+         * @var string
+         */
+        protected $dispatched = "";
+
+        /**
+         * @var string
+         */
+        protected $routed = "";
+
+        /**
+         * @return bool
+         */
+        public function isGet() {}
+
+        /**
+         * @return bool
+         */
+        public function isPost() {}
+
+        /**
+         * @return bool
+         */
+        public function isPut() {}
+
+        /**
+         * @return bool
+         */
+        public function isHead() {}
+
+        /**
+         * @return bool
+         */
+        public function isOptions() {}
+
+        /**
+         * @return bool
+         */
+        public function isCli() {}
+
+        /**
+         * @return bool
+         */
+        public function isDispatched() {}
+
+        /**
+         * @return bool
+         */
+        public function isRouted() {}
+
+        /**
+         * @return bool false
+         */
+        public function isXmlHttpRequest() {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getServer($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getEnv($name = null, $default = null) {}
+
+        /**
+         * @param string $name
+         * @param mixed $default
+         * @return mixed
+         */
+        public function getParam($name, $default = null) {}
+
+        /**
+         * @return array
+         */
+        public function getParams() {}
+
+        /**
+         * @return \Yaf\Exception
+         */
+        public function getException() {}
+
+        /**
+         * @return string
+         */
+        public function getModuleName() {}
+
+        /**
+         * @return string
+         */
+        public function getControllerName() {}
+
+        /**
+         * @return string
+         */
+        public function getActionName() {}
+
+        /**
+         * @param string|array $name the variable name, or an array of key=>value pairs
+         * @param string $value
+         * @return \Yaf\Request_Abstract|bool
+         */
+        public function setParam($name, $value = null) {}
+
+        /**
+         * @param string $module
+         * @return \Yaf\Request_Abstract|bool
+         */
+        public function setModuleName($module) {}
+
+        /**
+         * @param string $controller
+         * @return \Yaf\Request_Abstract|bool
+         */
+        public function setControllerName($controller) {}
+
+        /**
+         * @param string $action
+         * @return \Yaf\Request_Abstract|bool
+         */
+        public function setActionName($action) {}
+
+        /**
+         * @return string
+         */
+        public function getMethod() {}
+
+        /**
+         * @return string
+         */
+        public function getLanguage() {}
+
+        /**
+         * @param string $uri base URI
+         * @return bool
+         */
+        public function setBaseUri($uri) {}
+
+        /**
+         * @return string
+         */
+        public function getBaseUri() {}
+
+        /**
+         * @return string
+         */
+        public function getRequestUri() {}
+
+        /**
+         * @since 2.1.0
+         * @param string $uri request URI
+         */
+        public function setRequestUri($uri) {}
+
+        /**
+         * @return bool
+         */
+        public function setDispatched() {}
+
+        /**
+         * @return \Yaf\Request_Abstract|bool
+         */
+        public function setRouted() {}
+    }abstract class Plugin_Abstract
+    {
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function routerStartup(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function routerShutdown(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function dispatchLoopStartup(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function dispatchLoopShutdown(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function preDispatch(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function postDispatch(Request_Abstract $request, Response_Abstract $response) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @param \Yaf\Response_Abstract $response
+         * @return bool true
+         */
+        public function preResponse(Request_Abstract $request, Response_Abstract $response) {}
+    }abstract class Response_Abstract
+    {
+        public const DEFAULT_BODY = "content";
+
+        /**
+         * @var string
+         */
+        protected $_header;
+
+        /**
+         * @var string
+         */
+        protected $_body;
+
+        /**
+         * @var bool
+         */
+        protected $_sendheader;
+
+            public function __construct() {}
+
+            public function __destruct() {}
+
+            private function __clone() {}
+
+            public function __toString() {}
+
+        /**
+         * @param string $content content string
+         * @param string $key the content key, you can set a content with a key, if you don't specific, then \Yaf\Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function setBody($content, $key = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $content content string
+         * @param string $key the content key, you can set a content with a key, if you don't specific, then \Yaf\Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function appendBody($content, $key = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $content content string
+         * @param string $key the content key, you can set a content with a key, if you don't specific, then \Yaf\Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function prependBody($content, $key = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string $key the content key, you can set a content with a key, if you don't specific, then \Yaf\Response_Abstract::DEFAULT_BODY will be used
+         * @return bool
+         */
+        public function clearBody($key = self::DEFAULT_BODY) {}
+
+        /**
+         * @param string|null $key the content key, if you don't specific, then \Yaf\Response_Abstract::DEFAULT_BODY will be used. if you pass in a NULL, then all contents will be returned as a array
+         * @return mixed
+         */
+        public function getBody($key = self::DEFAULT_BODY) {}
+    }interface View_Interface
+    {
+        /**
+         * @param string|array $name
+         * @param mixed $value
+         * @return bool
+         */
+        public function assign($name, $value);
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @return bool
+         */
+        public function display($tpl, ?array $tpl_vars = null);
+
+        /**
+         * @return string
+         */
+        public function getScriptPath();
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @return string
+         */
+        public function render($tpl, ?array $tpl_vars = null);
+
+        /**
+         * @param string $template_dir An absolute path to the template directory, by default, \Yaf\Dispatcher use application.directory . "/views" as this parameter.
+         */
+        public function setScriptPath($template_dir);
+    }interface Route_Interface
+    {
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool
+         */
+        public function route(Request_Abstract $request);
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null);
+    }class Exception extends \Exception {}class Route_Static implements \Yaf\Route_Interface
+    {
+        /**
+         * @deprecated not_implemented
+         * @param string $uri
+         * @return bool
+         */
+        public function match($uri) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool always TRUE
+         */
+        public function route(Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+}
+
+namespace Yaf\Response {
+        class Http extends \Yaf\Response_Abstract
+    {
+        /**
+         * @var int
+         */
+        protected $_response_code = 0;
+
+        private function __clone() {}
+
+        /**
+         * @return string
+         */
+        private function __toString() {}
+
+        /**
+         * @param string $name
+         * @param string $value
+         * @param bool $replace
+         * @param int $response_code
+         * @return bool
+         */
+        public function setHeader($name, $value, $replace = false, $response_code = 0) {}
+
+        /**
+         * @param array $headers
+         * @return bool
+         */
+        public function setAllHeaders(array $headers) {}
+
+        /**
+         * @param string $name
+         * @return mixed
+         */
+        public function getHeader($name = null) {}
+
+        /**
+         * @return \Yaf\Response_Abstract|false
+         */
+        public function clearHeaders() {}
+
+        /**
+         * @param string $url
+         * @return bool
+         */
+        public function setRedirect($url) {}
+
+        /**
+         * @return bool
+         */
+        public function response() {}
+    }
+    class Cli extends \Yaf\Response_Abstract
+    {
+        private function __clone() {}
+
+        /**
+         * @return string
+         */
+        private function __toString() {}
+    }
+}
+
+namespace Yaf\Request {
+    class Http extends \Yaf\Request_Abstract
+    {
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getQuery($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getRequest($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getPost($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getCookie($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param mixed $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getFiles($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function get($name, $default = null) {}
+
+        /**
+         * @return bool
+         */
+        public function isXmlHttpRequest() {}
+
+        /**
+         * @param string $request_uri
+         * @param string $base_uri
+         */
+        public function __construct($request_uri, $base_uri) {}
+
+            private function __clone() {}
+    }class Simple extends \Yaf\Request_Abstract
+    {
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getQuery($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getRequest($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getPost($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name, if not provided returns all
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function getCookie($name = null, $default = null) {}
+
+        /**
+         * @param mixed $name
+         * @param null $default
+         * @return array
+         */
+        public function getFiles($name = null, $default = null) {}
+
+        /**
+         * @param string $name the variable name
+         * @param string $default if this parameter is provide, this will be returned if the variable can not be found
+         * @return mixed
+         */
+        public function get($name, $default = null) {}
+
+        /**
+         * @return bool
+         */
+        public function isXmlHttpRequest() {}
+
+        /**
+         * @param string $method
+         * @param string $controller
+         * @param string $action
+         * @param string $params
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($method, $controller, $action, $params = null) {}
+
+            private function __clone() {}
+    }
+}
+
+namespace Yaf\Config {
+    class Ini extends \Yaf\Config_Abstract implements \Iterator, \Traversable, \ArrayAccess, \Countable
+    {
+            public function __get($name = null) {}
+
+            public function __set($name, $value) {}
+
+            public function get($name = null) {}
+
+        /**
+         * @deprecated not_implemented
+         */
+        public function set($name, $value) {}
+
+            public function toArray() {}
+
+            public function readonly() {}
+
+        /**
+         * @param string $config_file path to an INI configure file
+         * @param string $section which section in that INI file you want to be parsed
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($config_file, $section = null) {}
+
+        /**
+         * @param string $name
+         */
+        public function __isset($name) {}
+
+            public function count() {}
+
+            public function rewind() {}
+
+            public function current() {}
+
+            public function next() {}
+
+            public function valid() {}
+
+            public function key() {}
+
+        /**
+         * @deprecated not_implemented
+         */
+        public function offsetUnset($name) {}
+
+            public function offsetGet($name) {}
+
+            public function offsetExists($name) {}
+
+            public function offsetSet($name, $value) {}
+    }class Simple extends \Yaf\Config_Abstract implements \Iterator, \Traversable, \ArrayAccess, \Countable
+    {
+            public function __get($name = null) {}
+
+            public function __set($name, $value) {}
+
+            public function get($name = null) {}
+
+            public function set($name, $value) {}
+
+            public function toArray() {}
+
+            public function readonly() {}
+
+        /**
+         * @param array $array
+         * @param string $readonly
+         */
+        public function __construct(array $array, $readonly = null) {}
+
+        /**
+         * @param string $name
+         */
+        public function __isset($name) {}
+
+            public function count() {}
+
+            public function rewind() {}
+
+            public function current() {}
+
+            public function next() {}
+
+            public function valid() {}
+
+            public function key() {}
+
+            public function offsetUnset($name) {}
+
+            public function offsetGet($name) {}
+
+            public function offsetExists($name) {}
+
+            public function offsetSet($name, $value) {}
+    }
+}
+
+namespace Yaf\View {
+    /**
+     * @method void|bool eval(string $tpl_str, ?array $vars = null) Render a string template and return the result.
+     * @param string $tpl_str string template
+     * @param array $vars
+     * @return void|false return FALSE on failure
+     */
+    class Simple implements \Yaf\View_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_tpl_dir;
+
+        /**
+         * @var array
+         */
+        protected $_tpl_vars;
+
+        /**
+         * @var array
+         */
+        protected $_options;
+
+        /**
+         * @param string $template_dir The base directory of the templates, by default, it is APPLICATION . "/views" for Yaf.
+         * @param array $options Options for the engine, as of Yaf 2.1.13, you can use short tag
+         * @throws \Yaf\Exception\TypeError
+         */
+        final public function __construct($template_dir, ?array $options = null) {}
+
+        /**
+         * @param string $name
+         */
+        public function __isset($name) {}
+
+        /**
+         * @param string|array $name A string or an array.if is string, then the next argument $value is required.
+         * @param mixed $value mixed value
+         * @return \Yaf\View\Simple
+         */
+        public function assign($name, $value = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @throws \Yaf\Exception\LoadFailed\View
+         * @return string|void
+         */
+        public function render($tpl, ?array $tpl_vars = null) {}
+
+        /**
+         * @param string $tpl
+         * @param array $tpl_vars
+         * @throws \Yaf\Exception\LoadFailed\View
+         * @return bool
+         */
+        public function display($tpl, ?array $tpl_vars = null) {}
+
+        /**
+         * @param string $name A string name which will be used to access the value in the template.
+         * @param mixed &$value mixed value
+         * @return \Yaf\View\Simple
+         */
+        public function assignRef($name, &$value) {}
+
+        /**
+         * @param string $name assigned variable name. if empty, will clear all assigned variables.
+         * @return \Yaf\View\Simple
+         */
+        public function clear($name = null) {}
+
+        /**
+         * @param string $template_dir
+         * @return \Yaf\View\Simple
+         */
+        public function setScriptPath($template_dir) {}
+
+        /**
+         * @return string
+         */
+        public function getScriptPath() {}
+
+        /**
+         * @param null $name the assigned variable name
+         * @return mixed
+         */
+        public function __get($name = null) {}
+
+        /**
+         * @param string $name A string value name.
+         * @param mixed $value mixed value
+         */
+        public function __set($name, $value = null) {}
+    }
+}
+
+namespace Yaf\Route {
+    final class Simple implements \Yaf\Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $controller;
+
+        /**
+         * @var string
+         */
+        protected $module;
+
+        /**
+         * @var string
+         */
+        protected $action;
+
+        /**
+         * @param string $module_name
+         * @param string $controller_name
+         * @param string $action_name
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($module_name, $controller_name, $action_name) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool always TRUE
+         */
+        public function route(Yaf\Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }final class Supervar implements \Yaf\Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_var_name;
+
+        /**
+         * @param string $supervar_name The name of key.
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($supervar_name) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool If there is a key(which was defined in \Yaf\Route\Supervar::__construct()) in $_GET, return TRUE. otherwise return FALSE.
+         */
+        public function route(Yaf\Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }final class Rewrite extends \Yaf\Router implements \Yaf\Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_route;
+
+        /**
+         * @var array
+         */
+        protected $_default;
+
+        /**
+         * @var array
+         */
+        protected $_verify;
+
+        /**
+         * @param string $match A pattern, will be used to match a request uri, if doesn't matched, \Yaf\Route\Rewrite will return FALSE.
+         * @param array $route When the match pattern matches the request uri, \Yaf\Route\Rewrite will use this to decide which m/c/a to routed.
+         * @param array $verify
+         * @param string $reverse
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($match, array $route, ?array $verify = null, $reverse = null) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool
+         */
+        public function route(Yaf\Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }final class Regex extends \Yaf\Router implements \Yaf\Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_route;
+
+        /**
+         * @var array
+         */
+        protected $_default;
+
+        /**
+         * @var array
+         */
+        protected $_maps;
+
+        /**
+         * @var array
+         */
+        protected $_verify;
+
+        /**
+         * @var string
+         */
+        protected $_reverse;
+
+        /**
+         * @param string $match A complete Regex pattern, will be used to match a request uri, if doesn't matched, \Yaf\Route\Regex will return FALSE.
+         * @param array $route When the match pattern matches the request uri, \Yaf\Route\Regex will use this to decide which m/c/a to routed.
+         * @param array $map A array to assign name to the captures in the match result.
+         * @param array $verify
+         * @param string $reverse
+         * @throws \Yaf\Exception\TypeError
+         */
+        public function __construct($match, array $route, ?array $map = null, ?array $verify = null, $reverse = null) {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool If the pattern given by the first parameter of \Yaf\Route\Regex::_construct() matches the request uri, return TRUE, otherwise return FALSE.
+         */
+        public function route(Yaf\Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }final class Map implements \Yaf\Route_Interface
+    {
+        /**
+         * @var string
+         */
+        protected $_ctl_router = '';
+
+        /**
+         * @var string
+         */
+        protected $_delimiter;
+
+        /**
+         * @param bool $controller_prefer Whether the result should considering as controller or action
+         * @param string $delimiter
+         */
+        public function __construct($controller_prefer = false, $delimiter = '') {}
+
+        /**
+         * @param \Yaf\Request_Abstract $request
+         * @return bool
+         */
+        public function route(Yaf\Request_Abstract $request) {}
+
+        /**
+         * @param array $info
+         * @param array $query
+         * @return bool
+         */
+        public function assemble(array $info, ?array $query = null) {}
+    }
+}
+
+namespace Yaf\Exception {
+    class TypeError extends \Yaf\Exception {}class StartupError extends \Yaf\Exception {}class RouterFailed extends \Yaf\Exception {}class DispatchFailed extends \Yaf\Exception {}class LoadFailed extends \Yaf\Exception {}
+}
+
+namespace Yaf\Exception\LoadFailed {
+    class Module extends \Yaf\Exception\LoadFailed {}class Controller extends \Yaf\Exception\LoadFailed {}class Action extends \Yaf\Exception\LoadFailed {}class View extends \Yaf\Exception\LoadFailed {}
+}

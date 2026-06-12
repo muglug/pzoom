@@ -1,0 +1,1 @@
+{"$a": "int<0, max>", "$b": "float", "$c": "float|int<0, max>|null"}

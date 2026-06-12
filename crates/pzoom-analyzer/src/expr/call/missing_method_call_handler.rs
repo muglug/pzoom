@@ -94,7 +94,7 @@ pub(crate) fn analyze_magic_property_method_call(
 
         if let Some(pseudo_property_type) = class_info.pseudo_property_set_types.get(&prop_id) {
             if let Some(second_arg_pos) = arg_positions.get(1) {
-                if let Some(value_type) = analysis_data.get_expr_type(*second_arg_pos) {
+                if let Some(value_type) = analysis_data.expr_types.get(&*second_arg_pos).cloned() {
                     // A `mixed` value is universally compatible (Psalm reports it via
                     // MixedAssignment, not a property-value mismatch), so skip the
                     // pseudo-property type check rather than flagging PossiblyInvalid.
@@ -196,50 +196,24 @@ pub(crate) fn analyze_magic_property_method_call(
     None
 }
 
-pub(crate) fn get_pseudo_method_info_case_insensitive<'a>(
+pub(crate) fn get_pseudo_method_info<'a>(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-    if let Some(method_info) = class_info.pseudo_methods.get(&method_id) {
-        return Some(method_info);
-    }
 
-    class_info
-        .pseudo_methods
-        .iter()
-        .find_map(|(stored_id, method_info)| {
-            analyzer
-                .interner
-                .lookup(*stored_id)
-                .as_ref()
-                .eq_ignore_ascii_case(method_name)
-                .then_some(method_info)
-        })
+    class_info.pseudo_methods.get(&method_id)
 }
 
-pub(crate) fn get_method_info_case_insensitive<'a>(
+pub(crate) fn get_method_info<'a>(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-    if let Some(method_info) = class_info.methods.get(&method_id) {
-        return Some(method_info);
-    }
 
-    class_info
-        .methods
-        .iter()
-        .find_map(|(stored_id, method_info)| {
-            analyzer
-                .interner
-                .lookup(*stored_id)
-                .as_ref()
-                .eq_ignore_ascii_case(method_name)
-                .then_some(method_info)
-        })
+    class_info.methods.get(&method_id).map(|method| &**method)
 }

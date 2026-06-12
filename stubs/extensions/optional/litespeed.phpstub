@@ -1,0 +1,13 @@
+<?php
+
+/**
+ * @return array<array-key, mixed>
+ */
+function litespeed_request_headers(): array {}
+
+/**
+ * @return array<array-key, mixed>
+ */
+function litespeed_response_headers(): array|false {}
+
+function litespeed_finish_request(): bool {}

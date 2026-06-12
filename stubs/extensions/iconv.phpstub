@@ -9,17 +9,20 @@ function iconv(string $from_encoding, string $to_encoding, string $string): stri
 
 /**
  * @pure
+ *
+ * @param string $contents
+ * @param int $status
+ * @return string
  */
 function ob_iconv_handler(string $contents, int $status): string
 {
 }
 
 /**
- * @param 'all'|'input_encoding'|'output_encoding'|'internal_encoding' $type
- *
- * @return false|string|array{input_encoding: string, output_encoding: string, internal_encoding: string}
- *
  * @pure
+ *
+ * @param string $type
+ * @return array<array-key, mixed>|false|string
  */
 function iconv_get_encoding(string $type = 'all'): array|string|false
 {

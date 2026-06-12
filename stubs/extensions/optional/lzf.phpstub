@@ -1,0 +1,24 @@
+<?php
+
+/**
+ * @param string $data
+ * @return string
+ */
+function lzf_compress($data)
+{
+}
+
+/**
+ * @param string $data
+ * @return string
+ */
+function lzf_decompress($data)
+{
+}
+
+/**
+ * @return int
+ */
+function lzf_optimized_for()
+{
+}

@@ -12,8 +12,8 @@ use super::parse_tree::{NodeId, NodeKind, ParseTreeArena};
 use super::parse_tree_creator::ParseTreeCreator;
 use super::type_tokenizer;
 use pzoom_code_info::t_atomic::{FunctionLikeParameter, PropertiesOfVisibility};
-use pzoom_code_info::type_resolution::TypeResolutionContext;
-use pzoom_code_info::{ArrayKey, TAtomic, TUnion};
+use pzoom_code_info::type_resolution::{TemplateBinding, TypeResolutionContext};
+use pzoom_code_info::{ArrayKey, GenericParent, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::FxHashMap;
 
@@ -90,6 +90,45 @@ pub fn extract_var_name_from_content(content: &str) -> Option<&str> {
     None
 }
 
+/// Like [`extract_var_name_from_content`], but keeps a property path after
+/// the variable (`$context->possibly_thrown_exceptions`). Psalm's
+/// CommentAnalyzer takes the whole token as the `@var` target, so a
+/// property-path annotation must not be misread as targeting the base
+/// variable (which would retype it at the next fetch).
+pub fn extract_var_path_from_content(content: &str) -> Option<&str> {
+    let trimmed = content.trim();
+    let base = extract_var_name_from_content(content)?;
+    let base_start = trimmed.find(base)?;
+    let mut end = base_start + base.len();
+
+    loop {
+        let rest = &trimmed[end..];
+        if let Some(after_arrow) = rest.strip_prefix("->") {
+            let segment_len = after_arrow
+                .char_indices()
+                .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '_')
+                .map(|(idx, ch)| idx + ch.len_utf8())
+                .last()
+                .unwrap_or(0);
+            if segment_len == 0 {
+                break;
+            }
+            end += 2 + segment_len;
+        } else if let Some(after_bracket) = rest.strip_prefix('[') {
+            // A dim segment (`$params[$i]` / `$arr['k']`) extends the path
+            // (Psalm's var comment ids capture the whole expression).
+            let Some(close) = after_bracket.find(']') else {
+                break;
+            };
+            end += 1 + close + 1;
+        } else {
+            break;
+        }
+    }
+
+    Some(&trimmed[base_start..end])
+}
+
 /// Extract all variable names (including `$`) from tag content.
 pub fn extract_var_names_from_content(content: &str) -> Vec<&str> {
     let trimmed = content.trim();
@@ -125,6 +164,101 @@ pub fn extract_var_names_from_content(content: &str) -> Vec<&str> {
     }
 
     result
+}
+
+/// Psalm's `Union::setFromDocblock` walks every nested type (FromDocblockSetter
+/// visitor), so an array's key/value unions carry their own docblock
+/// provenance — the fetched-element type stays "docblock-defined" even after
+/// the OUTER union loses the flag (signature-backed `@return`,
+/// FunctionLikeDocblockScanner). pzoom marks the array-param unions, the ones
+/// element fetches read.
+fn mark_array_param_unions_from_docblock(union: &mut TUnion) {
+    for atomic in union.types.iter_mut() {
+        match atomic {
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            } => {
+                mark_union_from_docblock(key_type);
+                mark_union_from_docblock(value_type);
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                mark_union_from_docblock(value_type);
+            }
+            TAtomic::TKeyedArray {
+                properties,
+                fallback_key_type,
+                fallback_value_type,
+                ..
+            } => {
+                let properties = std::sync::Arc::make_mut(properties);
+                for property_type in properties.values_mut() {
+                    mark_union_from_docblock(property_type);
+                }
+                if let Some(fallback_key_type) = fallback_key_type {
+                    mark_union_from_docblock(fallback_key_type);
+                }
+                if let Some(fallback_value_type) = fallback_value_type {
+                    mark_union_from_docblock(fallback_value_type);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn mark_union_from_docblock(union: &mut TUnion) {
+    union.from_docblock = true;
+    union.sync_docblock_bits_from_union_flag();
+    mark_array_param_unions_from_docblock(union);
+}
+
+/// Inverse of the parse-time marking, for parsed types that model NATIVE
+/// signatures (Psalm's CallMap storage): clear `from_docblock` on the union
+/// and on the nested array-param unions element fetches read.
+pub fn clear_union_from_docblock_deep(union: &mut TUnion) {
+    union.from_docblock = false;
+    union.sync_docblock_bits_from_union_flag();
+    for atomic in union.types.iter_mut() {
+        match atomic {
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            } => {
+                clear_union_from_docblock_deep(key_type);
+                clear_union_from_docblock_deep(value_type);
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                clear_union_from_docblock_deep(value_type);
+            }
+            TAtomic::TKeyedArray {
+                properties,
+                fallback_key_type,
+                fallback_value_type,
+                ..
+            } => {
+                let properties = std::sync::Arc::make_mut(properties);
+                for property_type in properties.values_mut() {
+                    clear_union_from_docblock_deep(property_type);
+                }
+                if let Some(fallback_key_type) = fallback_key_type {
+                    clear_union_from_docblock_deep(fallback_key_type);
+                }
+                if let Some(fallback_value_type) = fallback_value_type {
+                    clear_union_from_docblock_deep(fallback_value_type);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// A type-string parse/validation failure. pzoom's analogue of Psalm's
@@ -170,6 +304,8 @@ pub fn parse_type_string_with_context(
 ) -> Result<TUnion, TypeParseError> {
     let mut parsed = parse_tokens(type_str, interner, context)?;
     parsed.from_docblock = true;
+    parsed.sync_docblock_bits_from_union_flag();
+    mark_array_param_unions_from_docblock(&mut parsed);
     Ok(parsed)
 }
 
@@ -212,21 +348,42 @@ fn extract_type_string(content: &str) -> Option<&str> {
             }
             '<' | '{' | '(' => depth += 1,
             '>' | '}' | ')' => depth = depth.saturating_sub(1),
-            '\n' | '\r' if depth == 0 => {
-                end_idx = i;
-                break;
-            }
             '$' if depth == 0 => {
+                // `@return $this` is a valid docblock type (Psalm maps it to
+                // `static`); a `$` elsewhere starts the variable name.
+                let is_leading_this = i == 0
+                    && trimmed.len() >= 5
+                    && trimmed.starts_with("$this")
+                    && trimmed[5..]
+                        .chars()
+                        .next()
+                        .is_none_or(|next| !next.is_alphanumeric() && next != '_');
+                if is_leading_this {
+                    continue;
+                }
                 end_idx = i;
                 break;
             }
-            ' ' | '\t' if depth == 0 => {
+            // A newline continues the type when the next line starts with a
+            // union/intersection marker (Psalm's splitDocLine joins
+            // `class-string<A>\n    |class-string<B>` into one type).
+            ' ' | '\t' | '\n' | '\r' if depth == 0 => {
                 let remaining = trimmed[i..].trim_start();
                 let prev_non_ws = trimmed[..i].chars().rev().find(|ch| !ch.is_whitespace());
 
                 // Keep callable return type segments like "callable(...): int"
                 // intact even when there is whitespace after ':'.
                 if matches!(prev_non_ws, Some(':')) {
+                    continue;
+                }
+
+                // A line ending in a union/intersection marker continues onto
+                // the next line (`'property'|\n *  'property-read' $tag`).
+                if matches!(prev_non_ws, Some('|') | Some('&'))
+                    && !remaining.is_empty()
+                    && !starts_with_param_marker(remaining)
+                    && !starts_with_inline_docblock_tag(remaining)
+                {
                     continue;
                 }
 
@@ -269,7 +426,6 @@ fn looks_like_type_continuation(s: &str) -> bool {
         || remaining.starts_with('&')
         || remaining.starts_with('?')
         || remaining.starts_with(':')
-        || remaining.starts_with(',')
         || remaining.starts_with(')')
         || remaining.starts_with('>')
     {
@@ -458,35 +614,6 @@ fn strip_wrapping_quotes(s: &str) -> Option<String> {
     }
 
     Some(unescaped)
-}
-
-fn normalize_class_string_key_union(key_union: &TUnion) -> TUnion {
-    if key_union.types.iter().all(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. }
-        )
-    }) {
-        return key_union.clone();
-    }
-
-    if key_union.is_single() {
-        if let Some(single_atomic) = key_union.get_single() {
-            match single_atomic {
-                TAtomic::TNamedObject { .. }
-                | TAtomic::TTemplateParam { .. }
-                | TAtomic::TTemplateParamClass { .. }
-                | TAtomic::TObjectIntersection { .. } => {
-                    return TUnion::new(TAtomic::TClassString {
-                        as_type: Some(Box::new(single_atomic.clone())),
-                    });
-                }
-                _ => {}
-            }
-        }
-    }
-
-    TUnion::new(TAtomic::TClassString { as_type: None })
 }
 
 fn template_param_deferred_key_of(union: &TUnion, is_key_of: bool) -> Option<TAtomic> {
@@ -877,14 +1004,19 @@ fn get_type_from_tree(
                 .unwrap_or("")
                 .to_string();
             let array_type = build_named_atomic(
-                &type_tokenizer::fix_scalar_terms(&array_param).to_lowercase(),
+                &type_tokenizer::fix_scalar_terms(&array_param),
                 &array_param,
                 None,
                 interner,
                 ctx,
             );
-            let offset_type =
-                build_named_atomic(&value.to_lowercase(), &value, None, interner, ctx);
+            let offset_type = build_named_atomic(
+                &type_tokenizer::fix_scalar_terms(&value),
+                &value,
+                None,
+                interner,
+                ctx,
+            );
             TypeResult::Atomic(TAtomic::TNamedObject {
                 name: StrId::PZOOM_INDEXED_ACCESS,
                 type_params: Some(vec![TUnion::new(array_type), TUnion::new(offset_type)]),
@@ -897,10 +1029,12 @@ fn get_type_from_tree(
             param_name,
             as_type,
         } => {
-            // Psalm returns a TTemplateParam whose `as` is the named object.
+            // Psalm returns a TTemplateParam whose `as` is the named object and
+            // whose defining class is 'class-string-map' (TemplateAsTree only
+            // appears as the first param of a class-string-map).
             TypeResult::Atomic(TAtomic::TTemplateParam {
                 name: interner.intern(&param_name),
-                defining_entity: StrId::EMPTY,
+                defining_entity: GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
                 as_type: Box::new(TUnion::new(TAtomic::named_object(interner.intern(&as_type)))),
             })
         }
@@ -980,8 +1114,11 @@ fn value_to_type(
         }
     }
 
-    let lower = type_tokenizer::fix_scalar_terms(value).to_lowercase();
-    TypeResult::Atomic(build_named_atomic(&lower, value, None, interner, ctx))
+    // Psalm matches docblock keywords case-sensitively after fixScalarTerms
+    // canonicalizes the case-insensitive scalar list — `Numeric`, `Scalar`,
+    // `Resource` are class references.
+    let fixed = type_tokenizer::fix_scalar_terms(value);
+    TypeResult::Atomic(build_named_atomic(&fixed, value, None, interner, ctx))
 }
 
 /// Shared `Foo::class` handling (used by both value nodes and array-shape keys).
@@ -1040,13 +1177,20 @@ fn generic_tree_to_type(
     interner: &Interner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
+    // `class-string-map<T as Foo, T>` introduces its own placeholder template
+    // while parsing the second param, so it cannot share the plain
+    // children-to-params mapping below.
+    if type_tokenizer::fix_scalar_terms(value).eq_ignore_ascii_case("class-string-map") {
+        return class_string_map_tree_to_type(tree, id, interner, ctx);
+    }
+
     let params: Vec<TUnion> = tree
         .children(id)
         .iter()
         .map(|c| get_type_from_tree(tree, *c, interner, ctx).into_union())
         .collect();
 
-    let generic_type_value = type_tokenizer::fix_scalar_terms(value).to_lowercase();
+    let generic_type_value = type_tokenizer::fix_scalar_terms(value);
 
     // key-of/value-of resolve to a (possibly multi-atomic) union, matching the
     // previous top-level behaviour.
@@ -1105,19 +1249,40 @@ fn generic_tree_to_type(
                 params.insert(0, TUnion::mixed());
             }
             let traversable = TAtomic::named_object_with_params(
-                interner.intern("Traversable"),
+                StrId::TRAVERSABLE,
                 Some(params.clone()),
             );
             let array_access = TAtomic::named_object_with_params(
-                interner.intern("ArrayAccess"),
+                StrId::ARRAY_ACCESS,
                 Some(params),
             );
-            let countable = TAtomic::named_object(interner.intern("Countable"));
+            let countable = TAtomic::named_object(StrId::COUNTABLE);
             return TypeResult::Atomic(TAtomic::TObjectIntersection {
                 types: vec![traversable, array_access, countable],
             });
         }
         _ => {}
+    }
+
+    // Psalm's TypeParser pads short generic forms of the builtin iterator
+    // hierarchy: a single param is the *value* (`Traversable<V>` →
+    // `Traversable<mixed, V>`), and `Generator` always carries four params
+    // (`Generator<T>` → `Generator<mixed, T, mixed, mixed>`).
+    let mut params = params;
+    let trimmed_type_value = generic_type_value.trim_start_matches('\\');
+    if params.len() == 1
+        && (trimmed_type_value.eq_ignore_ascii_case("Traversable")
+            || trimmed_type_value.eq_ignore_ascii_case("Iterator")
+            || trimmed_type_value.eq_ignore_ascii_case("IteratorAggregate"))
+    {
+        params.insert(0, TUnion::mixed());
+    } else if trimmed_type_value.eq_ignore_ascii_case("Generator") {
+        if params.len() == 1 {
+            params.insert(0, TUnion::mixed());
+        }
+        while params.len() < 4 {
+            params.push(TUnion::mixed());
+        }
     }
 
     TypeResult::Atomic(build_named_atomic(
@@ -1127,6 +1292,80 @@ fn generic_tree_to_type(
         interner,
         ctx,
     ))
+}
+
+/// Port of Psalm `TypeParser`'s `class-string-map` handling (getTypeFromGenericTree).
+///
+/// The first param introduces a placeholder template — either bounded
+/// (`T as Foo`, a TemplateAs tree) or bare (`T`, parsed as a named object) —
+/// which is added to the template scope with defining entity
+/// `class-string-map` (Psalm's `$template_type_map[$name] = ['class-string-map' => $as]`)
+/// before the second (value) param is parsed.
+fn class_string_map_tree_to_type(
+    tree: &ParseTreeArena,
+    id: NodeId,
+    interner: &Interner,
+    ctx: &TypeResolutionContext,
+) -> TypeResult {
+    let children = tree.children(id);
+
+    // Psalm throws a TypeParseTreeException unless exactly two params are
+    // given; pzoom's tree-to-type conversion has no error channel, so malformed
+    // input degrades to the faithful supertype `array<class-string, mixed>`.
+    let class_string_map_fallback = || {
+        TypeResult::Atomic(TAtomic::TArray {
+            key_type: Box::new(TUnion::new(TAtomic::TClassString { as_type: None })),
+            value_type: Box::new(TUnion::mixed()),
+        })
+    };
+
+    if children.len() != 2 {
+        return class_string_map_fallback();
+    }
+
+    let template_marker = get_type_from_tree(tree, children[0], interner, ctx).into_union();
+
+    // Psalm: a TTemplateParam marker carries its `as` bound (which must be a
+    // named object); a TNamedObject marker is an unbounded placeholder.
+    let (param_name, as_type) = match template_marker.get_single() {
+        Some(TAtomic::TTemplateParam { name, as_type, .. }) => {
+            match as_type.get_single() {
+                Some(bound @ TAtomic::TNamedObject { .. }) => (*name, Some(bound.clone())),
+                // Psalm: 'Unrecognised as type'.
+                _ => return class_string_map_fallback(),
+            }
+        }
+        Some(TAtomic::TNamedObject {
+            name,
+            type_params: None,
+            ..
+        }) => (*name, None),
+        // Psalm: 'Unrecognised class-string-map templated param'.
+        _ => return class_string_map_fallback(),
+    };
+
+    // Parse the value param with the placeholder in scope, overriding any
+    // same-named outer template (Psalm assigns into $template_type_map).
+    let mut value_ctx = ctx.clone();
+    value_ctx
+        .template_type_map
+        .retain(|binding| binding.name != param_name);
+    value_ctx.template_type_map.push(TemplateBinding {
+        name: param_name,
+        defining_entity: GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
+        as_type: match &as_type {
+            Some(bound) => TUnion::new(bound.clone()),
+            None => TUnion::new(TAtomic::TObject),
+        },
+    });
+
+    let value_param = get_type_from_tree(tree, children[1], interner, &value_ctx).into_union();
+
+    TypeResult::Atomic(TAtomic::TClassStringMap {
+        param_name,
+        as_type: as_type.map(Box::new),
+        value_param: Box::new(value_param),
+    })
 }
 
 /// Port of `TypeParser::getComputedIntsFromMask`: every OR-combination of the
@@ -1190,7 +1429,34 @@ fn union_tree_to_type(
     if types.is_empty() {
         TypeResult::Union(TUnion::mixed())
     } else {
-        TypeResult::Union(TUnion::from_types(types))
+        // Psalm's getTypeFromUnionTree runs TypeCombiner::combine over the
+        // alternatives. pzoom's combiner is not yet faithful for every
+        // docblock union, so the combine is applied to the pattern the
+        // comparators rely on: an empty-array alternative beside keyed
+        // shapes, e.g. `array{T, T}|array<never, never>` parses as
+        // `list{0?: T, 1?: T}` like Psalm.
+        let has_empty_array = types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TArray { key_type, value_type }
+                    if key_type.is_nothing() && value_type.is_nothing()
+            )
+        });
+        let rest_are_keyed_shapes = types.iter().all(|atomic| match atomic {
+            TAtomic::TKeyedArray { .. } => true,
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            } => key_type.is_nothing() && value_type.is_nothing(),
+            _ => false,
+        });
+        if has_empty_array && rest_are_keyed_shapes && types.len() > 1 {
+            TypeResult::Union(TUnion::from_types(
+                pzoom_code_info::ttype::type_combiner::combine(types, false),
+            ))
+        } else {
+            TypeResult::Union(TUnion::from_types(types))
+        }
     }
 }
 
@@ -1233,10 +1499,122 @@ fn intersection_tree_to_type(
     match intersection_types.len() {
         0 => TypeResult::Union(TUnion::mixed()),
         1 => TypeResult::Atomic(intersection_types.pop().unwrap()),
-        _ => TypeResult::Atomic(TAtomic::TObjectIntersection {
-            types: intersection_types,
-        }),
+        _ => {
+            if let Some(folded) = fold_keyed_array_intersection(&intersection_types) {
+                return TypeResult::Atomic(folded);
+            }
+            TypeResult::Atomic(TAtomic::TObjectIntersection {
+                types: intersection_types,
+            })
+        }
     }
+}
+
+/// Port of Psalm's `TypeParser::getTypeFromKeyedArrays`: an intersection of
+/// array shapes — with at most one generic `array<K, V>` member, in first or
+/// last position — folds into a single keyed array. Shape properties merge,
+/// and the generic member's params become the fallback (`array{foo: T}&
+/// array<K, V>` ⇒ `array{foo: T, ...<K, V>}`); with no generic member, an
+/// unsealed member yields an `(array-key, mixed)` fallback. Overlapping
+/// property types make Psalm intersect them (or fail the parse); pzoom only
+/// folds when they agree, falling back to the raw intersection otherwise.
+fn fold_keyed_array_intersection(intersection_types: &[TAtomic]) -> Option<TAtomic> {
+    let is_generic_array =
+        |atomic: &TAtomic| matches!(atomic, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. });
+
+    let first_is_keyed = matches!(intersection_types.first()?, TAtomic::TKeyedArray { .. });
+    let last_is_keyed = matches!(intersection_types.last()?, TAtomic::TKeyedArray { .. });
+    if !first_is_keyed && !last_is_keyed {
+        return None;
+    }
+
+    let member_count = intersection_types.len();
+    for (index, member) in intersection_types.iter().enumerate() {
+        let allowed = matches!(member, TAtomic::TKeyedArray { .. })
+            || (is_generic_array(member) && (index == 0 || index == member_count - 1));
+        if !allowed {
+            return None;
+        }
+    }
+
+    let mut members: Vec<&TAtomic> = intersection_types.iter().collect();
+
+    // Psalm uses the first generic-array member as the fallback source,
+    // otherwise the last.
+    let mut generic_fallback: Option<(TUnion, TUnion)> = None;
+    if let TAtomic::TArray {
+        key_type,
+        value_type,
+    }
+    | TAtomic::TNonEmptyArray {
+        key_type,
+        value_type,
+    } = members[0]
+    {
+        generic_fallback = Some(((**key_type).clone(), (**value_type).clone()));
+        members.remove(0);
+    } else if let TAtomic::TArray {
+        key_type,
+        value_type,
+    }
+    | TAtomic::TNonEmptyArray {
+        key_type,
+        value_type,
+    } = members[member_count - 1]
+    {
+        generic_fallback = Some(((**key_type).clone(), (**value_type).clone()));
+        members.pop();
+    }
+
+    let mut merged_properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+    let mut all_sealed = true;
+
+    for member in members {
+        let TAtomic::TKeyedArray {
+            properties,
+            sealed,
+            fallback_key_type,
+            ..
+        } = member
+        else {
+            // A second generic-array member (e.g. `array<..>&array<..>`);
+            // Psalm has no defined behavior here, keep the raw intersection.
+            return None;
+        };
+
+        if !*sealed || fallback_key_type.is_some() {
+            all_sealed = false;
+        }
+
+        for (key, property_type) in properties.iter() {
+            if let Some(existing) = merged_properties.get(key) {
+                if existing != property_type {
+                    return None;
+                }
+            } else {
+                merged_properties.insert(key.clone(), property_type.clone());
+            }
+        }
+    }
+
+    let fallback = match generic_fallback {
+        Some(fallback) => Some(fallback),
+        None if !all_sealed => Some((TUnion::array_key(), TUnion::mixed())),
+        None => None,
+    };
+
+    let (fallback_key_type, fallback_value_type) = match fallback {
+        Some((key, value)) => (Some(Box::new(key)), Some(Box::new(value))),
+        None => (None, None),
+    };
+
+    Some(TAtomic::TKeyedArray {
+        properties: std::sync::Arc::new(merged_properties),
+        is_list: false,
+        sealed: fallback_key_type.is_none(),
+        fallback_key_type,
+        fallback_value_type,
+    })
 }
 
 /// Port of `getTypeFromCallableTree`.
@@ -1387,7 +1765,11 @@ fn keyed_array_tree_to_type(
 
     // `object{...}` is an object with known properties, not an array.
     if value == "object" {
-        return TypeResult::Atomic(TAtomic::TObjectWithProperties { properties });
+        return TypeResult::Atomic(TAtomic::TObjectWithProperties {
+            properties,
+            is_stringable: false,
+            is_invokable: false,
+        });
     }
 
     let mut fallback_key_type: Option<Box<TUnion>> = None;
@@ -1417,7 +1799,7 @@ fn keyed_array_tree_to_type(
     }
 
     TypeResult::Atomic(TAtomic::TKeyedArray {
-        properties,
+        properties: std::sync::Arc::new(properties),
         is_list,
         sealed,
         fallback_key_type,
@@ -1478,13 +1860,20 @@ fn build_named_atomic(
         "void" => TAtomic::TVoid,
         "mixed" => TAtomic::TMixed,
         "non-empty-mixed" => TAtomic::TNonEmptyMixed,
-        "object" | "stringable-object" | "callable-object" => TAtomic::TObject,
+        "object" | "callable-object" => TAtomic::TObject,
+        // Psalm: an object guaranteed to expose __toString.
+        "stringable-object" => TAtomic::TObjectWithProperties {
+            properties: FxHashMap::default(),
+            is_stringable: true,
+            is_invokable: false,
+        },
         "resource" | "open-resource" => TAtomic::TResource,
         "closed-resource" => TAtomic::TClosedResource,
         "never" | "no-return" | "never-return" | "never-returns" => TAtomic::TNothing,
 
         "array-key" => TAtomic::TArrayKey,
         "scalar" => TAtomic::TScalar,
+"non-empty-scalar" => TAtomic::TNonEmptyScalar,
         "numeric" => TAtomic::TNumeric,
         "positive-int" => TAtomic::TIntRange {
             min: Some(1),
@@ -1502,7 +1891,7 @@ fn build_named_atomic(
             min: None,
             max: Some(0),
         },
-        "literal-int" => TAtomic::TInt,
+        "literal-int" => TAtomic::TNonspecificLiteralInt,
         "non-empty-string" => TAtomic::TNonEmptyString,
         "numeric-string" => TAtomic::TNumericString,
         "lowercase-string" => TAtomic::TLowercaseString,
@@ -1528,30 +1917,13 @@ fn build_named_atomic(
                     .unwrap_or_else(|| resolve_value_of_union(param))
             })
             .unwrap_or(TAtomic::TMixed),
-        "class-string-map" => {
-            let (key_type, value_type) = if let Some(params) = generic_params {
-                match params.len() {
-                    0 => (
-                        TUnion::new(TAtomic::TClassString { as_type: None }),
-                        TUnion::mixed(),
-                    ),
-                    1 => (normalize_class_string_key_union(&params[0]), TUnion::mixed()),
-                    _ => (
-                        normalize_class_string_key_union(&params[0]),
-                        params[1].clone(),
-                    ),
-                }
-            } else {
-                (
-                    TUnion::new(TAtomic::TClassString { as_type: None }),
-                    TUnion::mixed(),
-                )
-            };
-            TAtomic::TArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(value_type),
-            }
-        }
+        // The generic form is handled by `class_string_map_tree_to_type` (which
+        // introduces the placeholder template before parsing the value param);
+        // a bare `class-string-map` keyword degrades to its faithful supertype.
+        "class-string-map" => TAtomic::TArray {
+            key_type: Box::new(TUnion::new(TAtomic::TClassString { as_type: None })),
+            value_type: Box::new(TUnion::mixed()),
+        },
         // `properties-of<C>` (and visibility-scoped variants). When the param is
         // an in-scope template (resolved via the context), it stays deferred as
         // `TTemplatePropertiesOf`; a concrete class becomes `TPropertiesOf`
@@ -1609,7 +1981,7 @@ fn build_named_atomic(
                 2 => {
                     let mut iter = params.into_iter();
                     TAtomic::TArray {
-                        key_type: Box::new(iter.next().unwrap()),
+                        key_type: Box::new(clamp_array_key(iter.next().unwrap())),
                         value_type: Box::new(iter.next().unwrap()),
                     }
                 }
@@ -1632,7 +2004,7 @@ fn build_named_atomic(
                 2 => {
                     let mut iter = params.into_iter();
                     TAtomic::TNonEmptyArray {
-                        key_type: Box::new(iter.next().unwrap()),
+                        key_type: Box::new(clamp_array_key(iter.next().unwrap())),
                         value_type: Box::new(iter.next().unwrap()),
                     }
                 }
@@ -1662,10 +2034,12 @@ fn build_named_atomic(
                 value_type: Box::new(value_type),
             }
         }
+        // Bare `iterable` and the one-param form default the key to `mixed`
+        // (Psalm's TIterable defaults), not `array-key`.
         "iterable" => match generic_params {
             Some(params) => match params.len() {
                 1 => TAtomic::TIterable {
-                    key_type: Box::new(TUnion::array_key()),
+                    key_type: Box::new(TUnion::mixed()),
                     value_type: Box::new(params.into_iter().next().unwrap()),
                 },
                 2 => {
@@ -1676,12 +2050,12 @@ fn build_named_atomic(
                     }
                 }
                 _ => TAtomic::TIterable {
-                    key_type: Box::new(TUnion::array_key()),
+                    key_type: Box::new(TUnion::mixed()),
                     value_type: Box::new(TUnion::mixed()),
                 },
             },
             None => TAtomic::TIterable {
-                key_type: Box::new(TUnion::array_key()),
+                key_type: Box::new(TUnion::mixed()),
                 value_type: Box::new(TUnion::mixed()),
             },
         },
@@ -1693,11 +2067,30 @@ fn build_named_atomic(
                 .map(Box::new);
             TAtomic::TClassString { as_type }
         }
-        "callable-string" => TAtomic::TCallable {
-            params: None,
-            return_type: None,
-            is_pure: None,
-        },
+        "callable-string" => TAtomic::TCallableString,
+        // Psalm's TCallableKeyedArray: a two-element list that is also
+        // callable — [class-string|object, non-empty-string].
+        "callable-array" => {
+            let mut properties = rustc_hash::FxHashMap::default();
+            properties.insert(
+                pzoom_code_info::t_atomic::ArrayKey::Int(0),
+                TUnion::from_types(vec![
+                    TAtomic::TClassString { as_type: None },
+                    TAtomic::TObject,
+                ]),
+            );
+            properties.insert(
+                pzoom_code_info::t_atomic::ArrayKey::Int(1),
+                TUnion::new(TAtomic::TNonEmptyString),
+            );
+            TAtomic::TKeyedArray {
+                properties: std::sync::Arc::new(properties),
+                is_list: true,
+                sealed: true,
+                fallback_key_type: None,
+                fallback_value_type: None,
+            }
+        }
         "callable" => TAtomic::TCallable {
             params: None,
             return_type: None,
@@ -1735,6 +2128,8 @@ fn build_named_atomic(
                 }
             }
 
+            let generic_params = normalize_iterator_family_params(name, generic_params, interner);
+
             TAtomic::TNamedObject {
                 name,
                 type_params: generic_params,
@@ -1743,6 +2138,68 @@ fn build_named_atomic(
             }
         }
     }
+}
+
+/// Psalm fills missing leading template params for the builtin iterator
+/// family: `Traversable<A>` parses as `Traversable<mixed, A>` (the single
+/// param binds TValue, TKey defaults to mixed).
+fn normalize_iterator_family_params(
+    name: StrId,
+    generic_params: Option<Vec<TUnion>>,
+    interner: &Interner,
+) -> Option<Vec<TUnion>> {
+    let Some(params) = generic_params else {
+        return None;
+    };
+    if params.len() == 1 {
+        let raw_name = interner.lookup(name);
+        let base_name = raw_name.rsplit('\\').next().unwrap_or(&raw_name);
+        if base_name == "Traversable" || base_name == "Iterator" || base_name == "IteratorAggregate"
+        {
+            let mut padded = vec![TUnion::mixed()];
+            padded.extend(params);
+            return Some(padded);
+        }
+    }
+    Some(params)
+}
+
+/// Array keys cannot be mixed: Psalm parses `array<mixed, X>` as
+/// `array<array-key, X>`.
+fn clamp_array_key(key_type: TUnion) -> TUnion {
+    if key_type.has_mixed() {
+        return TUnion::array_key();
+    }
+
+    // PHP coerces numeric-string array keys to ints — Psalm's TypeParser
+    // rewrites literal keys via getLiteralArrayKeyInt ('17' -> 17; '015',
+    // '+5' and padded strings stay strings).
+    let mut key_type = key_type;
+    for atomic in key_type.types.iter_mut() {
+        if let TAtomic::TLiteralString { value } = atomic
+            && let Some(int_key) = literal_array_key_int(value)
+        {
+            *atomic = TAtomic::TLiteralInt { value: int_key };
+        }
+    }
+    key_type
+}
+
+/// Psalm's `ArrayAnalyzer::getLiteralArrayKeyInt`: the int PHP would coerce a
+/// literal string array key to, when it would.
+fn literal_array_key_int(literal_key: &str) -> Option<i64> {
+    if literal_key.trim() != literal_key {
+        return None;
+    }
+    if literal_key.starts_with('+') {
+        return None;
+    }
+    let parsed: i64 = literal_key.parse().ok()?;
+    // e.g. '015' parses but PHP keeps it as a string key.
+    if parsed.to_string() != literal_key {
+        return None;
+    }
+    Some(parsed)
 }
 
 #[cfg(test)]
@@ -1776,7 +2233,7 @@ mod tests {
         // (flattened to the union of its branches).
         let interner = Interner::default();
         let mut ctx = TypeResolutionContext::new();
-        ctx.param_names.push(interner.intern("$string"));
+        ctx.param_names.push(StrId::STRING_VAR);
         let ty = parse_type_string_with_context(SPACED_PARAM_CONDITIONAL, &interner, &ctx)
             .expect("param conditional should parse with param context");
         let id = ty.get_id(Some(&interner));

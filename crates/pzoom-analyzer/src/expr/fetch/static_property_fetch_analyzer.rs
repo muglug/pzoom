@@ -17,6 +17,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
 
 use super::atomic_property_fetch_analyzer::get_property_type;
+use std::rc::Rc;
 
 /// Analyze a static property access expression (Foo::$bar).
 pub fn analyze(
@@ -36,10 +37,25 @@ pub fn analyze(
     // Get the property name from the Variable
     let prop_name = match &access.property {
         Variable::Direct(direct) => Some(direct.name.trim_start_matches('$')),
-        _ => None,
+        other => {
+            // Dynamic property names (`static::${$var}`) consume their inner
+            // expression (general use).
+            if let Variable::Indirect(indirect) = other {
+                let was_inside_general_use = context.inside_general_use;
+                context.inside_general_use = true;
+                let _ = expression_analyzer::analyze(
+                    analyzer,
+                    indirect.expression,
+                    analysis_data,
+                    context,
+                );
+                context.inside_general_use = was_inside_general_use;
+            }
+            None
+        }
     };
     let Some(prop_name) = prop_name else {
-        analysis_data.set_expr_type(pos, TUnion::mixed());
+        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
         return;
     };
 
@@ -60,6 +76,26 @@ pub fn analyze(
         return;
     }
 
+    // Psalm consults `$context->vars_in_scope[$var_id]` before the declared
+    // type: a narrowed static-property type (e.g. from `if (self::$instance)`)
+    // wins. The key matches expression_identifier::get_expression_var_key.
+    let class_key_part = match access.class.unparenthesized() {
+        Expression::Identifier(identifier) => Some(identifier.value().to_string()),
+        Expression::Self_(_) => Some("self".to_string()),
+        Expression::Static(_) => Some("static".to_string()),
+        Expression::Parent(_) => Some("parent".to_string()),
+        _ => None,
+    };
+    if let Some(class_key_part) = class_key_part
+        && let Some(narrowed_type) = context
+            .locals
+            .get(format!("{}::${}", class_key_part, prop_name).as_str())
+            .cloned()
+    {
+        analysis_data.expr_types.insert(pos, Rc::new(narrowed_type));
+        return;
+    }
+
     // Try to get the resolved class ID from the name.
     let class_id = get_resolved_class_id(analyzer, access.class, context);
 
@@ -76,7 +112,7 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.set_expr_type(pos, TUnion::mixed());
+                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             Expression::Self_(_) | Expression::Static(_) => {
@@ -90,19 +126,46 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.set_expr_type(pos, TUnion::mixed());
+                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             _ => {}
         }
     }
 
-    let property_type = class_id
+    let mut property_type = class_id
         .and_then(|class_id| {
             fetch_static_property(analyzer, class_id, prop_name, pos, analysis_data, context)
         })
         .unwrap_or_else(TUnion::mixed);
-    analysis_data.set_expr_type(pos, property_type);
+
+    // Psalm `StaticPropertyFetchAnalyzer` → `processUnspecialTaints`: the
+    // global `A::$prop` property node flows into this fetch (static
+    // properties carry taints between call sites).
+    if let pzoom_code_info::GraphKind::WholeProgram(_) = analysis_data.data_flow_graph.kind
+        && let Some(class_id) = class_id
+    {
+        let prop_id = analyzer.interner.intern(prop_name);
+        let node_class = analyzer
+            .codebase
+            .get_class(class_id)
+            .and_then(|class_info| class_info.declaring_property_ids.get(&prop_id).copied())
+            .unwrap_or(class_id);
+        let localized_property_node = pzoom_code_info::DataFlowNode::get_for_localized_property(
+            (node_class, prop_id),
+            crate::data_flow::make_data_flow_node_position(analyzer, pos),
+        );
+        property_type =
+            crate::expr::fetch::atomic_property_fetch_analyzer::add_unspecialized_property_fetch_dataflow(
+                localized_property_node,
+                (node_class, prop_id),
+                analysis_data,
+                false,
+                property_type,
+            );
+    }
+
+    analysis_data.expr_types.insert(pos, Rc::new(property_type));
 }
 
 /// Whether the class portion of a static fetch is a class *name* (`Foo::`,
@@ -162,7 +225,7 @@ fn fetch_static_property(
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::UndefinedClass,
-            format!("Class {} does not exist", class_name),
+            crate::class_casing::undefined_class_message(analyzer, &class_name),
             analyzer.file_path,
             pos.0,
             pos.1,
@@ -186,7 +249,17 @@ fn fetch_static_property(
         ));
     }
 
-    let Some(prop_info) = class_info.properties.get(&prop_id) else {
+    #[allow(clippy::needless_late_init)]
+    let prop_lookup = class_info.properties.get(&prop_id);
+    if let Some(prop_info) = prop_lookup
+        && analyzer.config.find_unused_code
+    {
+        // Static property reads mark the property used (find_unused_code).
+        analysis_data
+            .referenced_properties
+            .insert((prop_info.declaring_class, prop_id));
+    }
+    let Some(prop_info) = prop_lookup else {
         // Property not found
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
@@ -218,21 +291,26 @@ fn fetch_static_property(
         ));
     }
 
-    // Check that property is static
+    // A non-static property is invisible to static access: Psalm's
+    // StaticPropertyFetchAnalyzer reports UndefinedPropertyFetch
+    // ("Static property X::$p is not defined") and stops.
     if !prop_info.is_static {
-        let (line, col) = analyzer.get_line_column(pos.0);
-        analysis_data.add_issue(Issue::new(
-            IssueKind::InvalidStaticPropertyFetch,
-            format!(
-                "Cannot access non-static property {}::${} statically",
-                class_name, prop_name
-            ),
-            analyzer.file_path,
-            pos.0,
-            pos.1,
-            line,
-            col,
-        ));
+        if !context.inside_isset {
+            let (line, col) = analyzer.get_line_column(pos.0);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::UndefinedPropertyFetch,
+                format!(
+                    "Static property {}::${} is not defined",
+                    class_name, prop_name
+                ),
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            ));
+        }
+        return None;
     }
 
     let visibility_scope_class_id = get_property_visibility_scope_class_id(class_info, prop_id);
@@ -347,7 +425,7 @@ fn analyze_variable_static_property_fetch(
     context: &mut BlockContext,
 ) {
     let class_type = analysis_data
-        .get_expr_type(class_pos)
+        .expr_types.get(&class_pos).cloned()
         .map(|rc| (*rc).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -392,6 +470,9 @@ fn analyze_variable_static_property_fetch(
             context.inside_isset,
             context.has_this,
             context,
+            // `$obj::$prop` syntax reaches static properties (Psalm's
+            // AtomicPropertyFetchAnalyzer `is_static_access`).
+            true,
         )
         .unwrap_or_else(TUnion::mixed);
         result_type = Some(match result_type {
@@ -400,7 +481,7 @@ fn analyze_variable_static_property_fetch(
         });
     }
 
-    analysis_data.set_expr_type(pos, result_type.unwrap_or_else(TUnion::mixed));
+    analysis_data.expr_types.insert(pos, Rc::new(result_type.unwrap_or_else(TUnion::mixed)));
 }
 
 /// Get the resolved class ID from an expression using resolved_names.

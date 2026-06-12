@@ -8,7 +8,7 @@ use mago_syntax::ast::ast::unary::{UnaryPostfix, UnaryPrefix, UnaryPrefixOperato
 use mago_syntax::ast::ast::variable::Variable;
 use rustc_hash::FxHashSet;
 
-use pzoom_code_info::algebra::ClauseKey;
+use pzoom_code_info::VarName;
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
@@ -18,6 +18,7 @@ use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::reconciler;
 use crate::statements_analyzer::StatementsAnalyzer;
+use std::rc::Rc;
 
 /// Analyze a unary prefix expression.
 pub fn analyze_prefix(
@@ -32,13 +33,24 @@ pub fn analyze_prefix(
         return;
     }
 
+    // Psalm flips $context->inside_negation for `!` and gates the &&/|| if-body
+    // merges on it: an operator inside a negation must not push its (un-negated)
+    // narrowing into the enclosing if's shared body context.
+    let saved_if_body_context = if matches!(unary.operator, UnaryPrefixOperator::Not(_)) {
+        context.if_body_context.take()
+    } else {
+        None
+    };
     let operand_pos = expression_analyzer::analyze(analyzer, unary.operand, analysis_data, context);
-    let operand_type = analysis_data.get_expr_type(operand_pos);
+    if let Some(if_body_context) = saved_if_body_context {
+        context.if_body_context = Some(if_body_context);
+    }
+    let operand_type = analysis_data.expr_types.get(&operand_pos).cloned();
 
     let expr_type = match &unary.operator {
         // Boolean not
         UnaryPrefixOperator::Not(_) => {
-            if let Some(op_type) = operand_type.as_deref() {
+            let result = if let Some(op_type) = operand_type.as_deref() {
                 if op_type.is_always_falsy() {
                     let mut result = TUnion::new(TAtomic::TTrue);
                     result.from_docblock = op_type.from_docblock;
@@ -52,22 +64,34 @@ pub fn analyze_prefix(
                 }
             } else {
                 TUnion::bool()
-            }
+            };
+
+            // Hakana wires `!` through decision dataflow (which also records the
+            // expression type).
+            return expression_analyzer::add_decision_dataflow(
+                analyzer,
+                analysis_data,
+                unary.operand,
+                None,
+                pos,
+                result,
+            );
         }
 
-        // Arithmetic negation/plus
+        // Arithmetic negation/plus — the result is derived from the operand:
+        // keep its dataflow parents (Psalm treats `-$a`/`+$a` as uses of $a).
         UnaryPrefixOperator::Negation(_) => {
             if let Some(op_type) = operand_type {
                 // If operand is a literal int, negate it
                 if let Some(TAtomic::TLiteralInt { value }) = op_type.types.first() {
                     if op_type.types.len() == 1 {
-                        return analysis_data.set_expr_type(
-                            pos,
-                            TUnion::new(TAtomic::TLiteralInt { value: -value }),
-                        );
+                        let mut result = TUnion::new(TAtomic::TLiteralInt { value: -value });
+                        result.parent_nodes = op_type.parent_nodes.clone();
+                        analysis_data.expr_types.insert(pos, Rc::new(result));
+                        return;
                     }
                 }
-                if op_type
+                let mut result = if op_type
                     .types
                     .iter()
                     .any(|t| matches!(t, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
@@ -75,7 +99,9 @@ pub fn analyze_prefix(
                     TUnion::float()
                 } else {
                     TUnion::int()
-                }
+                };
+                result.parent_nodes = op_type.parent_nodes.clone();
+                result
             } else {
                 TUnion::new(TAtomic::TNumeric)
             }
@@ -83,7 +109,7 @@ pub fn analyze_prefix(
 
         UnaryPrefixOperator::Plus(_) => {
             if let Some(op_type) = operand_type {
-                if op_type
+                let mut result = if op_type
                     .types
                     .iter()
                     .any(|t| matches!(t, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
@@ -91,7 +117,9 @@ pub fn analyze_prefix(
                     TUnion::float()
                 } else {
                     TUnion::int_from_calculation()
-                }
+                };
+                result.parent_nodes = op_type.parent_nodes.clone();
+                result
             } else {
                 TUnion::new(TAtomic::TNumeric)
             }
@@ -105,14 +133,22 @@ pub fn analyze_prefix(
                 pos,
                 analysis_data,
             );
-            if operand_type
+            // The result is derived from the operand: keep its dataflow
+            // parents (the operand is "used" by whatever consumes the result).
+            let operand_parents = operand_type
+                .as_ref()
+                .map(|t| t.parent_nodes.clone())
+                .unwrap_or_default();
+            let mut result = if operand_type
                 .as_ref()
                 .is_some_and(|t| union_is_string_like_for_bitwise(t))
             {
                 TUnion::string()
             } else {
                 TUnion::int()
-            }
+            };
+            result.parent_nodes = operand_parents;
+            result
         }
 
         // Pre-increment/decrement - returns the modified value
@@ -124,7 +160,12 @@ pub fn analyze_prefix(
                 pos,
                 analysis_data,
             );
-            let result_type = get_increment_result_type(operand_type.as_deref());
+            let delta = if matches!(unary.operator, UnaryPrefixOperator::PreIncrement(_)) {
+                1
+            } else {
+                -1
+            };
+            let result_type = get_increment_result_type(operand_type.as_deref(), delta, context.inside_loop, context.inside_assignment);
             maybe_emit_undefined_increment_variable(
                 analyzer,
                 unary.operand,
@@ -134,10 +175,19 @@ pub fn analyze_prefix(
             update_var_type_for_increment(
                 analyzer,
                 unary.operand,
+                pos,
                 &result_type,
                 analysis_data,
                 context,
             );
+            // Pre-increment evaluates to the freshly-written value: surface
+            // its dataflow node so `if (++$i > 10)` counts as a use.
+            let mut result_type = result_type;
+            if let Expression::Variable(Variable::Direct(direct)) = unary.operand.unparenthesized()
+                && let Some(stored) = context.get_var_type(direct.name)
+            {
+                result_type.parent_nodes = stored.parent_nodes.clone();
+            }
             result_type
         }
 
@@ -173,7 +223,7 @@ pub fn analyze_prefix(
         UnaryPrefixOperator::VoidCast(_, _) => TUnion::void(),
     };
 
-    analysis_data.set_expr_type(pos, expr_type);
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
 }
 
 /// Analyze a unary postfix expression.
@@ -185,7 +235,7 @@ pub fn analyze_postfix(
     context: &mut BlockContext,
 ) {
     let operand_pos = expression_analyzer::analyze(analyzer, unary.operand, analysis_data, context);
-    let operand_type = analysis_data.get_expr_type(operand_pos);
+    let operand_type = analysis_data.expr_types.get(&operand_pos).cloned();
 
     // Post increment/decrement returns the original value before modification
     let expr_type = operand_type
@@ -197,22 +247,80 @@ pub fn analyze_postfix(
     maybe_emit_undefined_increment_variable(analyzer, unary.operand, analysis_data, context);
 
     // Update the variable's type in context (the variable gets the incremented value)
-    let new_var_type = get_increment_result_type(operand_type.as_deref());
+    let delta = if matches!(
+        unary.operator,
+        mago_syntax::ast::ast::unary::UnaryPostfixOperator::PostIncrement(_)
+    ) {
+        1
+    } else {
+        -1
+    };
+    let new_var_type = get_increment_result_type(operand_type.as_deref(), delta, context.inside_loop, context.inside_assignment);
     update_var_type_for_increment(
         analyzer,
         unary.operand,
+        pos,
         &new_var_type,
         analysis_data,
         context,
     );
 
-    analysis_data.set_expr_type(pos, expr_type);
+    // Psalm's IncDecExpressionAnalyzer: when the operand has a string member
+    // and this is an increment, the EXPRESSION takes the arithmetic result
+    // (numeric strings give int|float) rather than the pre-increment value.
+    let expr_type = if delta > 0
+        && operand_type.as_ref().is_some_and(|t| {
+            t.types.iter().any(|atomic| {
+                matches!(
+                    atomic,
+                    TAtomic::TString
+                        | TAtomic::TLiteralString { .. }
+                        | TAtomic::TNonEmptyString
+                        | TAtomic::TNumericString
+                        | TAtomic::TNonEmptyNumericString
+                        | TAtomic::TLowercaseString
+                        | TAtomic::TNonEmptyLowercaseString
+                        | TAtomic::TTruthyString
+                )
+            })
+        }) {
+        new_var_type
+    } else {
+        expr_type
+    };
+
+    analysis_data.expr_types.insert(pos, Rc::new(expr_type));
 }
 
-/// Get the result type after incrementing/decrementing a value.
-fn get_increment_result_type(operand_type: Option<&TUnion>) -> TUnion {
+/// Get the result type after incrementing/decrementing a value (`delta` is
+/// +1 for `++`, -1 for `--`).
+/// A string atomic whose increment is numeric (Psalm: TNumericString or a
+/// numeric literal string increments to int|float, with no StringIncrement).
+fn is_numericish_string_atomic(atomic: &TAtomic) -> bool {
+    match atomic {
+        TAtomic::TNumericString | TAtomic::TNonEmptyNumericString => true,
+        TAtomic::TLiteralString { value } => value.parse::<f64>().is_ok(),
+        _ => false,
+    }
+}
+
+fn get_increment_result_type(
+    operand_type: Option<&TUnion>,
+    delta: i64,
+    inside_loop: bool,
+    inside_assignment: bool,
+) -> TUnion {
     match operand_type {
         Some(t) => {
+            // Psalm's ArithmeticOpAnalyzer: incrementing a numeric string
+            // yields int|float (from calculation); other strings stay strings.
+            if t.types.iter().all(is_numericish_string_atomic) {
+                let mut result =
+                    TUnion::from_types(vec![TAtomic::TFloat, TAtomic::TInt]);
+                result.from_calculation = true;
+                return result;
+            }
+
             if t.types.iter().all(|a| {
                 matches!(
                     a,
@@ -229,25 +337,102 @@ fn get_increment_result_type(operand_type: Option<&TUnion>) -> TUnion {
                 return TUnion::string();
             }
 
-            // If it's a literal int, we can't preserve the literal value since we don't
-            // know if it's increment or decrement. Just return int.
+            // Psalm types `$i++` through ArithmeticOpAnalyzer as `$i + 1`
+            // (VirtualPlus): inside a loop a literal widens to a half-open
+            // range (`0` then `$i++` converges to int<1, max>); outside one
+            // it stays literal arithmetic unless the increment is buried in
+            // an assignment; ranges shift their bounds.
             if t.types.iter().all(|a| {
                 matches!(
                     a,
-                    TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TNumeric
+                    TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
                 )
             }) {
-                TUnion::int_from_calculation()
-            } else if t
+                let shifted: Vec<TAtomic> = t
+                    .types
+                    .iter()
+                    .map(|a| match a {
+                        TAtomic::TLiteralInt { value } => {
+                            if inside_loop {
+                                if delta > 0 {
+                                    TAtomic::TIntRange {
+                                        min: value.checked_add(delta),
+                                        max: None,
+                                    }
+                                } else {
+                                    TAtomic::TIntRange {
+                                        min: None,
+                                        max: value.checked_add(delta),
+                                    }
+                                }
+                            } else if inside_assignment {
+                                TAtomic::TInt
+                            } else {
+                                match value.checked_add(delta) {
+                                    Some(new_value) => {
+                                        TAtomic::TLiteralInt { value: new_value }
+                                    }
+                                    None => TAtomic::TInt,
+                                }
+                            }
+                        }
+                        TAtomic::TIntRange { min, max } => TAtomic::TIntRange {
+                            min: min.map(|m| m.saturating_add(delta)),
+                            max: max.map(|m| m.saturating_add(delta)),
+                        },
+                        other => other.clone(),
+                    })
+                    .collect();
+                // Like Psalm's ArithmeticOpAnalyzer result, the int stays
+                // flagged from_calculation: ++ can overflow to float, so a
+                // later is_int/is_float check is not redundant.
+                let mut shifted_union = TUnion::from_types(shifted);
+                shifted_union.from_calculation = true;
+                return shifted_union;
+            }
+
+            if t
                 .types
                 .iter()
                 .any(|a| matches!(a, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
             {
                 TUnion::float()
             } else {
-                // PHP's increment behavior on non-numeric types is complex,
-                // fall back to numeric
-                TUnion::new(TAtomic::TNumeric)
+                // Mixed unions increment per atomic (Psalm's virtual `$i + 1`
+                // over each member): ints stay int, floats stay float, strings
+                // become non-empty-string (`++"a"` is "b"); anything else
+                // falls back to numeric.
+                let mut incremented: Vec<TAtomic> = Vec::with_capacity(t.types.len() + 1);
+                for atomic in &t.types {
+                    // Numeric strings and `numeric` increment to int|float
+                    // (Psalm's ArithmeticOpAnalyzer).
+                    if is_numericish_string_atomic(atomic) || matches!(atomic, TAtomic::TNumeric) {
+                        for incremented_atomic in [TAtomic::TInt, TAtomic::TFloat] {
+                            if !incremented.contains(&incremented_atomic) {
+                                incremented.push(incremented_atomic);
+                            }
+                        }
+                        continue;
+                    }
+                    incremented.push(match atomic {
+                        TAtomic::TInt
+                        | TAtomic::TLiteralInt { .. }
+                        | TAtomic::TIntRange { .. } => TAtomic::TInt,
+                        TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => TAtomic::TFloat,
+                        TAtomic::TString
+                        | TAtomic::TLiteralString { .. }
+                        | TAtomic::TNonEmptyString
+                        | TAtomic::TLowercaseString
+                        | TAtomic::TNonEmptyLowercaseString
+                        | TAtomic::TTruthyString
+                        | TAtomic::TClassString { .. }
+                        | TAtomic::TLiteralClassString { .. } => TAtomic::TNonEmptyString,
+                        _ => TAtomic::TNumeric,
+                    });
+                }
+                let mut result = TUnion::from_types(incremented);
+                result.from_calculation = true;
+                result
             }
         }
         None => TUnion::new(TAtomic::TNumeric),
@@ -255,20 +440,73 @@ fn get_increment_result_type(operand_type: Option<&TUnion>) -> TUnion {
 }
 
 /// Update a variable's type in the context after increment/decrement.
+/// `full_pos` is the whole crement expression's span (`$i++` / `++$i`).
 fn update_var_type_for_increment(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
+    full_pos: Pos,
     new_type: &TUnion,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
     if let Expression::Variable(Variable::Direct(direct)) = expr.unparenthesized() {
-        let var_id = analyzer.interner.intern(direct.name);
-        context.set_var_type(var_id, new_type.clone());
+        let var_id = VarName::new(direct.name);
+        let mut stored_type = new_type.clone();
+        // `++$i` reads and rewrites the variable (Hakana's `$i = $i + 1`
+        // rewrite): the old value's dataflow parents feed a fresh assignment
+        // source so loop-carried uses see the increment.
+        if analysis_data.data_flow_graph.kind == pzoom_code_info::GraphKind::FunctionBody {
+            let span = expr.span();
+            // The node id is keyed on the whole crement span: the operand
+            // span already identifies the READ sink (`$result[$i++]` sinks
+            // the old value as an array key), and a write node with the same
+            // id would self-collide and never count as used by later reads.
+            // The reported position stays on the operand, matching Psalm.
+            let assignment_node = pzoom_code_info::DataFlowNode {
+                id: pzoom_code_info::data_flow::node::DataFlowNodeId::Var(
+                    pzoom_code_info::VarId(analyzer.interner.intern(&var_id)),
+                    analyzer.file_path,
+                    full_pos.0,
+                    full_pos.1,
+                ),
+                kind: pzoom_code_info::data_flow::node::DataFlowNodeKind::VariableUseSource {
+                    pos: crate::data_flow::make_data_flow_node_position(
+                        analyzer,
+                        (span.start.offset, span.end.offset),
+                    ),
+                    kind: if context.references_to_external_scope.contains(&var_id)
+                        || context.static_var_ids.contains(&var_id)
+                    {
+                        pzoom_code_info::VariableSourceKind::InoutArg
+                    } else {
+                        pzoom_code_info::VariableSourceKind::Default
+                    },
+                    pure: false,
+                    has_awaitable: false,
+                    has_await_call: false,
+                    has_parent_nodes: true,
+                    from_loop_init: false,
+                },
+            };
+            if let Some(old_type) = context.get_var_type(&var_id) {
+                for parent_node in &old_type.parent_nodes {
+                    analysis_data.data_flow_graph.add_path(
+                        &parent_node.id,
+                        &assignment_node.id,
+                        pzoom_code_info::PathKind::Default,
+                        vec![],
+                        vec![],
+                    );
+                }
+            }
+            analysis_data.data_flow_graph.add_node(assignment_node.clone());
+            stored_type.parent_nodes = vec![assignment_node];
+        }
+        context.set_var_type(var_id, stored_type);
 
-        clear_dependent_property_types(analyzer, context, direct.name);
-        clear_dependent_array_access_types(analyzer, context, direct.name);
-        context.invalidate_dependent_types(var_id);
+        clear_dependent_property_types( context, direct.name);
+        clear_dependent_array_access_types( context, direct.name);
+        context.invalidate_dependent_types(direct.name);
         remove_var_clauses_from_context(context, direct.name);
         return;
     }
@@ -277,24 +515,24 @@ fn update_var_type_for_increment(
         return;
     };
 
-    let var_id = analyzer.interner.intern(&var_name);
+    let var_id = VarName::new(&var_name);
     context.locals.insert(var_id, new_type.clone());
 
     if var_name.ends_with(']') {
         let mut assertions = BTreeMap::new();
-        assertions.insert(var_name.clone(), vec![Assertion::IsIsset]);
+        assertions.insert(var_name.clone(), vec![vec![Assertion::IsIsset]]);
         let mut changed_var_ids = FxHashSet::default();
         let inside_loop = context.inside_loop;
 
         reconciler::reconcile_keyed_types(
-            &reconciler::to_and_groups(&assertions),
+            &assertions,
             context,
             &mut changed_var_ids,
             analyzer,
             analysis_data,
             inside_loop,
             false,
-            false,
+            crate::reconciler::EmissionMode::Silent,
             None,
         );
     }
@@ -302,7 +540,6 @@ fn update_var_type_for_increment(
 }
 
 fn clear_dependent_property_types(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -310,14 +547,8 @@ fn clear_dependent_property_types(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .starts_with(&property_prefix)
-        })
+        .filter(|var_id| var_id.starts_with(&property_prefix))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -328,7 +559,6 @@ fn clear_dependent_property_types(
 }
 
 fn clear_dependent_array_access_types(
-    analyzer: &StatementsAnalyzer<'_>,
     context: &mut BlockContext,
     var_name: &str,
 ) {
@@ -336,14 +566,8 @@ fn clear_dependent_array_access_types(
     let keys_to_clear: Vec<_> = context
         .locals
         .keys()
-        .copied()
-        .filter(|var_id| {
-            analyzer
-                .interner
-                .lookup(*var_id)
-                .as_ref()
-                .contains(&key_fragment)
-        })
+        .filter(|var_id| var_id.contains(&key_fragment))
+        .cloned()
         .collect();
 
     for key in keys_to_clear {
@@ -354,25 +578,9 @@ fn clear_dependent_array_access_types(
 }
 
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
-    context.clauses.retain(|clause| {
-        !clause
-            .possibilities
-            .keys()
-            .any(|key| matches_assignment_target_key(key, assigned_var_name))
-    });
+    context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
 
-fn matches_assignment_target_key(key: &ClauseKey, assigned_var_name: &str) -> bool {
-    match key {
-        ClauseKey::Name(name) => {
-            name == assigned_var_name
-                || name.starts_with(&format!("{}[", assigned_var_name))
-                || name.starts_with(&format!("{}->", assigned_var_name))
-                || name.contains(&format!("[{}]", assigned_var_name))
-        }
-        ClauseKey::Range(..) => false,
-    }
-}
 
 fn maybe_emit_undefined_increment_variable(
     analyzer: &StatementsAnalyzer<'_>,
@@ -388,11 +596,7 @@ fn maybe_emit_undefined_increment_variable(
         return;
     }
 
-    let is_defined = analyzer
-        .interner
-        .find(direct.name)
-        .and_then(|var_id| context.get_var_type(var_id))
-        .is_some();
+    let is_defined = context.locals.contains_key(direct.name);
 
     if is_defined {
         return;
@@ -429,14 +633,15 @@ fn maybe_emit_increment_operand_issue(
         match atomic {
             TAtomic::TTrue | TAtomic::TBool => saw_true_or_bool = true,
             TAtomic::TFalse => saw_false = true,
+            // Numeric strings increment to int|float — intended, no report
+            // (Psalm's ArithmeticOpAnalyzer).
+            atomic if is_numericish_string_atomic(atomic) => {}
             TAtomic::TString
             | TAtomic::TLiteralString { .. }
             | TAtomic::TNonEmptyString
             | TAtomic::TLowercaseString
             | TAtomic::TNonEmptyLowercaseString
-            | TAtomic::TTruthyString
-            | TAtomic::TNumericString
-            | TAtomic::TNonEmptyNumericString => saw_string = true,
+            | TAtomic::TTruthyString => saw_string = true,
             _ => {}
         }
     }

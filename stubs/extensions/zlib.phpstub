@@ -143,10 +143,18 @@ final class DeflateContext
 {
 }
 
+/**
+ * @param string $data
+ * @param int $flags
+ * @return false|string
+ */
 function ob_gzhandler(string $data, int $flags): string|false
 {
 }
 
+/**
+ * @return false|string
+ */
 function zlib_get_coding_type(): string|false
 {
 }
@@ -169,6 +177,12 @@ function readgzfile(string $filename, bool $use_include_path = false): int|false
 {
 }
 
+/**
+ * @param string $data
+ * @param int $encoding
+ * @param int $level
+ * @return false|string
+ */
 function zlib_encode(string $data, int $encoding, int $level = -1): string|false
 {
 }
@@ -177,14 +191,32 @@ function zlib_decode(string $data, int $max_length = 0): string|false
 {
 }
 
+/**
+ * @param string $data
+ * @param int $level
+ * @param int $encoding
+ * @return false|string
+ */
 function gzdeflate(string $data, int $level = -1, int $encoding = ZLIB_ENCODING_RAW): string|false
 {
 }
 
+/**
+ * @param string $data
+ * @param int $level
+ * @param int $encoding
+ * @return false|string
+ */
 function gzencode(string $data, int $level = -1, int $encoding = ZLIB_ENCODING_GZIP): string|false
 {
 }
 
+/**
+ * @param string $data
+ * @param int $level
+ * @param int $encoding
+ * @return false|string
+ */
 function gzcompress(string $data, int $level = -1, int $encoding = ZLIB_ENCODING_DEFLATE): string|false
 {
 }

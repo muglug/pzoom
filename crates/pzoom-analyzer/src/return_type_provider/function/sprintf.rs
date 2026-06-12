@@ -273,10 +273,9 @@ fn analyze_sprintf_call(
         return;
     }
 
-    // Formats with `*` (variable) width/precision are too complex to validate.
-    if is_complex_sprintf_format(&format) {
-        return;
-    }
+    // Complex placeholders (e.g. `*` variable width/precision) still fall back to a
+    // generic return type, but their format and argument count are validated below,
+    // mirroring Psalm's SprintfReturnTypeProvider after vimeo/psalm@6e38dc1.
 
     let Some(required) = count_sprintf_placeholders(&format) else {
         emit(
@@ -405,54 +404,77 @@ fn is_always_empty_sprintf_format(format: &str) -> bool {
     i == b.len()
 }
 
-/// Matches Psalm's complex-placeholder regex
-/// `%(?:\d+\$)?[-+]?(?:\d+|\*)(?:\.(?:\d+|\*))?[bcdouxXeEfFgGhHs]` anywhere in the format.
-/// Such placeholders (notably variable `*` width/precision) are not validated.
+/// Matches Psalm's complex-placeholder regex (since vimeo/psalm@6e38dc1)
+/// `%(?:\d+\$)?[-+]?(?:(?:\d+|\*(?:\d+\$)?)(?:\.(?:\d+|\*(?:\d+\$)?))?|\.\*(?:\d+\$)?)[bcdouxXeEfFgGhHs]`
+/// anywhere in the format. Such placeholders (notably variable `*` width/precision)
+/// have their argument count validated, but the return type is not refined.
 fn is_complex_sprintf_format(format: &str) -> bool {
     let b = format.as_bytes();
     (0..b.len()).any(|i| b[i] == b'%' && complex_sprintf_match_at(b, i))
+}
+
+/// Skip an optional `\d+\$` group; returns the position after it, or `start`
+/// unchanged when the digits are not terminated by `$`.
+fn skip_optional_positional_argnum(b: &[u8], start: usize) -> usize {
+    let mut i = start;
+    while i < b.len() && b[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i > start && i < b.len() && b[i] == b'$' {
+        i + 1
+    } else {
+        start
+    }
 }
 
 fn complex_sprintf_match_at(b: &[u8], start: usize) -> bool {
     let mut i = start + 1;
 
     // optional argnum: \d+\$
-    let argnum_start = i;
-    while i < b.len() && b[i].is_ascii_digit() {
-        i += 1;
-    }
-    if i > argnum_start && i < b.len() && b[i] == b'$' {
-        i += 1;
-    } else {
-        i = argnum_start;
-    }
+    i = skip_optional_positional_argnum(b, i);
 
     // [-+]?
     if i < b.len() && (b[i] == b'-' || b[i] == b'+') {
         i += 1;
     }
 
-    // (?:\d+|\*) - required
-    if i < b.len() && b[i] == b'*' {
-        i += 1;
-    } else {
-        let width_start = i;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == width_start {
-            return false;
-        }
+    if i >= b.len() {
+        return false;
     }
 
-    // (?:\.(?:\d+|\*))?
-    if i < b.len() && b[i] == b'.' {
+    if b[i] == b'.' {
+        // \.\*(?:\d+\$)? — precision-only `*` placeholder
         i += 1;
-        if i < b.len() && b[i] == b'*' {
+        if i >= b.len() || b[i] != b'*' {
+            return false;
+        }
+        i += 1;
+        i = skip_optional_positional_argnum(b, i);
+    } else {
+        // (?:\d+|\*(?:\d+\$)?) - required
+        if b[i] == b'*' {
             i += 1;
+            i = skip_optional_positional_argnum(b, i);
         } else {
+            let width_start = i;
             while i < b.len() && b[i].is_ascii_digit() {
                 i += 1;
+            }
+            if i == width_start {
+                return false;
+            }
+        }
+
+        // (?:\.(?:\d+|\*(?:\d+\$)?))?
+        if i < b.len() && b[i] == b'.' {
+            i += 1;
+            if i < b.len() && b[i] == b'*' {
+                i += 1;
+                i = skip_optional_positional_argnum(b, i);
+            } else {
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
             }
         }
     }
@@ -460,13 +482,40 @@ fn complex_sprintf_match_at(b: &[u8], start: usize) -> bool {
     i < b.len() && is_sprintf_specifier(b[i])
 }
 
-/// Count the number of arguments a (non-complex, non-always-empty) sprintf format
-/// requires. Returns None if the format is syntactically invalid (e.g. a stray `%`).
+/// Count the number of arguments a (non-always-empty) sprintf format requires,
+/// emulating PHP's `php_formatted_print`. A variable `*` width/precision consumes
+/// the next sequential argument (or, as `*N$`, the argument at position N) before
+/// the conversion itself does. Returns None if the format is syntactically invalid
+/// (e.g. a stray `%`, or `*` digits not terminated by `$`).
 fn count_sprintf_placeholders(format: &str) -> Option<usize> {
     let b = format.as_bytes();
     let mut i = 0;
     let mut sequential = 0usize;
     let mut max_argnum = 0usize;
+
+    // Parse a `*` width/precision: a bare `*` consumes the next sequential
+    // argument; `*N$` references argument N; `*` followed by digits without a
+    // closing `$` is a PHP ValueError ("Unknown format specifier").
+    let parse_star =
+        |i: &mut usize, sequential: &mut usize, max_argnum: &mut usize| -> Option<()> {
+            *i += 1;
+            let start = *i;
+            while *i < b.len() && b[*i].is_ascii_digit() {
+                *i += 1;
+            }
+            if *i > start {
+                if *i < b.len() && b[*i] == b'$' {
+                    let value: usize = format[start..*i].parse().ok()?;
+                    *i += 1;
+                    *max_argnum = (*max_argnum).max(value);
+                } else {
+                    return None;
+                }
+            } else {
+                *sequential += 1;
+            }
+            Some(())
+        };
 
     while i < b.len() {
         if b[i] != b'%' {
@@ -506,21 +555,30 @@ fn count_sprintf_placeholders(format: &str) -> Option<usize> {
             }
         }
 
-        // width
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-        }
-
-        // precision
-        if i < b.len() && b[i] == b'.' {
-            i += 1;
+        // width: digits or `*` / `*N$`
+        if i < b.len() && b[i] == b'*' {
+            parse_star(&mut i, &mut sequential, &mut max_argnum)?;
+        } else {
             while i < b.len() && b[i].is_ascii_digit() {
                 i += 1;
             }
         }
 
-        // specifier
-        if i < b.len() && is_sprintf_specifier(b[i]) {
+        // precision: digits or `*` / `*N$`
+        if i < b.len() && b[i] == b'.' {
+            i += 1;
+            if i < b.len() && b[i] == b'*' {
+                parse_star(&mut i, &mut sequential, &mut max_argnum)?;
+            } else {
+                while i < b.len() && b[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+        }
+
+        // specifier; `%` (a literal percent with modifiers, e.g. `%1$%`) is valid
+        // and still consumes an argument position in PHP
+        if i < b.len() && (is_sprintf_specifier(b[i]) || b[i] == b'%') {
             i += 1;
             match argnum {
                 Some(n) => max_argnum = max_argnum.max(n),

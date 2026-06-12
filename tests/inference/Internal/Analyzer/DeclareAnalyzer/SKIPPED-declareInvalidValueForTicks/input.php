@@ -1,0 +1,1 @@
+<?php declare(ticks='often');

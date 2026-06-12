@@ -292,6 +292,7 @@ pub fn verify_type(
         param_type.clone()
     };
     let param_type = normalize_class_constant_param_type(analyzer, &param_type, callable_name);
+    let param_type = expand_bare_generic_param_type(analyzer, &param_type);
 
 
     if argument_offset == 0
@@ -329,7 +330,21 @@ pub fn verify_type(
             let suppress_callable_string_mismatch =
                 docblock_has_callable && union_is_string_like(signature_type);
 
-            if signature_has_callable != docblock_has_callable && !suppress_callable_string_mismatch
+            // A templated docblock type (`@param TCallback $cb` with
+            // `TCallback as Closure():string` against a `Closure` hint) is
+            // checked against the signature through its bound where the
+            // function is declared, not per-argument — Psalm accepts it
+            // (noCrashTemplatedClosure). After standin replacement the
+            // docblock side may also be an unresolved type variable.
+            let docblock_is_templated = docblock_type.types.iter().any(|atomic| {
+                matches!(atomic, TAtomic::TTypeVariable { .. })
+            }) || crate::type_comparator::generic_type_comparator::union_has_template(
+                docblock_type,
+            );
+
+            if signature_has_callable != docblock_has_callable
+                && !suppress_callable_string_mismatch
+                && !docblock_is_templated
             {
                 add_issue(
                     analyzer,
@@ -1160,6 +1175,65 @@ pub(crate) fn add_dataflow(
     }
 
     analysis_data.data_flow_graph.add_node(method_node);
+}
+
+/// Psalm `TypeExpander::expandNamedObject` with `$expand_generic = true`
+/// (ArgumentAnalyzer expands the parameter type this way before comparison):
+/// a bare named-object reference to a class with template parameters becomes
+/// a generic object filled with each template's declared bound — but only
+/// when at least one bound is more specific than `mixed` (`takesA(A $a)`
+/// with `@template T as object` checks arguments against `A<object>`).
+fn expand_bare_generic_param_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    param_type: &TUnion,
+) -> TUnion {
+    let needs_expansion = param_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TNamedObject {
+                type_params: None,
+                ..
+            }
+        )
+    });
+    if !needs_expansion {
+        return param_type.clone();
+    }
+
+    let mut expanded = param_type.clone();
+    for atomic in expanded.types.iter_mut() {
+        let TAtomic::TNamedObject {
+            name,
+            type_params: type_params @ None,
+            ..
+        } = atomic
+        else {
+            continue;
+        };
+
+        let Some(class_info) = analyzer.codebase.get_class(*name) else {
+            continue;
+        };
+
+        if class_info.template_types.is_empty()
+            || !class_info
+                .template_types
+                .iter()
+                .any(|template_type| !template_type.as_type.is_mixed())
+        {
+            continue;
+        }
+
+        *type_params = Some(
+            class_info
+                .template_types
+                .iter()
+                .map(|template_type| template_type.as_type.clone())
+                .collect(),
+        );
+    }
+
+    expanded
 }
 
 /// Psalm `Union::isString()`: every atomic is a string type.

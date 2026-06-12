@@ -1152,8 +1152,29 @@ fn template_param_shallowly_contained_by(
         && container_as.types.len() == 1
     {
         let container_in_fn = matches!(container_entity, GenericParent::FunctionLike(_));
+        let input_in_fn = matches!(input_entity, GenericParent::FunctionLike(_));
 
-        if !container_in_fn {
+        // Psalm: the shortcut applies when neither side is function-defined,
+        // or the input is function-defined but the function belongs to a
+        // class *other* than the container template's class (a method's own
+        // template passed where its class's template is expected stays rigid
+        // — `$this->makeNew($u)` with `U:fn-map` against `T:Container`).
+        let input_fn_on_container_class = input_in_fn
+            && match container_entity {
+                GenericParent::ClassLike(container_class) => codebase
+                    .get_class(*container_class)
+                    .is_some_and(|container_class_info| {
+                        container_class_info.methods.values().any(|method_info| {
+                            method_info.template_types.iter().any(|method_template| {
+                                method_template.name == input_name
+                                    && method_template.defining_entity == *input_entity
+                            })
+                        })
+                    }),
+                _ => false,
+            };
+
+        if !container_in_fn && !input_fn_on_container_class {
             match (input_as.types.first(), container_as.types.first()) {
                 (
                     Some(input_bound @ TAtomic::TNamedObject { .. }),

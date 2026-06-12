@@ -5258,6 +5258,31 @@ fn check_class_constant_overrides(
             ));
         };
 
+        // Psalm's ClassLikeNodeScanner::visitClassConstDeclaration: from PHP
+        // 8.3 a class constant without a native type hint should declare one,
+        // unless the class is final (enums are implicitly final).
+        if is_own
+            && !const_info.has_type_hint
+            && !class_info.is_final
+            && class_info.kind != ClassLikeKind::Enum
+            && analyzer.config.php_version_id() >= 80300
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                const_info.start_offset,
+                "MissingClassConstType",
+            )
+        {
+            emit(
+                analysis_data,
+                IssueKind::MissingClassConstType,
+                format!(
+                    "Class constant \"{}::{}\" should have a declared type.",
+                    class_name, const_name_str,
+                ),
+            );
+        }
+
         // --- Psalm's getOverriddenConstant ---
         let mut parent_classlike: Option<StrId> = None;
         let mut parent_const: Option<&pzoom_code_info::class_constant_info::ClassConstantInfo> =

@@ -1491,6 +1491,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         circular: false,
                     resolution_failures: Vec::new(),
                         declared_type: None,
+                        has_type_hint: class_const.hint.is_some(),
                     },
                 );
             }
@@ -1613,6 +1614,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     circular: false,
                     resolution_failures: Vec::new(),
                     declared_type: None,
+                    has_type_hint: false,
                 },
             );
 
@@ -2410,6 +2412,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             circular: false,
                     resolution_failures: Vec::new(),
                             declared_type: declared_const_type_for_item,
+                            has_type_hint: class_const.hint.is_some(),
                         };
 
                         class_info.constants.insert(const_name, const_info);

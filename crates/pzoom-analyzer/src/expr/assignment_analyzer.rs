@@ -1405,6 +1405,29 @@ fn analyze_reference_assignment(
     let rhs_is_external = rhs_key.contains('[') || rhs_key.contains("->") || rhs_key.contains("::");
     context.set_reference(lhs_var_id.clone(), rhs_var_id, rhs_type.clone(), rhs_is_external);
 
+    // Psalm's AssignmentAnalyzer: a reference taken to an object property
+    // (`$b = &$a->b;`) or static property (`$b = &A::$b;`) cannot be tracked
+    // through the reference — UnsupportedPropertyReferenceUsage.
+    if (rhs_key.contains("->") || rhs_key.contains("::"))
+        && !issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            pos.0,
+            "UnsupportedPropertyReferenceUsage",
+        )
+    {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::UnsupportedPropertyReferenceUsage,
+            "This reference cannot be analyzed",
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
     // Reference-binding dataflow: the bind publishes the target's current
     // value (it stays reachable through the alias — Psalm reports nothing for
     // a value only read via the reference), and the binding itself is an

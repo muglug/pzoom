@@ -141,6 +141,9 @@ pub enum IssueKind {
     MissingReturnType,
     MissingParamType,
     MissingPropertyType,
+    /// A class constant declared without a native type on PHP >= 8.3 in a
+    /// non-final class (Psalm shortcode 359).
+    MissingClassConstType,
     MissingConstructor,
     MissingDependency,
     ExtensionRequirementViolation,
@@ -404,6 +407,9 @@ pub enum IssueKind {
     NonVariableReferenceReturn,
     ReferenceReusedFromConfusingScope,
     UnsupportedReferenceUsage,
+    /// A reference taken to an object/static property (`$b = &$a->b;`) —
+    /// Psalm cannot track the property through the reference (shortcode 321).
+    UnsupportedPropertyReferenceUsage,
 
     // Scalar type issues
     InvalidScalarArgument,

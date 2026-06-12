@@ -57,6 +57,7 @@
  "crates/pzoom-analyzer/src/expr/fetch/mod.rs": null,
  "crates/pzoom-analyzer/src/expr/fetch/static_property_fetch_analyzer.rs": "Internal/Analyzer/Statements/Expression/Fetch/StaticPropertyFetchAnalyzer.php",
  "crates/pzoom-analyzer/src/expr/include_analyzer.rs": "Internal/Analyzer/Statements/Expression/IncludeAnalyzer.php",
+ "crates/pzoom-analyzer/src/expr/empty_analyzer.rs": "Internal/Analyzer/Statements/Expression/EmptyAnalyzer.php",
  "crates/pzoom-analyzer/src/expr/isset_analyzer.rs": "Internal/Analyzer/Statements/Expression/IssetAnalyzer.php",
  "crates/pzoom-analyzer/src/expr/match_analyzer.rs": "Internal/Analyzer/Statements/Expression/MatchAnalyzer.php",
  "crates/pzoom-analyzer/src/expr/mod.rs": null,

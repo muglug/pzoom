@@ -14,6 +14,7 @@ pub mod const_fetch_analyzer;
 pub mod echo_analyzer;
 pub mod exit_analyzer;
 pub mod include_analyzer;
+pub mod empty_analyzer;
 pub mod isset_analyzer;
 pub mod match_analyzer;
 pub mod partial_application_analyzer;

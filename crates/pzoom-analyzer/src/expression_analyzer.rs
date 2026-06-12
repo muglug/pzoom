@@ -30,7 +30,7 @@ use crate::expr::fetch::{
 use crate::expr::{
     array_analyzer, assignment_analyzer, binop_analyzer, call_analyzer, clone_analyzer,
     closure_analyzer, const_fetch_analyzer, echo_analyzer, exit_analyzer, include_analyzer,
-    isset_analyzer, match_analyzer, ternary_analyzer, throw_analyzer, unop_analyzer,
+    empty_analyzer, isset_analyzer, match_analyzer, ternary_analyzer, throw_analyzer, unop_analyzer,
     variable_fetch_analyzer, yield_analyzer,
 };
 
@@ -320,7 +320,7 @@ fn analyze_construct(
             isset_analyzer::analyze(analyzer, isset, pos, analysis_data, context);
         }
         Construct::Empty(empty) => {
-            isset_analyzer::analyze_empty(analyzer, empty, pos, analysis_data, context);
+            empty_analyzer::analyze(analyzer, empty, pos, analysis_data, context);
         }
         Construct::Include(include) => {
             include_analyzer::analyze_include(analyzer, include, pos, analysis_data, context);

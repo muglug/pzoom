@@ -113,6 +113,7 @@ pub enum IssueKind {
     InvalidArrayOffset,
     DuplicateArrayKey,
     InvalidArrayAssignment,
+    PossiblyInvalidArrayAssignment,
 
     // Null/Void reference
     NullReference,
@@ -195,7 +196,9 @@ pub enum IssueKind {
     ParadoxicalCondition,
     UnevaluatedCode,
     RedundantFunctionCall,
+    RedundantFunctionCallGivenDocblockType,
     RedundantCast,
+    RedundantFlag,
     RedundantPropertyInitializationCheck,
     RedundantPropertyInitialization,
 
@@ -379,6 +382,7 @@ pub enum IssueKind {
     UninitializedProperty,
     ReadonlyPropertyAssignment,
     InvalidPropertyAssignment,
+    PossiblyInvalidPropertyAssignment,
     UndefinedPropertyAssignment,
     UndefinedPropertyFetch,
     NoInterfaceProperties,

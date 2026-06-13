@@ -112,31 +112,11 @@ KNOWN_FAILURES: dict[str, str] = {
     "UnusedPsalmSuppress": "suppress-tracking only covers filter-pass matches",
     "UnusedReturnValue": "needs cross-file unused-code aggregation",
     # Scanner / declaration-level checks not yet implemented
-    "DuplicateMethod": "duplicate method declarations are collapsed at scan time",
-    "MissingClosureParamType": "closures don't report untyped params yet",
     "ParseError": "parse errors are recovered, not surfaced as issues",
     # Include resolution is intentionally absent (no filesystem resolution)
     "MissingFile": "include path resolution unimplemented",
     "UnresolvableInclude": "include path resolution unimplemented",
-    # Mixed-flow gaps around $GLOBALS et al.
-    "MixedArrayAssignment": "assignment into mixed bases not reported",
-    "MixedArrayTypeCoercion": "array-key coercion against mixed not reported",
-    "MixedReturnStatement": "$GLOBALS access yields mixed without the issue",
-    # Union-target assignment checks not implemented
-    "PossiblyInvalidArrayAssignment": "array assignment on int|array union",
-    "PossiblyNullArrayAssignment": "array assignment on null base",
-    "PossiblyInvalidPropertyAssignment": "property assignment on A|int union",
-    # Docblock-provenance variants: pzoom lacks per-union from_docblock here
-    "RedundantCastGivenDocblockType": "reports plain RedundantCast",
-    "RedundantConditionGivenDocblockType": "docblock-sourced redundancy unreported",
-    "RedundantFunctionCallGivenDocblockType": "reports plain RedundantFunctionCall",
     # Misc unimplemented checks
-    "LoopInvalidation": "loop-counter overwrite check unimplemented",
-    "RedundantFlag": "filter_var flag validation (FilterUtils) unported",
-    "RedundantPropertyInitializationCheck": "isset-on-typed-property check unimplemented",
-    "TaintedCallable": "taint sink kind not modelled",
-    "UndefinedInterface": "interface-extends-class check unimplemented",
-    "UndefinedMagicPropertyAssignment": "magic @property assignment validation unimplemented",
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")

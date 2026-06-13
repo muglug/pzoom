@@ -284,8 +284,16 @@ pub fn analyze(
                 ));
             }
         }
-        // Check type compatibility for non-void/never functions
-        else if has_return_value && !expected_type.is_mixed() && !expected_type.is_void() {
+        // Psalm's ReturnAnalyzer skips the return-type check entirely for a
+        // generator body (`isGenerator() && has_yield`): a `return X` inside a
+        // generator only provides the loosely-checked TReturn, so an inferred
+        // mixed/Send type must not be reported as a mismatch.
+        else if has_return_value
+            && !expected_type.is_mixed()
+            && !expected_type.is_void()
+            && !(analysis_data.current_function_is_generator
+                && union_is_generator(expected_type, analyzer.interner))
+        {
             // Psalm/Hakana compare against the declared return type as-is:
             // the function's own template params stay rigid in the
             // container (they are the *caller's* choice), and a type
@@ -1472,6 +1480,20 @@ fn expected_type_allows_generator_void_return(
             )
         }
         _ => false,
+    })
+}
+
+/// Whether the declared return type is a `Generator` (Psalm's `Union::isGenerator`).
+fn union_is_generator(expected_type: &TUnion, interner: &pzoom_str::Interner) -> bool {
+    expected_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TNamedObject { name, .. }
+                if interner
+                    .lookup(*name)
+                    .trim_start_matches('\\')
+                    .eq_ignore_ascii_case("Generator")
+        )
     })
 }
 

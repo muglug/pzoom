@@ -79,6 +79,7 @@
  "crates/pzoom-analyzer/src/function_like_analyzer.rs": "Internal/Analyzer/FunctionLikeAnalyzer.php",
  "crates/pzoom-analyzer/src/internal_access.rs": null,
  "crates/pzoom-analyzer/src/issue_suppression.rs": null,
+ "crates/pzoom-analyzer/src/methods.rs": "Internal/Codebase/Methods.php",
  "crates/pzoom-analyzer/src/lib.rs": null,
  "crates/pzoom-analyzer/src/params_provider/function/array_filter.rs": "Internal/Provider/ParamsProvider/ArrayFilterParamsProvider.php",
  "crates/pzoom-analyzer/src/params_provider/function/array_multisort.rs": "Internal/Provider/ParamsProvider/ArrayMultisortParamsProvider.php",

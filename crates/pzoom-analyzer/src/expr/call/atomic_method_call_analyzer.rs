@@ -236,7 +236,7 @@ pub(crate) fn get_method_return_type(
                                     context,
                                 );
 
-                            let resolved_magic_return = resolve_effective_method_return_type(
+                            let resolved_magic_return = crate::methods::get_method_return_type(
                                 analyzer,
                                 *name,
                                 "__call",
@@ -880,7 +880,7 @@ pub(crate) fn get_method_return_type(
                 arg_positions,
                 analysis_data,
             );
-            resolve_effective_method_return_type(
+            crate::methods::get_method_return_type(
                 analyzer,
                 class_id,
                 method_name,

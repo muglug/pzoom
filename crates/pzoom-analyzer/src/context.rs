@@ -320,6 +320,20 @@ pub struct BlockContext {
     /// Expected callable types for closure/arrow expressions keyed by expression start offset.
     pub expected_callable_arg_types: FxHashMap<u32, TUnion>,
 
+    /// Parent callable return types for closures/arrow-functions that are
+    /// *returned* from a callable-returning function, keyed by expression start
+    /// offset. Mirrors Psalm's `potentiallyInferTypesOnClosureFromParentReturnType`,
+    /// which infers a returned closure's return type from the enclosing
+    /// function's callable return type — but *not* for closures passed as
+    /// arguments.
+    pub returned_closure_parent_return_types: FxHashMap<u32, TUnion>,
+
+    /// While analyzing a try/catch with a `finally` clause, the shared scope
+    /// into which control-flow exits (e.g. `return`) merge their in-scope
+    /// variables, so the finally block sees only-some-path variables as
+    /// possibly undefined (Psalm's `Context::$finally_scope`).
+    pub finally_scope: Option<Rc<RefCell<crate::scope::FinallyScope>>>,
+
     /// Reference to the if body context when inside a conditional.
     pub if_body_context: Option<Rc<RefCell<BlockContext>>>,
 
@@ -445,6 +459,12 @@ impl BlockContext {
             list_key_dependencies: self.list_key_dependencies.clone(),
             static_var_ids: self.static_var_ids.clone(),
             expected_callable_arg_types: self.expected_callable_arg_types.clone(),
+            returned_closure_parent_return_types: self
+                .returned_closure_parent_return_types
+                .clone(),
+            // Shared with the parent (an Rc clone) so exits deep inside the
+            // try/catch merge into the same finally scope.
+            finally_scope: self.finally_scope.clone(),
             if_body_context: None,
             function_context: self.function_context.clone(),
         }

@@ -187,6 +187,14 @@ pub struct ClassLikeInfo {
     /// interface, or an **abstract** method required by a used trait.
     pub overridden_method_ids: FxHashMap<StrId, FxHashSet<StrId>>,
 
+    /// Psalm `ClassLikeStorage::$documenting_method_ids`: maps an appearing
+    /// method name to the ancestor `MethodIdentifier` whose docblock documents
+    /// its return type. Computed at populate time (mirroring Psalm's Populator)
+    /// and consulted lazily by the method-call return-type fetcher, mirroring
+    /// `Methods::getMethodReturnType`.
+    #[serde(default)]
+    pub documenting_method_ids: FxHashMap<StrId, crate::method_identifier::MethodIdentifier>,
+
     /// Properties defined in this class.
     /// Properties on this class (including inherited). Values are
     /// `Arc`-shared like `methods`: inheritance flattening is a refcount bump

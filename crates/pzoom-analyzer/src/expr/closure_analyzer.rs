@@ -263,9 +263,19 @@ pub fn analyze(
     let infer_purity = !has_explicit_pure_annotation;
     closure_function_info.is_pure = has_explicit_pure_annotation || infer_purity;
     closure_function_info.is_mutation_free = false;
-    let closure_expected_return_type = hinted_return_type
-        .clone()
-        .or_else(|| inline_return_type.clone());
+    // Psalm's `potentiallyInferTypesOnClosureFromParentReturnType` also infers
+    // the closure's return type from the enclosing function's callable return
+    // type (`inferInnerClosureTypeFromParent`): a closure that declares no
+    // return type — or a less specific one — adopts the parent callable's.
+    let parent_callable_return_type = context
+        .returned_closure_parent_return_types
+        .get(&closure_offset)
+        .and_then(extract_expected_callable_return_type);
+    let closure_expected_return_type = crate::stmt::return_analyzer::infer_inner_closure_type_from_parent(
+        analyzer.codebase,
+        hinted_return_type.clone().or_else(|| inline_return_type.clone()),
+        parent_callable_return_type.as_ref(),
+    );
     closure_function_info.return_type = closure_expected_return_type.clone();
     closure_function_info.signature_return_type = closure_expected_return_type.clone();
     closure_function_info.returns_by_ref = closure.ampersand.is_some();
@@ -868,6 +878,36 @@ fn apply_expected_callable_param_types<'a, I>(
 
         param_info.param_type = expected_param_type.clone();
     }
+}
+
+/// The return type of a callable/closure expected type, combined across atomics
+/// (mirrors reading `$parent_callable_return_type->return_type` in Psalm's
+/// `potentiallyInferTypesOnClosureFromParentReturnType`).
+fn extract_expected_callable_return_type(expected_callable_type: &TUnion) -> Option<TUnion> {
+    let mut combined: Option<TUnion> = None;
+    for atomic in &expected_callable_type.types {
+        let atomic_return = match atomic {
+            TAtomic::TCallable {
+                return_type: Some(return_type),
+                ..
+            }
+            | TAtomic::TClosure {
+                return_type: Some(return_type),
+                ..
+            } => Some((**return_type).clone()),
+            TAtomic::TTemplateParam { as_type, .. } => {
+                extract_expected_callable_return_type(as_type)
+            }
+            _ => None,
+        };
+        if let Some(atomic_return) = atomic_return {
+            combined = Some(match combined {
+                Some(existing) => combine_union_types(&existing, &atomic_return, false),
+                None => atomic_return,
+            });
+        }
+    }
+    combined
 }
 
 fn extract_expected_callable_param_types(expected_callable_type: &TUnion) -> Vec<TUnion> {

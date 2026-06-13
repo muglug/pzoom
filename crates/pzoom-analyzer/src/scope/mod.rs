@@ -1,10 +1,12 @@
 //! Scope-related structures for analysis.
 
+pub mod finally_scope;
 pub mod if_conditional_scope;
 pub mod if_scope;
 pub mod loop_scope;
 pub mod switch_scope;
 
+pub use finally_scope::FinallyScope;
 pub use if_conditional_scope::IfConditionalScope;
 pub use if_scope::IfScope;
 pub use loop_scope::LoopScope;

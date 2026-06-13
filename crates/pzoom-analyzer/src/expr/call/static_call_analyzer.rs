@@ -718,7 +718,7 @@ pub fn analyze(
                             .methods
                             .get(&magic_method_id)
                             .and_then(|magic_info| {
-                                crate::expr::call::method_call_return_type_fetcher::resolve_effective_method_return_type(
+                                crate::methods::get_method_return_type(
                                     analyzer,
                                     class_info.name,
                                     analyzer.interner.lookup(magic_method_id).as_ref(),

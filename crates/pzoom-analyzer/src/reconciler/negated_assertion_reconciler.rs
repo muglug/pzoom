@@ -894,7 +894,15 @@ fn should_subtract(
         to_remove,
         &mut comparison_result,
     ) {
-        return true;
+        // A containment that recorded type-variable bounds is provisional (the
+        // variable's constraints reconcile at the end of the function-like), so
+        // it cannot definitively eliminate a type here (Psalm's
+        // NegatedAssertionReconciler "go deeper" loop checks the same).
+        if comparison_result.type_variable_lower_bounds.is_empty()
+            && comparison_result.type_variable_upper_bounds.is_empty()
+        {
+            return true;
+        }
     }
 
     matches!(

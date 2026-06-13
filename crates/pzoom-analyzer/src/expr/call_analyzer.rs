@@ -75,8 +75,6 @@ fn reconcile_lower_bounds_with_upper_bounds(
 
     let relevant_lower_bounds = get_relevant_bounds(lower_bounds);
 
-    let mut union_comparison_result = TypeComparisonResult::new();
-
     let mut has_issue = false;
 
     let add_issue_at =
@@ -94,6 +92,8 @@ fn reconcile_lower_bounds_with_upper_bounds(
 
     for relevant_lower_bound in &relevant_lower_bounds {
         for upper_bound in upper_bounds {
+            let mut union_comparison_result = TypeComparisonResult::new();
+
             if !union_type_comparator::is_contained_by(
                 codebase,
                 &relevant_lower_bound.bound_type,
@@ -102,6 +102,13 @@ fn reconcile_lower_bounds_with_upper_bounds(
                 false,
                 &mut union_comparison_result,
             ) {
+                if union_comparison_result.type_coerced_from_mixed == Some(true) {
+                    // a bound inferred through mixed gets the same loose gate
+                    // Psalm applies when binding templates from mixed
+                    // arguments (Psalm be7afcf, TypeVariableTracker)
+                    continue;
+                }
+
                 has_issue = true;
                 add_issue_at(
                     analysis_data,

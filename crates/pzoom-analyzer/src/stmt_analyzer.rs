@@ -14,7 +14,7 @@ use crate::type_comparator::union_type_comparator;
 
 // Import statement-specific analyzers
 use crate::stmt::{
-    break_analyzer, class_analyzer, continue_analyzer, do_analyzer, echo_analyzer,
+    break_analyzer, class_analyzer, continue_analyzer, declare_analyzer, do_analyzer, echo_analyzer,
     expression_stmt_analyzer, for_analyzer, foreach_analyzer, function_analyzer, global_analyzer,
     if_else_analyzer, return_analyzer, static_analyzer, switch_analyzer, try_analyzer,
     unset_analyzer, while_analyzer,
@@ -199,7 +199,9 @@ pub fn analyze_stmt(
         Statement::Try(try_stmt) => {
             try_analyzer::analyze(analyzer, try_stmt, analysis_data, context)
         }
-        Statement::Declare(_) => Ok(()),
+        Statement::Declare(declare_stmt) => {
+            declare_analyzer::analyze(analyzer, declare_stmt, analysis_data)
+        }
         Statement::Goto(_) => Ok(()),
         Statement::Label(_) => Ok(()),
         Statement::Continue(continue_stmt) => {
@@ -222,7 +224,7 @@ pub fn analyze_stmt(
             unset_analyzer::analyze(analyzer, unset_stmt, analysis_data, context)
         }
         Statement::HaltCompiler(_) => Ok(()),
-        Statement::EchoTag(_) => Ok(()),
+        Statement::EchoTag(tag) => echo_analyzer::analyze_tag(analyzer, tag, analysis_data, context),
         Statement::Noop(_) => Ok(()),
         // Non-exhaustive enum - catch future variants
         _ => Ok(()),

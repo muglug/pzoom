@@ -79,7 +79,7 @@ pub fn analyze_exit(
             if analyzer.config.taint_analysis
                 && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
             {
-                crate::expr::echo_analyzer::add_output_call_argument_dataflow(
+                crate::expr::output_constructs::add_output_call_argument_dataflow(
                     analyzer,
                     "exit",
                     0,
@@ -120,7 +120,7 @@ pub fn analyze_die(
             if analyzer.config.taint_analysis
                 && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
             {
-                crate::expr::echo_analyzer::add_output_call_argument_dataflow(
+                crate::expr::output_constructs::add_output_call_argument_dataflow(
                     analyzer,
                     "exit",
                     0,

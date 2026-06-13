@@ -199,6 +199,8 @@ pub fn analyze_with_namespace(
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
+        check_template_names_shadowing_classes(analyzer, info, analysis_data);
+        check_class_templates_in_static_methods(analyzer, info, analysis_data);
         check_template_variance(analyzer, info, analysis_data);
         check_reserved_class_constant_names(analyzer, info, analysis_data);
         check_undefined_classes_in_constant_initializers(analyzer, info, analysis_data);
@@ -5258,6 +5260,31 @@ fn check_class_constant_overrides(
             ));
         };
 
+        // Psalm's ClassLikeNodeScanner::visitClassConstDeclaration: from PHP
+        // 8.3 a class constant without a native type hint should declare one,
+        // unless the class is final (enums are implicitly final).
+        if is_own
+            && !const_info.has_type_hint
+            && !class_info.is_final
+            && class_info.kind != ClassLikeKind::Enum
+            && analyzer.config.php_version_id() >= 80300
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                const_info.start_offset,
+                "MissingClassConstType",
+            )
+        {
+            emit(
+                analysis_data,
+                IssueKind::MissingClassConstType,
+                format!(
+                    "Class constant \"{}::{}\" should have a declared type.",
+                    class_name, const_name_str,
+                ),
+            );
+        }
+
         // --- Psalm's getOverriddenConstant ---
         let mut parent_classlike: Option<StrId> = None;
         let mut parent_const: Option<&pzoom_code_info::class_constant_info::ClassConstantInfo> =
@@ -5754,6 +5781,171 @@ fn collect_covariant_misuse(
             }
         }
         _ => {}
+    }
+}
+
+/// Psalm `ClassAnalyzer::analyze`: a class-level `@template` whose name
+/// resolves (via the class's namespace, like `Type::getFQCLNFromString`) to
+/// an existing class or interface is a `ReservedWord` — "Cannot use Bar as
+/// template name since the class already exists".
+fn check_template_names_shadowing_classes(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    if class_info.template_types.is_empty() {
+        return;
+    }
+
+    let class_fqn = analyzer.interner.lookup(class_info.name);
+    let namespace = class_fqn.rsplit_once('\\').map(|(namespace, _)| namespace);
+
+    for template_type in &class_info.template_types {
+        let template_name = analyzer.interner.lookup(template_type.name);
+
+        let shadows_class = analyzer.codebase.class_exists(template_type.name)
+            || namespace
+                .and_then(|namespace| {
+                    analyzer
+                        .interner
+                        .find(&format!("{}\\{}", namespace, template_name))
+                })
+                .is_some_and(|fq_id| analyzer.codebase.class_exists(fq_id));
+
+        if shadows_class {
+            let (issue_start, issue_end) = class_issue_pos(class_info);
+            let (line, col) = analyzer.get_line_column(issue_start);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::ReservedWord,
+                format!(
+                    "Cannot use {} as template name since the class already exists",
+                    template_name
+                ),
+                analyzer.file_path,
+                issue_start,
+                issue_end,
+                line,
+                col,
+            ));
+        }
+    }
+}
+
+/// Psalm `FunctionLikeDocblockScanner`: class-level templates are not in
+/// scope for a static method's `@param` docblock types (unless the method
+/// declares templates of its own, whose handling merges the class templates
+/// back in) — the bare name is read as a class reference, reported as
+/// `UndefinedDocblockClass` "Docblock-defined class, interface or enum named
+/// T does not exist".
+fn check_class_templates_in_static_methods(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    if class_info.template_types.is_empty() {
+        return;
+    }
+
+    for method_info in class_info.methods.values() {
+        if !method_info.is_static
+            || method_info.declaring_class != Some(class_info.name)
+            || !method_info.template_types.is_empty()
+        {
+            continue;
+        }
+
+        let mut reported: FxHashSet<StrId> = FxHashSet::default();
+        for param in &method_info.params {
+            if !param.has_docblock_type {
+                continue;
+            }
+            let Some(param_type) = param.get_type() else {
+                continue;
+            };
+
+            let mut class_template_refs = Vec::new();
+            collect_class_template_param_names(
+                param_type,
+                class_info.name,
+                &mut class_template_refs,
+            );
+
+            for template_name in class_template_refs {
+                if !reported.insert(template_name) {
+                    continue;
+                }
+                let (line, col) = analyzer.get_line_column(param.start_offset);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UndefinedDocblockClass,
+                    format!(
+                        "Docblock-defined class, interface or enum named {} does not exist",
+                        analyzer.interner.lookup(template_name)
+                    ),
+                    analyzer.file_path,
+                    param.start_offset,
+                    param.start_offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+}
+
+/// Collects the names of template params defined by `class_id` referenced
+/// anywhere in `union` (including nested type arguments).
+fn collect_class_template_param_names(
+    union: &TUnion,
+    class_id: StrId,
+    found: &mut Vec<StrId>,
+) {
+    for atomic in &union.types {
+        match atomic {
+            TAtomic::TTemplateParam {
+                name,
+                defining_entity: pzoom_code_info::GenericParent::ClassLike(defining_class),
+                as_type,
+            } => {
+                if *defining_class == class_id {
+                    found.push(*name);
+                }
+                collect_class_template_param_names(as_type, class_id, found);
+            }
+            TAtomic::TNamedObject {
+                type_params: Some(type_params),
+                ..
+            } => {
+                for type_param in type_params {
+                    collect_class_template_param_names(type_param, class_id, found);
+                }
+            }
+            TAtomic::TArray { key_type, value_type }
+            | TAtomic::TNonEmptyArray { key_type, value_type }
+            | TAtomic::TIterable { key_type, value_type } => {
+                collect_class_template_param_names(key_type, class_id, found);
+                collect_class_template_param_names(value_type, class_id, found);
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                collect_class_template_param_names(value_type, class_id, found);
+            }
+            TAtomic::TKeyedArray {
+                properties,
+                fallback_key_type,
+                fallback_value_type,
+                ..
+            } => {
+                for property_type in properties.values() {
+                    collect_class_template_param_names(property_type, class_id, found);
+                }
+                if let Some(fallback_key_type) = fallback_key_type {
+                    collect_class_template_param_names(fallback_key_type, class_id, found);
+                }
+                if let Some(fallback_value_type) = fallback_value_type {
+                    collect_class_template_param_names(fallback_value_type, class_id, found);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

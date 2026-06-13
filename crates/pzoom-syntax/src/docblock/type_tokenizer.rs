@@ -187,6 +187,16 @@ pub fn tokenize(string_type: &str) -> Result<Vec<TypeToken>, String> {
             // continue; (outer loop ++$i)
             i += 1;
             continue;
+        } else if was_space
+            && matches!(
+                type_tokens.last().unwrap().value.as_str(),
+                "covariant" | "contravariant"
+            )
+        {
+            // Inline variance modifiers (PHPStan syntax) end their own token so
+            // ParseTreeCreator can skip them. Mirrors Psalm f6cbb808.
+            // $type_tokens[++$rtc] = ['', $i];
+            type_tokens.push(TypeToken::new("", i));
         } else if was_char {
             // $type_tokens[++$rtc] = ['', $i];
             type_tokens.push(TypeToken::new("", i));

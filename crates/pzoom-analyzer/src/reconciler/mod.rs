@@ -136,6 +136,13 @@ pub fn reconcile_keyed_types(
             .iter()
             .flatten()
             .any(|a| matches!(a, Assertion::Falsy | Assertion::Empty));
+        // Psalm's `$has_empty` (only the Empty_ assertion from `empty()`):
+        // getValueForKey declines to invent a value for an unknowable array
+        // offset under it.
+        let has_empty = var_assertions
+            .iter()
+            .flatten()
+            .any(|a| matches!(a, Assertion::Empty));
         let has_positive_non_isset_assertion = var_assertions.iter().flatten().any(|assertion| {
             matches!(
                 assertion,
@@ -175,12 +182,24 @@ pub fn reconcile_keyed_types(
                 analyzer,
                 has_isset,
                 has_inverted_isset,
+                has_empty,
                 inside_loop,
                 &mut possibly_undefined,
             )
         } else {
             None
         };
+
+        // Psalm's AssertionReconciler::getMissingType: when no type could be
+        // resolved for a nested key (getValueForKey returned null), the first
+        // clause produces a placeholder type instead of narrowing mixed —
+        // e.g. `empty($arr['a'])` over `array<array-key, mixed>` leaves
+        // `$arr['a']` as plain mixed, not falsy literals.
+        let mut type_is_missing = existing_type.is_none()
+            && (var_name.contains('[') || var_name.contains("->") || var_name.contains("::$"));
+        // Psalm: `$type_changed = !$before_adjustment || ...` — a key without a
+        // pre-existing type always counts as changed.
+        let type_was_missing = type_is_missing;
 
         let mut current_type = existing_type.unwrap_or_else(|| {
             if has_isset || has_inverted_isset {
@@ -202,6 +221,26 @@ pub fn reconcile_keyed_types(
             let is_active_assertion = active_assertion_offsets
                 .and_then(|offsets_by_var| offsets_by_var.get(var_name))
                 .is_some_and(|offsets| offsets.contains(&clause_index));
+
+            // The first clause against a missing type reconciles to Psalm's
+            // missing-type placeholder per alternative (AssertionReconciler
+            // returns `getMissingType` for a null existing type) — no
+            // narrowing, no redundancy bookkeeping.
+            if type_is_missing {
+                type_is_missing = false;
+                let mut missing_type: Option<TUnion> = None;
+                for assertion in assertion_group {
+                    let alternative = get_missing_type(assertion, inside_loop);
+                    missing_type = Some(match missing_type {
+                        None => alternative,
+                        Some(existing) => combine_union_types(&existing, &alternative, false),
+                    });
+                }
+                if let Some(missing_type) = missing_type {
+                    current_type = missing_type;
+                }
+                continue;
+            }
 
             if assertion_group.len() == 1 {
                 let assertion = &assertion_group[0];
@@ -378,7 +417,7 @@ pub fn reconcile_keyed_types(
 
         // Check if type changed (Hakana compares before rewriting parent
         // nodes below, so the comparison itself stays parent-node-sensitive)
-        let type_changed = current_type != type_before;
+        let type_changed = type_was_missing || current_type != type_before;
 
         // Hakana rewrites the narrowed type's parent nodes AFTER computing
         // type_changed. In taint (WholeProgram) mode, a narrowing whose result
@@ -808,7 +847,36 @@ pub(crate) fn resolve_key_type(
     analyzer: &StatementsAnalyzer<'_>,
 ) -> Option<TUnion> {
     let mut possibly_undefined = false;
-    get_value_for_key(key, context, analyzer, false, false, false, &mut possibly_undefined)
+    get_value_for_key(
+        key,
+        context,
+        analyzer,
+        false,
+        false,
+        false,
+        false,
+        &mut possibly_undefined,
+    )
+}
+
+/// Psalm's `AssertionReconciler::getMissingType`: the type an assertion
+/// produces when reconciled against a key with no resolvable existing type
+/// (`$existing_var_type === null`).
+fn get_missing_type(assertion: &Assertion, inside_loop: bool) -> TUnion {
+    match assertion {
+        Assertion::IsIsset | Assertion::IsEqualIsset | Assertion::NonEmpty => {
+            if inside_loop {
+                TUnion::new(TAtomic::TMixedFromLoopIsset)
+            } else {
+                TUnion::mixed()
+            }
+        }
+        Assertion::ArrayKeyExists
+        | Assertion::NonEmptyCountable(_)
+        | Assertion::HasExactCount(_) => TUnion::mixed(),
+        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) => TUnion::new(atomic.clone()),
+        _ => TUnion::mixed(),
+    }
 }
 
 fn get_value_for_key(
@@ -817,6 +885,7 @@ fn get_value_for_key(
     analyzer: &StatementsAnalyzer<'_>,
     has_isset: bool,
     has_inverted_isset: bool,
+    has_empty: bool,
     inside_loop: bool,
     possibly_undefined: &mut bool,
 ) -> Option<TUnion> {
@@ -830,6 +899,7 @@ fn get_value_for_key(
             analyzer,
             has_isset,
             has_inverted_isset,
+            has_empty,
             inside_loop,
             possibly_undefined,
         )?;
@@ -841,6 +911,7 @@ fn get_value_for_key(
             analyzer,
             has_isset,
             has_inverted_isset,
+            has_empty,
             inside_loop,
             possibly_undefined,
         ) {
@@ -904,6 +975,7 @@ fn get_value_for_key(
                 analyzer,
                 has_isset,
                 has_inverted_isset,
+                has_empty,
                 inside_loop,
                 possibly_undefined,
             )?;
@@ -1070,6 +1142,7 @@ fn apply_array_access_to_base_type(
     analyzer: &StatementsAnalyzer<'_>,
     has_isset: bool,
     has_inverted_isset: bool,
+    has_empty: bool,
     inside_loop: bool,
     possibly_undefined: &mut bool,
 ) -> Option<TUnion> {
@@ -1113,6 +1186,11 @@ fn apply_array_access_to_base_type(
                     } else {
                         None
                     }
+                } else if has_empty {
+                    // Psalm's getValueForKey: a variable / non-literal offset
+                    // on a keyed array under an `empty()` assertion is
+                    // unknowable (`if ($has_empty) { return null; }`).
+                    return None;
                 } else if let Some((resolved_literal_type, used_literal_keys)) =
                     resolve_keyed_array_value_for_variable_key(
                         array_key,
@@ -1168,6 +1246,13 @@ fn apply_array_access_to_base_type(
                 }
             }
             TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
+                // Psalm's getValueForKey: under an `empty()` assertion a
+                // generic-array offset is unknowable — fail the whole key
+                // (`if ($has_empty) { return null; }`), so the reconciler
+                // falls back to the missing-type placeholder.
+                if has_empty {
+                    return None;
+                }
                 *possibly_undefined = true;
                 if value_type.is_nothing() && has_isset {
                     Some(isset_mixed())
@@ -1175,6 +1260,9 @@ fn apply_array_access_to_base_type(
                     Some((**value_type).clone())
                 }
             }
+            // No `$has_empty` gate here: Psalm's list is a TKeyedArray with
+            // fallback params, and its literal-offset lookup path has no such
+            // gate.
             TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
                 *possibly_undefined = true;
                 if value_type.is_nothing() && has_isset {
@@ -1183,9 +1271,13 @@ fn apply_array_access_to_base_type(
                     Some((**value_type).clone())
                 }
             }
-            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset => {
-                Some(TUnion::mixed())
-            }
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed => Some(TUnion::mixed()),
+            // An access on a loop-isset placeholder keeps the placeholder
+            // flavour: Psalm's getValueForKey passes `$inside_loop` to
+            // `Type::getMixed()` throughout, so nested keys under an
+            // isset-in-loop stay evictable by the type combiner once a
+            // concrete type is merged in.
+            TAtomic::TMixedFromLoopIsset => Some(TUnion::new(TAtomic::TMixedFromLoopIsset)),
             TAtomic::TString | TAtomic::TNonEmptyString | TAtomic::TLiteralString { .. } => {
                 Some(TUnion::string())
             }
@@ -1454,6 +1546,7 @@ fn resolve_variable_key_type(
             array_key_var,
             context,
             analyzer,
+            false,
             false,
             false,
             false,
@@ -1831,7 +1924,11 @@ fn adjust_tkeyed_array_type(
         // `if (isset($params['foo'])) { return $params; }` still returns the
         // tainted parameter (Psalm keeps the union's parent nodes here).
         new_base.parent_nodes = existing_type.parent_nodes.clone();
-        changed_var_ids.insert(base_var_id.clone());
+        // Psalm marks only the nested path changed
+        // (`$changed_var_ids[$base_key . '[' . $array_key . ']'] = true;`),
+        // never the base itself — marking the base changed would make the
+        // callers' dependent-key sweeps evict sibling entries (`$arr['a']`
+        // when `$arr['b']` was asserted).
         changed_var_ids.insert(nested_path_id.clone());
         context.locals.insert(base_var_id.clone(), new_base.clone());
 

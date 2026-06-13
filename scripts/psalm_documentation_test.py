@@ -113,7 +113,6 @@ KNOWN_FAILURES: dict[str, str] = {
     "UnusedReturnValue": "needs cross-file unused-code aggregation",
     # Scanner / declaration-level checks not yet implemented
     "DuplicateMethod": "duplicate method declarations are collapsed at scan time",
-    "MissingClassConstType": "PHP 8.3 typed-constant check unimplemented",
     "MissingClosureParamType": "closures don't report untyped params yet",
     "ParseError": "parse errors are recovered, not surfaced as issues",
     # Include resolution is intentionally absent (no filesystem resolution)
@@ -136,10 +135,8 @@ KNOWN_FAILURES: dict[str, str] = {
     "RedundantFlag": "filter_var flag validation (FilterUtils) unported",
     "RedundantPropertyInitializationCheck": "isset-on-typed-property check unimplemented",
     "TaintedCallable": "taint sink kind not modelled",
-    "TaintedTextWithQuotes": "taint sink kind not modelled",
     "UndefinedInterface": "interface-extends-class check unimplemented",
     "UndefinedMagicPropertyAssignment": "magic @property assignment validation unimplemented",
-    "UnsupportedPropertyReferenceUsage": "by-ref property usage unmodelled",
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")

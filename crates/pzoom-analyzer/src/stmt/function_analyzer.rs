@@ -1257,7 +1257,16 @@ fn check_atomic_template_bounds(
                 &mut comparison_result,
             );
 
-            if !is_contained && !comparison_result.type_coerced.unwrap_or(false) {
+            // Psalm's TypeChecker::checkGenericParams reports on a plain
+            // `!isContainedBy` — a coerced match is still outside the bound
+            // (`Generic<T>` with `T as mixed` against `T as object` is an
+            // InvalidTemplateParam). pzoom keeps the coercion exemption only
+            // for non-template args, where its comparator marks benign
+            // literal/parent matches as coercions that Psalm accepts.
+            let arg_mentions_template = crate::type_comparator::generic_type_comparator::union_has_template(type_param);
+            if !is_contained
+                && (arg_mentions_template || !comparison_result.type_coerced.unwrap_or(false))
+            {
                 let (line, col) = analyzer.get_line_column(offset);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::InvalidTemplateParam,

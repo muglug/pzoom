@@ -950,7 +950,7 @@ fn class_is_traversable(codebase: &CodebaseInfo, name: StrId) -> bool {
 /// flattened `template_extended_params` to `Traversable`, substituting the
 /// object's own type params — or, when iterated bare, its template
 /// constraints ("assume that it's inside the calling class") — along the way.
-fn traversable_extended_param(
+pub(crate) fn traversable_extended_param(
     analyzer: &StatementsAnalyzer<'_>,
     class_name: StrId,
     type_params: Option<&Vec<TUnion>>,

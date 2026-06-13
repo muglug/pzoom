@@ -37,6 +37,36 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
         };
 
         match first_arg_type.get_single()? {
+            // A known enum case yields its `name` (and `value` when backed) as
+            // a sealed shape (Psalm's TEnumCase branch).
+            TAtomic::TEnumCase {
+                enum_name,
+                case_name,
+            } => {
+                let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+                properties.insert(
+                    ArrayKey::String("name".to_string()),
+                    TUnion::new(TAtomic::TLiteralString {
+                        value: event.analyzer.interner.lookup(*case_name).to_string(),
+                    }),
+                );
+                if let Some(case_value) = event
+                    .analyzer
+                    .codebase
+                    .get_class(*enum_name)
+                    .and_then(|class_info| class_info.constants.get(case_name))
+                    .and_then(|const_info| const_info.enum_case_value.clone())
+                {
+                    properties.insert(ArrayKey::String("value".to_string()), case_value);
+                }
+                Some(TUnion::new(TAtomic::TKeyedArray {
+                    properties: std::sync::Arc::new(properties),
+                    is_list: false,
+                    sealed: true,
+                    fallback_key_type: None,
+                    fallback_value_type: None,
+                }))
+            }
             TAtomic::TObjectWithProperties { properties, .. } => {
                 if properties.is_empty() {
                     return Some(fallback());

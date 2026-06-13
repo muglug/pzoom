@@ -617,6 +617,28 @@ pub(crate) fn build_unresolved_const_expr(
                 rhs: Box::new(build_unresolved_const_expr(binary.rhs, infer_context, interner)?),
             })
         }
+        // `COND ? IF : ELSE` — Psalm's ExpressionResolver builds an
+        // UnresolvedTernary, evaluated once the condition's constants resolve.
+        Expression::Conditional(conditional) => Some(UnresolvedConstExpr::Ternary {
+            cond: Box::new(build_unresolved_const_expr(
+                conditional.condition,
+                infer_context,
+                interner,
+            )?),
+            if_branch: match conditional.then {
+                Some(then_expr) => Some(Box::new(build_unresolved_const_expr(
+                    then_expr,
+                    infer_context,
+                    interner,
+                )?)),
+                None => None,
+            },
+            else_branch: Box::new(build_unresolved_const_expr(
+                conditional.r#else,
+                infer_context,
+                interner,
+            )?),
+        }),
         // A bare global constant reference (`JSON_PRETTY_PRINT`).
         Expression::ConstantAccess(constant_access) => {
             let raw = constant_access.name.value();

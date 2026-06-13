@@ -333,7 +333,10 @@ pub fn reconcile(
         ),
         Assertion::ArrayKeyExists => {
             if existing_var_type.is_nothing() {
-                let _ = inside_loop;
+                // Psalm: `Type::getMixed($inside_loop)` (see getMissingType).
+                if inside_loop {
+                    return TUnion::new(TAtomic::TMixedFromLoopIsset);
+                }
                 TUnion::mixed()
             } else {
                 let mut existing = existing_var_type.clone();
@@ -812,8 +815,14 @@ fn reconcile_isset(
     );
 
     if result.is_nothing() && (existing_var_type.is_nothing() || possibly_undefined) {
-        let _ = inside_loop;
-        return TUnion::mixed();
+        // Psalm's reconcileIsset returns `Type::getMixed($inside_loop)` here:
+        // inside a loop the placeholder keeps its from-loop-isset flavour so
+        // the type combiner can evict it once a concrete type is merged in.
+        return if inside_loop {
+            TUnion::new(TAtomic::TMixedFromLoopIsset)
+        } else {
+            TUnion::mixed()
+        };
     }
 
     let result = result;

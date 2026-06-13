@@ -207,6 +207,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 None,
             );
 
+            // Docblock assertions parse while the conditional-subject scope is
+            // alive too: a conditional assertion type (`@psalm-assert-if-true
+            // =(T is '' ? ...)`) registers its subject template so call sites
+            // keep literal bounds for it.
+            let parsed_assertions =
+                self.get_docblock_assertions(&parsed, None, None, Some(&function_template_map));
+            assertions.extend(parsed_assertions.assertions);
+            if_true_assertions.extend(parsed_assertions.if_true_assertions);
+            if_false_assertions.extend(parsed_assertions.if_false_assertions);
+
             let generated_conditional_templates =
                 std::mem::take(&mut self.conditional_subject_scope.generated_templates);
             template_types.extend(generated_conditional_templates);
@@ -243,12 +253,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 return_type.as_mut(),
                 signature_return_type.as_ref(),
             );
-
-            let parsed_assertions =
-                self.get_docblock_assertions(&parsed, None, None, Some(&function_template_map));
-            assertions.extend(parsed_assertions.assertions);
-            if_true_assertions.extend(parsed_assertions.if_true_assertions);
-            if_false_assertions.extend(parsed_assertions.if_false_assertions);
 
             let (scanned_taints, _raw_conditional_escapes) =
                 self.scan_docblock_taints(&parsed, &mut params, is_pure);

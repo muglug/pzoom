@@ -918,6 +918,24 @@ pub fn analyze_with_known_type(
                                 }
 
                                 if class_has_magic_setter(class_info) {
+                                    // Psalm `InstancePropertyAssignmentAnalyzer::analyzeSetCall`
+                                    // routes the assignment through a fake
+                                    // `$obj->__set($name, $value)` call; pzoom
+                                    // verifies the two arguments against the
+                                    // declared `__set` signature directly
+                                    // (templated `__set(K $prop, TData[K] $v)`
+                                    // params bind from the literal property
+                                    // name and the assigned value).
+                                    verify_magic_set_call_arguments(
+                                        analyzer,
+                                        class_info,
+                                        type_params.as_deref(),
+                                        prop_name,
+                                        &value_type,
+                                        pos,
+                                        analysis_data,
+                                    );
+
                                     if let Some(pseudo_type) = get_pseudo_property_set_type(
                                         class_info,
                                         type_params.as_deref(),
@@ -1399,6 +1417,158 @@ fn should_suppress_issue(
 
 fn class_has_magic_setter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::SET)
+}
+
+/// Psalm `InstancePropertyAssignmentAnalyzer::analyzeSetCall`: an assignment
+/// to an undeclared property of a class with `__set` becomes a fake
+/// `$obj->__set('prop', $value)` call, whose arguments are verified like any
+/// method call's. The literal property name and the assigned value bind the
+/// method's own templates (`@template K as key-of<TData>`), the receiver's
+/// type arguments bind the class templates, and a mismatch is an
+/// `InvalidArgument` — "Argument 1 of CharacterRow::__set expects
+/// 'height'|'id'|'name', but 'ame' provided".
+fn verify_magic_set_call_arguments(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    type_params: Option<&[TUnion]>,
+    prop_name: &str,
+    value_type: &TUnion,
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let Some(set_info) = class_info.methods.get(&StrId::SET) else {
+        return;
+    };
+
+    if set_info.params.len() < 2 {
+        return;
+    }
+
+    let declaring_class_info = analyzer
+        .codebase
+        .get_classlike_storage_for_method(class_info.name, StrId::SET)
+        .unwrap_or(class_info);
+
+    // Class template context: defaults + the receiver's view of the
+    // hierarchy (extended params and explicit type arguments), mirroring
+    // `build_method_template_context` for a non-self call.
+    let mut template_result =
+        function_call_analyzer::get_class_template_defaults(declaring_class_info);
+    for template_type in &set_info.template_types {
+        crate::template::template_types_insert(
+            &mut template_result,
+            template_type.name,
+            template_type.defining_entity,
+            template_type.as_type.clone(),
+        );
+    }
+
+    let lhs_type_part = TAtomic::TNamedObject {
+        name: class_info.name,
+        type_params: type_params.map(|params| params.to_vec()),
+        is_static: false,
+        remapped_params: false,
+    };
+    if let Some(collected) = crate::expr::call::class_template_param_collector::collect(
+        analyzer.codebase,
+        declaring_class_info,
+        class_info,
+        Some(&lhs_type_part),
+        false,
+    ) {
+        template_result.lower_bounds = collected;
+    }
+
+    let arg_types = [
+        TUnion::new(TAtomic::TLiteralString {
+            value: prop_name.to_string(),
+        }),
+        value_type.clone(),
+    ];
+
+    // Bind the method's own templates from the fake call's arguments, only
+    // filling slots the receiver left unbound (matching
+    // `build_method_template_context`).
+    let mut arg_template_result = pzoom_code_info::TemplateResult {
+        template_types: template_result.template_types.clone(),
+        ..Default::default()
+    };
+    for (param, arg_type) in set_info.params.iter().zip(arg_types.iter()) {
+        if let Some(param_type) = param.get_type() {
+            crate::template::standin_type_replacer::infer_template_replacements_from_union(
+                analyzer,
+                param_type,
+                arg_type,
+                &mut arg_template_result,
+            );
+        }
+    }
+    for (name, entity, replacement) in
+        crate::template::lower_bounds_iter(&arg_template_result).collect::<Vec<_>>()
+    {
+        match crate::template::lower_bounds_get(&template_result, name, entity) {
+            Some(existing) if !existing.is_nothing() => {}
+            _ => {
+                crate::template::lower_bounds_insert(&mut template_result, name, entity, replacement);
+            }
+        }
+    }
+
+    for (index, (param, arg_type)) in set_info.params.iter().zip(arg_types.iter()).enumerate() {
+        let Some(param_type) = param.get_type() else {
+            continue;
+        };
+
+        let effective_param_type = if crate::template::template_result_is_empty(&template_result) {
+            param_type.clone()
+        } else {
+            function_call_analyzer::replace_templates_in_union(param_type, &template_result)
+        };
+
+        if effective_param_type.is_mixed() {
+            continue;
+        }
+
+        // An unresolved template left in the param type cannot be checked
+        // rigidly here (mirrors verify_type's unresolved-template gap).
+        if effective_param_type.types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TTemplateParam { .. } | TAtomic::TTypeVariable { .. }
+            )
+        }) {
+            continue;
+        }
+
+        let mut comparison_result = TypeComparisonResult::new();
+        let is_contained = union_type_comparator::is_contained_by(
+            analyzer.codebase,
+            arg_type,
+            &effective_param_type,
+            true,
+            false,
+            &mut comparison_result,
+        );
+
+        if !is_contained && !comparison_result.type_coerced.unwrap_or(false) {
+            let (line, col) = analyzer.get_line_column(pos.0);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::InvalidArgument,
+                format!(
+                    "Argument {} of {}::__set expects {}, but {} provided",
+                    index + 1,
+                    analyzer.interner.lookup(class_info.name),
+                    effective_param_type.get_id(Some(analyzer.interner)),
+                    arg_type.get_id(Some(analyzer.interner))
+                ),
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            ));
+        }
+    }
 }
 
 fn class_has_sealed_properties(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {

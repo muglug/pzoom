@@ -1586,25 +1586,21 @@ fn infer_constructor_template_params(
                 }
             }
 
-            // The template's declared constraint is enforced where Psalm
-            // enforces it: the loose bind gate when the constructor arguments
-            // bound the template, and the ordinary argument comparison.
-            // Recording it as an upper bound here would re-check the inferred
-            // binding strictly at function end ("Key as mixed should be a
-            // subtype of array-key") — a check Psalm never makes. Only
-            // arg-derived constraints become upper bounds below. With no
-            // arg-derived bound the constraint still seeds the variable so a
-            // later conflicting use has something to push against.
-            let mut placeholder_upper_bounds: Vec<TemplateBound> = vec![];
-            if placeholder_lower_bounds.is_empty() {
-                placeholder_upper_bounds.push(TemplateBound {
-                    bound_type: (*map.first().unwrap().1).clone(),
-                    appearance_depth: 0,
-                    arg_offset: None,
-                    equality_bound_classlike: None,
-                    pos: Some(crate::template::bound_location(analyzer, pos)),
-                });
-            }
+            // The template's declared constraint is always recorded as an
+            // upper bound (Psalm be7afcf, NewAnalyzer): a constructor-widened
+            // bound must stay within `@template T of Foo`, reconciled at
+            // function end. Bounds inferred through mixed (e.g. an enclosing
+            // function's `Key as mixed` template) get the same loose gate
+            // Psalm applies when binding templates from mixed arguments — see
+            // the `type_coerced_from_mixed` escape in
+            // `reconcile_lower_bounds_with_upper_bounds`.
+            let mut placeholder_upper_bounds: Vec<TemplateBound> = vec![TemplateBound {
+                bound_type: (*map.first().unwrap().1).clone(),
+                appearance_depth: 0,
+                arg_offset: None,
+                equality_bound_classlike: None,
+                pos: Some(crate::template::bound_location(analyzer, pos)),
+            }];
 
             // A constructor argument that bound this template through a
             // `class-string<T>` position *names* the type exactly

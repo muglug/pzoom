@@ -29,8 +29,9 @@ use crate::expr::fetch::{
 };
 use crate::expr::{
     array_analyzer, assignment_analyzer, binop_analyzer, call_analyzer, clone_analyzer,
-    closure_analyzer, const_fetch_analyzer, echo_analyzer, exit_analyzer, include_analyzer,
-    isset_analyzer, match_analyzer, ternary_analyzer, throw_analyzer, unop_analyzer,
+    closure_analyzer, const_fetch_analyzer, exit_analyzer, include_analyzer,
+    empty_analyzer, isset_analyzer, match_analyzer, print_analyzer, ternary_analyzer,
+    throw_analyzer, unop_analyzer,
     variable_fetch_analyzer, yield_analyzer,
 };
 
@@ -320,7 +321,7 @@ fn analyze_construct(
             isset_analyzer::analyze(analyzer, isset, pos, analysis_data, context);
         }
         Construct::Empty(empty) => {
-            isset_analyzer::analyze_empty(analyzer, empty, pos, analysis_data, context);
+            empty_analyzer::analyze(analyzer, empty, pos, analysis_data, context);
         }
         Construct::Include(include) => {
             include_analyzer::analyze_include(analyzer, include, pos, analysis_data, context);
@@ -347,7 +348,7 @@ fn analyze_construct(
             );
         }
         Construct::Print(print_construct) => {
-            echo_analyzer::analyze_print(
+            print_analyzer::analyze(
                 analyzer,
                 print_construct.value,
                 pos,
@@ -374,7 +375,7 @@ fn analyze_construct(
             if analyzer.config.taint_analysis
                 && let Some(value_type) = analysis_data.expr_types.get(&value_pos).cloned()
             {
-                crate::expr::echo_analyzer::add_construct_argument_dataflow(
+                crate::expr::output_constructs::add_construct_argument_dataflow(
                     analyzer,
                     "eval",
                     &[pzoom_code_info::data_flow::node::SinkType::Eval],
@@ -1310,7 +1311,7 @@ fn analyze_composite_string(
                     parent_nodes: result_type.parent_nodes.clone(),
                     ..TUnion::string()
                 };
-                crate::expr::echo_analyzer::add_construct_argument_dataflow(
+                crate::expr::output_constructs::add_construct_argument_dataflow(
                     analyzer,
                     "shell_exec",
                     &[pzoom_code_info::data_flow::node::SinkType::Shell],

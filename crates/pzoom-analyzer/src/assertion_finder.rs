@@ -471,10 +471,20 @@ fn scrape_function_call_assertions(
                 let array_keys =
                     extract_array_keys_from_expr(analyzer, key_arg.value(), analysis_data);
 
+                // Psalm's getArrayKeyExistsAssertions never keys the assertion
+                // path by a class constant's symbolic name: for a
+                // ClassConstFetch key it resolves the constant's literal value
+                // (`$a['key']`, handled below via `array_keys`) and otherwise
+                // drops the var name entirely (AssertionFinder.php).
+                let key_is_class_constant = matches!(
+                    key_arg.value().unparenthesized(),
+                    Expression::Access(Access::ClassConstant(_))
+                );
+
                 let mut added_key_presence_assertion = false;
                 if let Some(array_var_name) = array_var_name.as_ref() {
                     if let Some(key_var_name) = key_var_name.as_ref() {
-                        if is_simple_array_key_identifier(key_var_name) {
+                        if is_simple_array_key_identifier(key_var_name) && !key_is_class_constant {
                             add_array_key_exists_path_assertions(
                                 result,
                                 array_var_name,
@@ -2598,7 +2608,11 @@ fn apply_assertion_list(
         let var_name = canonicalize_call_segments(&var_name);
 
         let mut resolved_assertion_type =
-            replace_assertion_templates(&assertion.assertion_type, template_result);
+            replace_assertion_templates(
+                analyzer.codebase,
+                &assertion.assertion_type,
+                template_result,
+            );
         // `self::T*`-style tokens in the assertion type resolve against the
         // declaring class (Psalm's TypeExpander pass on assertion rules).
         if let Some(declaring_class) = declaring_class {
@@ -2773,46 +2787,32 @@ pub(crate) fn convert_functionlike_assertion_type(assertion_type: &AssertionType
     }
 }
 
+/// Replaces template references in a docblock assertion's type. The codebase
+/// is threaded through so a template-conditional assertion
+/// (`@psalm-assert-if-true =(T is '' ? string : non-empty-string) $haystack`)
+/// picks its branch from the call's inferred template bounds, the way Psalm's
+/// TemplateInferredTypeReplacer resolves conditionals when processing custom
+/// assertions.
 fn replace_assertion_templates(
+    codebase: &pzoom_code_info::CodebaseInfo,
     assertion_type: &AssertionType,
     template_result: &TemplateResult,
 ) -> AssertionType {
+    let replace = |union: &TUnion| {
+        function_call_analyzer::replace_templates_in_union_in(
+            Some(codebase),
+            union,
+            template_result,
+        )
+    };
     match assertion_type {
-        AssertionType::IsType(union) => {
-            AssertionType::IsType(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
-        }
-        AssertionType::IsEqual(union) => {
-            AssertionType::IsEqual(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
-        }
-        AssertionType::IsLooselyEqual(union) => {
-            AssertionType::IsLooselyEqual(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
-        }
-        AssertionType::IsNotType(union) => {
-            AssertionType::IsNotType(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
-        }
-        AssertionType::IsNotEqual(union) => {
-            AssertionType::IsNotEqual(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
-        }
+        AssertionType::IsType(union) => AssertionType::IsType(replace(union)),
+        AssertionType::IsEqual(union) => AssertionType::IsEqual(replace(union)),
+        AssertionType::IsLooselyEqual(union) => AssertionType::IsLooselyEqual(replace(union)),
+        AssertionType::IsNotType(union) => AssertionType::IsNotType(replace(union)),
+        AssertionType::IsNotEqual(union) => AssertionType::IsNotEqual(replace(union)),
         AssertionType::IsNotLooselyEqual(union) => {
-            AssertionType::IsNotLooselyEqual(function_call_analyzer::replace_templates_in_union(
-                union,
-                template_result,
-            ))
+            AssertionType::IsNotLooselyEqual(replace(union))
         }
         AssertionType::Truthy => AssertionType::Truthy,
         AssertionType::Falsy => AssertionType::Falsy,

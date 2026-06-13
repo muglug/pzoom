@@ -1216,14 +1216,25 @@ fn generic_tree_to_type(
         // `int-mask<A, B, C, ...>` — Psalm's getTypeFromGenericTree: each member
         // must be a single int (or scalar class constant). For the all-literal
         // case it returns the union of every OR-combination of the values via
-        // getComputedIntsFromMask. pzoom has no TClassConstant/TIntMask atomic,
-        // so a member that is not a literal int collapses to the faithful
-        // supertype `int` (TIntMask is always an int subtype).
+        // getComputedIntsFromMask. A named member that resolves through
+        // `core_constant_int_value` mirrors Psalm's `defined()`/`constant()`
+        // lookup of PHP engine constants (`int-mask<GLOB_NOCHECK>` is
+        // `0|16`). pzoom has no TClassConstant/TIntMask atomic, so any other
+        // non-literal member collapses to the faithful supertype `int`
+        // (TIntMask is always an int subtype).
         "int-mask" => {
             let mut potential_ints: Vec<i64> = Vec::new();
             for param in &params {
                 match param.get_single() {
                     Some(TAtomic::TLiteralInt { value }) => potential_ints.push(*value),
+                    Some(TAtomic::TNamedObject {
+                        name,
+                        type_params: None,
+                        ..
+                    }) if core_constant_int_value(&interner.lookup(*name)).is_some() => {
+                        potential_ints
+                            .push(core_constant_int_value(&interner.lookup(*name)).unwrap());
+                    }
                     _ => return TypeResult::Atomic(TAtomic::TInt),
                 }
             }
@@ -1365,6 +1376,26 @@ fn class_string_map_tree_to_type(
         param_name,
         as_type: as_type.map(Box::new),
         value_param: Box::new(value_param),
+    })
+}
+
+/// The integer value of a PHP engine constant usable in type position.
+///
+/// Psalm resolves global-constant members of `int-mask<...>` through the PHP
+/// runtime (`defined($name) && constant($name)` in `TypeParser`); pzoom runs
+/// without a PHP engine, so the constants those stubs name are tabled here
+/// with their canonical values (matching `stubs/extensions/standard.phpstub`).
+fn core_constant_int_value(name: &str) -> Option<i64> {
+    Some(match name {
+        "GLOB_ERR" => 1,
+        "GLOB_MARK" => 2,
+        "GLOB_NOSORT" => 4,
+        "GLOB_NOCHECK" => 16,
+        "GLOB_NOESCAPE" => 64,
+        "GLOB_BRACE" => 1024,
+        "GLOB_ONLYDIR" => 1073741824,
+        "GLOB_AVAILABLE_FLAGS" => 1073741911,
+        _ => return None,
     })
 }
 

@@ -461,7 +461,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 | Statement::Block(_)
                 | Statement::Unset(_)
                 | Statement::Global(_)
-                | Statement::Noop(_) => {
+                | Statement::Noop(_)
+                // Template files: a `@var` docblock may precede a closing tag
+                // or inline HTML (`/** @var Foo $this */ ?> <?= $this->... ?>`).
+                // php-parser attaches such comments to the next statement and
+                // Psalm's StatementsAnalyzer applies their var comments like
+                // any other statement docblock, so these spans are eligible
+                // targets too.
+                | Statement::ClosingTag(_)
+                | Statement::Inline(_)
+                | Statement::EchoTag(_) => {
                     Some((statement.span().start.offset, statement.span().end.offset))
                 }
                 _ => None,
@@ -1491,6 +1500,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         circular: false,
                     resolution_failures: Vec::new(),
                         declared_type: None,
+                        has_type_hint: class_const.hint.is_some(),
                     },
                 );
             }
@@ -1613,6 +1623,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     circular: false,
                     resolution_failures: Vec::new(),
                     declared_type: None,
+                    has_type_hint: false,
                 },
             );
 
@@ -2022,6 +2033,21 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             Some(&class_info.constants),
                         );
 
+                        // Docblock assertions parse while the
+                        // conditional-subject scope is alive too: a
+                        // conditional assertion type (`@psalm-assert-if-true
+                        // =(T is '' ? ...)`) registers its subject template so
+                        // call sites keep literal bounds for it.
+                        let parsed_assertions = self.get_docblock_assertions(
+                            &parsed,
+                            member_self_class,
+                            class_info.parent_class,
+                            Some(&method_template_map),
+                        );
+                        assertions.extend(parsed_assertions.assertions);
+                        if_true_assertions.extend(parsed_assertions.if_true_assertions);
+                        if_false_assertions.extend(parsed_assertions.if_false_assertions);
+
                         let generated_conditional_templates = std::mem::take(
                             &mut self.conditional_subject_scope.generated_templates,
                         );
@@ -2059,16 +2085,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             return_type.as_mut(),
                             signature_return_type.as_ref(),
                         );
-
-                        let parsed_assertions = self.get_docblock_assertions(
-                            &parsed,
-                            member_self_class,
-                            class_info.parent_class,
-                            Some(&method_template_map),
-                        );
-                        assertions.extend(parsed_assertions.assertions);
-                        if_true_assertions.extend(parsed_assertions.if_true_assertions);
-                        if_false_assertions.extend(parsed_assertions.if_false_assertions);
 
                         let (scanned_taints, _raw_conditional_escapes) =
                             self.scan_docblock_taints(&parsed, &mut params, is_pure);
@@ -2410,6 +2426,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             circular: false,
                     resolution_failures: Vec::new(),
                             declared_type: declared_const_type_for_item,
+                            has_type_hint: class_const.hint.is_some(),
                         };
 
                         class_info.constants.insert(const_name, const_info);
@@ -4947,16 +4964,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 AssertionType::NotNull
             }
         } else {
+            // A conditional assertion type (`=(T is '' ? string :
+            // non-empty-string)` on str_contains and friends) keeps its
+            // TConditional structure — Psalm parses it like a conditional
+            // return type — so the call site picks a branch from the
+            // template bounds the arguments inferred. Parsing it here also
+            // registers the subject template on the function-like, exempting
+            // its bounds from literal generalization.
+            let conditional_type = self.parse_docblock_conditional_return_type(
+                assertion_source,
+                self_class,
+                parent_class,
+                template_map,
+                None,
+            );
+
             // `value-of<Enum::CASE>`-style utilities resolve with class
             // context (enum case values, class constants).
-            let parsed_type = self
-                .try_resolve_docblock_utility_type(
-                    assertion_source,
-                    self_class,
-                    parent_class,
-                    template_map,
-                    None,
-                )
+            let parsed_type = conditional_type
+                .map(docblock_conditional_union)
+                .or_else(|| {
+                    self.try_resolve_docblock_utility_type(
+                        assertion_source,
+                        self_class,
+                        parent_class,
+                        template_map,
+                        None,
+                    )
+                })
                 .unwrap_or_else(|| {
                     let parsed_type = crate::docblock::parse_type_string(
                         assertion_source,
@@ -6417,6 +6452,27 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             };
 
             let template_name_id = self.interner.intern(&template_name);
+
+            // Psalm `FunctionLikeDocblockScanner::handleTemplates`: a
+            // function-like (or method) `@template` that re-declares a
+            // template already defined by the enclosing class is an
+            // InvalidDocblock, and the class-level binding stays in force.
+            if let GenericParent::FunctionLike(owner) = defining_entity
+                && base_template_map.is_some_and(|base| base.contains_key(&template_name))
+            {
+                let offset = offset as u32;
+                docblock_issues.push(DocblockIssue {
+                    message: format!(
+                        "Duplicate template param {} in docblock for {}",
+                        template_name,
+                        self.interner.lookup(owner)
+                    ),
+                    start_offset: offset,
+                    end_offset: offset.saturating_add(1),
+                });
+                continue;
+            }
+
             let placeholder = DocblockTemplateBinding {
                 name: template_name_id,
                 defining_entity,
@@ -6429,7 +6485,35 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 self.try_resolve_template_key_of_type(&template_bound, Some(&template_map))
                     .unwrap_or_else(|| {
                         let parsed_type =
-                            crate::docblock::parse_type_string(&template_bound, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                            match crate::docblock::parse_type_string(&template_bound, self.interner.parent_ref()) {
+                                Ok(parsed_type) => parsed_type,
+                                Err(parse_error) => {
+                                    // Psalm: a malformed `@template` bound is an
+                                    // InvalidDocblock — `... in docblock for C`
+                                    // (ClassLikeNodeScanner) for classes,
+                                    // `Template T has invalid as type - ...`
+                                    // (FunctionLikeDocblockScanner) otherwise —
+                                    // and the bound falls back to mixed.
+                                    let message = match defining_entity {
+                                        GenericParent::ClassLike(owner) => format!(
+                                            "{} in docblock for {}",
+                                            parse_error.message,
+                                            self.interner.lookup(owner)
+                                        ),
+                                        _ => format!(
+                                            "Template {} has invalid as type - {}",
+                                            template_name, parse_error.message
+                                        ),
+                                    };
+                                    let offset = offset as u32;
+                                    docblock_issues.push(DocblockIssue {
+                                        message,
+                                        start_offset: offset,
+                                        end_offset: offset.saturating_add(1),
+                                    });
+                                    TUnion::mixed()
+                                }
+                            };
                         self.resolve_docblock_union_type(
                             parsed_type,
                             self_class,
@@ -7972,33 +8056,77 @@ fn resolve_value_of_template_atomic(atomic: &TAtomic) -> TUnion {
 }
 
 fn parse_template_tag_content(content: &str) -> Option<(String, Option<String>)> {
-    // A `@template` bound lives on the same line as the tag; any following lines
-    // (e.g. a free-text description) are not part of the type. Restricting to the
-    // first line prevents prose like `lorem ipsum` from being concatenated into
-    // the bound (Psalm parses the bound as a type and stops at the line).
-    let trimmed = content.lines().next().unwrap_or("").trim();
-    if trimmed.is_empty() {
+    // The template name and the `as`/`of`/`super` modifier live on the tag's
+    // first line; the bound type itself may continue across lines (Psalm
+    // concatenates the docblock tag's lines and `splitDocLine` extracts the
+    // type token, so `@template T of array{` + ` a: string }` works while
+    // trailing prose is dropped).
+    let first_line = content.lines().next().unwrap_or("").trim();
+    if first_line.is_empty() {
         return None;
     }
 
-    let mut parts = trimmed.split_whitespace();
+    let mut parts = first_line.split_whitespace();
     let template_name = parts.next()?.trim_matches(',');
     if template_name.is_empty() {
         return None;
     }
 
-    let remaining: Vec<&str> = parts.collect();
-    if remaining.len() >= 2 {
-        let modifier = remaining[0].to_ascii_lowercase();
-        if modifier == "as" || modifier == "of" || modifier == "super" {
-            let bound = remaining[1..].join(" ");
-            if !bound.trim().is_empty() {
-                return Some((template_name.to_string(), Some(bound)));
-            }
+    let modifier = parts.next().map(|word| word.to_ascii_lowercase());
+    if matches!(modifier.as_deref(), Some("as" | "of" | "super")) {
+        // Rebuild the bound from the FULL tag content (whitespace-joined
+        // across lines), then keep the first depth-aware type token —
+        // whitespace inside brackets/braces/parens belongs to the type,
+        // whitespace at depth zero starts the free-text description.
+        let joined = content.split_whitespace().collect::<Vec<&str>>().join(" ");
+        let after_name = joined
+            .split_whitespace()
+            .skip(2)
+            .collect::<Vec<&str>>()
+            .join(" ");
+        let bound = split_first_doc_type_token(&after_name);
+        if !bound.trim().is_empty() {
+            return Some((template_name.to_string(), Some(bound)));
         }
     }
 
     Some((template_name.to_string(), None))
+}
+
+/// Psalm `CommentAnalyzer::splitDocLine`'s leading-token extraction: returns
+/// the prefix of `text` up to the first whitespace that sits outside any
+/// `<>`/`{}`/`()`/`[]` brackets and quotes — the type token, with any
+/// trailing description dropped.
+fn split_first_doc_type_token(text: &str) -> String {
+    let text = text.trim();
+    let mut depth: u32 = 0;
+    let mut in_quote: Option<char> = None;
+    let mut escaped = false;
+
+    for (index, ch) in text.char_indices() {
+        if let Some(quote) = in_quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => in_quote = Some(ch),
+            '<' | '{' | '(' | '[' => depth += 1,
+            '>' | '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            _ if ch.is_whitespace() && depth == 0 => {
+                return text[..index].to_string();
+            }
+            _ => {}
+        }
+    }
+
+    text.to_string()
 }
 
 /// Psalm's `FunctionLikeDocblockScanner`: a docblock `@return` whose atomics

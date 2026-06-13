@@ -1284,20 +1284,6 @@ fn atomic_contains_boolish(atomic: &TAtomic) -> bool {
     }
 }
 
-fn is_array_like_union(union: &TUnion) -> bool {
-    !union.types.is_empty()
-        && union.types.iter().all(|atomic| match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
-            | TAtomic::TIterable { .. } => true,
-            TAtomic::TTemplateParam { as_type, .. } => is_array_like_union(as_type),
-            _ => false,
-        })
-}
-
 pub(crate) fn is_reference_returnable_expression(expr: &Expression<'_>) -> bool {
     matches!(
         expr.unparenthesized(),

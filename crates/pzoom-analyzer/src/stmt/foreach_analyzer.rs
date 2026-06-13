@@ -732,7 +732,7 @@ fn check_iterator_type(
 
     let (start_offset, end_offset) = pos;
     let (start_line, start_column) = analyzer.get_line_column(start_offset);
-    let mut emit = |analysis_data: &mut FunctionAnalysisData, kind: IssueKind, message: String| {
+    let emit = |analysis_data: &mut FunctionAnalysisData, kind: IssueKind, message: String| {
         analysis_data.add_issue(Issue::new(
             kind,
             message,

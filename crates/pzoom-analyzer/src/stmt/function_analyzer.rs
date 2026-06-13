@@ -1509,7 +1509,7 @@ fn collect_wrong_cased_classes(
         return;
     }
 
-    let mut recurse_union = |union: &TUnion, wrong_cased: &mut Vec<StrId>| {
+    let recurse_union = |union: &TUnion, wrong_cased: &mut Vec<StrId>| {
         for nested in &union.types {
             collect_wrong_cased_classes(analyzer, nested, wrong_cased, depth + 1);
         }

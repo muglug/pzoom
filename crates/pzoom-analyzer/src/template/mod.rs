@@ -458,7 +458,7 @@ fn collect_template_params_in_atomic(
         return;
     }
 
-    let mut recurse_union = |union: &TUnion, referenced: &mut Vec<(StrId, GenericParent, TUnion)>| {
+    let recurse_union = |union: &TUnion, referenced: &mut Vec<(StrId, GenericParent, TUnion)>| {
         for nested in &union.types {
             collect_template_params_in_atomic(nested, referenced, depth + 1);
         }

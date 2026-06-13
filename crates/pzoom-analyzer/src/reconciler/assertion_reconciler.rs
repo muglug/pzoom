@@ -663,10 +663,7 @@ fn intersect_atomic_with_atomic_inner(
         (TAtomic::TCallableString, TAtomic::TString)
         | (TAtomic::TCallableString, TAtomic::TNonEmptyString)
         | (TAtomic::TCallableString, TAtomic::TTruthyString)
-        | (TAtomic::TCallableString, TAtomic::TCallableString)
-        | (TAtomic::TString, TAtomic::TCallableString)
-        | (TAtomic::TNonEmptyString, TAtomic::TCallableString)
-        | (TAtomic::TTruthyString, TAtomic::TCallableString) => Some(TAtomic::TCallableString),
+        | (TAtomic::TCallableString, TAtomic::TCallableString) => Some(TAtomic::TCallableString),
         (TAtomic::TString, TAtomic::TTruthyString) => Some(TAtomic::TTruthyString),
         (TAtomic::TNumericString, TAtomic::TString) => Some(TAtomic::TNumericString),
         (TAtomic::TClassString { as_type }, TAtomic::TString) => Some(TAtomic::TClassString {
@@ -1681,11 +1678,13 @@ fn specialize_assertion_named_object_from_existing(
         TAtomic::TNamedObject {
             name: existing_name,
             type_params: existing_type_params,
-        .. },
+            ..
+        },
         TAtomic::TNamedObject {
             name: assertion_name,
             type_params: assertion_type_params,
-        .. },
+            ..
+        },
     ) = (existing_atomic, assertion_atomic)
     else {
         return None;
@@ -1753,7 +1752,9 @@ fn specialize_assertion_named_object_from_existing(
     Some(TAtomic::TNamedObject {
         name: *assertion_name,
         type_params: Some(inferred_type_params),
-    is_static: false, remapped_params: false })
+        is_static: false,
+        remapped_params: false,
+    })
 }
 
 fn infer_class_template_replacements_from_ancestors(
@@ -1799,9 +1800,8 @@ fn infer_class_template_replacements_from_ancestors(
                         mapped_template,
                         mapped_entity,
                     );
-                    let should_propagate = existing
-                        .as_ref()
-                        .is_none_or(is_template_placeholder_union);
+                    let should_propagate =
+                        existing.as_ref().is_none_or(is_template_placeholder_union);
 
                     if !should_propagate {
                         continue;
@@ -1894,14 +1894,18 @@ fn class_string_atomic_to_bound(
     codebase: Option<&CodebaseInfo>,
 ) -> Option<Option<TAtomic>> {
     match atomic {
-        TAtomic::TClassString { as_type } => Some(as_type.as_ref().map(|as_type| (**as_type).clone())),
+        TAtomic::TClassString { as_type } => {
+            Some(as_type.as_ref().map(|as_type| (**as_type).clone()))
+        }
         TAtomic::TTemplateParamClass { as_type, .. } => Some(Some((**as_type).clone())),
         TAtomic::TLiteralClassString { name } => {
             let class_id = codebase?.resolve_classlike_name(name)?;
             Some(Some(TAtomic::TNamedObject {
                 name: class_id,
                 type_params: None,
-            is_static: false, remapped_params: false }))
+                is_static: false,
+                remapped_params: false,
+            }))
         }
         _ => None,
     }
@@ -1998,7 +2002,9 @@ pub fn intersect_union_with_union_with_codebase(
 
     for atomic1 in &type1.types {
         for atomic2 in &type2.types {
-            if let Some(intersected) = intersect_atomic_with_atomic_inner(atomic1, atomic2, codebase) {
+            if let Some(intersected) =
+                intersect_atomic_with_atomic_inner(atomic1, atomic2, codebase)
+            {
                 // Avoid duplicates
                 if !result_types.iter().any(|t| t == &intersected) {
                     result_types.push(intersected);

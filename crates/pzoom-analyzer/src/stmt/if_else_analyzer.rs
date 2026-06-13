@@ -1299,33 +1299,6 @@ pub(crate) fn apply_clauses_to_context(
     )
 }
 
-/// `pre_narrowed_vars`: vars the operator-level condition analysis already
-/// narrowed before the entry reconcile (pzoom's cond_if_body_context seed).
-/// Psalm performs that narrowing inside the entry reconcile itself, so those
-/// vars land in `$changed_var_ids` and their clauses are removed from the
-/// branch context; with the pre-narrowed seed the reconcile is a no-op and
-/// would otherwise leave the clause behind to be re-reported by a later
-/// `assert()` re-derivation.
-fn apply_clauses_to_context_with_prenarrowed(
-    analyzer: &StatementsAnalyzer<'_>,
-    context: &mut BlockContext,
-    analysis_data: &mut FunctionAnalysisData,
-    creating_conditional_id: Option<(u32, u32)>,
-    emission_mode: reconciler::EmissionMode,
-    pre_narrowed_vars: Option<&FxHashSet<VarName>>,
-) -> FxHashSet<VarName> {
-    apply_clauses_to_context_full(
-        analyzer,
-        context,
-        analysis_data,
-        creating_conditional_id,
-        emission_mode,
-        pre_narrowed_vars,
-        None,
-        true,
-    )
-}
-
 /// `omit_report_vars`: Psalm's IfAnalyzer `$omit_keys` — vars mentioned in the
 /// OUTER context's clauses (minus the outer formula's own unit truths) are
 /// removed from `$cond_referenced_var_ids`, so the entry reconcile applies

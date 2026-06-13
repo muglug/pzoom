@@ -12,8 +12,8 @@ use mago_syntax::ast::ast::argument::{Argument, ArgumentList};
 use mago_syntax::ast::ast::call::{Call, FunctionCall};
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::variable::Variable;
-use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_code_info::VarName;
+use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_code_info::{
     DataFlowNode, FunctionLikeIdentifier, FunctionLikeInfo, FunctionLikeParameter, GraphKind,
     Issue, IssueKind, PathKind, TAtomic, TUnion, combine_union_types,
@@ -26,18 +26,16 @@ use crate::data_flow::make_data_flow_node_position;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::reconciler::assertion_reconciler;
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::template;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
-use crate::template;
 
 use super::{argument_analyzer, callable_validation};
 use pzoom_code_info::TemplateResult;
 
 /// Build the dataflow identifier for a function-like (Hakana threads
 /// `FunctionLikeIdentifier` everywhere; pzoom reconstructs it from storage).
-fn functionlike_id_for_info(
-    info: &FunctionLikeInfo,
-) -> pzoom_code_info::FunctionLikeIdentifier {
+fn functionlike_id_for_info(info: &FunctionLikeInfo) -> pzoom_code_info::FunctionLikeIdentifier {
     if let Some(declaring_class) = info.declaring_class {
         pzoom_code_info::FunctionLikeIdentifier::Method(declaring_class, info.name)
     } else {
@@ -202,9 +200,7 @@ pub(crate) fn check_arguments_match(
                         let mapped_index = arg_param_indices.get(idx).and_then(|mapped| *mapped);
                         let param = mapped_index
                             .and_then(|mapped| function_info.params.get(mapped))
-                            .or_else(|| {
-                                function_info.params.last().filter(|p| p.is_variadic)
-                            });
+                            .or_else(|| function_info.params.last().filter(|p| p.is_variadic));
                         if let Some(param) = param {
                             argument_analyzer::add_dataflow(
                                 analyzer,
@@ -232,8 +228,7 @@ pub(crate) fn check_arguments_match(
             if let (Some(param), Some(arg_type)) =
                 (param, get_argument_value_type(analysis_data, arg, arg_pos))
             {
-                let effective_param =
-                    adjust_param_type(param, template_result);
+                let effective_param = adjust_param_type(param, template_result);
 
                 argument_analyzer::verify_type(
                     analyzer,
@@ -273,8 +268,10 @@ fn adjust_param_type(
     }
 
     if let Some(signature_type) = &param.signature_type {
-        adjusted_param.signature_type =
-            Some(replace_template_param_union(signature_type, template_result));
+        adjusted_param.signature_type = Some(replace_template_param_union(
+            signature_type,
+            template_result,
+        ));
     }
 
     if let Some(default_type) = &param.default_type {
@@ -298,7 +295,10 @@ pub(crate) fn get_argument_value_type<'a>(
 ) -> Option<std::rc::Rc<TUnion>> {
     analysis_data.expr_types.get(&arg_pos).cloned().or_else(|| {
         let span = arg.value().span();
-        analysis_data.expr_types.get(&(span.start.offset, span.end.offset)).cloned()
+        analysis_data
+            .expr_types
+            .get(&(span.start.offset, span.end.offset))
+            .cloned()
     })
 }
 
@@ -325,11 +325,13 @@ fn resolve_argument_param_indices(
             // positionals.
             let arg_pos = arg_positions.get(arg_index).copied().unwrap_or((0, 0));
             if let Some(spread_type) = get_argument_value_type(analysis_data, arg, arg_pos)
-                && let [pzoom_code_info::TAtomic::TKeyedArray {
-                    properties,
-                    fallback_value_type: None,
-                    ..
-                }] = spread_type.types.as_slice()
+                && let [
+                    pzoom_code_info::TAtomic::TKeyedArray {
+                        properties,
+                        fallback_value_type: None,
+                        ..
+                    },
+                ] = spread_type.types.as_slice()
             {
                 let mut keys: Vec<&pzoom_code_info::ArrayKey> = properties.keys().collect();
                 keys.sort();
@@ -615,9 +617,7 @@ pub(crate) fn verify_arguments(
         let arg_pos = arg_positions.get(idx).copied().unwrap_or((0, 0));
 
         if arg.is_unpacked() {
-            if let Some(arg_type) =
-                get_argument_value_type(analysis_data, arg, arg_pos)
-            {
+            if let Some(arg_type) = get_argument_value_type(analysis_data, arg, arg_pos) {
                 argument_analyzer::verify_unpacked_argument(
                     analyzer,
                     arg_pos,
@@ -657,7 +657,10 @@ pub(crate) fn verify_arguments(
                         arg_pos,
                         &element_type,
                         param,
-                        arg_param_indices.get(idx).and_then(|mapped| *mapped).unwrap_or(idx),
+                        arg_param_indices
+                            .get(idx)
+                            .and_then(|mapped| *mapped)
+                            .unwrap_or(idx),
                         func_name,
                         analysis_data,
                         context,
@@ -678,7 +681,10 @@ pub(crate) fn verify_arguments(
                     argument_analyzer::add_dataflow(
                         analyzer,
                         &functionlike_id_for_info(func_info),
-                        arg_param_indices.get(idx).and_then(|mapped| *mapped).unwrap_or(idx),
+                        arg_param_indices
+                            .get(idx)
+                            .and_then(|mapped| *mapped)
+                            .unwrap_or(idx),
                         arg_pos,
                         &arg_type,
                         param,
@@ -698,9 +704,7 @@ pub(crate) fn verify_arguments(
             .or_else(|| func_info.params.last().filter(|p| p.is_variadic));
 
         if let Some(param) = param {
-            if let Some(arg_type) =
-                get_argument_value_type(analysis_data, arg, arg_pos)
-            {
+            if let Some(arg_type) = get_argument_value_type(analysis_data, arg, arg_pos) {
                 let mut effective_param = param.clone();
                 if !crate::template::template_result_is_empty(template_result) {
                     if let Some(param_type) = param.get_type() {
@@ -816,7 +820,7 @@ fn maybe_generalize_argument_type_after_call(
         && arg_class_name == param_class_name
     {
         context.set_var_type_for_inference(var_id, param_type.clone());
-        invalidate_property_narrowings_for_argument( context, direct_var.name);
+        invalidate_property_narrowings_for_argument(context, direct_var.name);
         return;
     }
 
@@ -825,7 +829,7 @@ fn maybe_generalize_argument_type_after_call(
         && &intersection != arg_type
     {
         context.set_var_type_for_inference(var_id, intersection);
-        invalidate_property_narrowings_for_argument( context, direct_var.name);
+        invalidate_property_narrowings_for_argument(context, direct_var.name);
         return;
     }
 
@@ -843,13 +847,10 @@ fn maybe_generalize_argument_type_after_call(
 
     let widened = combine_union_types(arg_type, param_type, false);
     context.set_var_type_for_inference(var_id, widened);
-    invalidate_property_narrowings_for_argument( context, direct_var.name);
+    invalidate_property_narrowings_for_argument(context, direct_var.name);
 }
 
-fn invalidate_property_narrowings_for_argument(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn invalidate_property_narrowings_for_argument(context: &mut BlockContext, var_name: &str) {
     let prefix = format!("{}->", var_name);
     let keys_to_remove: Vec<_> = context
         .locals
@@ -916,7 +917,9 @@ fn infer_array_filter_callback_param_type(
 
     let callback_pos = *arg_positions.get(1)?;
     let callback_is_null = analysis_data
-        .expr_types.get(&callback_pos).cloned()
+        .expr_types
+        .get(&callback_pos)
+        .cloned()
         .is_some_and(|callback_type| callback_type.is_null());
     if callback_is_null {
         return None;
@@ -939,11 +942,15 @@ fn infer_array_filter_callback_param_type(
                 )
         });
 
-    let (value_type, key_type) = if let Some(array_pos) =
-        arg_positions.first().copied().filter(|_| first_arg_supports_inference)
+    let (value_type, key_type) = if let Some(array_pos) = arg_positions
+        .first()
+        .copied()
+        .filter(|_| first_arg_supports_inference)
     {
         if let Some(array_type) = analysis_data.expr_types.get(&array_pos).cloned() {
-            if let Some(array_info) = function_call_analyzer::extract_array_like_info_from_union(&array_type) {
+            if let Some(array_info) =
+                function_call_analyzer::extract_array_like_info_from_union(&array_type)
+            {
                 let key_type = if array_info.key_type.is_nothing() {
                     TUnion::array_key()
                 } else {
@@ -962,8 +969,10 @@ fn infer_array_filter_callback_param_type(
 
     let mut mode = 0i64;
     if let (Some(mode_pos), Some(mode_arg)) = (arg_positions.get(2).copied(), args.get(2)) {
-        let raw_mode =
-            infer_array_filter_mode(mode_arg, analysis_data.expr_types.get(&mode_pos).cloned().as_deref());
+        let raw_mode = infer_array_filter_mode(
+            mode_arg,
+            analysis_data.expr_types.get(&mode_pos).cloned().as_deref(),
+        );
 
         if let Some(raw_mode) = raw_mode {
             if !(0..=2).contains(&raw_mode) {
@@ -1076,7 +1085,9 @@ fn suppress_undefined_array_filter_input_issues(
     first_arg_pos: Pos,
 ) {
     analysis_data.issues.retain(|issue| {
-        if issue.location.start_offset < first_arg_pos.0 || issue.location.start_offset > first_arg_pos.1 {
+        if issue.location.start_offset < first_arg_pos.0
+            || issue.location.start_offset > first_arg_pos.1
+        {
             return true;
         }
 
@@ -1218,14 +1229,12 @@ pub(crate) fn apply_param_out_types(
         // Psalm special-cases array_shift/array_pop by-ref adjustment
         // (ArrayFunctionArgumentsAnalyzer::handleByRefArrayAdjustment) instead
         // of applying the generic @param-out conditional.
-        if param_idx == 0
-            && (function_id == StrId::ARRAY_SHIFT || function_id == StrId::ARRAY_POP)
+        if param_idx == 0 && (function_id == StrId::ARRAY_SHIFT || function_id == StrId::ARRAY_POP)
         {
             // Psalm keys the adjustment by the extended var id, so property
             // paths (array_shift(\$atomic->extra_types)) drop their narrowed
             // non-empty state too.
-            if let Some(var_key) =
-                crate::expression_identifier::get_expression_var_key(arg.value())
+            if let Some(var_key) = crate::expression_identifier::get_expression_var_key(arg.value())
             {
                 super::array_function_arguments_analyzer::handle_by_ref_array_adjustment(
                     analyzer,
@@ -1244,8 +1253,7 @@ pub(crate) fn apply_param_out_types(
         if param_idx == 0
             && (function_id == StrId::ARRAY_PUSH || function_id == StrId::ARRAY_UNSHIFT)
         {
-            if let Some(var_key) =
-                crate::expression_identifier::get_expression_var_key(arg.value())
+            if let Some(var_key) = crate::expression_identifier::get_expression_var_key(arg.value())
             {
                 if super::array_function_arguments_analyzer::handle_array_addition(
                     analyzer,
@@ -1282,9 +1290,8 @@ pub(crate) fn apply_param_out_types(
                 "krsort" | "asort" | "arsort" | "natcasesort" | "natsort"
             )
         {
-            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
-                direct,
-            )) = arg.value().unparenthesized()
+            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+                arg.value().unparenthesized()
                 && let Some(existing) = context.get_var_type(direct.name)
             {
                 let mut array_atomics: Vec<TAtomic> = Vec::new();
@@ -1339,12 +1346,9 @@ pub(crate) fn apply_param_out_types(
         // Psalm's ArrayFunctionArgumentsAnalyzer::handleSplice: with a
         // replacement argument, the by-ref array becomes the combination of
         // its (list-ified) own type and the replacement's value type.
-        if param_idx == 0
-            && analyzer.interner.lookup(function_id).as_ref() == "array_splice"
-        {
-            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
-                direct,
-            )) = arg.value().unparenthesized()
+        if param_idx == 0 && analyzer.interner.lookup(function_id).as_ref() == "array_splice" {
+            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+                arg.value().unparenthesized()
                 && super::array_function_arguments_analyzer::handle_splice_by_ref(
                     context,
                     analysis_data,
@@ -1414,15 +1418,18 @@ pub(crate) fn apply_param_out_types(
                 .get_function(function_id)
                 .and_then(|function_info| analyzer.codebase.files.get(&function_info.file_path))
                 .is_some_and(|file_info| file_info.is_stub);
-            if let Some(constraint_type) = param.get_type().or(param.signature_type.as_ref()) {
-                if !function_is_builtin && !constraint_type.is_mixed() && var_id != "$this" {
-                    let constraint_type = super::callable_validation::normalize_class_constant_param_type(
+            if let Some(constraint_type) = param.get_type().or(param.signature_type.as_ref())
+                && !function_is_builtin
+                && !constraint_type.is_mixed()
+                && var_id != "$this"
+            {
+                let constraint_type =
+                    super::callable_validation::normalize_class_constant_param_type(
                         analyzer,
                         constraint_type,
                         callable_name.as_ref(),
                     );
-                    context.add_reference_constraint(var_id.clone(), constraint_type);
-                }
+                context.add_reference_constraint(var_id.clone(), constraint_type);
             }
 
             if var_id.as_str() != "$this" {
@@ -1433,10 +1440,8 @@ pub(crate) fn apply_param_out_types(
     }
 
     if !by_ref_var_ids.is_empty() {
-        context.clauses = BlockContext::remove_reconciled_clause_refs(
-            &context.clauses,
-            &by_ref_var_ids)
-        .0;
+        context.clauses =
+            BlockContext::remove_reconciled_clause_refs(&context.clauses, &by_ref_var_ids).0;
     }
 }
 
@@ -1480,7 +1485,9 @@ fn add_by_ref_argument_dataflow(
 
     if let GraphKind::FunctionBody = analysis_data.data_flow_graph.kind {
         let parent_nodes = analysis_data
-            .expr_types.get(&arg_pos).cloned()
+            .expr_types
+            .get(&arg_pos)
+            .cloned()
             .map(|arg_type| arg_type.parent_nodes.clone())
             .unwrap_or_default();
 
@@ -1701,10 +1708,6 @@ fn maybe_relax_array_map_callback_param_for_validation(
     effective_param.has_docblock_type = false;
 }
 
-
-
-
-
 /// Psalm's `ArrayFunctionArgumentsAnalyzer::handleByRefArrayAdjustment`: the
 /// written-back type of `array_shift($x)` / `array_pop($x)` is derived from
 /// `$x`'s current type per atomic, not from the stub's generic
@@ -1738,8 +1741,8 @@ fn unpacked_iterable_element_type(
                 type_params: Some(type_params),
                 ..
             } => {
-                let mapped = crate::type_comparator::object_type_comparator::
-                    get_mapped_generic_type_params(
+                let mapped =
+                    crate::type_comparator::object_type_comparator::get_mapped_generic_type_params(
                         codebase,
                         *name,
                         type_params,
@@ -1768,9 +1771,7 @@ fn unpacked_iterable_element_type(
         };
         if let Some(member) = member {
             element_type = Some(match element_type {
-                Some(existing) => {
-                    pzoom_code_info::combine_union_types(&existing, &member, false)
-                }
+                Some(existing) => pzoom_code_info::combine_union_types(&existing, &member, false),
                 None => member,
             });
         }

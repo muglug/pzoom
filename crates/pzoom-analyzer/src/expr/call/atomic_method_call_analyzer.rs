@@ -10,12 +10,10 @@ use crate::type_expander::localize_special_class_type_union;
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
 use pzoom_code_info::VarName;
+use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
 use pzoom_code_info::functionlike_info::AssertionType;
-use pzoom_code_info::{
-    Issue, IssueKind, TAtomic, TUnion, combine_union_types,
-};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -30,17 +28,14 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::stmt::attribute_analyzer;
 
 use super::argument_analyzer;
-use super::{
-    arguments_analyzer,
-    existing_atomic_method_call_analyzer, function_call_analyzer,
-};
+use super::{arguments_analyzer, existing_atomic_method_call_analyzer, function_call_analyzer};
 
 use super::method_call_analyzer::*;
 
-use super::method_call_return_type_fetcher::*;
-use super::method_visibility_analyzer::*;
 use super::method_call_prohibition_analyzer::*;
 use super::method_call_purity_analyzer::*;
+use super::method_call_return_type_fetcher::*;
+use super::method_visibility_analyzer::*;
 use super::missing_method_call_handler::*;
 use pzoom_code_info::TemplateResult;
 
@@ -72,7 +67,7 @@ pub(crate) fn get_method_return_type(
     }
 
     let reconciled_receiver_type =
-        get_reconciled_receiver_type_for_expression( context, object_expr)
+        get_reconciled_receiver_type_for_expression(context, object_expr)
             .and_then(|tracked_type| {
                 assertion_reconciler::intersect_union_with_union(obj_type, &tracked_type)
             })
@@ -144,7 +139,9 @@ pub(crate) fn get_method_return_type(
 
     for atomic in &receiver_atomics {
         match atomic {
-            TAtomic::TNamedObject { name, type_params , .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if let Some(class_info) = analyzer.codebase.get_class(*name) {
                     if let Some((resolved_class, resolved_type_params, method_info)) =
                         resolve_named_object_instance_method(
@@ -205,7 +202,9 @@ pub(crate) fn get_method_return_type(
                         has_receiver_without_method = true;
                     }
 
-                    if class_has_magic_call(class_info) && !class_has_sealed_methods(analyzer, class_info) {
+                    if class_has_magic_call(class_info)
+                        && !class_has_sealed_methods(analyzer, class_info)
+                    {
                         has_valid_receiver = true;
                         has_unsealed_magic_call = true;
 
@@ -247,7 +246,9 @@ pub(crate) fn get_method_return_type(
                                 args.len(),
                             );
 
-                            let localized_magic_return = localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+                            let localized_magic_return = localize_special_class_type_union(
+                                analyzer.codebase,
+                                analyzer.interner,
                                 &resolved_magic_return,
                                 *name,
                                 *name,
@@ -317,7 +318,10 @@ pub(crate) fn get_method_return_type(
                 )> = None;
 
                 for nested in types {
-                    let TAtomic::TNamedObject { name, type_params , .. } = nested else {
+                    let TAtomic::TNamedObject {
+                        name, type_params, ..
+                    } = nested
+                    else {
                         continue;
                     };
 
@@ -473,12 +477,9 @@ pub(crate) fn get_method_return_type(
         // replacement. Apply the same inheritance up front.
         let method_info = {
             let mut method_info = method_info;
-            if let Some(inherited_params) = apply_inherited_method_param_types(
-                analyzer,
-                class_id,
-                method_name,
-                &method_info,
-            ) {
+            if let Some(inherited_params) =
+                apply_inherited_method_param_types(analyzer, class_id, method_name, &method_info)
+            {
                 method_info.params = inherited_params;
 
                 // The documenting ancestor's method-level templates come with
@@ -537,46 +538,45 @@ pub(crate) fn get_method_return_type(
             }
         }
 
-        let template_result =
-            if let Some(class_info) = analyzer.codebase.get_class(class_id) {
-                analyze_pending_closure_args_for_method(
-                    analyzer,
-                    args,
-                    arg_positions,
-                    &method_info,
-                    class_info,
-                    object_type_params.as_deref(),
-                    class_id,
-                    receiver_class_id,
-                    parent_class_id,
-                    analysis_data,
-                    context,
-                );
+        let template_result = if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+            analyze_pending_closure_args_for_method(
+                analyzer,
+                args,
+                arg_positions,
+                &method_info,
+                class_info,
+                object_type_params.as_deref(),
+                class_id,
+                receiver_class_id,
+                parent_class_id,
+                analysis_data,
+                context,
+            );
 
-                existing_atomic_method_call_analyzer::build_method_template_context(
-                    analyzer,
-                    class_info,
-                    object_type_params.as_deref(),
-                    &method_info,
-                    is_this_call,
-                    args,
-                    arg_positions,
-                    analysis_data,
-                    context,
-                )
-            } else {
-                let mut template_result = function_call_analyzer::get_template_defaults(&method_info);
-                function_call_analyzer::infer_template_replacements_from_args(
-                    analyzer,
-                    args,
-                    arg_positions,
-                    &method_info.params,
-                    &mut template_result,
-                    analysis_data,
-                    context,
-                );
-                template_result
-            };
+            existing_atomic_method_call_analyzer::build_method_template_context(
+                analyzer,
+                class_info,
+                object_type_params.as_deref(),
+                &method_info,
+                is_this_call,
+                args,
+                arg_positions,
+                analysis_data,
+                context,
+            )
+        } else {
+            let mut template_result = function_call_analyzer::get_template_defaults(&method_info);
+            function_call_analyzer::infer_template_replacements_from_args(
+                analyzer,
+                args,
+                arg_positions,
+                &method_info.params,
+                &mut template_result,
+                analysis_data,
+                context,
+            );
+            template_result
+        };
 
         // Consult the method params providers (Psalm checks
         // `$codebase->methods->params_provider` at the top of
@@ -600,7 +600,9 @@ pub(crate) fn get_method_return_type(
             adjusted
         });
         let method_info_for_args: &pzoom_code_info::FunctionLikeInfo =
-            provider_adjusted_method_info.as_ref().unwrap_or(&method_info);
+            provider_adjusted_method_info
+                .as_ref()
+                .unwrap_or(&method_info);
 
         verify_method_arguments(
             analyzer,
@@ -700,7 +702,11 @@ pub(crate) fn get_method_return_type(
                             IssueKind::InaccessibleMethod
                         };
                         let message = if issue_kind == IssueKind::UndefinedMethod {
-                            crate::class_casing::undefined_method_message(analyzer, &class_name, method_name)
+                            crate::class_casing::undefined_method_message(
+                                analyzer,
+                                &class_name,
+                                method_name,
+                            )
                         } else {
                             format!(
                                 "Cannot access private method {}::{}",
@@ -817,12 +823,15 @@ pub(crate) fn get_method_return_type(
             && method_info.if_true_assertions.is_empty()
             && method_info.if_false_assertions.is_empty()
             && !method_info.has_throws
-            && analyzer.codebase.get_class(class_id).is_some_and(|class_info| {
-                super::method_call_purity_analyzer::method_is_mutation_free(
-                    &method_info,
-                    class_info,
-                ) || (method_info.is_external_mutation_free && receiver_is_fresh_pure_value)
-            })
+            && analyzer
+                .codebase
+                .get_class(class_id)
+                .is_some_and(|class_info| {
+                    super::method_call_purity_analyzer::method_is_mutation_free(
+                        &method_info,
+                        class_info,
+                    ) || (method_info.is_external_mutation_free && receiver_is_fresh_pure_value)
+                })
         {
             // Psalm points at the method name node.
             let (line, col) = analyzer.get_line_column(method_name_pos.0);
@@ -855,38 +864,35 @@ pub(crate) fn get_method_return_type(
             return Some(magic_property_return);
         }
 
-        let resolved_return_type =
-            crate::return_type_provider::dispatch_method_return_type(
-                &crate::return_type_provider::MethodReturnTypeProviderEvent {
-                    analyzer,
-                    class_id,
-                    method_name,
-                    args,
-                    arg_positions,
-                    analysis_data,
-                },
+        let resolved_return_type = crate::return_type_provider::dispatch_method_return_type(
+            &crate::return_type_provider::MethodReturnTypeProviderEvent {
+                analyzer,
+                class_id,
+                method_name,
+                args,
+                arg_positions,
+                analysis_data,
+            },
+        )
+        .unwrap_or_else(|| {
+            let param_arg_types = super::function_call_return_type_fetcher::collect_param_arg_types(
+                &method_info_for_args.params,
+                arg_positions,
+                analysis_data,
+            );
+            resolve_effective_method_return_type(
+                analyzer,
+                class_id,
+                method_name,
+                &method_info,
+                &template_result,
+                &param_arg_types,
+                args.len(),
             )
-                .unwrap_or_else(|| {
-                    let param_arg_types =
-                        super::function_call_return_type_fetcher::collect_param_arg_types(
-                            &method_info_for_args.params,
-                            arg_positions,
-                            analysis_data,
-                        );
-                    resolve_effective_method_return_type(
-                        analyzer,
-                        class_id,
-                        method_name,
-                        &method_info,
-                        &template_result,
-                        &param_arg_types,
-                        args.len(),
-                    )
-                });
+        });
 
         let static_class_id =
             find_concrete_receiver_class_id(analyzer, obj_type).unwrap_or(receiver_class_id);
-
 
         // Psalm's MethodCallReturnTypeFetcher: `static` in the return type
         // binds firmly when the receiver's concrete class is final, and a
@@ -899,27 +905,26 @@ pub(crate) fn get_method_return_type(
             .codebase
             .get_class(static_class_id)
             .is_some_and(|receiver_info| receiver_info.is_final);
-        let mut localized_return_type =
-            if let Some(receiver_template) = receiver_template_binding {
-                crate::type_expander::localize_special_class_type_union_with_static_object(
-                    analyzer.codebase,
-                    analyzer.interner,
-                    &resolved_return_type,
-                    class_id,
-                    receiver_template.clone(),
-                    parent_class_id,
-                )
-            } else {
-                crate::type_expander::localize_special_class_type_union_final(
-                    analyzer.codebase,
-                    analyzer.interner,
-                    &resolved_return_type,
-                    class_id,
-                    static_class_id,
-                    parent_class_id,
-                    receiver_is_final,
-                )
-            };
+        let mut localized_return_type = if let Some(receiver_template) = receiver_template_binding {
+            crate::type_expander::localize_special_class_type_union_with_static_object(
+                analyzer.codebase,
+                analyzer.interner,
+                &resolved_return_type,
+                class_id,
+                receiver_template.clone(),
+                parent_class_id,
+            )
+        } else {
+            crate::type_expander::localize_special_class_type_union_final(
+                analyzer.codebase,
+                analyzer.interner,
+                &resolved_return_type,
+                class_id,
+                static_class_id,
+                parent_class_id,
+                receiver_is_final,
+            )
+        };
 
         if should_strip_false_from_datetime_modify_return(
             analyzer,
@@ -951,11 +956,8 @@ pub(crate) fn get_method_return_type(
             .iter()
             .any(|atomic| matches!(atomic, TAtomic::TObjectIntersection { .. }))
         {
-            localized_return_type = intersect_self_return_with_receiver(
-                &localized_return_type,
-                obj_type,
-                class_id,
-            );
+            localized_return_type =
+                intersect_self_return_with_receiver(&localized_return_type, obj_type, class_id);
         }
 
         let method_is_mutation_free = analyzer
@@ -978,81 +980,73 @@ pub(crate) fn get_method_return_type(
         // when the call can be memoized — a narrowed entry for an impure (or
         // overridable inferred-pure) method must not stand in for a fresh call.
         if can_memoize
-            && let Some(tracked_type) = get_cached_no_arg_method_call_type(
-                context,
-                object_expr,
-                method_name,
-                args.len(),
-            )
-        {
-            if let Some(intersection) = assertion_reconciler::intersect_union_with_union(
+            && let Some(tracked_type) =
+                get_cached_no_arg_method_call_type(context, object_expr, method_name, args.len())
+            && let Some(intersection) = assertion_reconciler::intersect_union_with_union(
                 &localized_return_type,
                 &tracked_type,
-            ) {
-                localized_return_type = intersection;
-            }
+            )
+        {
+            localized_return_type = intersection;
         }
 
         if !method_is_mutation_free {
-            invalidate_property_narrowings_after_mutation( context);
+            invalidate_property_narrowings_after_mutation(context);
 
             // Mirror Psalm's MethodCallPurityAnalyzer with the default config
             // (`remember_property_assignments_after_call = true`): a non-mutation-free
             // call only invalidates the specific `$lhs->prop` narrowings for properties
             // the called method actually assigns to (its `this_property_mutations`).
-            if !method_info.this_property_mutations.is_empty() {
-                if let Some(object_key) =
-                    expression_identifier::get_expression_var_key(object_expr)
-                {
-                    // Collect the reference cluster for the receiver variable so a
-                    // mutation through one alias (`$ref = &$obj`) also invalidates the
-                    // narrowing held under the other alias.
-                    let mut root_names: Vec<String> = vec![object_key.to_string()];
-                    if let Some(target_id) =
-                        context.references_in_scope.get(object_key.as_str())
-                    {
-                        root_names.push(target_id.to_string());
+            if !method_info.this_property_mutations.is_empty()
+                && let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
+            {
+                // Collect the reference cluster for the receiver variable so a
+                // mutation through one alias (`$ref = &$obj`) also invalidates the
+                // narrowing held under the other alias.
+                let mut root_names: Vec<String> = vec![object_key.to_string()];
+                if let Some(target_id) = context.references_in_scope.get(object_key.as_str()) {
+                    root_names.push(target_id.to_string());
+                }
+                for (ref_id, target_id) in &context.references_in_scope {
+                    if target_id == &object_key {
+                        root_names.push(ref_id.to_string());
                     }
-                    for (ref_id, target_id) in &context.references_in_scope {
-                        if target_id == &object_key {
-                            root_names.push(ref_id.to_string());
-                        }
-                    }
+                }
 
-                    for prop_name in &method_info.this_property_mutations {
-                        let prop = analyzer.interner.lookup(*prop_name);
-                        for root in &root_names {
-                            let mutation_var = format!("{}->{}", root, prop);
-                            context.locals.remove(mutation_var.as_str());
-                        }
+                for prop_name in &method_info.this_property_mutations {
+                    let prop = analyzer.interner.lookup(*prop_name);
+                    for root in &root_names {
+                        let mutation_var = format!("{}->{}", root, prop);
+                        context.locals.remove(mutation_var.as_str());
                     }
                 }
             }
         }
 
-        if args.is_empty() {
-            if can_memoize {
-                if let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
-                {
-                    let call_key =
-                        format!("{}->{}()", object_key, method_name.to_ascii_lowercase());
-                    let call_id = analyzer.interner.intern(&call_key);
-                    context
-                        .locals
-                        .insert(VarName::new(&analyzer.interner.lookup(call_id)), localized_return_type.clone());
-                    // Psalm marks the node `memoizable` so getExtendedVarId
-                    // (and through it the assertion finder) keys on the call.
-                    analysis_data
-                        .memoizable_method_call_offsets
-                        .insert(pos.0);
-                }
-            }
+        if args.is_empty()
+            && can_memoize
+            && let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
+        {
+            let call_key = format!("{}->{}()", object_key, method_name.to_ascii_lowercase());
+            let call_id = analyzer.interner.intern(&call_key);
+            context.locals.insert(
+                VarName::new(&analyzer.interner.lookup(call_id)),
+                localized_return_type.clone(),
+            );
+            // Psalm marks the node `memoizable` so getExtendedVarId
+            // (and through it the assertion finder) keys on the call.
+            analysis_data.memoizable_method_call_offsets.insert(pos.0);
         }
 
         if has_null_receiver
             && !suppress_possibly_null_reference_issue
             && !expanded_obj_type.ignore_nullable_issues
-            && !issue_suppression::is_issue_suppressed_at(analyzer, analysis_data, pos.0, "PossiblyNullReference")
+            && !issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                pos.0,
+                "PossiblyNullReference",
+            )
         {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
@@ -1115,8 +1109,7 @@ pub(crate) fn get_method_return_type(
         }
 
         let object_span = object_expr.span();
-        let receiver_var_key =
-            crate::expression_identifier::get_expression_var_key(object_expr);
+        let receiver_var_key = crate::expression_identifier::get_expression_var_key(object_expr);
         localized_return_type = add_method_call_dataflow_with_receiver(
             analyzer,
             localized_return_type,
@@ -1173,8 +1166,11 @@ pub(crate) fn get_method_return_type(
                 secondary_parent,
                 false,
             );
-            localized_return_type =
-                pzoom_code_info::combine_union_types(&localized_return_type, &localized_secondary, false);
+            localized_return_type = pzoom_code_info::combine_union_types(
+                &localized_return_type,
+                &localized_secondary,
+                false,
+            );
         }
 
         return Some(localized_return_type);
@@ -1188,7 +1184,7 @@ pub(crate) fn get_method_return_type(
         // A preceding `method_exists($obj, 'foo')` guard proves the method exists at
         // runtime even though it is absent from the declared class, so treat the call as
         // returning `mixed` rather than reporting UndefinedMethod (matching Psalm).
-        if is_method_guarded_by_method_exists( context, object_expr, method_name) {
+        if is_method_guarded_by_method_exists(context, object_expr, method_name) {
             return Some(TUnion::mixed());
         }
 
@@ -1247,7 +1243,11 @@ pub(crate) fn get_method_return_type(
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UndefinedInterfaceMethod,
-                crate::class_casing::undefined_method_message(analyzer, &interface_name, method_name),
+                crate::class_casing::undefined_method_message(
+                    analyzer,
+                    &interface_name,
+                    method_name,
+                ),
                 analyzer.file_path,
                 pos.0,
                 pos.1,
@@ -1262,11 +1262,13 @@ pub(crate) fn get_method_return_type(
         match atomic {
             TAtomic::TNamedObject { name, .. } => {
                 if let Some(class_info) = analyzer.codebase.get_class(*name) {
-                    if is_datetime_interface_add( *name, method_name) {
+                    if is_datetime_interface_add(*name, method_name) {
                         return Some(TUnion::new(TAtomic::TNamedObject {
                             name: *name,
                             type_params: None,
-                        is_static: false, remapped_params: false }));
+                            is_static: false,
+                            remapped_params: false,
+                        }));
                     }
 
                     let class_name = analyzer.interner.lookup(*name);
@@ -1304,7 +1306,11 @@ pub(crate) fn get_method_return_type(
                             };
 
                             let message = if issue_kind == IssueKind::UndefinedMethod {
-                                crate::class_casing::undefined_method_message(analyzer, &class_name, method_name)
+                                crate::class_casing::undefined_method_message(
+                                    analyzer,
+                                    &class_name,
+                                    method_name,
+                                )
                             } else {
                                 format!(
                                     "Cannot access private method {}::{}",
@@ -1328,17 +1334,20 @@ pub(crate) fn get_method_return_type(
                             // reports PossiblyUndefinedMethod for non-final
                             // bounds.
                             let receiver_is_template_bound = !class_info.is_final
-                                && obj_type
-                                    .types
-                                    .iter()
-                                    .any(|original| matches!(original, TAtomic::TTemplateParam { .. }));
+                                && obj_type.types.iter().any(|original| {
+                                    matches!(original, TAtomic::TTemplateParam { .. })
+                                });
                             analysis_data.add_issue(Issue::new(
                                 if receiver_is_template_bound {
                                     IssueKind::PossiblyUndefinedMethod
                                 } else {
                                     IssueKind::UndefinedMethod
                                 },
-                                crate::class_casing::undefined_method_message(analyzer, &class_name, method_name),
+                                crate::class_casing::undefined_method_message(
+                                    analyzer,
+                                    &class_name,
+                                    method_name,
+                                ),
                                 analyzer.file_path,
                                 method_name_pos.0,
                                 method_name_pos.1,
@@ -1370,10 +1379,12 @@ pub(crate) fn get_method_return_type(
                     ) = object_expr.unparenthesized()
                     {
                         origin_secondary = analysis_data
-                            .expr_types.get(&(
+                            .expr_types
+                            .get(&(
                                 object_expr.span().start.offset,
                                 object_expr.span().end.offset,
-                            )).cloned()
+                            ))
+                            .cloned()
                             .and_then(|receiver_type| {
                                 crate::data_flow::mixed_origin_secondary(
                                     analyzer,
@@ -1452,7 +1463,9 @@ pub(crate) fn resolve_named_object_instance_method(
     class_info: &ClassLikeInfo,
     object_type_params: Option<&[TUnion]>,
     method_name: &str,
-    type_variable_bounds: Option<&rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>>,
+    type_variable_bounds: Option<
+        &rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>,
+    >,
 ) -> Option<(
     StrId,
     Option<Vec<TUnion>>,
@@ -1489,9 +1502,7 @@ pub(crate) fn resolve_named_object_instance_method(
     }
 
     if class_info.kind == ClassLikeKind::Interface || class_has_magic_call(class_info) {
-        if let Some(method_info) =
-            get_pseudo_method_info(analyzer, class_info, method_name)
-        {
+        if let Some(method_info) = get_pseudo_method_info(analyzer, class_info, method_name) {
             return Some((
                 class_info.name,
                 object_type_params.map(|p| p.to_vec()),
@@ -1514,7 +1525,9 @@ fn resolve_named_mixin_instance_method(
     class_info: &ClassLikeInfo,
     object_type_params: Option<&[TUnion]>,
     method_name: &str,
-    type_variable_bounds: Option<&rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>>,
+    type_variable_bounds: Option<
+        &rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>,
+    >,
 ) -> Option<(
     StrId,
     Option<Vec<TUnion>>,
@@ -1556,7 +1569,8 @@ fn resolve_named_mixin_instance_method(
             let TAtomic::TNamedObject {
                 name: mixin_class_id,
                 type_params: mixin_type_params,
-            .. } = localized_atomic
+                ..
+            } = localized_atomic
             else {
                 continue;
             };
@@ -1565,9 +1579,7 @@ fn resolve_named_mixin_instance_method(
                 continue;
             };
 
-            if let Some(method_info) =
-                get_method_info(analyzer, mixin_class_info, method_name)
-            {
+            if let Some(method_info) = get_method_info(analyzer, mixin_class_info, method_name) {
                 return Some((mixin_class_id, mixin_type_params, method_info.clone()));
             }
 
@@ -1689,7 +1701,9 @@ fn intersect_self_return_with_receiver(
 
 fn atomic_contains_static_reference(atomic: &TAtomic) -> bool {
     match atomic {
-        TAtomic::TNamedObject { name, type_params , .. } => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } => {
             if *name == StrId::STATIC {
                 return true;
             }
@@ -1893,7 +1907,9 @@ pub(crate) fn verify_method_arguments(
                         )
                     };
 
-                effective_param.param_type = Some(localize_special_class_type_union(analyzer.codebase, analyzer.interner,
+                effective_param.param_type = Some(localize_special_class_type_union(
+                    analyzer.codebase,
+                    analyzer.interner,
                     &replaced_param_type,
                     self_class_id,
                     static_class_id,
@@ -1901,21 +1917,27 @@ pub(crate) fn verify_method_arguments(
                 ));
             }
 
-
             // A `static` param on a templated receiver is the receiver's own
             // template type.
             if let Some(receiver_atomic) = receiver_template_atomic
                 && let Some(param_type) = &effective_param.param_type
-                && param_type
-                    .types
-                    .iter()
-                    .any(|atomic| matches!(atomic, TAtomic::TNamedObject { is_static: true, .. }))
+                && param_type.types.iter().any(|atomic| {
+                    matches!(
+                        atomic,
+                        TAtomic::TNamedObject {
+                            is_static: true,
+                            ..
+                        }
+                    )
+                })
             {
                 let replaced: Vec<TAtomic> = param_type
                     .types
                     .iter()
                     .map(|atomic| match atomic {
-                        TAtomic::TNamedObject { is_static: true, .. } => receiver_atomic.clone(),
+                        TAtomic::TNamedObject {
+                            is_static: true, ..
+                        } => receiver_atomic.clone(),
                         other => other.clone(),
                     })
                     .collect();
@@ -1971,7 +1993,13 @@ pub(crate) fn apply_post_call_assertions(
 
         let assertion_name = analyzer.interner.lookup(assertion.var_id);
         if assertion_name.as_ref() == "$this" {
-            apply_assertion_to_expression(analyzer, analysis_data, object_expr, &resolved_assertion_type, context);
+            apply_assertion_to_expression(
+                analyzer,
+                analysis_data,
+                object_expr,
+                &resolved_assertion_type,
+                context,
+            );
             continue;
         }
 
@@ -1981,18 +2009,14 @@ pub(crate) fn apply_post_call_assertions(
         // property type when it isn't a local yet. Mirrors Psalm applying
         // `$this->prop` assertions via the reconciler.
         if let Some(prop_suffix) = assertion_name.strip_prefix("$this->") {
-            if let Some(receiver_key) =
-                expression_identifier::get_expression_var_key(object_expr)
-            {
+            if let Some(receiver_key) = expression_identifier::get_expression_var_key(object_expr) {
                 let full_key = format!("{}->{}", receiver_key, prop_suffix);
                 let var_id = VarName::new(&full_key);
                 let existing_type = context
                     .locals
                     .get(&var_id)
                     .cloned()
-                    .or_else(|| {
-                        crate::reconciler::resolve_key_type(&full_key, context, analyzer)
-                    })
+                    .or_else(|| crate::reconciler::resolve_key_type(&full_key, context, analyzer))
                     .unwrap_or_else(TUnion::mixed);
                 let narrowed_type =
                     apply_functionlike_assertion_to_union(&existing_type, &resolved_assertion_type);
@@ -2072,7 +2096,13 @@ pub(crate) fn apply_post_static_call_assertions(
             continue;
         };
 
-        apply_assertion_to_expression(analyzer, analysis_data, argument.value(), &resolved_assertion_type, context);
+        apply_assertion_to_expression(
+            analyzer,
+            analysis_data,
+            argument.value(),
+            &resolved_assertion_type,
+            context,
+        );
     }
 }
 
@@ -2224,7 +2254,6 @@ fn subtract_union(existing_type: &TUnion, type_to_remove: &TUnion) -> TUnion {
         TUnion::from_types(filtered_types)
     }
 }
-
 
 /// Record a resolved method call for find_unused_code (Psalm's
 /// addMethodReferenceToClassMember + isMethodReturnReferenced recording).

@@ -410,11 +410,10 @@ impl ParseTreeCreator {
 
         let mut context_node = Some(self.current_leaf);
 
-        if let Some(cn) = context_node {
-            if self.is_generic_keyed_callable_method(cn) {
+        if let Some(cn) = context_node
+            && self.is_generic_keyed_callable_method(cn) {
                 context_node = self.tree.parent(cn);
             }
-        }
 
         while let Some(cn) = context_node {
             if self.is_generic_keyed_callable_method(cn) {
@@ -551,11 +550,10 @@ impl ParseTreeCreator {
 
         let mut current_parent = current_parent;
 
-        if let Some(cp) = current_parent {
-            if self.tree.is_keyed_array_property(cp) {
+        if let Some(cp) = current_parent
+            && self.tree.is_keyed_array_property(cp) {
                 return Ok(());
             }
-        }
 
         while matches!(current_parent, Some(cp) if self.tree.is_union(cp) || self.tree.is_callable_with_return_type(cp))
             && self.tree.parent(self.current_leaf).is_some()
@@ -564,15 +562,14 @@ impl ParseTreeCreator {
             current_parent = self.tree.parent(self.current_leaf);
         }
 
-        if let Some(cp) = current_parent {
-            if self.tree.is_conditional(cp) {
+        if let Some(cp) = current_parent
+            && self.tree.is_conditional(cp) {
                 if self.tree.children(cp).len() > 1 {
                     return Err("Cannot process colon in conditional twice".to_string());
                 }
                 self.current_leaf = cp;
                 return Ok(());
             }
-        }
 
         let current_parent = match current_parent {
             Some(cp) => cp,

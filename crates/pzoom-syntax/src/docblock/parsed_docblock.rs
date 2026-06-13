@@ -68,8 +68,7 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
     };
 
     // Strip off the */ suffix
-    let docblock = if docblock.ends_with("*/") {
-        let s = &docblock[..docblock.len() - 2];
+    let docblock = if let Some(s) = docblock.strip_suffix("*/") {
         // Also strip trailing * if present
         if s.ends_with('*') {
             &s[..s.len() - 1]
@@ -108,11 +107,10 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
         } else if line.trim().is_empty() {
             last_tag_line = None;
             last_tag_can_continue = false;
-        } else if let Some(last) = last_tag_line {
-            if last_tag_can_continue {
+        } else if let Some(last) = last_tag_line
+            && last_tag_can_continue {
                 merge_info.push((k, last));
             }
-        }
     }
 
     // Second pass: perform merges in source order so multiline tag content
@@ -140,15 +138,14 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
         }
 
         // Detect first line padding
-        if first_line_padding.is_none() {
-            if let Some(asterisk_pos) = line.find('*') {
+        if first_line_padding.is_none()
+            && let Some(asterisk_pos) = line.find('*') {
                 first_line_padding = Some(if asterisk_pos > 1 {
                     line[..asterisk_pos - 1].to_string()
                 } else {
                     String::new()
                 });
             }
-        }
 
         // Try to parse as a tag line
         if let Some((tag_type, data, data_offset)) = parse_tag_line(line) {
@@ -167,7 +164,7 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
                 .insert(absolute_offset, data);
         } else {
             // Not a tag line - part of description
-            let cleaned = line.trim_start_matches(|c| c == ' ' || c == '*');
+            let cleaned = line.trim_start_matches([' ', '*']);
             description_lines.push(cleaned.to_string());
         }
 
@@ -195,9 +192,7 @@ fn is_tag_line(line: &str) -> bool {
     let trimmed = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
     trimmed.starts_with('@')
         && trimmed
-            .chars()
-            .skip(1)
-            .next()
+            .chars().nth(1)
             .map(|c| c.is_alphanumeric())
             .unwrap_or(false)
 }
@@ -517,11 +512,10 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
                 let mut ordered: Vec<_> = tags.iter().collect();
                 ordered.sort_by_key(|(offset, _)| **offset);
                 for (offset, content) in ordered {
-                    if let Some(param_name) = extract_param_tag_name(content) {
-                        if let Some(prev_offset) = name_to_offset.insert(param_name, *offset) {
+                    if let Some(param_name) = extract_param_tag_name(content)
+                        && let Some(prev_offset) = name_to_offset.insert(param_name, *offset) {
                             combined.remove(&prev_offset);
                         }
-                    }
                     combined.insert(*offset, content.clone());
                 }
             }
@@ -598,7 +592,7 @@ impl ParsedDocblock {
                     doc_comment_text.push_str(" *\n");
                 }
 
-                for (_, line) in lines {
+                for line in lines.values() {
                     doc_comment_text.push_str(left_padding);
                     doc_comment_text.push_str(" * @");
                     doc_comment_text.push_str(tag_type);

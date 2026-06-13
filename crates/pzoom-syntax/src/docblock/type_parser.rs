@@ -891,8 +891,8 @@ fn strip_param_conditional_spaces(
     let mut out: Vec<type_tokenizer::TypeToken> = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
-        if tokens[i].value == " " {
-            if let (Some(name_tok), Some(is_tok)) = (tokens.get(i + 1), tokens.get(i + 2)) {
+        if tokens[i].value == " "
+            && let (Some(name_tok), Some(is_tok)) = (tokens.get(i + 1), tokens.get(i + 2)) {
                 // Param names are stored as written (including the `$`), matching
                 // the token value here and `ParamInfo.name`.
                 if is_tok.value == "is"
@@ -904,7 +904,6 @@ fn strip_param_conditional_spaces(
                     continue;
                 }
             }
-        }
         out.push(tokens[i].clone());
         i += 1;
     }
@@ -918,13 +917,11 @@ fn strip_trailing_commas(
 ) -> Vec<type_tokenizer::TypeToken> {
     let mut out: Vec<type_tokenizer::TypeToken> = Vec::with_capacity(tokens.len());
     for (i, token) in tokens.iter().enumerate() {
-        if token.value == "," {
-            if let Some(next) = tokens.get(i + 1) {
-                if matches!(next.value.as_str(), "}" | ")" | ">" | "]") {
+        if token.value == ","
+            && let Some(next) = tokens.get(i + 1)
+                && matches!(next.value.as_str(), "}" | ")" | ">" | "]") {
                     continue;
                 }
-            }
-        }
         out.push(token.clone());
     }
     out
@@ -1108,11 +1105,10 @@ fn value_to_type(
     if let Ok(int_value) = value.parse::<i64>() {
         return TypeResult::Atomic(TAtomic::TLiteralInt { value: int_value });
     }
-    if let Ok(float_value) = value.parse::<f64>() {
-        if value.contains('.') || value.contains('e') || value.contains('E') {
+    if let Ok(float_value) = value.parse::<f64>()
+        && (value.contains('.') || value.contains('e') || value.contains('E')) {
             return TypeResult::Atomic(TAtomic::TLiteralFloat { value: float_value });
         }
-    }
 
     // Psalm matches docblock keywords case-sensitively after fixScalarTerms
     // canonicalizes the case-insensitive scalar list — `Numeric`, `Scalar`,
@@ -1718,14 +1714,12 @@ fn keyed_array_tree_to_type(
 
     // A trailing empty GenericTree carries the `...<K, V>` extra/fallback params.
     let mut extra_params: Option<Vec<NodeId>> = None;
-    if let Some(last) = children.last() {
-        if let NodeKind::Generic { value: gv } = tree.kind(*last) {
-            if gv.is_empty() {
+    if let Some(last) = children.last()
+        && let NodeKind::Generic { value: gv } = tree.kind(*last)
+            && gv.is_empty() {
                 extra_params = Some(tree.children(*last).to_vec());
                 children.pop();
             }
-        }
-    }
 
     // Strip the trailing `callable-` marker for the is_list/`type` checks,
     // mirroring Psalm's `str_starts_with($type, 'callable-')` handling.
@@ -1867,8 +1861,8 @@ fn build_named_atomic(
 ) -> TAtomic {
     match base_name {
         "int" | "integer" => {
-            if let Some(params) = generic_params.as_ref() {
-                if params.len() == 2 {
+            if let Some(params) = generic_params.as_ref()
+                && params.len() == 2 {
                     let min = params[0].get_single().and_then(|a| match a {
                         TAtomic::TLiteralInt { value } => Some(*value),
                         _ => None,
@@ -1879,7 +1873,6 @@ fn build_named_atomic(
                     });
                     return TAtomic::TIntRange { min, max };
                 }
-            }
             TAtomic::TInt
         }
         "float" | "double" => TAtomic::TFloat,
@@ -2149,15 +2142,14 @@ fn build_named_atomic(
             // An in-scope template parameter (no type params) becomes a
             // TTemplateParam inline, mirroring Hakana's typehint resolver and
             // Psalm's Atomic::create template_type_map check.
-            if generic_params.is_none() {
-                if let Some(binding) = ctx.get_template(name) {
+            if generic_params.is_none()
+                && let Some(binding) = ctx.get_template(name) {
                     return TAtomic::TTemplateParam {
                         name: binding.name,
                         defining_entity: binding.defining_entity,
                         as_type: Box::new(binding.as_type.clone()),
                     };
                 }
-            }
 
             let generic_params = normalize_iterator_family_params(name, generic_params, interner);
 

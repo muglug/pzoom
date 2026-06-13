@@ -423,11 +423,10 @@ fn collect_stub_names(dir: &Path, out: &mut std::collections::BTreeSet<String>) 
         let path = entry.path();
         if path.is_dir() {
             collect_stub_names(&path, out);
-        } else if path.extension().and_then(|e| e.to_str()) == Some("phpstub") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
+        } else if path.extension().and_then(|e| e.to_str()) == Some("phpstub")
+            && let Ok(content) = std::fs::read_to_string(&path) {
                 extract_names(&content, out);
             }
-        }
     }
 }
 

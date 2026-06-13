@@ -337,18 +337,18 @@ impl<'a> NameResolver<'a> {
                 self.resolve_identifier(id);
             }
             Hint::Nullable(nullable) => {
-                self.visit_hint(&nullable.hint);
+                self.visit_hint(nullable.hint);
             }
             Hint::Union(union_hint) => {
-                self.visit_hint(&union_hint.left);
-                self.visit_hint(&union_hint.right);
+                self.visit_hint(union_hint.left);
+                self.visit_hint(union_hint.right);
             }
             Hint::Intersection(intersection) => {
-                self.visit_hint(&intersection.left);
-                self.visit_hint(&intersection.right);
+                self.visit_hint(intersection.left);
+                self.visit_hint(intersection.right);
             }
             Hint::Parenthesized(paren) => {
-                self.visit_hint(&paren.hint);
+                self.visit_hint(paren.hint);
             }
             // Built-in types don't need resolution
             _ => {}
@@ -415,7 +415,7 @@ impl<'a> NameResolver<'a> {
         // Alias is either explicit or the last part of the name
         let alias = match &item.alias {
             Some(alias) => alias.identifier.value.to_string(),
-            None => name.split('\\').last().unwrap_or(name.as_str()).to_string(),
+            None => name.split('\\').next_back().unwrap_or(name.as_str()).to_string(),
         };
 
         match kind {

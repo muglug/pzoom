@@ -158,7 +158,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // Determine the project root to scan
     // If paths is just ".", scan current directory
     // Otherwise, find the project root from the first specified path
-    let project_root = if paths.len() == 1 && paths[0] == PathBuf::from(".") {
+    let project_root = if paths.len() == 1 && paths[0] == *"." {
         PathBuf::from(".")
     } else {
         // Find project root from the first path
@@ -226,7 +226,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     }
 
     for file in &analysis_files {
-        if let Ok(contents) = std::fs::read_to_string(&file) {
+        if let Ok(contents) = std::fs::read_to_string(file) {
             let canonical = file
                 .canonicalize()
                 .unwrap_or_else(|_| file.clone())
@@ -292,7 +292,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     );
 
     // Check if we should analyze specific files or the whole codebase
-    let analyze_all = paths.len() == 1 && paths[0] == PathBuf::from(".");
+    let analyze_all = paths.len() == 1 && paths[0] == *".";
     let targeting_project_root = paths.len() == 1
         && paths[0]
             .canonicalize()
@@ -333,7 +333,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
             } else if canonical.is_dir() {
                 // Directory - find all files under it in the codebase
                 let dir_str = canonical.to_string_lossy();
-                for (&file_id, _) in &codebase.files {
+                for &file_id in codebase.files.keys() {
                     let file_path = interner.lookup(file_id);
                     if file_path.starts_with(&*dir_str) {
                         files_to_analyze.push(file_id);
@@ -456,7 +456,7 @@ fn format_number(value: f64, decimals: usize) -> String {
     let mut grouped = String::new();
     let digits: Vec<char> = int_part.chars().collect();
     for (i, c) in digits.iter().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 && *c != '-' {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) && *c != '-' {
             grouped.push(',');
         }
         grouped.push(*c);
@@ -573,7 +573,7 @@ fn format_file_reference(
     display_root: &Path,
     use_color: bool,
 ) -> String {
-    let display_path = format_display_path(&interner.lookup(location.file_path), &display_root);
+    let display_path = format_display_path(&interner.lookup(location.file_path), display_root);
     if !use_color {
         return format!(
             "{}:{}:{}",
@@ -734,22 +734,20 @@ fn format_display_path(path: &str, root: &Path) -> String {
         return rel.to_string_lossy().replace('\\', "/");
     }
 
-    if let (Ok(canon_root), Ok(canon_path)) = (root.canonicalize(), path_buf.canonicalize()) {
-        if let Ok(rel) = canon_path.strip_prefix(&canon_root) {
+    if let (Ok(canon_root), Ok(canon_path)) = (root.canonicalize(), path_buf.canonicalize())
+        && let Ok(rel) = canon_path.strip_prefix(&canon_root) {
             return rel.to_string_lossy().replace('\\', "/");
         }
-    }
 
     if let Ok(cwd) = std::env::current_dir() {
         if let Ok(rel) = path_buf.strip_prefix(&cwd) {
             return rel.to_string_lossy().replace('\\', "/");
         }
 
-        if let (Ok(canon_cwd), Ok(canon_path)) = (cwd.canonicalize(), path_buf.canonicalize()) {
-            if let Ok(rel) = canon_path.strip_prefix(&canon_cwd) {
+        if let (Ok(canon_cwd), Ok(canon_path)) = (cwd.canonicalize(), path_buf.canonicalize())
+            && let Ok(rel) = canon_path.strip_prefix(&canon_cwd) {
                 return rel.to_string_lossy().replace('\\', "/");
             }
-        }
     }
 
     path_buf.to_string_lossy().replace('\\', "/")
@@ -830,11 +828,10 @@ fn is_excluded_from_analysis(path: &Path, root: &Path, exclude_patterns: &[Strin
                 || path_string.ends_with(&format!("/{}", dir));
         }
 
-        if let Some(rel) = &rel_string {
-            if rel == &pattern || rel.starts_with(&format!("{}/", pattern)) {
+        if let Some(rel) = &rel_string
+            && (rel == &pattern || rel.starts_with(&format!("{}/", pattern))) {
                 return true;
             }
-        }
 
         path_string.ends_with(&format!("/{}", pattern)) || file_name == pattern
     })

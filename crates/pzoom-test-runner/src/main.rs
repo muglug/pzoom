@@ -544,14 +544,13 @@ fn run_analysis_and_compare(
     config.all_constants_global = input_path.contains("/GlobalConstants/");
     // Psalm tests can pin a PHP version per test case; the pzoom port keeps it
     // in a php_version.txt sidecar next to input.php.
-    if let Some(test_dir) = Path::new(input_path).parent() {
-        if let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt")) {
+    if let Some(test_dir) = Path::new(input_path).parent()
+        && let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt")) {
             let version = version.trim();
             if !version.is_empty() {
                 config.php_version = version.to_string();
             }
         }
-    }
 
     // Builtin signatures come from Psalm's CallMap for the analysis version;
     // skip when the (reused) base codebase was already applied for it.

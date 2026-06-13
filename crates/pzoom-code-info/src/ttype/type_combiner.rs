@@ -194,7 +194,7 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
         let has_non_specific_string = combination
             .value_types
             .get("string")
-            .map_or(false, |t| matches!(t, TAtomic::TString));
+            .is_some_and(|t| matches!(t, TAtomic::TString));
 
         if !has_non_specific_string {
             for (_as_type, atomic) in combination.class_string_types {
@@ -247,7 +247,7 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
     // Add named object types
     if let Some(named_object_types) = combination.named_object_types {
         // Remove enum cases if the full enum is present
-        for (_key, atomic) in &named_object_types {
+        for atomic in named_object_types.values() {
             if let TAtomic::TEnum { name } = atomic {
                 let enum_name = *name;
                 combination.value_types.retain(|_k, v| {
@@ -440,8 +440,8 @@ fn scrape_type_properties(
             let mut iterable_key = *key_type;
             let mut iterable_value = *value_type;
 
-            if let Some(existing) = combination.builtin_type_params.remove("iterable") {
-                if existing.len() >= 2 {
+            if let Some(existing) = combination.builtin_type_params.remove("iterable")
+                && existing.len() >= 2 {
                     iterable_key =
                         combine_iterable_param(&existing[0], &iterable_key, overwrite_empty_array);
                     iterable_value = combine_iterable_param(
@@ -450,7 +450,6 @@ fn scrape_type_properties(
                         overwrite_empty_array,
                     );
                 }
-            }
 
             // iterable absorbs a generic-array side (Psalm merges array params
             // into the iterable when the iterable has docblock params or the
@@ -473,8 +472,7 @@ fn scrape_type_properties(
             // iterable absorbs Traversable (Psalm merges its params and unsets
             // both the parameterised and paramless forms).
             if let Some(traversable_params) = combination.builtin_type_params.remove("Traversable")
-            {
-                if traversable_params.len() >= 2 {
+                && traversable_params.len() >= 2 {
                     iterable_key = combine_iterable_param(
                         &iterable_key,
                         &traversable_params[0],
@@ -486,15 +484,13 @@ fn scrape_type_properties(
                         overwrite_empty_array,
                     );
                 }
-            }
             let traversable_key = format!("named#{}", StrId::TRAVERSABLE.0);
-            if let Some(ref mut named_types) = combination.named_object_types {
-                if named_types.remove(&traversable_key).is_some() {
+            if let Some(ref mut named_types) = combination.named_object_types
+                && named_types.remove(&traversable_key).is_some() {
                     // A paramless Traversable is Traversable<mixed, mixed>.
                     iterable_key = TUnion::mixed();
                     iterable_value = TUnion::mixed();
                 }
-            }
 
             combination
                 .builtin_type_params
@@ -620,10 +616,7 @@ fn scrape_type_properties(
                 }
             } else {
                 // Non-generic named object
-                if combination.named_object_types.is_none() {
-                    // Already have object top type
-                    return None;
-                }
+                combination.named_object_types.as_ref()?;
 
                 // A paramless Traversable (= Traversable<mixed, mixed>) is
                 // absorbed by an existing iterable or parameterised
@@ -859,7 +852,7 @@ fn scrape_type_properties(
             if combination
                 .value_types
                 .get("string")
-                .map_or(false, |t| {
+                .is_some_and(|t| {
                     matches!(t, TAtomic::TClassString { .. } | TAtomic::TCallableString)
                 })
             {
@@ -1057,15 +1050,12 @@ fn scrape_keyed_array_properties(
         // carry it under its `...<K, V>` params).
         if (candidate_possibly_undefined || prior_entry_possibly_undefined.unwrap_or(true))
             && fallback_key_contains(combination.objectlike_key_type.as_ref(), &key)
-        {
-            if let Some(fallback_value) = combination.objectlike_value_type.clone() {
-                if let Some(entry_type) = combination.objectlike_entries.get(&key) {
+            && let Some(fallback_value) = combination.objectlike_value_type.clone()
+                && let Some(entry_type) = combination.objectlike_entries.get(&key) {
                     let combined =
                         combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
                     combination.objectlike_entries.insert(key.clone(), combined);
                 }
-            }
-        }
 
         missing_entries.retain(|k| k != &key);
 
@@ -1109,9 +1099,9 @@ fn scrape_keyed_array_properties(
             if let Some(existing_type) = combination.objectlike_entries.get_mut(&missing_key) {
                 existing_type.possibly_undefined = true;
             }
-            if fallback_key_contains(combination.objectlike_key_type.as_ref(), &missing_key) {
-                if let Some(fallback_value) = combination.objectlike_value_type.clone() {
-                    if let Some(entry_type) = combination.objectlike_entries.get(&missing_key) {
+            if fallback_key_contains(combination.objectlike_key_type.as_ref(), &missing_key)
+                && let Some(fallback_value) = combination.objectlike_value_type.clone()
+                    && let Some(entry_type) = combination.objectlike_entries.get(&missing_key) {
                         let combined = combine_union_types(
                             entry_type,
                             &fallback_value,
@@ -1121,8 +1111,6 @@ fn scrape_keyed_array_properties(
                             .objectlike_entries
                             .insert(missing_key.clone(), combined);
                     }
-                }
-            }
         }
     }
 
@@ -1361,14 +1349,8 @@ fn scrape_literal_int_properties(
             }
             TAtomic::TIntRange { min, max } => {
                 // Expand range to include the literal value
-                let new_min = match min {
-                    Some(m) => Some((*m).min(value)),
-                    None => None, // Already unbounded below
-                };
-                let new_max = match max {
-                    Some(m) => Some((*m).max(value)),
-                    None => None, // Already unbounded above
-                };
+                let new_min = min.as_ref().map(|m| (*m).min(value));
+                let new_max = max.as_ref().map(|m| (*m).max(value));
                 combination.value_types.insert(
                     "int".to_string(),
                     TAtomic::TIntRange {
@@ -1422,17 +1404,11 @@ fn scrape_int_range_properties(
         let mut new_min = min;
         let mut new_max = max;
 
-        for (_, atomic) in ints.iter() {
+        for atomic in ints.values() {
             if let TAtomic::TLiteralInt { value } = atomic {
                 // Expand range to include literal value
-                new_min = match new_min {
-                    Some(m) => Some(m.min(*value)),
-                    None => None, // Already unbounded below
-                };
-                new_max = match new_max {
-                    Some(m) => Some(m.max(*value)),
-                    None => None, // Already unbounded above
-                };
+                new_min = new_min.map(|m| m.min(*value));
+                new_max = new_max.map(|m| m.max(*value));
             }
         }
 
@@ -1551,8 +1527,8 @@ fn handle_keyed_array_entries(
 
     // A non-empty generic side whose keys are all string literals converts
     // into definite entries (Psalm handleKeyedArrayEntries step one).
-    if let Some((generic_key_type, generic_value_type)) = combination.array_type_params.clone() {
-        if combination.array_always_filled
+    if let Some((generic_key_type, generic_value_type)) = combination.array_type_params.clone()
+        && combination.array_always_filled
             && !generic_key_type.types.is_empty()
             && generic_key_type
                 .types
@@ -1569,7 +1545,6 @@ fn handle_keyed_array_entries(
             combination.array_type_params = None;
             combination.objectlike_sealed = false;
         }
-    }
 
     // When the generic side is present and non-empty, the shape is NOT kept:
     // the entries fold into the generic array in

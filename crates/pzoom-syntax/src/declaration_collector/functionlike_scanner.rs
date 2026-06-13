@@ -304,9 +304,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         let declared_if_not_exists = {
             let short_name = func.name.value.to_ascii_lowercase();
-            self.current_not_exists_function_guards
-                .iter()
-                .any(|guarded| *guarded == short_name)
+            self.current_not_exists_function_guards.contains(&short_name)
         };
         let info = FunctionLikeInfo {
             declared_if_not_exists,

@@ -46,7 +46,7 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
         for clause in clauses.iter() {
             let mut clause_has_unknown = false;
 
-            for (key, _) in clause.possibilities.iter() {
+            for key in clause.possibilities.keys() {
                 if matches!(key, ClauseKey::Range(..)) {
                     clause_has_unknown = true;
                     break;
@@ -295,8 +295,7 @@ fn unit_propagation_round(unique_clauses: &[&Clause]) -> (FxHashSet<u32>, Vec<Cl
                 }
 
                 if let Some(matching_clause_possibilities) = clause_b.possibilities.get(clause_var)
-                {
-                    if matching_clause_possibilities.contains_key(&negated_hash) {
+                    && matching_clause_possibilities.contains_key(&negated_hash) {
                         let mut clause_var_possibilities = matching_clause_possibilities.clone();
 
                         clause_var_possibilities.retain(|k, _| k != &negated_hash);
@@ -316,7 +315,6 @@ fn unit_propagation_round(unique_clauses: &[&Clause]) -> (FxHashSet<u32>, Vec<Cl
                             added_clauses.push(updated_clause);
                         }
                     }
-                }
             }
         }
     }
@@ -368,14 +366,13 @@ pub fn get_truths_from_formula(
                         .push(vec![possible_type.clone()]);
                 }
 
-                if let Some(creating_conditional_id) = creating_conditional_id {
-                    if creating_conditional_id == clause.creating_conditional_id {
+                if let Some(creating_conditional_id) = creating_conditional_id
+                    && creating_conditional_id == clause.creating_conditional_id {
                         active_truths
                             .entry(var_name.clone())
                             .or_insert_with(FxHashSet::default)
                             .insert(truths.get(var_name).unwrap().len() - 1);
                     }
-                }
             } else {
                 if clause.generated {
                     cond_referenced_var_ids.remove(var_name);
@@ -391,14 +388,13 @@ pub fn get_truths_from_formula(
                     ],
                 );
 
-                if let Some(creating_conditional_id) = creating_conditional_id {
-                    if creating_conditional_id == clause.creating_conditional_id {
+                if let Some(creating_conditional_id) = creating_conditional_id
+                    && creating_conditional_id == clause.creating_conditional_id {
                         active_truths
                             .entry(var_name.clone())
                             .or_insert_with(FxHashSet::default)
                             .insert(truths.get(var_name).unwrap().len() - 1);
                     }
-                }
             }
         }
     }

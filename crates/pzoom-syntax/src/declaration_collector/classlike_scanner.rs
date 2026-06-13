@@ -46,18 +46,18 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             info.is_final = self.is_docblock_final(parsed);
             info.is_public_api =
                 parsed.tags.contains_key("psalm-api") || parsed.tags.contains_key("api");
-            info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.is_immutable = self.is_docblock_immutable(parsed);
             info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
-                info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
-            info.is_consistent_constructor = self.is_docblock_consistent_constructor(&parsed);
-            info.enforce_template_inheritance = self.is_docblock_consistent_templates(&parsed);
-            info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
-            info.override_method_visibility = self.is_docblock_override_method_visibility(&parsed);
+                info.is_immutable || self.is_docblock_external_mutation_free(parsed);
+            info.is_consistent_constructor = self.is_docblock_consistent_constructor(parsed);
+            info.enforce_template_inheritance = self.is_docblock_consistent_templates(parsed);
+            info.no_seal_properties = self.is_docblock_no_seal_properties(parsed);
+            info.override_method_visibility = self.is_docblock_override_method_visibility(parsed);
             info.override_property_visibility =
-                self.is_docblock_override_property_visibility(&parsed);
-            info.sealed_properties = self.get_docblock_sealed_properties(&parsed);
-            info.sealed_methods = self.get_docblock_sealed_methods(&parsed);
+                self.is_docblock_override_property_visibility(parsed);
+            info.sealed_properties = self.get_docblock_sealed_properties(parsed);
+            info.sealed_methods = self.get_docblock_sealed_methods(parsed);
             info.is_deprecated = self.is_docblock_deprecated(parsed);
             info.deprecation_message = self.get_docblock_deprecation_message(parsed);
             info.internal =
@@ -94,12 +94,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         // Parse extends (class can only extend one class)
-        if let Some(extends) = &class.extends {
-            if let Some(parent) = extends.types.first() {
+        if let Some(extends) = &class.extends
+            && let Some(parent) = extends.types.first() {
                 let parent_name = self.resolve_identifier(parent);
                 info.parent_class = Some(parent_name);
             }
-        }
 
         // Parse implements
         if let Some(implements) = &class.implements {
@@ -282,11 +281,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
         }
 
-        if let Some(extends) = &class.extends {
-            if let Some(parent) = extends.types.first() {
+        if let Some(extends) = &class.extends
+            && let Some(parent) = extends.types.first() {
                 info.parent_class = Some(self.resolve_identifier(parent));
             }
-        }
 
         if let Some(implements) = &class.implements {
             for iface in &implements.types {
@@ -326,16 +324,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .map(|docblock| crate::docblock::parse(docblock, 0));
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.is_immutable = self.is_docblock_immutable(parsed);
             info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
-                info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
-            info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
-            info.override_method_visibility = self.is_docblock_override_method_visibility(&parsed);
+                info.is_immutable || self.is_docblock_external_mutation_free(parsed);
+            info.no_seal_properties = self.is_docblock_no_seal_properties(parsed);
+            info.override_method_visibility = self.is_docblock_override_method_visibility(parsed);
             info.override_property_visibility =
-                self.is_docblock_override_property_visibility(&parsed);
-            info.sealed_properties = self.get_docblock_sealed_properties(&parsed);
-            info.sealed_methods = self.get_docblock_sealed_methods(&parsed);
+                self.is_docblock_override_property_visibility(parsed);
+            info.sealed_properties = self.get_docblock_sealed_properties(parsed);
+            info.sealed_methods = self.get_docblock_sealed_methods(parsed);
             info.is_deprecated = self.is_docblock_deprecated(parsed);
             info.deprecation_message = self.get_docblock_deprecation_message(parsed);
             info.internal =
@@ -515,16 +513,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .map(|docblock| crate::docblock::parse(docblock, 0));
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.is_immutable = self.is_docblock_immutable(parsed);
             info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
-                info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
-            info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
-            info.override_method_visibility = self.is_docblock_override_method_visibility(&parsed);
+                info.is_immutable || self.is_docblock_external_mutation_free(parsed);
+            info.no_seal_properties = self.is_docblock_no_seal_properties(parsed);
+            info.override_method_visibility = self.is_docblock_override_method_visibility(parsed);
             info.override_property_visibility =
-                self.is_docblock_override_property_visibility(&parsed);
-            info.sealed_properties = self.get_docblock_sealed_properties(&parsed);
-            info.sealed_methods = self.get_docblock_sealed_methods(&parsed);
+                self.is_docblock_override_property_visibility(parsed);
+            info.sealed_properties = self.get_docblock_sealed_properties(parsed);
+            info.sealed_methods = self.get_docblock_sealed_methods(parsed);
             info.is_deprecated = self.is_docblock_deprecated(parsed);
             info.deprecation_message = self.get_docblock_deprecation_message(parsed);
             info.internal =
@@ -672,16 +670,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .map(|docblock| crate::docblock::parse(docblock, 0));
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            info.is_immutable = self.is_docblock_immutable(&parsed);
+            info.is_immutable = self.is_docblock_immutable(parsed);
             info.specialize_instance = parsed.tags.contains_key("psalm-taint-specialize");
             info.is_external_mutation_free =
-                info.is_immutable || self.is_docblock_external_mutation_free(&parsed);
-            info.no_seal_properties = self.is_docblock_no_seal_properties(&parsed);
-            info.override_method_visibility = self.is_docblock_override_method_visibility(&parsed);
+                info.is_immutable || self.is_docblock_external_mutation_free(parsed);
+            info.no_seal_properties = self.is_docblock_no_seal_properties(parsed);
+            info.override_method_visibility = self.is_docblock_override_method_visibility(parsed);
             info.override_property_visibility =
-                self.is_docblock_override_property_visibility(&parsed);
-            info.sealed_properties = self.get_docblock_sealed_properties(&parsed);
-            info.sealed_methods = self.get_docblock_sealed_methods(&parsed);
+                self.is_docblock_override_property_visibility(parsed);
+            info.sealed_properties = self.get_docblock_sealed_properties(parsed);
+            info.sealed_methods = self.get_docblock_sealed_methods(parsed);
             info.is_deprecated = self.is_docblock_deprecated(parsed);
             info.deprecation_message = self.get_docblock_deprecation_message(parsed);
             info.internal =

@@ -109,21 +109,20 @@ impl TypeCombination {
     /// Check if this combination has only a single simple value type
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {
-        if self.value_types.len() == 1 {
-            if self.array_type_params.is_none() {
+        if self.value_types.len() == 1
+            && self.array_type_params.is_none() {
                 return self.objectlike_entries.is_empty()
                     && self.object_type_params.is_empty()
                     && self.builtin_type_params.is_empty()
-                    && self.strings.as_ref().map_or(true, |s| s.is_empty())
-                    && self.ints.as_ref().map_or(true, |i| i.is_empty())
-                    && self.floats.as_ref().map_or(true, |f| f.is_empty())
+                    && self.strings.as_ref().is_none_or(|s| s.is_empty())
+                    && self.ints.as_ref().is_none_or(|i| i.is_empty())
+                    && self.floats.as_ref().is_none_or(|f| f.is_empty())
                     && self.class_string_types.is_empty()
                     && self
                         .named_object_types
                         .as_ref()
-                        .map_or(true, |n| n.is_empty());
+                        .is_none_or(|n| n.is_empty());
             }
-        }
         false
     }
 
@@ -137,13 +136,13 @@ impl TypeCombination {
                     TAtomic::TLiteralInt { value } => value == i,
                     TAtomic::TArrayKey => true,
                     TAtomic::TIntRange { min, max } => {
-                        let in_range = match (min, max) {
+                        
+                        match (min, max) {
                             (Some(min), Some(max)) => *i >= *min && *i <= *max,
                             (Some(min), None) => *i >= *min,
                             (None, Some(max)) => *i <= *max,
                             (None, None) => true,
-                        };
-                        in_range
+                        }
                     }
                     _ => false,
                 }),

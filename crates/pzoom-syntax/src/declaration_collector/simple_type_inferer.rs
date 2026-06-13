@@ -488,12 +488,11 @@ fn infer_simple_array_type<'a>(
             ArrayElement::Variadic(variadic) => {
                 // An unpacked array re-indexes its int keys: past
                 // PHP_INT_MAX that's the same fatal as a plain value.
-                if key_overflowed {
-                    if let Some(sink) = infer_context.key_overflow_sink {
+                if key_overflowed
+                    && let Some(sink) = infer_context.key_overflow_sink {
                         let span = mago_span::HasSpan::span(variadic);
                         sink.borrow_mut().push((span.start.offset, span.end.offset));
                     }
-                }
                 return None;
             }
         }

@@ -659,13 +659,11 @@ fn merge_functionlike_info(existing: &mut FunctionLikeInfo, incoming: FunctionLi
             .as_ref()
             .is_some_and(union_has_top_level_template_param);
 
-        if existing_param.param_type.is_none()
-            || (incoming_param_has_template && !existing_param_has_template)
-        {
-            if let Some(incoming_param_type) = incoming_param.param_type {
+        if (existing_param.param_type.is_none()
+            || (incoming_param_has_template && !existing_param_has_template))
+            && let Some(incoming_param_type) = incoming_param.param_type {
                 existing_param.param_type = Some(incoming_param_type);
             }
-        }
 
         if existing_param.param_out_type.is_none() && incoming_param.param_out_type.is_some() {
             existing_param.param_out_type = incoming_param.param_out_type;

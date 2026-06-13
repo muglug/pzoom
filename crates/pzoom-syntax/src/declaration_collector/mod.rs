@@ -1069,13 +1069,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
         }
 
-        if let Some(else_statements) = if_stmt.body.else_statements() {
-            if !entered_definite_branch {
+        if let Some(else_statements) = if_stmt.body.else_statements()
+            && !entered_definite_branch {
                 for stmt in else_statements {
                     self.visit_statement(stmt);
                 }
             }
-        }
     }
 
     /// Collect function names from `!function_exists('name')` conjuncts of an
@@ -2199,8 +2198,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut is_external_mutation_free =
                         is_mutation_free || docblock_external_mutation_free;
                     let mut mutation_free_inferred = false;
-                    if !is_pure && !is_mutation_free {
-                        if let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(
+                    if !is_pure && !is_mutation_free
+                        && let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(
                             body,
                         ) = &method.body
                         {
@@ -2219,7 +2218,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                 mutation_free_inferred = !is_final && !class_info.is_final;
                             }
                         }
-                    }
 
                     let method_info = FunctionLikeInfo {
                         name: method_name,
@@ -3471,13 +3469,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 });
 
                 // Legacy PHP signatures like `A $a = null` are nullable at runtime.
-                if default_type.as_ref().is_some_and(TUnion::is_null) {
-                    if let Some(signature_type) = signature_type.as_mut() {
-                        if !signature_type.is_nullable() {
+                if default_type.as_ref().is_some_and(TUnion::is_null)
+                    && let Some(signature_type) = signature_type.as_mut()
+                        && !signature_type.is_nullable() {
                             signature_type.add_type(TAtomic::TNull);
                         }
-                    }
-                }
 
                 // Method-level `@param` docblocks are resolved during analysis, but a
                 // docblock attached directly to the parameter (e.g. a promoted property
@@ -4096,13 +4092,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .and_then(|s| s.strip_suffix('>'))
         {
             ("protected-properties-of", inner.trim())
-        } else if let Some(inner) = trimmed
-            .strip_prefix("private-properties-of<")
-            .and_then(|s| s.strip_suffix('>'))
-        {
-            ("private-properties-of", inner.trim())
         } else {
-            return None;
+            let inner = trimmed
+            .strip_prefix("private-properties-of<")
+            .and_then(|s| s.strip_suffix('>'))?;
+            ("private-properties-of", inner.trim())
         };
 
         if inner.is_empty() {
@@ -5400,23 +5394,21 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     BinaryOperator::Equal(_) | BinaryOperator::Identical(_)
                 ) =>
             {
-                if let Some(var_name) = extract_direct_var(binary.lhs) {
-                    if is_null_expression(binary.rhs) {
+                if let Some(var_name) = extract_direct_var(binary.lhs)
+                    && is_null_expression(binary.rhs) {
                         return vec![Assertion {
                             var_id: self.interner.intern(&var_name),
                             assertion_type: AssertionType::NotNull,
                         }];
                     }
-                }
 
-                if let Some(var_name) = extract_direct_var(binary.rhs) {
-                    if is_null_expression(binary.lhs) {
+                if let Some(var_name) = extract_direct_var(binary.rhs)
+                    && is_null_expression(binary.lhs) {
                         return vec![Assertion {
                             var_id: self.interner.intern(&var_name),
                             assertion_type: AssertionType::NotNull,
                         }];
                     }
-                }
 
                 Vec::new()
             }
@@ -5457,23 +5449,21 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         | BinaryOperator::NotIdentical(_)
                 ) =>
             {
-                if let Some(var_name) = extract_direct_var(binary.lhs) {
-                    if is_null_expression(binary.rhs) {
+                if let Some(var_name) = extract_direct_var(binary.lhs)
+                    && is_null_expression(binary.rhs) {
                         return vec![Assertion {
                             var_id: self.interner.intern(&var_name),
                             assertion_type: AssertionType::NotNull,
                         }];
                     }
-                }
 
-                if let Some(var_name) = extract_direct_var(binary.rhs) {
-                    if is_null_expression(binary.lhs) {
+                if let Some(var_name) = extract_direct_var(binary.rhs)
+                    && is_null_expression(binary.lhs) {
                         return vec![Assertion {
                             var_id: self.interner.intern(&var_name),
                             assertion_type: AssertionType::NotNull,
                         }];
                     }
-                }
 
                 Vec::new()
             }
@@ -5621,9 +5611,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let import_record = (source_class, imported_alias.clone());
             if !self
                 .declarations
-                .type_alias_imports
-                .iter()
-                .any(|existing| *existing == import_record)
+                .type_alias_imports.contains(&import_record)
             {
                 self.declarations.type_alias_imports.push(import_record);
             }
@@ -6396,11 +6384,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
         }
 
-        if resolved_union.is_none() {
-            // Keep the token-named reference for analysis-time resolution
-            // (or UndefinedConstant reporting).
-            return None;
-        }
+        resolved_union.as_ref()?;
 
         resolved_union
     }
@@ -7190,11 +7174,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     if key == "param" || key == "param-out" {
                         if let Some(var_name) =
                             crate::docblock::extract_var_name_from_content(content)
-                        {
-                            if typed_param_tags.contains(var_name.trim_start_matches('$')) {
+                            && typed_param_tags.contains(var_name.trim_start_matches('$')) {
                                 continue;
                             }
-                        }
 
                         // Psalm's FunctionLikeDocblockParser skips a var-only
                         // `@param $x` outright (allowEmptyVarAnnotation).
@@ -7227,15 +7209,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         continue;
                     }
 
-                    if key == "param" || key == "param-out" {
-                        if let Some(var_name) =
+                    if (key == "param" || key == "param-out")
+                        && let Some(var_name) =
                             crate::docblock::extract_var_name_from_content(content)
-                        {
-                            if typed_param_tags.contains(var_name.trim_start_matches('$')) {
+                            && typed_param_tags.contains(var_name.trim_start_matches('$')) {
                                 continue;
                             }
-                        }
-                    }
 
                     issues.push(DocblockIssue {
                         message: "Missing docblock type".to_string(),
@@ -9166,22 +9145,15 @@ impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, Vec<&'arena str>>
     ) {
         if let Expression::Access(Access::Property(property_access)) =
             assignment.lhs.unparenthesized()
-        {
-            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(var)) =
+            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(var)) =
                 property_access.object.unparenthesized()
-            {
-                if var.name == "$this" {
-                    if let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+                && var.name == "$this"
+                    && let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
                         identifier,
                     ) = &property_access.property
-                    {
-                        if !context.contains(&identifier.value) {
+                        && !context.contains(&identifier.value) {
                             context.push(identifier.value);
                         }
-                    }
-                }
-            }
-        }
     }
 }
 

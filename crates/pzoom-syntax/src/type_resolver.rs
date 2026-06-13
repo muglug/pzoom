@@ -73,7 +73,7 @@ pub fn resolve_hint(
         }),
         Hint::Nullable(nullable) => {
             let mut inner = resolve_hint(
-                &nullable.hint,
+                nullable.hint,
                 interner,
                 current_namespace,
                 self_class,
@@ -86,7 +86,7 @@ pub fn resolve_hint(
         }
         Hint::Union(union) => {
             let left = resolve_hint(
-                &union.left,
+                union.left,
                 interner,
                 current_namespace,
                 self_class,
@@ -95,7 +95,7 @@ pub fn resolve_hint(
                 resolved_names,
             );
             let right = resolve_hint(
-                &union.right,
+                union.right,
                 interner,
                 current_namespace,
                 self_class,
@@ -109,7 +109,7 @@ pub fn resolve_hint(
         }
         Hint::Intersection(intersection) => {
             let left = resolve_hint(
-                &intersection.left,
+                intersection.left,
                 interner,
                 current_namespace,
                 self_class,
@@ -118,7 +118,7 @@ pub fn resolve_hint(
                 resolved_names,
             );
             let right = resolve_hint(
-                &intersection.right,
+                intersection.right,
                 interner,
                 current_namespace,
                 self_class,
@@ -148,7 +148,7 @@ pub fn resolve_hint(
             TUnion::from_types(result_atomics)
         }
         Hint::Parenthesized(paren) => resolve_hint(
-            &paren.hint,
+            paren.hint,
             interner,
             current_namespace,
             self_class,
@@ -236,7 +236,7 @@ fn resolve_identifier_hint(
         _ => {
             // It's a class name - resolve it
             let resolved_name = resolved_names
-                .and_then(|names| names.get(&(ident.span().start.offset as u32)).copied())
+                .and_then(|names| names.get(&{ ident.span().start.offset }).copied())
                 .unwrap_or_else(|| {
                     resolve_class_name(ident, interner, current_namespace, use_aliases)
                 });
@@ -276,8 +276,8 @@ fn resolve_class_name(
         None => (name, None),
     };
 
-    if let Some(use_aliases) = use_aliases {
-        if let Some(alias_target) = use_aliases.get(&first_segment.to_ascii_lowercase()) {
+    if let Some(use_aliases) = use_aliases
+        && let Some(alias_target) = use_aliases.get(&first_segment.to_ascii_lowercase()) {
             if let Some(remainder) = remainder {
                 let target = interner.lookup(*alias_target);
                 return interner.intern(&format!("{}\\{}", target, remainder));
@@ -285,7 +285,6 @@ fn resolve_class_name(
 
             return *alias_target;
         }
-    }
 
     if let Some(ns) = current_namespace {
         // Unqualified/qualified in a namespace - prepend namespace

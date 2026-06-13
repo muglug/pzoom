@@ -140,24 +140,20 @@ pub(crate) fn verify_output_argument_type(
 ) {
     use pzoom_code_info::TAtomic;
 
-    // pzoom's TMixedFromLoopIsset stands in where Psalm's loop fixpoint
-    // infers a precise type (Psalm reports nothing on those echoes, and its
-    // `isVanillaMixed()` likewise excludes from-loop-isset mixed from
-    // mixed-flavoured reporting), so it is exempt here.
-    if t.types
-        .iter()
-        .any(|atomic| matches!(atomic, TAtomic::TMixedFromLoopIsset))
-    {
-        return;
-    }
-
-    // Psalm: a mixed input reports MixedArgument and skips the containment
-    // checks entirely. pzoom narrows this to *pure* mixed: its post-if loop
-    // merges union a concrete branch type with a placeholder mixed
-    // (`'foo'|mixed`) where Psalm marks the impossible isset branch
-    // failed_reconciliation and keeps the precise type, so a partial-mixed
-    // union here is a pzoom inference artifact, not a Psalm finding.
-    if t.is_only_mixed() {
+    // Psalm: a mixed input (`Union::hasMixed`, any mixed-family member —
+    // including from-loop-isset placeholders) reports MixedArgument and
+    // skips the containment checks entirely. Where pzoom's union carries a
+    // spurious mixed member Psalm's inference avoids (the post-if loop merge
+    // unions a concrete branch type with a placeholder where Psalm marks the
+    // impossible isset branch failed_reconciliation), the resulting report is
+    // a known pzoom divergence — kept anyway for Psalm fidelity of the check
+    // itself.
+    if t.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+        )
+    }) {
         let (line, col) = analyzer.get_line_column(pos.0);
         let origin_secondary =
             crate::data_flow::mixed_origin_secondary(analyzer, analysis_data, t, pos.0);
@@ -219,12 +215,6 @@ pub(crate) fn check_stringable(
             ) {
                 saw_scalar_coercible = true;
             }
-        } else if matches!(
-            atomic,
-            TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
-        ) {
-            // Mixed members are MixedArgument territory (handled above for
-            // pure mixed); they are never reported as InvalidArgument.
         } else if matches!(atomic, TAtomic::TNull) {
             // null coerces to "" at runtime; Psalm reports nothing for echo
             // when the union also has scalar members (PossiblyNullArgument is

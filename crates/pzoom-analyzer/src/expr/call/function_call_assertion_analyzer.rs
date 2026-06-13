@@ -233,7 +233,7 @@ pub(crate) fn apply_post_call_assertions(
                 context
                     .locals
                     .get(*var_id)
-                    .is_some_and(|var_type| var_type.has_mixed())
+                    .is_some_and(|var_type| var_type.is_mixed())
             })
             .cloned()
             .collect();
@@ -606,7 +606,7 @@ pub(crate) fn apply_assert_builtin_assertions(
                 context
                     .locals
                     .get(*var_id)
-                    .is_some_and(|var_type| var_type.has_mixed())
+                    .is_some_and(|var_type| var_type.is_mixed())
             })
             .cloned()
             .collect();

@@ -836,7 +836,7 @@ fn narrow_after_subtraction(
         {
             // Psalm clamps a mixed iterable key to array-key when converting
             // to the array side (arrays cannot have mixed keys).
-            let array_key_type = if key_type.has_mixed() {
+            let array_key_type = if key_type.is_mixed() {
                 Box::new(TUnion::array_key())
             } else {
                 key_type.clone()

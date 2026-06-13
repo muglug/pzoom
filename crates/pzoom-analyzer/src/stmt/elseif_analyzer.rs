@@ -125,7 +125,7 @@ pub(crate) fn analyze(
     let mut mixed_var_ids: Vec<String> = elseif_context
         .locals
         .iter()
-        .filter(|(_, ty)| ty.has_mixed())
+        .filter(|(_, ty)| ty.is_mixed())
         .map(|(var_id, _)| var_id.to_string())
         .collect();
 

@@ -2198,7 +2198,7 @@ fn normalize_iterator_family_params(
 /// Array keys cannot be mixed: Psalm parses `array<mixed, X>` as
 /// `array<array-key, X>`.
 fn clamp_array_key(key_type: TUnion) -> TUnion {
-    if key_type.has_mixed() {
+    if key_type.is_mixed() {
         return TUnion::array_key();
     }
 

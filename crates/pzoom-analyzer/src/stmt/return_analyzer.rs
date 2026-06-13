@@ -78,14 +78,18 @@ pub fn analyze(
         }
 
         return_type = analysis_data
-            .expr_types.get(&value_pos).cloned()
+            .expr_types
+            .get(&value_pos)
+            .cloned()
             .map(|t| (*t).clone())
             .unwrap_or_else(TUnion::mixed);
 
         if let Some(inline_annotation) =
             get_inline_return_annotation_type(analyzer, value, analysis_data.current_stmt_start)
         {
-            analysis_data.expr_types.insert(value_pos, Rc::new(inline_annotation.clone()));
+            analysis_data
+                .expr_types
+                .insert(value_pos, Rc::new(inline_annotation.clone()));
             return_type = inline_annotation;
         }
 
@@ -303,10 +307,7 @@ pub fn analyze(
             // generator-like declared types (Iterator/Traversable/iterable) the
             // returned value is discarded, so any type is accepted.
             let is_generator = analysis_data.current_function_is_generator
-                && expected_type_allows_generator_void_return(
-                    &expected_type,
-                    analyzer.interner,
-                );
+                && expected_type_allows_generator_void_return(&expected_type, analyzer.interner);
             let comparison_expected_type = if is_generator {
                 get_generator_return_type(&expected_type, analyzer.interner)
                     .unwrap_or_else(TUnion::mixed)
@@ -345,21 +346,13 @@ pub fn analyze(
                         col,
                     ));
                 }
-            }
-            // Skip mixed return validation for now - without docblock parsing,
-            // we get too many false positives from untyped parameters
-            else if return_type.is_mixed()
+            } else if return_type.is_mixed()
                 || return_type
                     .types
                     .iter()
                     .any(|t| matches!(t, TAtomic::TNonEmptyMixed))
             {
-                // Psalm: a fully-mixed return against a declared return type
-                // reports MixedReturnStatement with the value's dataflow
-                // origin. Gated on report_unused until pzoom's
-                // mixed-inference parity catches up.
-                if analyzer.config.report_unused
-                    && return_type.is_mixed()
+                if return_type.is_mixed()
                     && let Some(value_expr) = ret.value.as_ref()
                 {
                     let span = value_expr.span();
@@ -422,8 +415,7 @@ pub fn analyze(
                         // When the comparison coerced (the inferred type is a
                         // wider/less-specific version of the declared type) emit
                         // LessSpecificReturnStatement, otherwise InvalidReturnStatement.
-                        let mut comparison_result =
-                            type_comparator::TypeComparisonResult::new();
+                        let mut comparison_result = type_comparator::TypeComparisonResult::new();
                         type_comparator::union_type_comparator::is_contained_by(
                             analyzer.codebase,
                             &concrete_return_type,
@@ -438,8 +430,7 @@ pub fn analyze(
                             IssueKind::InvalidReturnStatement
                         };
 
-                        let actual_type_id =
-                            concrete_return_type.get_id(Some(analyzer.interner));
+                        let actual_type_id = concrete_return_type.get_id(Some(analyzer.interner));
                         let expected_type_id =
                             comparison_expected_type.get_id(Some(analyzer.interner));
 
@@ -498,11 +489,13 @@ pub fn analyze(
                                 line,
                                 col,
                             )
-                            .with_secondary_opt(return_declaration_secondary(
-                                analyzer,
-                                IssueKind::NullableReturnStatement,
-                                &expected_type_id,
-                            )),
+                            .with_secondary_opt(
+                                return_declaration_secondary(
+                                    analyzer,
+                                    IssueKind::NullableReturnStatement,
+                                    &expected_type_id,
+                                ),
+                            ),
                         );
                     }
 
@@ -528,11 +521,13 @@ pub fn analyze(
                                 line,
                                 col,
                             )
-                            .with_secondary_opt(return_declaration_secondary(
-                                analyzer,
-                                IssueKind::FalsableReturnStatement,
-                                &expected_type_id,
-                            )),
+                            .with_secondary_opt(
+                                return_declaration_secondary(
+                                    analyzer,
+                                    IssueKind::FalsableReturnStatement,
+                                    &expected_type_id,
+                                ),
+                            ),
                         );
                     }
                 }
@@ -545,9 +540,11 @@ pub fn analyze(
                         true,
                         true,
                     )
-                }) && ret.value.as_ref().is_some_and(|value| {
-                    should_emit_mixed_return_statement(value, context)
-                }) && let Some((start, end)) = value_issue_pos(analysis_data)
+                }) && ret
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| should_emit_mixed_return_statement(value, context))
+                    && let Some((start, end)) = value_issue_pos(analysis_data)
                 {
                     let (line, col) = analyzer.get_line_column(start);
                     analysis_data.add_issue(Issue::new(
@@ -660,8 +657,7 @@ pub fn analyze(
                     };
 
                     let actual_type_id = return_type.get_id(Some(analyzer.interner));
-                    let expected_type_id =
-                        comparison_expected_type.get_id(Some(analyzer.interner));
+                    let expected_type_id = comparison_expected_type.get_id(Some(analyzer.interner));
 
                     emit_unknown_class_string_return_literals(
                         analyzer,
@@ -685,13 +681,11 @@ pub fn analyze(
                             line,
                             col,
                         )
-                        .with_secondary_opt(
-                            return_declaration_secondary(
-                                analyzer,
-                                issue_kind,
-                                &expected_type_id,
-                            ),
-                        ),
+                        .with_secondary_opt(return_declaration_secondary(
+                            analyzer,
+                            issue_kind,
+                            &expected_type_id,
+                        )),
                     );
                 }
             }
@@ -1589,10 +1583,7 @@ fn atomic_contains_named_class(atomic: &TAtomic, class_name: StrId) -> bool {
     }
 }
 
-fn should_emit_mixed_return_statement(
-    expr: &Expression<'_>,
-    context: &BlockContext,
-) -> bool {
+fn should_emit_mixed_return_statement(expr: &Expression<'_>, context: &BlockContext) -> bool {
     if let Expression::Variable(Variable::Direct(direct)) = expr.unparenthesized() {
         let var_id = VarName::new(direct.name);
         if context.static_var_ids.contains(&var_id) {

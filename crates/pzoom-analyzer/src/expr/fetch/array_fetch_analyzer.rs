@@ -1180,7 +1180,7 @@ pub fn analyze(
     // A possibly-undefined offset is widened even when mixed (Psalm's
     // `elseif ($stmt_type->possibly_undefined)` branch adds null in place of
     // reporting PossiblyUndefinedArrayOffset inside isset()/unset()).
-    if context.inside_isset && (!result_union.has_mixed() || has_possibly_undefined_offset) {
+    if context.inside_isset && (!result_union.is_mixed() || has_possibly_undefined_offset) {
         if result_union.is_nothing() {
             // combineUnionTypes(never, null) collapses to null.
             let from_docblock = result_union.from_docblock;

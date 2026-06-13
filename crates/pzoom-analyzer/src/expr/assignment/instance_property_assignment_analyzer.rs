@@ -530,8 +530,8 @@ pub fn analyze_with_known_type(
                                     // MixedAssignment instead ("Unable to
                                     // determine the type that $x->p is being
                                     // assigned to").
-                                    if value_type.has_mixed() {
-                                        if !prop_type.has_mixed()
+                                    if value_type.is_mixed() {
+                                        if !prop_type.is_mixed()
                                             && !should_suppress_issue(
                                                 analyzer,
                                                 pos.0,

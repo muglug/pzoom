@@ -254,16 +254,6 @@ impl TUnion {
         }
     }
 
-    /// Whether this union contains a `mixed` atomic (Psalm's `Union::hasMixed`).
-    ///
-    /// NOTE: pzoom historically named this `is_mixed`, conflating Psalm's
-    /// `hasMixed` (any atomic is mixed) with `isMixed` (every atomic is mixed).
-    /// `is_mixed` retains the historical "any" semantics for its many callers;
-    /// use [`Self::is_only_mixed`] for Psalm's `isMixed`.
-    pub fn has_mixed(&self) -> bool {
-        self.types.iter().any(|t| matches!(t, TAtomic::TMixed))
-    }
-
     /// Check if this union contains the mixed type (any atomic is mixed).
     pub fn is_mixed(&self) -> bool {
         self.types

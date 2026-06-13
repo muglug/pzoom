@@ -234,13 +234,14 @@ pub fn reconcile(
                     name: StrId::STATIC,
                     ..
                 }
-                | TAtomic::TNamedObject { is_static: true, .. } => false,
-                TAtomic::TNamedObject { name, .. } => analyzer
-                    .codebase
-                    .get_class(*name)
-                    .is_some_and(|info| {
+                | TAtomic::TNamedObject {
+                    is_static: true, ..
+                } => false,
+                TAtomic::TNamedObject { name, .. } => {
+                    analyzer.codebase.get_class(*name).is_some_and(|info| {
                         info.kind != pzoom_code_info::class_like_info::ClassLikeKind::Interface
-                    }),
+                    })
+                }
                 // A repeated `$x === Enum::Case` check is always redundant
                 // (enum cases are singletons).
                 TAtomic::TEnumCase { .. } => true,
@@ -971,7 +972,9 @@ fn reconcile_exact_count(
                     // Psalm's reconcileExactlyCountable: the first `count`
                     // entries of a list are now definitely present.
                     let needs_defining = *is_list
-                        && properties.values().any(|property| property.possibly_undefined);
+                        && properties
+                            .values()
+                            .any(|property| property.possibly_undefined);
                     if needs_defining {
                         did_remove_type = true;
                         let mut defined_properties = (**properties).clone();
@@ -1468,10 +1471,7 @@ fn reconcile_has_array_key(
                 did_remove_type = true;
 
                 let mut properties = rustc_hash::FxHashMap::default();
-                properties.insert(
-                    array_key.clone(),
-                    TUnion::new(TAtomic::TNonEmptyMixed),
-                );
+                properties.insert(array_key.clone(), TUnion::new(TAtomic::TNonEmptyMixed));
 
                 result_types.push(TAtomic::TKeyedArray {
                     properties: std::sync::Arc::new(properties),
@@ -1748,7 +1748,9 @@ fn reconcile_array_access(
             TAtomic::TNamedObject {
                 name: StrId::ARRAY_ACCESS,
                 type_params: None,
-            is_static: false, remapped_params: false },
+                is_static: false,
+                remapped_params: false,
+            },
         ]);
         reconciled_type.from_docblock = existing_var_type.from_docblock;
         return reconciled_type;
@@ -1806,10 +1808,7 @@ fn types_might_match(a: &TAtomic, b: &TAtomic) -> bool {
             TAtomic::TInt,
             TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. },
         ) => true,
-        (
-            TAtomic::TLiteralInt { .. },
-            TAtomic::TInt | TAtomic::TIntRange { .. },
-        ) => true,
+        (TAtomic::TLiteralInt { .. }, TAtomic::TInt | TAtomic::TIntRange { .. }) => true,
         (TAtomic::TLiteralInt { value: v1 }, TAtomic::TLiteralInt { value: v2 }) => v1 == v2,
 
         (
@@ -1833,10 +1832,7 @@ fn types_might_match(a: &TAtomic, b: &TAtomic) -> bool {
 /// Checks if type a is more specific than type b.
 fn is_more_specific(a: &TAtomic, b: &TAtomic) -> bool {
     match (a, b) {
-        (
-            TAtomic::TLiteralInt { .. },
-            TAtomic::TInt | TAtomic::TIntRange { .. },
-        ) => true,
+        (TAtomic::TLiteralInt { .. }, TAtomic::TInt | TAtomic::TIntRange { .. }) => true,
         (TAtomic::TLiteralString { .. }, TAtomic::TString | TAtomic::TNonEmptyString) => true,
         (TAtomic::TTrue | TAtomic::TFalse, TAtomic::TBool) => true,
         (_, TAtomic::TMixed | TAtomic::TNonEmptyMixed) => true,
@@ -1851,7 +1847,8 @@ fn can_be_array_accessed(atomic: &TAtomic, allow_int_key: bool) -> bool {
         | TAtomic::TNonEmptyArray { .. }
         | TAtomic::TList { .. }
         | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. } => true,
+        | TAtomic::TKeyedArray { .. }
+        | TAtomic::TClassStringMap { .. } => true,
 
         TAtomic::TString | TAtomic::TNonEmptyString | TAtomic::TLiteralString { .. } => {
             // String access with int key

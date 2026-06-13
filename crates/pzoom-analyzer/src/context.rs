@@ -84,7 +84,7 @@ fn substitute_union(existing: &TUnion, old_type: &TUnion, new_type: Option<&TUni
 
     if let Some(new_type) = new_type {
         for atomic in expand_bool_atomics(&new_type.types) {
-            if !atomics.iter().any(|existing_atomic| *existing_atomic == atomic) {
+            if !atomics.contains(&atomic) {
                 atomics.push(atomic);
             }
         }
@@ -733,7 +733,7 @@ impl BlockContext {
         for clause in clauses {
             let mut dominated = false;
 
-            for (key, _) in clause.possibilities.iter() {
+            for key in clause.possibilities.keys() {
                 if let ClauseKey::Name(name) = key {
                     // Check if any changed var affects this clause
                     for changed_name in changed_var_ids {

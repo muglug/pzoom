@@ -96,14 +96,23 @@ DIVERGENT_EXPECTATIONS = {
 # Genuine pzoom gaps, discovered by this script. Each entry must keep
 # failing: when one starts to pass, the run fails until it is removed.
 KNOWN_FAILURES: dict[str, str] = {
-    # Unused-declaration gaps the per-file pass (--find-unused-code) does not
-    # yet cover:
-    "UnusedPsalmSuppress": "a suppress over an issue-free statement is not tracked",
-    # Scanner / declaration-level checks not yet implemented
-    "ParseError": "parse errors are recovered, not surfaced as issues",
-    # Include resolution is intentionally absent (no filesystem resolution)
-    "MissingFile": "include path resolution unimplemented",
-    "UnresolvableInclude": "include path resolution unimplemented",
+    # Reporting an unused @psalm-suppress needs issue-generation parity first:
+    # a suppression looks unused whenever pzoom fails to generate the issue
+    # Psalm would have suppressed, so blanket reporting false-positives (a
+    # corpus sweep found ~180 such gaps). Only `@psalm-suppress
+    # UnusedPsalmSuppress` by itself is reported today.
+    "UnusedPsalmSuppress": "needs issue-generation parity to avoid false positives",
+    # mago recovers from parse errors AND mis-flags several valid constructs
+    # (multiline double-quoted strings, `as final` trait aliases, multiline
+    # docblock array shapes), so surfacing its diagnostics as ParseError
+    # regresses ~5 inference tests. Revisit when mago's parser matures.
+    "ParseError": "mago parser mis-flags valid constructs; surfacing false-positives",
+    # Resolving an include path needs Psalm's getPathTo (constant folding,
+    # __DIR__/__FILE__/dirname) plus filesystem existence checks, which pzoom
+    # intentionally omits — a `require $var` heuristic would flag the common
+    # `require __DIR__ . '/autoload.php'` pattern.
+    "MissingFile": "needs include-path + filesystem resolution",
+    "UnresolvableInclude": "needs include-path resolution (getPathTo)",
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")

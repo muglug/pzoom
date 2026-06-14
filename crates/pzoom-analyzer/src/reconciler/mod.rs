@@ -1320,6 +1320,24 @@ fn apply_array_access_to_base_type(
                     })
                     .or_else(|| if has_isset { Some(isset_mixed()) } else { None })
             }
+            // An `ArrayAccess` object (e.g. `WeakMap<K, V>`) accessed by offset
+            // yields its `offsetGet` value type, so `isset($wm[$k])` then
+            // `$wm[$k]` keeps that value instead of widening to mixed.
+            TAtomic::TNamedObject { name, .. } => {
+                if let Some((_key_type, value_type)) =
+                    crate::expr::fetch::array_fetch_analyzer::resolve_array_access_method_types(
+                        analyzer, atomic, *name,
+                    )
+                {
+                    *possibly_undefined = true;
+                    Some(value_type)
+                } else if has_isset || has_inverted_isset {
+                    *possibly_undefined = true;
+                    Some(isset_mixed())
+                } else {
+                    None
+                }
+            }
             _ => {
                 if has_isset || has_inverted_isset {
                     *possibly_undefined = true;

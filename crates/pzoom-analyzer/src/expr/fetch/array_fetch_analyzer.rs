@@ -377,6 +377,21 @@ pub fn analyze(
         expand_template_union_bounds(&array_type)
     };
 
+    // Psalm's ArrayFetchAnalyzer: indexing a template array `T` with a template
+    // offset `K` whose bound is `key-of<T>` yields a deferred `T[K]`
+    // (`TTemplateIndexedAccess`) rather than widening to the element type. The
+    // deferred access resolves once `T` and `K` are bound at the call site.
+    if index_is_templated
+        && let Some(indexed_access) =
+            build_template_indexed_access(&array_type, index_type.as_ref())
+    {
+        let mut result = TUnion::new(indexed_access);
+        result.parent_nodes = array_type.parent_nodes.clone();
+        result.from_docblock = array_type.from_docblock;
+        analysis_data.expr_types.insert(pos, Rc::new(result));
+        return;
+    }
+
     // Check each type in the union
     let mut result_types: Vec<TAtomic> = Vec::new();
     let mut result_ignore_nullable = false;
@@ -2006,6 +2021,52 @@ fn merge_expected_offset_type(target: &mut Option<TUnion>, incoming: TUnion) {
             *target = Some(incoming);
         }
     }
+}
+
+/// Build a deferred `T[K]` (`TNamedObject{PZOOM_INDEXED_ACCESS, [T, K]}`) when
+/// `array_type` is a single template `T` and `index_type` a single template `K`
+/// whose bound is `key-of<T>` — mirroring Psalm's construction in
+/// `ArrayFetchAnalyzer` (which makes a `TTemplateIndexedAccess`). The result
+/// matches the docblock parser's representation of `@return T[K]` so the body's
+/// inferred type and the declared return type unify.
+fn build_template_indexed_access(array_type: &TUnion, index_type: Option<&TUnion>) -> Option<TAtomic> {
+    let TAtomic::TTemplateParam {
+        name: array_name,
+        defining_entity: array_defining_entity,
+        ..
+    } = array_type.get_single()?
+    else {
+        return None;
+    };
+
+    let index_type = index_type?;
+    let TAtomic::TTemplateParam {
+        as_type: offset_as_type,
+        ..
+    } = index_type.get_single()?
+    else {
+        return None;
+    };
+
+    // `K`'s bound must be `key-of<T>` of the same template `T` being indexed.
+    let indexes_array = offset_as_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TTemplateKeyOf { param_name, defining_entity, .. }
+                if param_name == array_name && defining_entity == array_defining_entity
+        )
+    });
+
+    if !indexes_array {
+        return None;
+    }
+
+    Some(TAtomic::TNamedObject {
+        name: StrId::PZOOM_INDEXED_ACCESS,
+        type_params: Some(vec![array_type.clone(), index_type.clone()]),
+        is_static: false,
+        remapped_params: false,
+    })
 }
 
 fn expand_template_union_bounds(union: &TUnion) -> TUnion {

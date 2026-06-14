@@ -565,28 +565,17 @@ pub fn analyze(
                 merge_expected_offset_type(&mut expected_offset_type, expected_key.clone());
                 atomic_expected_offset_types.push(expected_key);
 
-                if let Some(index_type) = index_type.as_ref() {
-                    for offset_atomic in &index_type.types {
-                        let Some(replacement) =
-                            class_string_map_offset_replacement(analyzer, offset_atomic)
-                        else {
-                            continue;
-                        };
-
-                        let mut template_result = pzoom_code_info::TemplateResult::default();
-                        crate::template::lower_bounds_insert(
-                            &mut template_result,
-                            *param_name,
-                            pzoom_code_info::GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
-                            TUnion::new(replacement),
-                        );
-                        let substituted =
-                            inferred_type_replacer::replace(value_param, &template_result);
-
-                        for t in &substituted.types {
-                            if !result_types.contains(t) {
-                                result_types.push(t.clone());
-                            }
+                if let Some(index_type) = index_type.as_ref()
+                    && let Some(substituted) = resolve_class_string_map_value(
+                        analyzer,
+                        *param_name,
+                        value_param,
+                        index_type,
+                    )
+                {
+                    for t in &substituted.types {
+                        if !result_types.contains(t) {
+                            result_types.push(t.clone());
                         }
                     }
                 }
@@ -1273,6 +1262,39 @@ pub fn analyze(
 /// deferred as the template param `T2`, `class-string<Foo>` / `Foo::class`
 /// resolve to the named object, and a bare `class-string` yields `object`.
 /// Non-class-string offsets are skipped (Psalm ignores them too).
+/// The value type of a `class-string-map` accessed at `offset_type` — the map's
+/// `value_param` with its placeholder bound to the class the offset names
+/// (Psalm's `handleArrayAccessOnClassStringMap`). Shared by the array-fetch and
+/// the isset reconciler so both resolve the map value identically.
+pub(crate) fn resolve_class_string_map_value(
+    analyzer: &StatementsAnalyzer<'_>,
+    param_name: StrId,
+    value_param: &TUnion,
+    offset_type: &TUnion,
+) -> Option<TUnion> {
+    let mut result: Option<TUnion> = None;
+    for offset_atomic in &offset_type.types {
+        let Some(replacement) = class_string_map_offset_replacement(analyzer, offset_atomic) else {
+            continue;
+        };
+
+        let mut template_result = pzoom_code_info::TemplateResult::default();
+        crate::template::lower_bounds_insert(
+            &mut template_result,
+            param_name,
+            pzoom_code_info::GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
+            TUnion::new(replacement),
+        );
+        let substituted = inferred_type_replacer::replace(value_param, &template_result);
+
+        result = Some(match result {
+            Some(existing) => combine_union_types(&existing, &substituted, false),
+            None => substituted,
+        });
+    }
+    result
+}
+
 fn class_string_map_offset_replacement(
     analyzer: &StatementsAnalyzer<'_>,
     offset_atomic: &TAtomic,

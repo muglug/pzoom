@@ -1287,6 +1287,30 @@ fn apply_array_access_to_base_type(
                 null_type.ignore_nullable_issues = base_type.ignore_nullable_issues;
                 Some(null_type)
             }
+            // A `class-string-map<T as Foo, …>` access resolves its value type
+            // against the offset's class-string (Psalm's
+            // handleArrayAccessOnClassStringMap), so `isset($map[$class])` then
+            // `$map[$class]` keeps the precise value instead of widening to
+            // mixed.
+            TAtomic::TClassStringMap {
+                param_name,
+                value_param,
+                ..
+            } => {
+                *possibly_undefined = true;
+                context
+                    .locals
+                    .get(&pzoom_code_info::VarName::new(array_key))
+                    .and_then(|offset_type| {
+                        crate::expr::fetch::array_fetch_analyzer::resolve_class_string_map_value(
+                            analyzer,
+                            *param_name,
+                            value_param,
+                            offset_type,
+                        )
+                    })
+                    .or_else(|| if has_isset { Some(isset_mixed()) } else { None })
+            }
             _ => {
                 if has_isset || has_inverted_isset {
                     *possibly_undefined = true;

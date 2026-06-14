@@ -200,6 +200,22 @@ pub(crate) fn get_inherited_method_return_type(
         }
     }
 
+    // Infer the documenting method's own templates (e.g. `@template U` bound
+    // from `@param U $value`) from the call arguments, so a `@return U` resolves
+    // to the argument type instead of defaulting to `never`.
+    for candidate_param in &candidate_method_info.params {
+        if let (Some(param_type), Some(arg_type)) =
+            (candidate_param.get_type(), param_arg_types.get(&candidate_param.name))
+        {
+            crate::template::standin_type_replacer::infer_template_replacements_from_union(
+                analyzer,
+                param_type,
+                arg_type,
+                &mut candidate_result,
+            );
+        }
+    }
+
     let resolved_return_type = function_call_analyzer::resolve_functionlike_return_type(
         analyzer,
         candidate_method_info,

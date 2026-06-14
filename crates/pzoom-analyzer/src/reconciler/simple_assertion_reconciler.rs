@@ -224,11 +224,14 @@ pub fn reconcile(
                 // A range assertion that removes nothing is redundant
                 // (Psalm's range reconcile: `assert($a < 10)` on int<min, 5>).
                 TAtomic::TIntRange { .. } => true,
-                // Scalar checks report only on runtime-derived types: Psalm's
-                // per-type reconcilers stay quiet for docblock-sourced values
-                // (a docblock can lie about a scalar).
+                // A scalar check that removes nothing is redundant. Psalm's
+                // reconcileInt/String/Bool report it whether or not the type is
+                // docblock-sourced — the provenance only picks the issue *kind*
+                // (RedundantConditionGivenDocblockType vs RedundantCondition) in
+                // triggerIssueForImpossible. A loop-narrowed value is exempt
+                // (its type is still settling across iterations).
                 TAtomic::TInt | TAtomic::TString | TAtomic::TFloat | TAtomic::TBool => {
-                    !existing_var_type.from_docblock && !inside_loop
+                    !inside_loop
                 }
                 TAtomic::TNamedObject {
                     name: StrId::STATIC,

@@ -266,6 +266,38 @@ pub fn analyze_with_known_type(
                 return;
             }
 
+            // Some members are objects and some are not (`A|int`): the write is
+            // valid for the object part but possibly wrong for the rest — Psalm's
+            // PossiblyInvalidPropertyAssignment. The object part is still
+            // processed below (no early return).
+            if has_invalid_type && has_object_type {
+                let invalid_type_id = lookup_types
+                    .iter()
+                    .find(|t| {
+                        !matches!(
+                            t,
+                            TAtomic::TNamedObject { .. }
+                                | TAtomic::TObject
+                                | TAtomic::TNull
+                                | TAtomic::TMixed
+                        )
+                    })
+                    .map(|t| t.get_id(Some(analyzer.interner)))
+                    .unwrap_or_else(|| obj_type.get_id(Some(analyzer.interner)));
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::PossiblyInvalidPropertyAssignment,
+                    format!(
+                        "Cannot assign to property ${prop_name} with possible non-object type '{invalid_type_id}'",
+                    ),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
             let prop_id = analyzer.interner.intern(prop_name);
             let has_concrete_property_candidate = lookup_types.iter().any(|atomic| {
                 let TAtomic::TNamedObject { name, .. } = atomic else {
@@ -1572,7 +1604,18 @@ fn verify_magic_set_call_arguments(
 }
 
 fn class_has_sealed_properties(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
-    class_info.sealed_properties.unwrap_or(false) && !class_info.no_seal_properties
+    if class_info.no_seal_properties {
+        return false;
+    }
+    // Psalm's `ClassLikeStorage::hasSealedProperties`:
+    //   sealed_properties ?? (user_defined ? config->seal_all_properties : false)
+    // `seal_all_properties` defaults to true, so a user-defined class with a
+    // `__set` and `@property` declarations seals its magic properties by
+    // default (an undeclared one is UndefinedMagicPropertyAssignment); a
+    // stubbed/builtin class does not seal unless it opts in explicitly.
+    class_info
+        .sealed_properties
+        .unwrap_or(!class_info.is_stubbed)
 }
 
 fn get_pseudo_property_set_type(

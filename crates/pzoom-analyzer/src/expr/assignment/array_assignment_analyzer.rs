@@ -163,7 +163,15 @@ fn analyze_assignment_chain<'a>(
     let suppress_undefined_root = match root_expr.unparenthesized() {
         Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) => {
             let root_var_id = VarName::new(direct.name);
+            // A superglobal (`$GLOBALS`, `$_GET`, …) is always defined with a
+            // known type, even on first use — don't reseed it as a fresh empty
+            // array, or `$GLOBALS['foo'][0] = …` would miss the mixed offset
+            // assignment (the root is read here at line 180 and supplies its
+            // superglobal type below).
             !context.locals.contains_key(&root_var_id)
+                && !crate::expr::variable_fetch_analyzer::is_superglobal(
+                    direct.name.strip_prefix('$').unwrap_or(direct.name),
+                )
         }
         _ => false,
     };
@@ -821,6 +829,7 @@ fn apply_assignment_to_container(
     let mut invalid_atomic_name: Option<String> = None;
     let mut undefined_offset_set_class: Option<pzoom_str::StrId> = None;
     let mut saw_mixed_assignment = false;
+    let mut saw_null = false;
 
     let offset_set_name = StrId::OFFSET_SET;
 
@@ -920,7 +929,15 @@ fn apply_assignment_to_container(
                     ));
                 }
             }
-            TAtomic::TNull | TAtomic::TFalse => {
+            TAtomic::TNull => {
+                // PHP autovivifies null into an array on offset write, but Psalm
+                // still flags it (the value was — or could be — null): a
+                // PossiblyNullArrayAssignment, emitted after the loop.
+                has_writable = true;
+                saw_null = true;
+                updated.push(create_autovivified_array_atomic(key_type, assigned_type));
+            }
+            TAtomic::TFalse => {
                 has_writable = true;
                 updated.push(create_autovivified_array_atomic(key_type, assigned_type));
             }
@@ -1097,6 +1114,23 @@ fn apply_assignment_to_container(
                 invalid_atomic_name.unwrap_or_else(|| "unknown".to_string()),
             );
         }
+    } else if emit_mixed_issues {
+        // Some union members accept the offset write while others do not —
+        // Psalm's PossiblyNull/PossiblyInvalidArrayAssignment (the array part
+        // keeps the write valid, the null/non-array part makes it possibly
+        // wrong). A null member is reported separately from a non-array one,
+        // matching Psalm's per-atomic loop in getArrayAccessTypeGivenOffset.
+        if saw_null {
+            emit_possibly_null_array_assignment_issue(analyzer, analysis_data, issue_pos);
+        }
+        if let Some(invalid_name) = invalid_atomic_name {
+            emit_possibly_invalid_array_assignment_issue(
+                analyzer,
+                analysis_data,
+                issue_pos,
+                invalid_name,
+            );
+        }
     }
 
     if updated.is_empty() {
@@ -1232,6 +1266,41 @@ fn emit_mixed_array_assignment_issue(
     analysis_data.add_issue(Issue::new(
         IssueKind::MixedArrayAssignment,
         "Cannot assign array offset on mixed type".to_string(),
+        analyzer.file_path,
+        issue_pos.0,
+        issue_pos.1,
+        line,
+        col,
+    ));
+}
+
+fn emit_possibly_null_array_assignment_issue(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    issue_pos: Pos,
+) {
+    let (line, col) = analyzer.get_line_column(issue_pos.0);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::PossiblyNullArrayAssignment,
+        "Cannot access array value on possibly null variable".to_string(),
+        analyzer.file_path,
+        issue_pos.0,
+        issue_pos.1,
+        line,
+        col,
+    ));
+}
+
+fn emit_possibly_invalid_array_assignment_issue(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    issue_pos: Pos,
+    non_array_type: String,
+) {
+    let (line, col) = analyzer.get_line_column(issue_pos.0);
+    analysis_data.add_issue(Issue::new(
+        IssueKind::PossiblyInvalidArrayAssignment,
+        format!("Cannot access array value on non-array variable of type {non_array_type}"),
         analyzer.file_path,
         issue_pos.0,
         issue_pos.1,

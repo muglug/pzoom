@@ -2274,6 +2274,18 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         ..Default::default()
                     };
 
+                    // Psalm's FunctionLikeNodeScanner: a method whose name is
+                    // already declared on this class is a DuplicateMethod.
+                    if class_info.methods.contains_key(&method_name) {
+                        class_info
+                            .duplicate_method_issues
+                            .push(pzoom_code_info::class_like_info::DuplicatePropertyIssue {
+                                property_name: method_name,
+                                start_offset: span.start.offset,
+                                end_offset: span.end.offset,
+                            });
+                    }
+
                     class_info
                         .methods
                         .insert(method_name, std::sync::Arc::new(method_info));

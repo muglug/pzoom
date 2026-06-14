@@ -214,6 +214,7 @@ pub fn analyze_with_namespace(
         }
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
@@ -290,6 +291,7 @@ pub fn analyze_anonymous_class(
         check_class_relationships(analyzer, info, context, analysis_data);
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
@@ -346,6 +348,7 @@ pub fn analyze_interface_with_namespace(
     check_interface_property_declarations(analyzer, interface_stmt, analysis_data);
 
     if let Some(info) = interface_info {
+        check_interface_extends_targets(analyzer, info, context, analysis_data);
         check_inheritor_violations(analyzer, info, analysis_data);
         check_docblock_issues(analyzer, info, analysis_data);
         check_undefined_docblock_mixins(analyzer, info, analysis_data);
@@ -360,6 +363,7 @@ pub fn analyze_interface_with_namespace(
         check_missing_interface_method_typehints(analyzer, info, analysis_data);
         check_invalid_override_attributes(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
     }
 
@@ -601,6 +605,7 @@ pub fn analyze_enum_with_namespace(
         );
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
@@ -1474,6 +1479,39 @@ fn check_private_final_methods(
                 analyzer.file_path,
                 method_info.start_offset,
                 method_info.end_offset,
+                line,
+                col,
+            ));
+        }
+    }
+}
+
+/// Psalm's `InterfaceAnalyzer`: every name in an interface's `extends` list
+/// must resolve to an interface. An existing non-interface (a class) is
+/// UndefinedInterface "X is not an interface". (For a class's `implements`
+/// list the equivalent check lives in `check_class_relationships`.)
+fn check_interface_extends_targets(
+    analyzer: &StatementsAnalyzer<'_>,
+    interface_info: &pzoom_code_info::ClassLikeInfo,
+    context: &BlockContext,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for extended_id in &interface_info.interfaces {
+        let resolved = resolve_alias_in_context(*extended_id, context);
+        if let Some(extended_info) = analyzer.codebase.get_class(resolved)
+            && extended_info.kind != ClassLikeKind::Interface
+        {
+            let (issue_start, issue_end) = class_issue_pos(interface_info);
+            let (line, col) = analyzer.get_line_column(issue_start);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::UndefinedInterface,
+                format!(
+                    "{} is not an interface",
+                    analyzer.interner.lookup(*extended_id)
+                ),
+                analyzer.file_path,
+                issue_start,
+                issue_end,
                 line,
                 col,
             ));
@@ -4784,6 +4822,7 @@ pub fn analyze_trait_with_namespace(
         );
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_docblock_issues(analyzer, info, analysis_data);
         check_undefined_docblock_mixins(analyzer, info, analysis_data);
@@ -5611,6 +5650,31 @@ fn check_duplicate_property_declarations(
             IssueKind::DuplicateProperty,
             format!(
                 "Property {}::${} has already been defined",
+                analyzer.interner.lookup(class_info.name),
+                analyzer.interner.lookup(duplicate.property_name)
+            ),
+            analyzer.file_path,
+            duplicate.start_offset,
+            duplicate.end_offset,
+            line,
+            col,
+        ));
+    }
+}
+
+/// Psalm's FunctionLikeNodeScanner DuplicateMethod, surfaced from the scan-time
+/// record (`property_name` carries the method name).
+fn check_duplicate_method_declarations(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for duplicate in &class_info.duplicate_method_issues {
+        let (line, col) = analyzer.get_line_column(duplicate.start_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::DuplicateMethod,
+            format!(
+                "Method {}::{} has already been defined",
                 analyzer.interner.lookup(class_info.name),
                 analyzer.interner.lookup(duplicate.property_name)
             ),

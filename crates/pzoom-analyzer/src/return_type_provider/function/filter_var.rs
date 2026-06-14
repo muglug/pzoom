@@ -105,6 +105,26 @@ impl FunctionReturnTypeProvider for FilterVarReturnTypeProvider {
         let null_on_failure = flags & FILTER_NULL_ON_FAILURE != 0;
         let force_array = flags & FILTER_FORCE_ARRAY != 0;
 
+        // Psalm's FilterUtils: FILTER_NULL_ON_FAILURE is redundant when a
+        // `default` option is set — the default already replaces the failure
+        // value, so the flag does nothing.
+        if null_on_failure
+            && default_type.is_some()
+            && let Some(issue_pos) = options_pos
+        {
+            let (line, col) = event.analyzer.get_line_column(issue_pos.0);
+            analysis_data.add_issue(pzoom_code_info::Issue::new(
+                pzoom_code_info::IssueKind::RedundantFlag,
+                "Redundant flag FILTER_NULL_ON_FAILURE when using the \"default\" option"
+                    .to_string(),
+                event.analyzer.file_path,
+                issue_pos.0,
+                issue_pos.1,
+                line,
+                col,
+            ));
+        }
+
         let success_atomic = match filter_id {
             FILTER_DEFAULT => TAtomic::TString,
             FILTER_VALIDATE_INT => {

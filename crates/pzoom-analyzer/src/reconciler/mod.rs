@@ -328,8 +328,14 @@ pub fn reconcile_keyed_types(
                 // docblock flag and reports RedundantConditionGivenDocblockType.
                 // Value-equality narrowing (`$x === 2`) also keeps provenance
                 // (Psalm's handleLiteralEquality filters the existing atomics).
+                // A *negated* assertion (`$x !== null`, `!is_int($x)`) is handled
+                // by SimpleNegatedAssertionReconciler, which never calls
+                // setFromDocblock(false) — so `if ($i !== null)` on a docblock
+                // `int` keeps its provenance and a later `(int) $i` is the
+                // RedundantCastGivenDocblockType variant.
                 had_active_assertion |= is_active_assertion
                     && !assertion.has_isset()
+                    && !assertion.has_negation()
                     && !matches!(
                         assertion,
                         Assertion::Truthy

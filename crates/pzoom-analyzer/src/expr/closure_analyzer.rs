@@ -156,6 +156,40 @@ pub fn analyze(
             inline_annotation,
         );
     }
+    // Psalm's FunctionLikeAnalyzer: a closure/arrow-fn parameter with no
+    // declared type is MissingClosureParamType — the closure counterpart of
+    // MissingParamType. The type counts as provided when the expected-callable
+    // *signature* declares it (`callable(E): R` fills the param, so
+    // `inferClosureParamTypeFromContext` is clean), but NOT when the body type
+    // is merely inferred from an array element behind an untyped `?callable`
+    // (Psalm reports it for `array_filter` — see its arrayFilterWithAssert
+    // test, which ignores MissingClosureParamType). An inline `@var
+    // callable(...)` annotation that declares the signature also suppresses it.
+    if inline_callable_annotation.is_none() {
+        let signature_param_types = context
+            .expected_callable_arg_types
+            .get(&closure_offset)
+            .map(extract_expected_callable_param_types)
+            .unwrap_or_default();
+        for (index, param) in closure.parameter_list.parameters.iter().enumerate() {
+            // The type counts as provided when the expected callable signature
+            // has a param at this index — even `mixed` (Psalm sets
+            // `$function_param->type` and so does not report). Only a param the
+            // signature does not cover at all stays "missing".
+            if param.hint.is_none() && signature_param_types.get(index).is_none() {
+                let span = param.variable.span();
+                add_issue(
+                    analyzer,
+                    analysis_data,
+                    span.start.offset,
+                    span.end.offset,
+                    IssueKind::MissingClosureParamType,
+                    format!("Parameter {} has no provided type", param.variable.name),
+                );
+            }
+        }
+    }
+
     // Psalm's closure storage keeps only the DECLARED param types — context-
     // seeded types power the body analysis, but an untyped param stays mixed
     // for callable-compatibility comparison (input param type null -> mixed).

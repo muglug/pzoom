@@ -985,8 +985,12 @@ fn suppresses_issue(token: &str, issue_name: &str) -> bool {
         "MixedReturnStatement" | "MixedInferredReturnType" => {
             return issue_name == "MixedReturnStatement";
         }
+        // A `*GivenDocblockType` issue is distinct from its base kind (Psalm
+        // treats them as separate issues): suppressing one must not suppress
+        // the other. pzoom emits these directly where the redundancy follows
+        // from a docblock-provided type, so an exact match is correct.
         "RedundantCastGivenDocblockType" => {
-            return issue_name == "RedundantCast";
+            return issue_name == "RedundantCastGivenDocblockType";
         }
         "RedundantConditionGivenDocblockType" => {
             return issue_name == "RedundantConditionGivenDocblockType";

@@ -63,6 +63,29 @@ pub fn analyze(
     // We need this before analyzing arguments to predeclare by-ref out variables.
     let (func_name, is_fq, name_offset) = get_function_name(func_call.function);
 
+    // Psalm's FunctionCallAnalyzer: a dynamic call `$name()` whose callee is a
+    // variable/expression (no literal function name) is an INPUT_CALLABLE taint
+    // sink — tainted text used as the invoked function name is a
+    // TaintedCallable. Connect the callee's dataflow to a `variable-call` sink.
+    if analyzer.config.taint_analysis
+        && func_name.is_none()
+        && let Some(callee_type) = analysis_data.expr_types.get(&callee_pos).cloned()
+        && !callee_type.parent_nodes.is_empty()
+    {
+        let callee_span = mago_span::HasSpan::span(func_call.function);
+        crate::expr::output_constructs::add_construct_argument_dataflow(
+            analyzer,
+            "variable-call",
+            &[pzoom_code_info::data_flow::node::SinkType::Callable],
+            0,
+            callee_pos,
+            &callee_type,
+            (callee_span.start.offset, callee_span.end.offset),
+            analysis_data,
+            context,
+        );
+    }
+
     // func_get_args() implicitly reads every parameter of the enclosing
     // function-like (Psalm skips unused-param reporting for such bodies).
     if func_name.is_some_and(|name| name.eq_ignore_ascii_case("func_get_args"))

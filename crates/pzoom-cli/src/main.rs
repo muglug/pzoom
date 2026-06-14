@@ -37,6 +37,15 @@ struct Cli {
     /// Show only errors (no info or warnings)
     #[arg(long)]
     errors_only: bool,
+
+    /// Enable the unused-declaration pass (UnusedClass/Method/Property, …).
+    /// pzoom aggregates references per file rather than codebase-wide, so this
+    /// is an opt-in: it is sound when the analyzed set is self-contained (e.g.
+    /// a single file), but over-reports a class/method referenced only from
+    /// another file. `findUnusedCode` in psalm.xml stays limited to the
+    /// unused-variable half until references are aggregated codebase-wide.
+    #[arg(long)]
+    find_unused_code: bool,
 }
 
 #[derive(Subcommand)]
@@ -92,6 +101,10 @@ fn load_config(cli: &Cli, paths: &[PathBuf]) -> Config {
 
     if let Some(threads) = cli.threads {
         config.threads = threads;
+    }
+
+    if cli.find_unused_code {
+        config.find_unused_code = true;
     }
 
     config

@@ -96,27 +96,16 @@ DIVERGENT_EXPECTATIONS = {
 # Genuine pzoom gaps, discovered by this script. Each entry must keep
 # failing: when one starts to pass, the run fails until it is removed.
 KNOWN_FAILURES: dict[str, str] = {
-    # findUnusedCode's declaration pass needs whole-program reference
-    # aggregation; pzoom only tracks references per file, so psalm.xml's
-    # findUnusedCode deliberately doesn't enable it (see psalm_config.rs).
-    "ClassMustBeFinal": "needs cross-file unused-code aggregation",
-    "PossiblyUnusedMethod": "needs cross-file unused-code aggregation",
-    "PossiblyUnusedParam": "needs cross-file unused-code aggregation",
-    "PossiblyUnusedProperty": "needs cross-file unused-code aggregation",
-    "PossiblyUnusedReturnValue": "needs cross-file unused-code aggregation",
-    "UnusedClass": "needs cross-file unused-code aggregation",
-    "UnusedConstructor": "needs cross-file unused-code aggregation",
-    "UnusedDocblockParam": "gated on findUnusedCode (not wired, see above)",
-    "UnusedMethod": "needs cross-file unused-code aggregation",
-    "UnusedProperty": "needs cross-file unused-code aggregation",
-    "UnusedPsalmSuppress": "suppress-tracking only covers filter-pass matches",
-    "UnusedReturnValue": "needs cross-file unused-code aggregation",
+    # Unused-declaration gaps the per-file pass (--find-unused-code) does not
+    # yet cover:
+    "UnusedConstructor": "constructor is skipped by the unused-method pass",
+    "UnusedReturnValue": "no call-site return-value usage tracking",
+    "UnusedPsalmSuppress": "a suppress over an issue-free statement is not tracked",
     # Scanner / declaration-level checks not yet implemented
     "ParseError": "parse errors are recovered, not surfaced as issues",
     # Include resolution is intentionally absent (no filesystem resolution)
     "MissingFile": "include path resolution unimplemented",
     "UnresolvableInclude": "include path resolution unimplemented",
-    # Misc unimplemented checks
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")
@@ -138,6 +127,18 @@ def extract_first_php_block(md_path: Path) -> tuple[str, str | None]:
     return issue, None
 
 
+def needs_unused_code(issue: str) -> bool:
+    """Mirror Psalm DocumentationTest's `check_references`: these issues are
+    only emitted once the unused-declaration pass runs (Psalm's
+    reportUnusedCode + consolidateAnalyzedData)."""
+    return (
+        issue == "ClassMustBeFinal"
+        or "Unused" in issue
+        or "Unevaluated" in issue
+        or "Unnecessary" in issue
+    )
+
+
 def build_config(issue: str) -> str:
     attrs = ['errorLevel="1"']
     if issue in PHP_83:
@@ -146,13 +147,7 @@ def build_config(issue: str) -> str:
         attrs.append('phpVersion="8.1"')
     else:
         attrs.append('phpVersion="8.0"')
-    check_references = (
-        issue == "ClassMustBeFinal"
-        or "Unused" in issue
-        or "Unevaluated" in issue
-        or "Unnecessary" in issue
-    )
-    if check_references:
+    if needs_unused_code(issue):
         attrs.append('findUnusedCode="true"')
     if issue == "UnusedPsalmSuppress":
         attrs.append('findUnusedPsalmSuppress="true"')
@@ -177,8 +172,14 @@ def run_one(pzoom: Path, issue: str, code: str) -> tuple[str, bool, str]:
         tmp_path = Path(tmp)
         (tmp_path / "psalm.xml").write_text(build_config(issue), encoding="utf-8")
         (tmp_path / "input.php").write_text(code + "\n", encoding="utf-8")
+        cmd = [str(pzoom), "--threads", "1"]
+        # The doc snippet is a single self-contained file, so pzoom's per-file
+        # reference tracking is whole-program here — enable the unused-declaration
+        # pass that `findUnusedCode` leaves off for real multi-file projects.
+        if needs_unused_code(issue):
+            cmd.append("--find-unused-code")
         proc = subprocess.run(
-            [str(pzoom), "--threads", "1"],
+            cmd,
             cwd=tmp_path,
             capture_output=True,
             text=True,

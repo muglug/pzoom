@@ -8,7 +8,7 @@ use pzoom_code_info::{
     TAtomic, TUnion,
 };
 use pzoom_str::StrId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 use crate::data_flow::make_data_flow_node_position;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
@@ -23,7 +23,6 @@ use super::method_call_analyzer::*;
 
 use super::atomic_method_call_analyzer::*;
 use super::missing_method_call_handler::*;
-use pzoom_code_info::TemplateResult;
 
 /// Port of Hakana `method_call_return_type_fetcher::add_dataflow`
 /// (function-body branch; the whole-program branch builds taint-specific
@@ -499,49 +498,6 @@ pub(crate) fn localize_class_union_type(
     function_call_analyzer::replace_templates_in_union(union, &template_result)
 }
 
-pub(crate) fn resolve_effective_method_return_type(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_id: StrId,
-    method_name: &str,
-    method_info: &pzoom_code_info::FunctionLikeInfo,
-    template_result: &TemplateResult,
-    param_arg_types: &FxHashMap<StrId, TUnion>,
-    arg_count: usize,
-) -> TUnion {
-    let own_return_type = function_call_analyzer::resolve_functionlike_return_type(
-        analyzer,
-        method_info,
-        template_result,
-        param_arg_types,
-        arg_count,
-    );
-
-    let inherited_return_type = get_inherited_method_return_type(
-        analyzer,
-        class_id,
-        method_name,
-        template_result,
-        param_arg_types,
-        arg_count,
-    );
-
-    match (own_return_type, inherited_return_type) {
-        (Some(own_return_type), Some(inherited_return_type))
-            if should_prefer_inherited_return(
-                analyzer,
-                method_info,
-                &own_return_type,
-                &inherited_return_type,
-            ) =>
-        {
-            inherited_return_type
-        }
-        (Some(own_return_type), _) => own_return_type,
-        (None, Some(inherited_return_type)) => inherited_return_type,
-        (None, None) => TUnion::mixed(),
-    }
-}
-
 pub(crate) fn merge_receiver_intersection_into_return_type(
     localized_return_type: &TUnion,
     receiver_type: &TUnion,
@@ -578,131 +534,6 @@ pub(crate) fn merge_receiver_intersection_into_return_type(
     } else {
         localized_return_type.clone()
     }
-}
-
-pub(crate) fn get_inherited_method_return_type(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_id: StrId,
-    method_name: &str,
-    template_result: &TemplateResult,
-    param_arg_types: &FxHashMap<StrId, TUnion>,
-    arg_count: usize,
-) -> Option<TUnion> {
-    let class_info = analyzer.codebase.get_class(class_id)?;
-    let mut candidate_class_ids = Vec::new();
-
-    if let Some(parent_class_id) = class_info.parent_class {
-        candidate_class_ids.push(parent_class_id);
-    }
-
-    candidate_class_ids.extend(
-        class_info
-            .all_parent_classes
-            .iter()
-            .copied()
-            .filter(|parent_class_id| Some(*parent_class_id) != class_info.parent_class),
-    );
-    candidate_class_ids.extend(class_info.interfaces.iter().copied());
-    candidate_class_ids.extend(class_info.all_parent_interfaces.iter().copied());
-
-    // Prefer the ancestor that *documents* the method with a docblock return
-    // type (mirrors Psalm's `documenting_method_ids`): a nearer ancestor that
-    // merely restates the native signature (e.g. an abstract `NodeAbstract`
-    // re-declaring `getAttributes(): array`) must not shadow an interface/parent
-    // whose docblock gives the precise type (`@return array<string, mixed>`).
-    // Fall back to the nearest ancestor carrying any return type when none
-    // document it.
-    {
-        let mut documenting: Option<StrId> = None;
-        let mut any_return: Option<StrId> = None;
-        let mut seen_pick = FxHashSet::default();
-        for candidate_class_id in &candidate_class_ids {
-            if !seen_pick.insert(*candidate_class_id) {
-                continue;
-            }
-            let Some(candidate_class_info) = analyzer.codebase.get_class(*candidate_class_id)
-            else {
-                continue;
-            };
-            let Some(candidate_method_info) =
-                get_method_info(analyzer, candidate_class_info, method_name)
-            else {
-                continue;
-            };
-            if candidate_method_info.return_type.is_some() {
-                documenting = Some(*candidate_class_id);
-                break;
-            }
-            if any_return.is_none() && candidate_method_info.get_return_type().is_some() {
-                any_return = Some(*candidate_class_id);
-            }
-        }
-        candidate_class_ids = vec![documenting.or(any_return)?];
-    }
-
-    let mut seen = FxHashSet::default();
-
-    for candidate_class_id in candidate_class_ids {
-        if !seen.insert(candidate_class_id) {
-            continue;
-        }
-
-        let Some(candidate_class_info) = analyzer.codebase.get_class(candidate_class_id) else {
-            continue;
-        };
-
-        let Some(candidate_method_info) =
-            get_method_info(analyzer, candidate_class_info, method_name)
-        else {
-            continue;
-        };
-
-        if candidate_method_info.get_return_type().is_none() {
-            continue;
-        }
-
-        let mut candidate_result = template_result.clone();
-        for (template_name, entries) in
-            function_call_analyzer::get_class_template_defaults(candidate_class_info).template_types
-        {
-            candidate_result.template_types.entry(template_name).or_insert(entries);
-        }
-        for (template_name, entries) in
-            function_call_analyzer::get_template_defaults(candidate_method_info).template_types
-        {
-            candidate_result.template_types.entry(template_name).or_insert(entries);
-        }
-
-        if let Some(candidate_template_map) =
-            class_info.template_extended_params.get(&candidate_class_id)
-        {
-            for (template_name, mapped_type) in candidate_template_map {
-                let resolved_mapped_type = function_call_analyzer::replace_templates_in_union(
-                    mapped_type,
-                    &candidate_result,
-                );
-                crate::template::lower_bounds_insert(
-                    &mut candidate_result,
-                    *template_name,
-                    pzoom_code_info::GenericParent::ClassLike(candidate_class_id),
-                    resolved_mapped_type,
-                );
-            }
-        }
-
-        let resolved_return_type = function_call_analyzer::resolve_functionlike_return_type(
-            analyzer,
-            candidate_method_info,
-            &candidate_result,
-            param_arg_types,
-            arg_count,
-        )
-        .unwrap_or_else(TUnion::mixed);
-
-        return Some(resolved_return_type);
-    }
-
-    None
 }
 
 /// The documenting ancestor's method-level `@template` declarations: a method
@@ -874,63 +705,6 @@ pub(crate) fn method_has_docblock_param_types(method_info: &pzoom_code_info::Fun
         .params
         .iter()
         .any(|param| param.has_docblock_type)
-}
-
-fn should_prefer_inherited_return(
-    analyzer: &StatementsAnalyzer<'_>,
-    method_info: &pzoom_code_info::FunctionLikeInfo,
-    own_return_type: &TUnion,
-    inherited_return_type: &TUnion,
-) -> bool {
-    // A method with its own docblock return type should not defer to an inherited one.
-    if method_info.return_type.is_some() {
-        return false;
-    }
-
-    if own_return_type.is_mixed() && !inherited_return_type.is_mixed() {
-        return true;
-    }
-
-    if let (
-        Some(TAtomic::TNamedObject {
-            name: own_name,
-            type_params: own_params,
-        .. }),
-        Some(TAtomic::TNamedObject {
-            name: inherited_name,
-            type_params: inherited_params,
-        .. }),
-    ) = (
-        own_return_type.get_single(),
-        inherited_return_type.get_single(),
-    ) && own_name == inherited_name
-        && own_params.is_none()
-        && inherited_params.is_some()
-    {
-        return true;
-    }
-
-    let mut inherited_to_own = TypeComparisonResult::new();
-    if !union_type_comparator::is_contained_by(
-        analyzer.codebase,
-        inherited_return_type,
-        own_return_type,
-        false,
-        false,
-        &mut inherited_to_own,
-    ) {
-        return false;
-    }
-
-    let mut own_to_inherited = TypeComparisonResult::new();
-    !union_type_comparator::is_contained_by(
-        analyzer.codebase,
-        own_return_type,
-        inherited_return_type,
-        false,
-        false,
-        &mut own_to_inherited,
-    )
 }
 
 /// Like [`expand_template_object_union`], but a receiver that is a type

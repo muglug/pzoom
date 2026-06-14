@@ -13,7 +13,7 @@
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
 use pzoom_code_info::codebase_info::ConstantInfo;
-use pzoom_code_info::{CodebaseInfo, GlobalDefineValue, TAtomic, TUnion};
+use pzoom_code_info::{CodebaseInfo, GlobalDefineValue, MethodIdentifier, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use indexmap::IndexMap;
@@ -976,11 +976,12 @@ fn populate_classlike_storage(classlike_name: &StrId, codebase: &mut CodebaseInf
     }
 
     // Psalm's documenting-method inheritance (Populator's
-    // documenting_method_ids + Methods::getMethodReturnType): a method
-    // redeclared without docblock types inherits an overridden method's
-    // docblock return type when it is more specific than the redeclared
-    // signature.
-    inherit_documenting_return_types(&mut storage, codebase);
+    // `ClassLikeStorage::$documenting_method_ids`): record, per appearing method
+    // name, the ancestor `MethodIdentifier` whose docblock documents the return
+    // type, and flag the overriding method as documenting-inherited. The
+    // effective return type is resolved lazily — never baked — by
+    // `Methods::getMethodReturnType` (pzoom's method-call return-type fetcher).
+    populate_documenting_method_ids(&mut storage, codebase);
 
     // Class-level `@psalm-taint-specialize` (Psalm Populator): every
     // non-static method's taints are tracked per call site.
@@ -1025,235 +1026,112 @@ fn populate_classlike_storage(classlike_name: &StrId, codebase: &mut CodebaseInf
     codebase.classlike_infos.insert(*classlike_name, storage);
 }
 
-/// Port of Psalm's docblock inheritance for methods: when a method overrides
-/// an ancestor method, declares no docblock types of its own, and the
-/// ancestor's docblock return type is *more specific* than the redeclared
-/// signature, the ancestor's docblock return type becomes the method's
-/// effective return type (Psalm resolves this lazily in
-/// `Methods::getMethodReturnType` via `documenting_method_ids`; pzoom
-/// resolves it here, once, into the stored method).
+/// Port of the documenting-method section of Psalm's
+/// `Populator::populateOverriddenMethods`
+/// (`ClassLikeStorage::$documenting_method_ids`): for each method that overrides
+/// ancestors but declares no docblock types of its own, record the ancestor
+/// `MethodIdentifier` whose docblock documents the return type, and flag the
+/// overriding method as documenting-inherited.
 ///
-/// Types mentioning `self`/`static`/`parent` or template params are skipped —
-/// they need call-site context that a populate-time copy cannot supply.
-fn inherit_documenting_return_types(storage: &mut ClassLikeInfo, codebase: &CodebaseInfo) {
-    use pzoom_analyzer::type_comparator::union_type_comparator;
+/// The effective return type is never baked into storage; it is resolved
+/// lazily wherever needed by `Methods::getMethodReturnType` (pzoom's method-call
+/// return-type fetcher), exactly as Psalm does.
+fn populate_documenting_method_ids(storage: &mut ClassLikeInfo, codebase: &CodebaseInfo) {
+    storage.documenting_method_ids.clear();
 
-    let method_names: Vec<StrId> = storage.overridden_method_ids.keys().copied().collect();
+    fn has_docblock_return(method: &pzoom_code_info::FunctionLikeInfo) -> bool {
+        method.return_type.is_some()
+    }
+    fn has_docblock_params(method: &pzoom_code_info::FunctionLikeInfo) -> bool {
+        method.params.iter().any(|param| param.has_docblock_type)
+    }
+
+    // Deterministic iteration over method names (FxHashMap is unordered).
+    let mut method_names: Vec<StrId> = storage.overridden_method_ids.keys().copied().collect();
+    method_names.sort_by_key(|method_name| method_name.0);
+
+    // Method names whose documenting id was unset by a conflicting interface —
+    // mirrors Psalm's `inherited_return_type === null` guard, which skips a
+    // method once unset.
+    let mut documenting_unset: FxHashSet<StrId> = FxHashSet::default();
 
     for method_name in method_names {
-        if storage.declaring_method_ids.get(&method_name) != Some(&storage.name) {
-            continue;
-        }
         let Some(child) = storage.methods.get(&method_name) else {
             continue;
         };
-        if child.return_type.is_some()
-            || child
-                .params
-                .iter()
-                .any(|param| param.param_type.is_some())
-        {
+        if has_docblock_return(child) || has_docblock_params(child) {
             continue;
         }
-        let candidate = child.signature_return_type.clone();
 
-        let mut overridden_classes: Vec<StrId> = storage.overridden_method_ids[&method_name]
+        // Deterministic ancestor order for the interface tie-break below.
+        let mut declaring_classes: Vec<StrId> = storage.overridden_method_ids[&method_name]
             .iter()
             .copied()
             .collect();
-        overridden_classes.sort_by_key(|class_id| class_id.0);
+        declaring_classes.sort_by_key(|class_id| class_id.0);
 
-        // Conflicting docblocks between unrelated ancestors cancel the
-        // inheritance (Psalm's documenting-method conflict rule unsets the
-        // documenting id when two interfaces disagree).
-        let mut distinct_overridden_ids: Vec<String> = Vec::new();
-        for overridden_class in &overridden_classes {
-            if let Some(parent_storage) = codebase.classlike_infos.get(overridden_class)
-                && let Some(parent_method) = parent_storage.methods.get(&method_name)
-                && let Some(overridden_return) = parent_method.return_type.as_ref()
-            {
-                let id = overridden_return.get_id(None);
-                if !distinct_overridden_ids.contains(&id) {
-                    distinct_overridden_ids.push(id);
-                }
-            }
-        }
-        if distinct_overridden_ids.len() > 1 {
-            continue;
-        }
-
-        // Psalm's Populator marks the method as documenting-inherited whenever
-        // any ancestor declares docblock types and the child declares none —
-        // even when the type itself cannot be copied (e.g. it mentions
-        // templates). The flag suppresses docblock return comparisons against
-        // other ancestors in MethodComparator.
-        let ancestor_documents = overridden_classes.iter().any(|overridden_class| {
-            codebase
-                .classlike_infos
-                .get(overridden_class)
-                .and_then(|parent_storage| parent_storage.methods.get(&method_name))
-                .is_some_and(|parent_method| {
-                    parent_method.return_type.is_some()
-                        || parent_method
-                            .params
-                            .iter()
-                            .any(|param| param.param_type.is_some())
-                })
-        });
-
-        let mut inherited: Option<TUnion> = None;
-        for overridden_class in overridden_classes {
-            let Some(parent_storage) = codebase.classlike_infos.get(&overridden_class) else {
-                continue;
-            };
-            let Some(parent_method) = parent_storage.methods.get(&method_name) else {
-                continue;
-            };
-            let Some(overridden_return) = parent_method.return_type.as_ref() else {
-                continue;
-            };
-            // A `static::CONST` return resolved against the ancestor: the
-            // inheritor's own constant may differ, so the copied value would
-            // be wrong (Psalm resolves these late).
-            if parent_method.return_type_mentions_static_const {
-                continue;
-            }
-            // Templates defined by the ancestor resolve through this class's
-            // extended params (Psalm substitutes them at analysis time via
-            // ClassTemplateParamCollector; pzoom resolves the concrete
-            // @template-extends/@template-implements args here at populate
-            // time). Types still needing analysis context after substitution
-            // (self/static/unresolved templates) cannot be copied.
-            let overridden_return =
-                pzoom_analyzer::stmt::class_analyzer::replace_extended_templates_in_union(
-                    overridden_return,
-                    &storage.template_extended_params,
-                );
-            if union_needs_analysis_context_for(&overridden_return, Some(storage.name)) {
-                continue;
-            }
-
-            match candidate.as_ref() {
-                None => inherited = Some(overridden_return.clone()),
-                Some(candidate) => {
-                    if candidate.get_id(None) == overridden_return.get_id(None) {
-                        break;
-                    }
-                    let mut result_forward = Default::default();
-                    let overridden_in_candidate = union_type_comparator::is_contained_by(
-                        codebase,
-                        &overridden_return,
-                        candidate,
-                        false,
-                        false,
-                        &mut result_forward,
-                    );
-                    let mut result_backward = Default::default();
-                    let candidate_in_overridden = union_type_comparator::is_contained_by(
-                        codebase,
-                        candidate,
-                        &overridden_return,
-                        false,
-                        false,
-                        &mut result_backward,
-                    );
-                    if overridden_in_candidate && !candidate_in_overridden {
-                        inherited = Some(overridden_return.clone());
-                    }
-                }
-            }
-            if inherited.is_some() {
+        for declaring_class in declaring_classes {
+            if documenting_unset.contains(&method_name) {
                 break;
             }
-        }
 
-        if inherited.is_some() || ancestor_documents {
-            if let Some(method_arc) = storage.methods.get_mut(&method_name) {
-                let method = std::sync::Arc::make_mut(method_arc);
-                if let Some(inherited) = inherited {
-                    method.return_type = Some(inherited);
+            let Some(declaring_storage) = codebase.classlike_infos.get(&declaring_class) else {
+                continue;
+            };
+            let Some(declaring_method) = declaring_storage
+                .methods
+                .get(&method_name)
+                .map(|method| method.as_ref())
+                .or_else(|| declaring_storage.pseudo_methods.get(&method_name))
+                .or_else(|| declaring_storage.pseudo_static_methods.get(&method_name))
+            else {
+                continue;
+            };
+
+            if !has_docblock_return(declaring_method) && !has_docblock_params(declaring_method) {
+                continue;
+            }
+
+            let declaring_method_id = MethodIdentifier(declaring_class, method_name);
+
+            match storage.documenting_method_ids.get(&method_name).copied() {
+                None => {
+                    storage
+                        .documenting_method_ids
+                        .insert(method_name, declaring_method_id);
                 }
-                method.inherited_return_type = true;
+                Some(existing) if existing == declaring_method_id => {}
+                Some(existing) => {
+                    // A nearer declaring interface (the new declaring class
+                    // extends the current documenting class) supersedes it.
+                    if declaring_storage.interfaces.contains(&existing.0) {
+                        storage
+                            .documenting_method_ids
+                            .insert(method_name, declaring_method_id);
+                    } else if let Some(documenting_storage) =
+                        codebase.classlike_infos.get(&existing.0)
+                        && !documenting_storage.interfaces.contains(&declaring_class)
+                        && documenting_storage.kind == ClassLikeKind::Interface
+                    {
+                        // Two unrelated interfaces disagree — cancel the
+                        // inheritance (Psalm unsets the documenting id).
+                        storage.documenting_method_ids.remove(&method_name);
+                        documenting_unset.insert(method_name);
+                    }
+                }
             }
         }
     }
-}
 
-/// Like [`union_needs_analysis_context`], but template params defined by
-/// `own_class` itself are usable in that class's copied member types (e.g. an
-/// inherited `@return class-string<T>` substituted to the child's own
-/// template via @template-implements) and don't block the copy.
-fn union_needs_analysis_context_for(union: &TUnion, own_class: Option<StrId>) -> bool {
-    fn atomic_needs_context(atomic: &TAtomic, own_class: Option<StrId>) -> bool {
-        match atomic {
-            TAtomic::TTemplateParam {
-                defining_entity, ..
-            } => own_class.map(pzoom_code_info::GenericParent::ClassLike) != Some(*defining_entity),
-            TAtomic::TTemplateKeyOf { .. } => true,
-            TAtomic::TNamedObject {
-                name,
-                type_params,
-                is_static,
-                ..
-            } => {
-                *is_static
-                    || *name == StrId::SELF
-                    || *name == StrId::STATIC
-                    || *name == StrId::PARENT
-                    || type_params.as_ref().is_some_and(|params| {
-                        params
-                            .iter()
-                            .any(|param| union_needs_analysis_context_for(param, own_class))
-                    })
-            }
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => {
-                union_needs_analysis_context_for(key_type, own_class)
-                    || union_needs_analysis_context_for(value_type, own_class)
-            }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                union_needs_analysis_context_for(value_type, own_class)
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
-                ..
-            } => {
-                properties
-                    .values()
-                    .any(|value| union_needs_analysis_context_for(value, own_class))
-                    || fallback_key_type
-                        .as_deref()
-                        .is_some_and(|key| union_needs_analysis_context_for(key, own_class))
-                    || fallback_value_type
-                        .as_deref()
-                        .is_some_and(|value| union_needs_analysis_context_for(value, own_class))
-            }
-            TAtomic::TIterable {
-                key_type,
-                value_type,
-            } => {
-                union_needs_analysis_context_for(key_type, own_class)
-                    || union_needs_analysis_context_for(value_type, own_class)
-            }
-            TAtomic::TClassString {
-                as_type: Some(inner),
-            } => atomic_needs_context(inner, own_class),
-            _ => false,
+    // Psalm sets `MethodStorage::$inherited_return_type = true` for every method
+    // that ends up with a documenting id (it gates ReturnTypeAnalyzer's external
+    // type check and MethodComparator's docblock-return comparison).
+    let documenting_names: Vec<StrId> = storage.documenting_method_ids.keys().copied().collect();
+    for method_name in documenting_names {
+        if let Some(method_arc) = storage.methods.get_mut(&method_name) {
+            std::sync::Arc::make_mut(method_arc).inherited_return_type = true;
         }
     }
-
-    union
-        .types
-        .iter()
-        .any(|atomic| atomic_needs_context(atomic, own_class))
 }
 
 /// Populate data from a used trait.

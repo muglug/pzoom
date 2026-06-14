@@ -3453,7 +3453,7 @@ fn compare_method_to_guide(
         && implementer_method.return_type.is_none()
         && implementer_method.declaring_class == Some(class_info.name)
     {
-        get_specialized_inherited_return_type(analyzer, class_info, method_name)
+        crate::methods::get_specialized_inherited_return_type(analyzer, class_info, method_name)
     } else {
         None
     };
@@ -6795,25 +6795,50 @@ fn analyze_method(
 
     // Create a function-like info wrapper for the method
     let func_info = method_info.map(|mi| (**mi).clone()).map(|mut mi| {
-        if mi.return_type.is_none() && mi.signature_return_type.is_none() {
-            if let Some(current_class_info) = class_info {
-                if let Some(inherited_return_type) = get_specialized_inherited_return_type(
-                    analyzer,
-                    current_class_info,
-                    method_name_id,
-                ) {
-                    let inherited_return_type = if current_class_info.is_final {
-                        localize_special_class_names_for_final_class(
-                            &inherited_return_type,
-                            current_class_info.name,
-                            current_class_info.parent_class,
+        if mi.return_type.is_none()
+            && method_name_id != StrId::CONSTRUCT
+            && let Some(current_class_info) = class_info
+        {
+            // Psalm derives a method's effective return type via
+            // `Methods::getMethodReturnType`, which consults
+            // `documenting_method_ids`: a method documented by an ancestor takes
+            // that ancestor's docblock return type even when it redeclares a
+            // native signature hint. A method with no native signature inherits
+            // the overridden return type the same way. Resolve it lazily here
+            // (no populate-time bake) by copying the ancestor's documented type
+            // with class-level templates bound through this class — method-level
+            // templates stay as params and bind at the call site, matching
+            // getMethodReturnType for the body's expected type.
+            let inherits = current_class_info
+                .documenting_method_ids
+                .contains_key(&method_name_id)
+                || mi.signature_return_type.is_none();
+            let inherited_return_type = if inherits {
+                crate::methods::get_specialized_inherited_return_type(analyzer, current_class_info, method_name_id)
+                    .map(|documented| {
+                        crate::methods::reconcile_documented_return_type(
+                            analyzer,
+                            current_class_info,
+                            documented,
+                            mi.signature_return_type.as_ref(),
                         )
-                    } else {
-                        inherited_return_type
-                    };
+                    })
+            } else {
+                None
+            };
 
-                    mi.return_type = Some(inherited_return_type);
-                }
+            if let Some(inherited_return_type) = inherited_return_type {
+                let inherited_return_type = if current_class_info.is_final {
+                    localize_special_class_names_for_final_class(
+                        &inherited_return_type,
+                        current_class_info.name,
+                        current_class_info.parent_class,
+                    )
+                } else {
+                    inherited_return_type
+                };
+
+                mi.return_type = Some(inherited_return_type);
             }
         }
 
@@ -7182,7 +7207,10 @@ fn analyze_method(
 
             crate::stmt::function_analyzer::verify_missing_return_checks(
                 &method_analyzer,
-                info,
+                // The method's effective return type — its own native type
+                // reconciled with any documenting-ancestor type (Psalm's
+                // `getMethodReturnType`) — lives on the synthesized `func_info`.
+                func_info.as_ref().unwrap_or(info),
                 analysis_data,
                 method.name.span().start.offset as u32,
                 &cased_name,
@@ -7647,60 +7675,6 @@ fn get_specialized_inherited_param_type(
     None
 }
 
-fn get_specialized_inherited_return_type(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_info: &pzoom_code_info::ClassLikeInfo,
-    method_name: StrId,
-) -> Option<TUnion> {
-    // Trait methods are flattened into the class, so a used trait is the
-    // closest documenting source for an override (resolved via `@use T<...>`).
-    for trait_name in &class_info.used_traits {
-        if let Some(inherited_type) =
-            get_return_type_from_classlike(analyzer, *trait_name, method_name)
-        {
-            return Some(replace_extended_templates_in_union(
-                &inherited_type,
-                &class_info.template_extended_params,
-            ));
-        }
-    }
-
-    if let Some(parent_class) = class_info.parent_class {
-        if let Some(inherited_type) =
-            get_return_type_from_classlike(analyzer, parent_class, method_name)
-        {
-            return Some(replace_extended_templates_in_union(
-                &inherited_type,
-                &class_info.template_extended_params,
-            ));
-        }
-    }
-
-    for interface_name in &class_info.interfaces {
-        if let Some(inherited_type) =
-            get_return_type_from_classlike(analyzer, *interface_name, method_name)
-        {
-            return Some(replace_extended_templates_in_union(
-                &inherited_type,
-                &class_info.template_extended_params,
-            ));
-        }
-    }
-
-    for interface_name in &class_info.all_parent_interfaces {
-        if let Some(inherited_type) =
-            get_return_type_from_classlike(analyzer, *interface_name, method_name)
-        {
-            return Some(replace_extended_templates_in_union(
-                &inherited_type,
-                &class_info.template_extended_params,
-            ));
-        }
-    }
-
-    None
-}
-
 fn get_param_type_from_classlike(
     analyzer: &StatementsAnalyzer<'_>,
     classlike_name: StrId,
@@ -7714,26 +7688,6 @@ fn get_param_type_from_classlike(
         .get_type()
         .cloned()
         .map(|param_type| (param_type, param.has_docblock_type))
-}
-
-fn get_return_type_from_classlike(
-    analyzer: &StatementsAnalyzer<'_>,
-    classlike_name: StrId,
-    method_name: StrId,
-) -> Option<TUnion> {
-    let class_storage = analyzer.codebase.get_class(classlike_name)?;
-    let method_storage = class_storage.methods.get(&method_name)?;
-
-    // A `static::CONST` return resolved against the ancestor: the
-    // inheritor's own constant may differ (Psalm resolves these late).
-    if method_storage.return_type_mentions_static_const {
-        return method_storage.signature_return_type.clone();
-    }
-
-    method_storage
-        .return_type
-        .clone()
-        .or_else(|| method_storage.signature_return_type.clone())
 }
 
 pub fn replace_extended_templates_in_union(
@@ -7831,6 +7785,58 @@ pub fn replace_extended_templates_in_union(
                             as_type: Box::new(replaced_as_type),
                         },
                     );
+                }
+            }
+            // `key-of<T>` / `value-of<T>` where `T` is an ancestor template
+            // bound by `@template-extends`/`@template-implements`: substitute
+            // the binding and compute the concrete keys/values, mirroring how
+            // Psalm resolves these through the extends chain.
+            TAtomic::TTemplateKeyOf {
+                param_name,
+                defining_entity,
+                as_type,
+            }
+            | TAtomic::TTemplateValueOf {
+                param_name,
+                defining_entity,
+                as_type,
+            } => {
+                let is_key_of = matches!(atomic_type, TAtomic::TTemplateKeyOf { .. });
+                if let Some(bound) = defining_entity
+                    .classlike_name()
+                    .and_then(|entity_class| template_extended_params.get(&entity_class))
+                    .and_then(|map| map.get(param_name))
+                {
+                    changed = true;
+                    let bound = replace_extended_templates_in_union(bound, template_extended_params);
+                    let resolved = if is_key_of {
+                        pzoom_code_info::ttype::get_key_of_union(&bound)
+                    } else {
+                        pzoom_code_info::ttype::get_value_of_union(&bound)
+                    };
+                    for resolved_atomic in resolved.types {
+                        push_unique_atomic(&mut replaced_types, resolved_atomic);
+                    }
+                } else {
+                    let replaced_as_type =
+                        replace_extended_templates_in_union(as_type, template_extended_params);
+                    if replaced_as_type != **as_type {
+                        changed = true;
+                    }
+                    let rebuilt = if is_key_of {
+                        TAtomic::TTemplateKeyOf {
+                            param_name: *param_name,
+                            defining_entity: *defining_entity,
+                            as_type: Box::new(replaced_as_type),
+                        }
+                    } else {
+                        TAtomic::TTemplateValueOf {
+                            param_name: *param_name,
+                            defining_entity: *defining_entity,
+                            as_type: Box::new(replaced_as_type),
+                        }
+                    };
+                    push_unique_atomic(&mut replaced_types, rebuilt);
                 }
             }
             _ => {

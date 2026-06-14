@@ -242,6 +242,13 @@ pub fn analyze_property(
                 );
                 property_type
             });
+        } else if let Some(mixin_property_type) =
+            get_mixin_property_type(analyzer, class_info, prop_id)
+        {
+            // A `@mixin` class contributes its declared and `@property`
+            // (pseudo) members, which take precedence over the class's own
+            // `__get` (Psalm merges the mixin's members onto the class).
+            return Some(mixin_property_type);
         } else {
             // Property not found - fall back to magic __get return type when available.
             let magic_get_id = StrId::GET;
@@ -269,6 +276,35 @@ pub fn analyze_property(
     }
 
     // Couldn't determine property type - return None to fall back to mixed
+    None
+}
+
+/// The type of `prop_id` as contributed by one of `class_info`'s `@mixin`
+/// classes — its declared property type, else its `@property` (pseudo) type.
+fn get_mixin_property_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    prop_id: StrId,
+) -> Option<TUnion> {
+    for mixin in &class_info.named_mixins {
+        let TAtomic::TNamedObject {
+            name: mixin_name, ..
+        } = mixin
+        else {
+            continue;
+        };
+        let Some(mixin_info) = analyzer.codebase.get_class(*mixin_name) else {
+            continue;
+        };
+        if let Some(prop_info) = mixin_info.properties.get(&prop_id)
+            && let Some(prop_type) = prop_info.get_type()
+        {
+            return Some(prop_type.clone());
+        }
+        if let Some(pseudo_property_type) = mixin_info.pseudo_property_get_types.get(&prop_id) {
+            return Some(pseudo_property_type.clone());
+        }
+    }
     None
 }
 
@@ -1006,6 +1042,16 @@ fn get_property_type_inner(
                                 col,
                             ));
                             return None;
+                        }
+
+                        // A `@mixin` class contributes its declared and
+                        // `@property` (pseudo) members, taking precedence over
+                        // the class's own `__get` (Psalm merges the mixin's
+                        // members onto the class).
+                        if let Some(mixin_property_type) =
+                            get_mixin_property_type(analyzer, class_info, prop_id)
+                        {
+                            return Some(mixin_property_type);
                         }
 
                         if class_has_magic_getter(class_info) {

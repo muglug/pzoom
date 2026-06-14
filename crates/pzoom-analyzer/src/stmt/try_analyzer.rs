@@ -30,10 +30,20 @@ pub fn analyze(
 ) -> Result<(), AnalysisError> {
     let original_context = context.clone();
 
+    // Psalm threads a `FinallyScope` through the try/catch (`Context::$finally_scope`)
+    // so each control-flow exit (notably `return`) collects its live variables
+    // for the finally block. Only created when a finally clause is present.
+    let finally_scope = try_stmt.finally_clause.as_ref().map(|_| {
+        std::rc::Rc::new(std::cell::RefCell::new(
+            crate::scope::FinallyScope::default(),
+        ))
+    });
+
     // Analyze the try block
     let mut try_context = original_context.clone();
     let was_inside_try = try_context.inside_try;
     try_context.inside_try = true;
+    try_context.finally_scope = finally_scope.clone();
     stmt_analyzer::analyze_stmts(
         analyzer,
         try_stmt.block.statements.as_slice(),
@@ -41,6 +51,7 @@ pub fn analyze(
         &mut try_context,
     )?;
     try_context.inside_try = was_inside_try;
+    try_context.finally_scope = None;
 
     // Vars newly assigned in the try body (Psalm's $newly_assigned_var_ids):
     // until proven definitely assigned by every continuing catch, they are
@@ -88,6 +99,8 @@ pub fn analyze(
     for catch in try_stmt.catch_clauses.iter() {
         let mut catch_context = finally_entry_context.clone();
         catch_context.has_returned = false;
+        // A `return` inside a catch also feeds the finally scope.
+        catch_context.finally_scope = finally_scope.clone();
 
         // Psalm's TryAnalyzer marks try-assigned vars possibly undefined on
         // catch entry — the catch runs after a throw that may have preceded
@@ -263,6 +276,26 @@ pub fn analyze(
     if let Some(finally) = &try_stmt.finally_clause {
         let mut finally_context = finally_entry_context.clone();
         finally_context.has_returned = false;
+
+        // Fold in variables collected from try/catch exits (Psalm consumes the
+        // FinallyScope here). pzoom's finally entry context already merges the
+        // try/catch end states, so only variables it does not already track are
+        // added — a variable assigned solely before an early `return` deep in
+        // the try, which the end-state merge would otherwise miss. It enters the
+        // finally as possibly undefined, since the finally may run on a path
+        // that never reached that assignment.
+        if let Some(finally_scope) = &finally_scope {
+            for (var_id, exit_type) in &finally_scope.borrow().vars_in_scope {
+                if !finally_context.locals.contains_key(var_id) {
+                    let mut possibly_undefined = exit_type.clone();
+                    possibly_undefined.possibly_undefined = true;
+                    finally_context
+                        .locals
+                        .insert(var_id.clone(), possibly_undefined);
+                }
+            }
+        }
+
         stmt_analyzer::analyze_stmts(
             analyzer,
             finally.block.statements.as_slice(),

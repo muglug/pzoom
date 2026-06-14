@@ -54,20 +54,7 @@ pub fn analyze(
 
     if let Some(value) = ret.value.as_ref() {
         let inserted_expected_callable_offset =
-            if let Some(expected_return_type) = analyzer.get_expected_return_type() {
-                get_closure_like_expression_offset(value).and_then(|closure_offset| {
-                    if callable_validation::union_has_callable(expected_return_type) {
-                        context
-                            .expected_callable_arg_types
-                            .insert(closure_offset, expected_return_type.clone());
-                        Some(closure_offset)
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                None
-            };
+            potentially_infer_types_on_closure_from_parent_return_type(analyzer, value, context);
 
         let was_inside_return = context.inside_return;
         context.inside_return = true;
@@ -75,6 +62,9 @@ pub fn analyze(
         context.inside_return = was_inside_return;
         if let Some(closure_offset) = inserted_expected_callable_offset {
             context.expected_callable_arg_types.remove(&closure_offset);
+            context
+                .returned_closure_parent_return_types
+                .remove(&closure_offset);
         }
 
         return_type = analysis_data
@@ -294,8 +284,16 @@ pub fn analyze(
                 ));
             }
         }
-        // Check type compatibility for non-void/never functions
-        else if has_return_value && !expected_type.is_mixed() && !expected_type.is_void() {
+        // Psalm's ReturnAnalyzer skips the return-type check entirely for a
+        // generator body (`isGenerator() && has_yield`): a `return X` inside a
+        // generator only provides the loosely-checked TReturn, so an inferred
+        // mixed/Send type must not be reported as a mismatch.
+        else if has_return_value
+            && !expected_type.is_mixed()
+            && !expected_type.is_void()
+            && !(analysis_data.current_function_is_generator
+                && union_is_generator(expected_type, analyzer.interner))
+        {
             // Psalm/Hakana compare against the declared return type as-is:
             // the function's own template params stay rigid in the
             // container (they are the *caller's* choice), and a type
@@ -732,7 +730,7 @@ pub fn analyze(
         );
 
         if let pzoom_code_info::GraphKind::WholeProgram(_) = analysis_data.data_flow_graph.kind {
-            handle_whole_program_return_dataflow(analyzer, analysis_data, &return_type, value_pos);
+            handle_taints(analyzer, analysis_data, &return_type, value_pos);
         } else {
             let return_node = DataFlowNode::get_for_unlabelled_sink(value_pos);
             add_default_dataflow_paths(
@@ -747,18 +745,39 @@ pub fn analyze(
     // Record the return type for later comparison
     analysis_data.inferred_return_types.push(return_type);
 
+    // Psalm's ReturnAnalyzer: when returning out of a try/catch that has a
+    // `finally`, merge the variables live at this return into the finally scope.
+    // A variable already seen on another exit path is unioned; one seen only
+    // here becomes possibly undefined in the finally (it may not have been
+    // assigned on the path that actually reaches the finally).
+    if let Some(finally_scope) = context.finally_scope.clone() {
+        let mut finally_scope = finally_scope.borrow_mut();
+        for (var_id, var_type) in &context.locals {
+            if let Some(existing) = finally_scope.vars_in_scope.get(var_id) {
+                let combined = combine_union_types(existing, var_type, false);
+                finally_scope.vars_in_scope.insert(var_id.clone(), combined);
+            } else {
+                let mut possibly_undefined = var_type.clone();
+                possibly_undefined.possibly_undefined = true;
+                finally_scope
+                    .vars_in_scope
+                    .insert(var_id.clone(), possibly_undefined);
+            }
+        }
+    }
+
     // Mark that control flow has exited
     context.has_returned = true;
 
     Ok(())
 }
 
-/// Hakana `return_analyzer::handle_dataflow`, whole-program branch: the
-/// return expression's parents flow into a `Return` node, which flows into
-/// the function-like's `CallTo` node (with the storage's added/removed
-/// taints), which flows into every parent classlike's `CallTo` node for the
-/// same method.
-fn handle_whole_program_return_dataflow(
+/// Port of Psalm `ReturnAnalyzer::handleTaints` (taint-graph branch): the
+/// return expression's parent nodes flow into the method-return node (carrying
+/// the storage's added/removed taints), which flows into every parent
+/// classlike's method-return node for the same method so an overriding return
+/// taints its ancestors' call sites.
+fn handle_taints(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     return_type: &TUnion,
@@ -1293,6 +1312,68 @@ pub(crate) fn is_reference_returnable_expression(expr: &Expression<'_>) -> bool 
     )
 }
 
+/// Port of Psalm `ReturnAnalyzer::potentiallyInferTypesOnClosureFromParentReturnType`:
+/// when a function returns a closure/arrow-function and the enclosing function's
+/// declared return type is a callable, seed the returned closure's expected
+/// argument types from that parent callable so its parameter (and return) types
+/// can be inferred. Returns the closure's offset when seeded so the caller can
+/// clear it after analysis.
+fn potentially_infer_types_on_closure_from_parent_return_type(
+    analyzer: &StatementsAnalyzer<'_>,
+    value: &Expression<'_>,
+    context: &mut BlockContext,
+) -> Option<u32> {
+    let expected_return_type = analyzer.get_expected_return_type()?;
+    let closure_offset = get_closure_like_expression_offset(value)?;
+    if !callable_validation::union_has_callable(expected_return_type) {
+        return None;
+    }
+    context
+        .expected_callable_arg_types
+        .insert(closure_offset, expected_return_type.clone());
+    // Mark this closure as a *return value* so the closure analyzer also infers
+    // its return type from the parent callable (Psalm only does this for
+    // returned closures, never for closures passed as arguments).
+    context
+        .returned_closure_parent_return_types
+        .insert(closure_offset, expected_return_type.clone());
+    Some(closure_offset)
+}
+
+/// Port of Psalm `ReturnAnalyzer::inferInnerClosureTypeFromParent`: given the
+/// inner closure's own type (param or return) and the corresponding type from
+/// the enclosing function's callable return type, prefer the parent type when
+/// the closure declares none or the parent is more specific; otherwise keep the
+/// closure's own.
+pub(crate) fn infer_inner_closure_type_from_parent(
+    codebase: &pzoom_code_info::CodebaseInfo,
+    return_type: Option<TUnion>,
+    parent_return_type: Option<&TUnion>,
+) -> Option<TUnion> {
+    let Some(parent_return_type) = parent_return_type else {
+        return return_type;
+    };
+
+    match &return_type {
+        None => Some(parent_return_type.clone()),
+        Some(own_return_type) => {
+            let mut comparison_result = type_comparator::TypeComparisonResult::new();
+            if type_comparator::union_type_comparator::is_contained_by(
+                codebase,
+                parent_return_type,
+                own_return_type,
+                false,
+                false,
+                &mut comparison_result,
+            ) {
+                Some(parent_return_type.clone())
+            } else {
+                return_type
+            }
+        }
+    }
+}
+
 fn get_closure_like_expression_offset(expr: &Expression<'_>) -> Option<u32> {
     match expr.unparenthesized() {
         Expression::Closure(closure) => Some(closure.span().start.offset),
@@ -1399,6 +1480,20 @@ fn expected_type_allows_generator_void_return(
             )
         }
         _ => false,
+    })
+}
+
+/// Whether the declared return type is a `Generator` (Psalm's `Union::isGenerator`).
+fn union_is_generator(expected_type: &TUnion, interner: &pzoom_str::Interner) -> bool {
+    expected_type.types.iter().any(|atomic| {
+        matches!(
+            atomic,
+            TAtomic::TNamedObject { name, .. }
+                if interner
+                    .lookup(*name)
+                    .trim_start_matches('\\')
+                    .eq_ignore_ascii_case("Generator")
+        )
     })
 }
 

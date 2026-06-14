@@ -27,6 +27,13 @@ pub struct FunctionLikeInfo {
     /// Parameters.
     pub params: Vec<ParamInfo>,
 
+    /// `@global Type $var` declarations on the function docblock (Psalm's
+    /// `FunctionLikeStorage::$global_types`). Keyed by the interned variable
+    /// name (including the leading `$`); consulted when a `global $var;`
+    /// statement imports the variable.
+    #[serde(default)]
+    pub global_types: Vec<(StrId, TUnion)>,
+
     /// Return type (effective type for analysis - docblock if present, else signature).
     pub return_type: Option<TUnion>,
     /// The docblock @return mentions `static::CONST` — a late-static constant

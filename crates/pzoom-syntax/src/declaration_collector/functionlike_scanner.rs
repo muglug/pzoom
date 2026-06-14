@@ -12,6 +12,7 @@ use pzoom_code_info::functionlike_info::{
     FunctionTemplateType,
 };
 use pzoom_code_info::GenericParent;
+use pzoom_code_info::TUnion;
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 
@@ -58,6 +59,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut function_template_map: TemplateMap = FxHashMap::default();
         let mut function_docblock_issues: Vec<DocblockIssue> = Vec::new();
         let mut taints = pzoom_code_info::functionlike_info::FunctionLikeTaints::default();
+        let mut global_types: Vec<(StrId, TUnion)> = Vec::new();
 
         if let Some((docblock_start, docblock)) =
             self.find_preceding_docblock_with_offset(span.start.offset)
@@ -83,6 +85,30 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 .collect();
 
             function_template_map = self.build_template_map_from_bindings(&template_bindings, None);
+
+            // `@global Type $var` declarations type the matching `global $var;`
+            // imports in the body (Psalm's FunctionLikeStorage::$global_types).
+            if let Some(global_tags) = parsed.tags.get("global") {
+                for content in global_tags.values() {
+                    let (Some(type_str), Some(var_name)) = (
+                        crate::docblock::extract_type_string_from_content(content),
+                        crate::docblock::extract_var_name_from_content(content),
+                    ) else {
+                        continue;
+                    };
+                    let parsed_type =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
+                    let resolved_type = self.resolve_docblock_union_type(
+                        parsed_type,
+                        None,
+                        None,
+                        Some(&function_template_map),
+                    );
+                    global_types.push((self.interner.intern(var_name), resolved_type));
+                }
+            }
+
             let function_param_names: Vec<StrId> =
                 params.iter().map(|param| param.name).collect();
             self.validate_function_docblock_type_tags(
@@ -310,6 +336,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             declared_if_not_exists,
             name,
             params,
+            global_types,
             return_type,
             return_type_location,
             name_location: {

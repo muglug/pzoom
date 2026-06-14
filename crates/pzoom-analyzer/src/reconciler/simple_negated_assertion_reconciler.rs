@@ -765,16 +765,31 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
             | TAtomic::TKeyedArray { .. } => {
                 // Remove array types
             }
-            TAtomic::TCallable { .. } => {
+            TAtomic::TCallable {
+                params,
+                return_type,
+                is_pure,
+            } => {
                 // callable - array => callable-string|callable-object: both
                 // remaining halves stay callable (Psalm's TCallableString /
                 // TCallableObject).
                 acceptable_types.push(TAtomic::TCallableString);
-                acceptable_types.push(TAtomic::TObjectWithProperties {
-                    properties: Default::default(),
-                    is_stringable: false,
-                    is_invokable: true,
-                });
+                // A *typed* callable (`callable():R`) keeps its signature on the
+                // object half as a Closure, so a later invocation still resolves
+                // the return type (Psalm preserves the callable signature).
+                if params.is_some() || return_type.is_some() {
+                    acceptable_types.push(TAtomic::TClosure {
+                        params: params.clone(),
+                        return_type: return_type.clone(),
+                        is_pure: *is_pure,
+                    });
+                } else {
+                    acceptable_types.push(TAtomic::TObjectWithProperties {
+                        properties: Default::default(),
+                        is_stringable: false,
+                        is_invokable: true,
+                    });
+                }
             }
             TAtomic::TIterable {
                 key_type,

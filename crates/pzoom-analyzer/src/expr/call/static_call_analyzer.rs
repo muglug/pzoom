@@ -193,6 +193,25 @@ pub fn analyze(
                 allow_non_static_via_magic,
             )) = resolve_named_object_static_method(analyzer, class_info, method_name)
             {
+                // While re-analysing a constructor to collect property
+                // initialisations, an ancestor `parent::`/`self::`/`static::`
+                // call is followed in place (Psalm's
+                // `ExistingAtomicStaticCallAnalyzer`, collect_initializations
+                // branch) — ungated by visibility, unlike instance calls.
+                if context.collect_initializations
+                    && crate::init_collector::self_is_or_extends(
+                        analyzer.codebase,
+                        context,
+                        class_id,
+                    )
+                {
+                    crate::init_collector::follow_static_init_call(
+                        analyzer,
+                        context,
+                        resolved_class_id,
+                        &method_info,
+                    );
+                }
                 if analyzer.config.find_unused_code {
                     super::atomic_method_call_analyzer::record_method_reference(
                         analyzer,

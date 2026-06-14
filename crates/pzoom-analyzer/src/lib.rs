@@ -19,6 +19,7 @@ pub mod file_analyzer;
 pub mod formula_generator;
 pub mod function_analysis_data;
 pub mod function_like_analyzer;
+pub mod init_collector;
 pub mod methods;
 pub(crate) mod internal_access;
 pub(crate) mod issue_suppression;

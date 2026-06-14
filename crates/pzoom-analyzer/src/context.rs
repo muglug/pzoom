@@ -247,6 +247,26 @@ pub struct BlockContext {
     /// it definitely initialises (Psalm's `Context::collect_initializations`).
     pub collect_initializations: bool,
 
+    /// During a `collect_initializations` pass, whether non-private methods the
+    /// constructor calls may also initialise properties (Psalm's
+    /// `Context::collect_nonprivate_initializations`). Set when no uninitialised
+    /// property is private; an overridable method then counts as an initialiser.
+    pub collect_nonprivate_initializations: bool,
+
+    /// During a `collect_initializations` pass, the `$this`/ancestor methods
+    /// already followed, keyed by `(declaring_class, method_name)`. Mirrors
+    /// Psalm's `Context::initialized_methods`: a guard against following the same
+    /// method twice (and against mutual-recursion). Cloned at branch points like
+    /// the rest of the context, so each alternative follows independently.
+    pub initialized_methods: FxHashSet<(StrId, StrId)>,
+
+    /// During a `collect_initializations` pass, the class context that assigned
+    /// each `$this->prop`, keyed by property name. Mirrors the `initialized_class`
+    /// Psalm records on the property's scope type: it lets the property-init check
+    /// tell a parent's `$this->b = …` (which sets the *parent's* private `$b`)
+    /// apart from a same-named private `$b` declared on the child. Last write wins.
+    pub initialized_prop_classes: FxHashMap<StrId, StrId>,
+
     /// Whether the property fetch being analyzed is the root of an array
     /// APPEND target (`$a->foo[] = …`) — Psalm doesn't count that as a read
     /// of the property for find_unused_code (an offset write does).
@@ -449,6 +469,9 @@ impl BlockContext {
             inside_foreach: self.inside_foreach,
             inside_try: self.inside_try,
             collect_initializations: self.collect_initializations,
+            collect_nonprivate_initializations: self.collect_nonprivate_initializations,
+            initialized_methods: self.initialized_methods.clone(),
+            initialized_prop_classes: self.initialized_prop_classes.clone(),
             self_class: self.self_class,
             parent_class: self.parent_class,
             has_this: self.has_this,

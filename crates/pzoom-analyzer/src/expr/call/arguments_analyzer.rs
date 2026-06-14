@@ -1436,6 +1436,18 @@ pub(crate) fn apply_param_out_types(
                 context.set_var_type(var_id.clone(), resolved_out_type);
                 by_ref_var_ids.insert(var_id.clone());
             }
+        } else if let Some(property_key) =
+            crate::expression_identifier::get_expression_var_key(arg.value().unparenthesized())
+            && property_key.contains("->")
+        {
+            // A by-ref `@param-out` argument that is a property path
+            // (`$obj->prop`) assigns that property through the reference — Psalm
+            // writes `vars_in_scope[$obj->prop]` with the out-type. This also lets
+            // a constructor initialise a property by passing it to a `@param-out`
+            // helper (`$this->foo($this->bar)`).
+            let var_id = VarName::new(&property_key);
+            context.set_var_type(var_id.clone(), resolved_out_type);
+            by_ref_var_ids.insert(var_id);
         }
     }
 

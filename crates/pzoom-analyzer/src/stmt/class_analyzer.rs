@@ -4279,59 +4279,13 @@ fn check_property_initialization(
     // property is non-private, overridable methods may initialize them too.
     let collect_nonprivate = !any_private;
 
-    // Does an assignment made by a method declared in `from_class` initialize
-    // the checked class's property? A private property only counts when both
-    // sides resolve to the same declaration (Psalm's initialized_class check:
-    // assigning `$this->b` in a parent constructor doesn't set a child's own
-    // private `$b`).
-    let assignment_initializes = |from_class: StrId, property_name: StrId| -> bool {
-        let Some(property) = class_info.properties.get(&property_name) else {
-            return false;
-        };
-        if !matches!(property.visibility, Visibility::Private) || from_class == class_info.name {
-            return true;
-        }
-        let from_class_info = analyzer.codebase.get_class(from_class);
-        if from_class_info.is_some_and(|info| info.kind == ClassLikeKind::Trait) {
-            // Trait methods run in the using class's context.
-            return true;
-        }
-        let from_declaring = from_class_info
-            .and_then(|info| info.declaring_property_ids.get(&property_name).copied());
-        from_declaring.is_some()
-            && from_declaring
-                == class_info
-                    .declaring_property_ids
-                    .get(&property_name)
-                    .copied()
-    };
-
-    // Expand the constructor's events, following `$this`-bound calls the way
-    // Psalm's collectSpecialInformation does: instance calls only when the
-    // resolved method is private or final (or nothing private is at stake),
-    // `parent::`/ancestor static-dispatch calls unconditionally. An exhaustive
-    // alternation initializes what every alternative (fully expanded)
-    // initializes.
-    // Own-body initialisation comes from re-analysing the constructor at
-    // analysis time (flow- and type-sensitive). When the body lives in this
-    // class's AST we trust it for the direct `$this->prop = …` assignments and
-    // ask the scan-time walk only for promoted params and the methods the
-    // constructor calls (whose bodies may be in other files); otherwise
-    // (inherited/trait constructor) the scan-time walk supplies everything.
-    let body_initialized = analyze_constructor_init_props(analyzer, class, class_info, constructor);
-    let skip_direct_assigns = body_initialized.is_some();
-    let mut initialized: FxHashSet<StrId> = body_initialized.unwrap_or_default();
-    let mut visited: FxHashSet<(StrId, StrId)> = FxHashSet::default();
-    expand_initializer_method(
-        analyzer,
-        class_info,
-        constructor,
-        collect_nonprivate,
-        &assignment_initializes,
-        skip_direct_assigns,
-        &mut initialized,
-        &mut visited,
-    );
+    // Re-analyse the constructor (own or inherited) at analysis time, following
+    // every `$this->`/`parent::`/ancestor call it makes in place — a fully
+    // flow- and type-sensitive definite-assignment pass (Psalm's
+    // collect_initializations re-run). The returned set is the properties left
+    // definitely assigned, with same-named-private shadowing already filtered.
+    let initialized =
+        analyze_constructor_init_props(analyzer, class_info, constructor, collect_nonprivate);
 
     // UninitializedProperty: the constructor body read `$this->prop` before
     // anything could have initialized it. Only this class's own constructor
@@ -4432,298 +4386,105 @@ fn check_property_initialization(
     }
 }
 
-/// Expand one method's initialization events into `initialized`, following
-/// `$this`-bound calls (pzoom's stand-in for Psalm's `getMethodMutations`
-/// during a `collect_initializations` pass).
-#[allow(clippy::too_many_arguments)]
-fn expand_initializer_method(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_info: &pzoom_code_info::ClassLikeInfo,
-    method: &std::sync::Arc<pzoom_code_info::FunctionLikeInfo>,
-    collect_nonprivate: bool,
-    assignment_initializes: &dyn Fn(StrId, StrId) -> bool,
-    // When set, this method's *direct* `$this->prop = …` events are ignored —
-    // the analysis-time constructor re-analysis already supplied them. Promoted
-    // params and the methods it calls are still followed.
-    skip_direct_assigns: bool,
-    initialized: &mut FxHashSet<StrId>,
-    visited: &mut FxHashSet<(StrId, StrId)>,
-) {
-    let method_class = method.declaring_class.unwrap_or(class_info.name);
-    if !visited.insert((method_class, method.name)) {
-        return;
-    }
-
-    // A constructor's promoted parameters assign their properties.
-    if method.name == StrId::CONSTRUCT
-        && let Some(method_class_info) = analyzer.codebase.get_class(method_class)
-    {
-        for (property_name, property) in &method_class_info.properties {
-            if property.is_promoted
-                && property.declaring_class == method_class
-                && assignment_initializes(method_class, *property_name)
-            {
-                initialized.insert(*property_name);
-            }
-        }
-    }
-
-    expand_initializer_events(
-        analyzer,
-        class_info,
-        &method.initializer_events,
-        method_class,
-        collect_nonprivate,
-        assignment_initializes,
-        skip_direct_assigns,
-        initialized,
-        visited,
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn expand_initializer_events(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_info: &pzoom_code_info::ClassLikeInfo,
-    events: &[pzoom_code_info::functionlike_info::InitializerEvent],
-    method_class: StrId,
-    collect_nonprivate: bool,
-    assignment_initializes: &dyn Fn(StrId, StrId) -> bool,
-    skip_direct_assigns: bool,
-    initialized: &mut FxHashSet<StrId>,
-    visited: &mut FxHashSet<(StrId, StrId)>,
-) {
-    use pzoom_code_info::functionlike_info::InitializerEvent;
-
-    for event in events {
-        match event {
-            InitializerEvent::Assign(property_name) => {
-                if !skip_direct_assigns && assignment_initializes(method_class, *property_name) {
-                    initialized.insert(*property_name);
-                }
-            }
-            InitializerEvent::AssignByRef(property_name) => {
-                // A by-ref write-back is invisible to the constructor
-                // re-analysis, so it is honoured even when direct assignments
-                // are skipped.
-                if assignment_initializes(method_class, *property_name) {
-                    initialized.insert(*property_name);
-                }
-            }
-            InitializerEvent::ThisCall(callee_name) => {
-                // Resolve against the checked class so overrides win; magic
-                // __call resolutions just aren't followed (Psalm).
-                let Some(callee) = class_info.methods.get(callee_name) else {
-                    continue;
-                };
-                if callee.is_static {
-                    continue;
-                }
-                if collect_nonprivate
-                    || matches!(callee.visibility, Visibility::Private)
-                    || callee.is_final
-                    || class_info.is_final
-                {
-                    expand_initializer_method(
-                        analyzer,
-                        class_info,
-                        callee,
-                        collect_nonprivate,
-                        assignment_initializes,
-                        false,
-                        initialized,
-                        visited,
-                    );
-                }
-            }
-            InitializerEvent::ParentCall(callee_name) => {
-                // A trait method's `parent::` refers to the using class's
-                // parent.
-                let parent_base = match analyzer.codebase.get_class(method_class) {
-                    Some(info) if info.kind == ClassLikeKind::Trait => class_info.name,
-                    _ => method_class,
-                };
-                let Some(callee) = analyzer
-                    .codebase
-                    .get_class(parent_base)
-                    .and_then(|info| info.parent_class)
-                    .and_then(|parent| analyzer.codebase.get_class(parent))
-                    .and_then(|parent_info| parent_info.methods.get(callee_name))
-                else {
-                    continue;
-                };
-                expand_initializer_method(
-                    analyzer,
-                    class_info,
-                    callee,
-                    collect_nonprivate,
-                    assignment_initializes,
-                    false,
-                    initialized,
-                    visited,
-                );
-            }
-            InitializerEvent::NamedCall(raw_class_name, callee_name) => {
-                // Psalm follows `AncestorClass::m()` static-dispatch calls
-                // when the checked class extends the named class.
-                let Some(target_class) =
-                    resolve_initializer_named_class(analyzer, class_info, *raw_class_name)
-                else {
-                    continue;
-                };
-                let Some(callee) = analyzer
-                    .codebase
-                    .get_class(target_class)
-                    .and_then(|target_info| target_info.methods.get(callee_name))
-                else {
-                    continue;
-                };
-                expand_initializer_method(
-                    analyzer,
-                    class_info,
-                    callee,
-                    collect_nonprivate,
-                    assignment_initializes,
-                    false,
-                    initialized,
-                    visited,
-                );
-            }
-            InitializerEvent::Branch(branches) => {
-                // An exhaustive alternation establishes what every alternative
-                // (fully expanded) establishes.
-                let mut merged: Option<FxHashSet<StrId>> = None;
-                for branch in branches {
-                    let mut branch_initialized = initialized.clone();
-                    let mut branch_visited = visited.clone();
-                    expand_initializer_events(
-                        analyzer,
-                        class_info,
-                        branch,
-                        method_class,
-                        collect_nonprivate,
-                        assignment_initializes,
-                        skip_direct_assigns,
-                        &mut branch_initialized,
-                        &mut branch_visited,
-                    );
-                    merged = Some(match merged {
-                        None => branch_initialized,
-                        Some(accumulated) => accumulated
-                            .intersection(&branch_initialized)
-                            .copied()
-                            .collect(),
-                    });
-                }
-                if let Some(merged) = merged {
-                    *initialized = merged;
-                }
-            }
-        }
-    }
-}
-
 /// Psalm's `checkPropertyInitialization` re-analyses the constructor in a
 /// `collect_initializations` context and reads which `$this->prop` ended up in
 /// `vars_in_scope` — a flow-sensitive, type-aware definite-assignment check (a
 /// property assigned only after `exit()` or a `never`-returning call is *not*
-/// initialized). pzoom re-runs the constructor body the same way here and
-/// returns the set of properties left assigned at the end. The issues this pass
-/// produces are discarded (a throwaway analysis buffer); only the `$this->prop`
-/// scope keys are kept. Returns `None` when the constructor body is not in this
-/// class's own AST (inherited/trait constructors), so the caller falls back to
-/// the scan-time event walk for those.
+/// initialized). pzoom re-runs the constructor body the same way here.
+///
+/// Every `$this->`/`parent::`/ancestor method the constructor calls is followed
+/// *at its call site* by the call-analyzer hook (`init_collector`), re-parsing
+/// the callee's file on demand — so an inherited or cross-file constructor body,
+/// and any helper it calls, are all re-analysed. The own constructor body is
+/// re-analysed directly; an inherited constructor is reached the way Psalm
+/// synthesises `parent::__construct()` — via the ungated static-call follow.
+///
+/// The issues this pass produces are discarded (a throwaway analysis buffer);
+/// only the `$this->prop` scope keys are kept. A property whose only assignment
+/// was made by a class that may not initialise it (a same-named private property
+/// shadowed across the hierarchy) is filtered out via `assignment_initializes`.
 fn analyze_constructor_init_props(
     analyzer: &StatementsAnalyzer<'_>,
-    class: &Class<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     constructor: &pzoom_code_info::FunctionLikeInfo,
-) -> Option<FxHashSet<StrId>> {
-    let body_stmts = class.members.iter().find_map(|member| {
-        let ClassLikeMember::Method(method) = member else {
-            return None;
-        };
-        if !method.name.value.eq_ignore_ascii_case("__construct") {
-            return None;
-        }
-        match &method.body {
-            MethodBody::Concrete(block) => Some(block.statements.as_slice()),
-            MethodBody::Abstract(_) => None,
-        }
-    })?;
-
+    collect_nonprivate: bool,
+) -> FxHashSet<StrId> {
     let mut method_context = BlockContext::new();
     method_context.collect_initializations = true;
+    method_context.collect_nonprivate_initializations = collect_nonprivate;
     method_context.self_class = Some(class_info.name);
     method_context.has_this = true;
+    // `$this` is the concrete class being checked (not `static`): a
+    // `$this->method()` call must resolve against this class so a child's
+    // override of an inherited-constructor helper is seen (Psalm passes the
+    // child `TNamedObject` as the object type).
     method_context.set_var_type(
         VarName::new_static("$this"),
         TUnion::new(TAtomic::TNamedObject {
             name: class_info.name,
             type_params: None,
-            is_static: true,
+            is_static: false,
             remapped_params: false,
         }),
     );
-    // Seed the constructor's parameters so the body analyses cleanly. Their
-    // precise types do not matter — `$this->prop = $param` records `$this->prop`
-    // regardless, and this pass's issues are thrown away.
-    for param in &constructor.params {
-        let param_name = analyzer.interner.lookup(param.name);
-        let param_type = param.get_type().cloned().unwrap_or_else(TUnion::mixed);
-        method_context.set_var_type(VarName::new(param_name.as_ref()), param_type);
+
+    let constructor_class = constructor.declaring_class.unwrap_or(class_info.name);
+    if constructor_class == class_info.name {
+        // Own constructor: re-analyse its body directly (`self` is this class).
+        // Guard against a pathological `$this->__construct()` re-entry.
+        method_context
+            .initialized_methods
+            .insert((constructor_class, StrId::CONSTRUCT));
+        crate::init_collector::reanalyze_method_body_into(
+            analyzer,
+            constructor,
+            &mut method_context,
+        );
+    } else {
+        // Inherited constructor: Psalm synthesises a `ParentCtor::__construct()`
+        // call and follows it (so `self` becomes the parent inside the body).
+        crate::init_collector::follow_static_init_call(
+            analyzer,
+            &mut method_context,
+            constructor_class,
+            constructor,
+        );
     }
 
-    let constructor_analyzer = analyzer.for_nested_function(Some(constructor));
-    let mut throwaway = FunctionAnalysisData::new();
-    let _ = crate::stmt_analyzer::analyze_stmts(
-        &constructor_analyzer,
-        body_stmts,
-        &mut throwaway,
-        &mut method_context,
-    );
-
     // Psalm checks `vars_in_scope['$this->prop']->initialized`. pzoom records
-    // `$this->prop` in scope on both reads and writes, so distinguish an
-    // assignment from a mere read by the type's `possibly_undefined` flag — a
-    // read of an uninitialised property stays possibly-undefined, an assigned
-    // one does not.
+    // `$this->prop` in scope on writes (reads are suppressed during collection),
+    // so a present, not-possibly-undefined key is a definite assignment.
+    //
+    // The same-named-private shadowing filter (Psalm's `initialized_class`
+    // re-fetch) only runs when the constructor is INHERITED
+    // (`fq_class_name !== constructor_appearing_fqcln`): a class with its own
+    // constructor that writes `$this->foo` initialises its own `$foo` regardless
+    // of a parent also writing a same-named private `$foo` afterwards.
+    let constructor_is_inherited = constructor_class != class_info.name;
     let mut initialized = FxHashSet::default();
     for (var_name, var_type) in method_context.locals.iter() {
         if let Some(property_name) = var_name.as_str().strip_prefix("$this->")
             && !var_type.possibly_undefined
         {
-            initialized.insert(analyzer.interner.intern(property_name));
+            let property_id = analyzer.interner.intern(property_name);
+            let assigning_class = method_context
+                .initialized_prop_classes
+                .get(&property_id)
+                .copied()
+                .unwrap_or(class_info.name);
+            if !constructor_is_inherited
+                || crate::init_collector::assignment_initializes(
+                    analyzer.codebase,
+                    class_info.name,
+                    assigning_class,
+                    property_id,
+                )
+            {
+                initialized.insert(property_id);
+            }
         }
     }
-    Some(initialized)
-}
-
-/// Resolve a `SomeClass::m()` class name as written in a method body against
-/// the checked class's ancestry (Psalm follows such calls only when
-/// `classExtends($context->self, X)` holds).
-fn resolve_initializer_named_class(
-    analyzer: &StatementsAnalyzer<'_>,
-    class_info: &pzoom_code_info::ClassLikeInfo,
-    raw_name: StrId,
-) -> Option<StrId> {
-    let raw = analyzer.interner.lookup(raw_name);
-    let trimmed = raw.trim_start_matches('\\');
-
-    let mut candidates: Vec<StrId> = vec![analyzer.interner.intern(trimmed)];
-    // A relative name resolves against the checked class's namespace.
-    let class_name = analyzer.interner.lookup(class_info.name);
-    if let Some((namespace, _)) = class_name.rsplit_once('\\') {
-        candidates.push(
-            analyzer
-                .interner
-                .intern(&format!("{}\\{}", namespace, trimmed)),
-        );
-    }
-
-    candidates.into_iter().find(|candidate| {
-        *candidate == class_info.name || class_info.all_parent_classes.contains(candidate)
-    })
+    initialized
 }
 
 /// Whether the `/** ... */` docblock immediately preceding `offset` carries a

@@ -683,7 +683,15 @@ pub fn subtract_null(existing_var_type: &TUnion) -> TUnion {
     if acceptable_types.is_empty() {
         TUnion::nothing()
     } else {
-        let result = TUnion::from_types(acceptable_types);
+        // Removing null from a docblock-provided type keeps it docblock-derived
+        // (Psalm preserves `from_docblock` through reconcileNotNull), so a later
+        // redundancy on the narrowed value is the `*GivenDocblockType` variant.
+        let mut result = TUnion::from_types(acceptable_types);
+        result.from_docblock = existing_var_type.from_docblock;
+        result.from_calculation = existing_var_type.from_calculation;
+        result.ignore_nullable_issues = existing_var_type.ignore_nullable_issues;
+        result.ignore_falsable_issues = existing_var_type.ignore_falsable_issues;
+        result.sync_docblock_bits_from_union_flag();
         result
     }
 }

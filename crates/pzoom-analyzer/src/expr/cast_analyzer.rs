@@ -30,14 +30,25 @@ pub fn analyze(
     // Check for redundant casts
     if let Some(ref inner) = inner_type {
         if is_redundant_cast(&unary.operator, &inner) {
-            let cast_name = get_cast_name(&unary.operator);
+            let type_key = inner.get_id(Some(analyzer.interner));
             let (line, col) = analyzer.get_line_column(pos.0);
+            // Psalm's handleRedundantCast: a redundancy that follows from a
+            // docblock-provided type is the distinct RedundantCastGivenDocblockType
+            // (which a project may want, e.g. when guarding untrusted input).
+            let (kind, message) = if inner.from_docblock {
+                (
+                    IssueKind::RedundantCastGivenDocblockType,
+                    format!("Redundant cast to {type_key} given docblock-provided type"),
+                )
+            } else {
+                (
+                    IssueKind::RedundantCast,
+                    format!("Redundant cast to {type_key}"),
+                )
+            };
             analysis_data.add_issue(Issue::new(
-                IssueKind::RedundantCast,
-                format!(
-                    "Redundant ({}) cast - value is already {}",
-                    cast_name, cast_name
-                ),
+                kind,
+                message,
                 analyzer.file_path,
                 pos.0, // start_offset
                 pos.1, // end_offset
@@ -722,22 +733,5 @@ fn is_redundant_cast(op: &UnaryPrefixOperator, inner_type: &TUnion) -> bool {
         }
 
         _ => false,
-    }
-}
-
-/// Get the display name for a cast operator.
-fn get_cast_name(op: &UnaryPrefixOperator) -> &'static str {
-    match op {
-        UnaryPrefixOperator::IntCast(_, _) | UnaryPrefixOperator::IntegerCast(_, _) => "int",
-        UnaryPrefixOperator::FloatCast(_, _)
-        | UnaryPrefixOperator::DoubleCast(_, _)
-        | UnaryPrefixOperator::RealCast(_, _) => "float",
-        UnaryPrefixOperator::StringCast(_, _) | UnaryPrefixOperator::BinaryCast(_, _) => "string",
-        UnaryPrefixOperator::BoolCast(_, _) | UnaryPrefixOperator::BooleanCast(_, _) => "bool",
-        UnaryPrefixOperator::ArrayCast(_, _) => "array",
-        UnaryPrefixOperator::ObjectCast(_, _) => "object",
-        UnaryPrefixOperator::UnsetCast(_, _) => "unset",
-        UnaryPrefixOperator::VoidCast(_, _) => "void",
-        _ => "unknown",
     }
 }

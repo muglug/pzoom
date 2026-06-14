@@ -3406,6 +3406,17 @@ pub(crate) fn infer_invokable_object_return_type(
                 analysis_data,
                 context,
             ),
+            // A `callable():R` (or `Closure():R`) member of an intersection like
+            // `object&callable():int` carries the invocation's return type
+            // directly (Psalm reads the TCallable/TClosure return type).
+            TAtomic::TCallable { return_type, .. } | TAtomic::TClosure { return_type, .. } => {
+                Some(
+                    return_type
+                        .as_ref()
+                        .map(|return_type| (**return_type).clone())
+                        .unwrap_or_else(TUnion::mixed),
+                )
+            }
             TAtomic::TObjectIntersection { types } => {
                 let mut intersection_return: Option<TUnion> = None;
                 for intersection_atomic in types {

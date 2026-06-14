@@ -50,7 +50,7 @@ pzoom has these, but mirrors little of Psalm's logic. Listed constructs are Psal
 | 851 | 29 | `SimpleNegatedAssertionReconciler.php` → `simple_negated_assertion_reconciler.rs` | `removeType`, `addType`, `getAtomicTypes`, `getNever`, `getId`, `hasMixed`, `Reconciler`, `RECONCILIATION_EMPTY` |
 | 734 | 24 | `StatementsAnalyzer.php` → `statements_analyzer.rs, stmt_analyzer.rs` | `getParsedDocblock`, `isset`, `data_flow_graph`, `getAliases`, `tags`, `getFileAnalyzer`, `getUnusedVarLocations`, `analyzeStatement` |
 | 734 | 1 | `Type.php` → `mod.rs` | `Union`, `class_type`, `Atomic`, `from_docblock`, `TNamedObject`, `value`, `setPossiblyUndefined`, `getFalse` |
-| 702 | 36 | `ArgumentsAnalyzer.php` → `arguments_analyzer.rs` | `in_array`, `isset`, `inside_call`, `getFQCLN`, `getAtomicTypes`, `TemplateStandinTypeReplacer`, `MethodIdentifier`, `ARRAY_FILTERLIKE` |
+| 696 | 37 | `ArgumentsAnalyzer.php` → `arguments_analyzer.rs` | `in_array`, `isset`, `inside_call`, `getFQCLN`, `getAtomicTypes`, `TemplateStandinTypeReplacer`, `MethodIdentifier`, `ARRAY_FILTERLIKE` |
 | 688 | 14 | `Methods.php` → `methods.rs` | `fq_class_name`, `MethodIdentifier`, `classlike_storage_provider`, `file_reference_provider`, `strtolower`, `isset`, `getDeclaringMethodId`, `getOverriddenMethodIds` |
 | 668 | 49 | `TypeCombiner.php` → `type_combiner.rs` | `isset`, `unset`, `setPossiblyUndefined`, `TGenericObject`, `Codebase`, `setFromDocblock`, `isNever`, `TNonFalsyString` |
 | 664 | 9 | `CallAnalyzer.php` → `call_analyzer.rs` | `getType`, `value`, `isset`, `getAtomicTypes`, `vars_in_scope`, `name`, `getStorage`, `MethodIdentifier` |

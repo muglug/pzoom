@@ -4284,14 +4284,15 @@ fn check_property_initialization(
     // flow- and type-sensitive definite-assignment pass (Psalm's
     // collect_initializations re-run). The returned set is the properties left
     // definitely assigned, with same-named-private shadowing already filtered.
-    let initialized =
+    let (initialized, uninitialized_reads) =
         analyze_constructor_init_props(analyzer, class_info, constructor, collect_nonprivate);
 
     // UninitializedProperty: the constructor body read `$this->prop` before
-    // anything could have initialized it. Only this class's own constructor
-    // has positions in this file.
+    // anything could have initialized it (collected at analysis time during the
+    // re-run above, Psalm's InstancePropertyFetchAnalyzer). Only this class's own
+    // constructor has positions in this file.
     if constructor_declared_here && !analyzer.config.is_issue_suppressed("UninitializedProperty") {
-        for (property_name, offset) in &constructor.initializer_uninit_reads {
+        for (property_name, offset) in &uninitialized_reads {
             if !candidates.contains(property_name) {
                 continue;
             }
@@ -4408,7 +4409,7 @@ fn analyze_constructor_init_props(
     class_info: &pzoom_code_info::ClassLikeInfo,
     constructor: &pzoom_code_info::FunctionLikeInfo,
     collect_nonprivate: bool,
-) -> FxHashSet<StrId> {
+) -> (FxHashSet<StrId>, Vec<(StrId, u32)>) {
     let mut method_context = BlockContext::new();
     method_context.collect_initializations = true;
     method_context.collect_nonprivate_initializations = collect_nonprivate;
@@ -4428,6 +4429,9 @@ fn analyze_constructor_init_props(
         }),
     );
 
+    // A throwaway buffer for the re-analysis: its issues are discarded, but the
+    // `collected_uninitialized_reads` are surfaced as UninitializedProperty.
+    let mut analysis_data = FunctionAnalysisData::new();
     let constructor_class = constructor.declaring_class.unwrap_or(class_info.name);
     if constructor_class == class_info.name {
         // Own constructor: re-analyse its body directly (`self` is this class).
@@ -4439,10 +4443,12 @@ fn analyze_constructor_init_props(
             analyzer,
             constructor,
             &mut method_context,
+            &mut analysis_data,
         );
     } else {
         // Inherited constructor: Psalm synthesises a `ParentCtor::__construct()`
-        // call and follows it (so `self` becomes the parent inside the body).
+        // call and follows it (so `self` becomes the parent inside the body). Its
+        // uninitialised reads live in another file and are not reported here.
         crate::init_collector::follow_static_init_call(
             analyzer,
             &mut method_context,
@@ -4484,7 +4490,7 @@ fn analyze_constructor_init_props(
             }
         }
     }
-    initialized
+    (initialized, analysis_data.collected_uninitialized_reads)
 }
 
 /// Whether the `/** ... */` docblock immediately preceding `offset` carries a

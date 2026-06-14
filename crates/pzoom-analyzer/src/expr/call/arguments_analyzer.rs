@@ -1167,6 +1167,23 @@ pub(crate) fn predeclare_by_ref_argument_vars(
                 placeholder.from_undefined_by_ref = true;
                 context.set_var_type(var_id, placeholder);
             }
+        } else if context.collect_initializations
+            && let Some(property_key) =
+                crate::expression_identifier::get_expression_var_key(arg.value().unparenthesized())
+            && property_key.contains("->")
+        {
+            // While collecting constructor initialisations, a by-ref property-path
+            // argument (`$this->foo($this->bar)`) initialises that property through
+            // the reference — predeclare it so reading it as the argument is not
+            // mistaken for an uninitialised read. Gated to the collect pass: in
+            // normal analysis a property keeps its declared type (so e.g.
+            // `array_push($this->ints, …)` still type-checks the element).
+            let var_id = VarName::new(&property_key);
+            if !context.locals.contains_key(&var_id) {
+                let mut placeholder = TUnion::mixed();
+                placeholder.from_undefined_by_ref = true;
+                context.set_var_type(var_id, placeholder);
+            }
         }
     }
 }

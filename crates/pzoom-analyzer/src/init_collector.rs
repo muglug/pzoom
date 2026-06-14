@@ -43,10 +43,12 @@ pub(crate) fn reanalyze_method_body_into(
     analyzer: &StatementsAnalyzer<'_>,
     method_info: &FunctionLikeInfo,
     method_context: &mut BlockContext,
+    analysis_data: &mut FunctionAnalysisData,
 ) {
     // Seed the method's parameters so the body analyses cleanly; their precise
     // types are irrelevant (`$this->prop = $param` records `$this->prop`
-    // regardless, and this pass's issues are thrown away).
+    // regardless, and this pass's issues are thrown away — only
+    // `collected_uninitialized_reads` and the `$this->prop` scope are kept).
     for param in &method_info.params {
         let param_name = analyzer.interner.lookup(param.name);
         let param_type = param.get_type().cloned().unwrap_or_else(TUnion::mixed);
@@ -101,11 +103,10 @@ pub(crate) fn reanalyze_method_body_into(
     .with_arena(&arena);
     let method_analyzer = file_analyzer.for_nested_function(Some(method_info));
 
-    let mut throwaway = FunctionAnalysisData::new();
     let _ = crate::stmt_analyzer::analyze_stmts(
         &method_analyzer,
         body_stmts,
-        &mut throwaway,
+        analysis_data,
         method_context,
     );
 }
@@ -242,7 +243,11 @@ fn follow_init_call(
         }
     }
 
-    reanalyze_method_body_into(analyzer, method_info, &mut call_context);
+    // A followed method's body is re-analysed for its `$this->prop` writes only;
+    // its own issues (and any uninitialised-read records, which Psalm raises only
+    // for the constructor body itself) are discarded.
+    let mut throwaway = FunctionAnalysisData::new();
+    reanalyze_method_body_into(analyzer, method_info, &mut call_context, &mut throwaway);
 
     // The caller inherits the callee's resulting property scope (Psalm's
     // getMethodMutations writeback).

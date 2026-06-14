@@ -68,6 +68,13 @@ pub struct FunctionAnalysisData {
     /// Issues discovered during analysis.
     pub issues: Vec<Issue>,
 
+    /// `(property, offset)` reads of `$this->prop` reached in a constructor body
+    /// while collecting initialisations, before the property was initialised
+    /// (Psalm's `InstancePropertyFetchAnalyzer` UninitializedProperty check).
+    /// Drained by `check_property_initialization`; populated only during the
+    /// `collect_initializations` re-analysis of the constructor.
+    pub collected_uninitialized_reads: Vec<(StrId, u32)>,
+
     /// Property-fetch expressions whose lookup failed on a known class
     /// (undefined property). Psalm's handleNonExistentProperty leaves the
     /// node untyped, so a chained fetch on it stays silent; pzoom records

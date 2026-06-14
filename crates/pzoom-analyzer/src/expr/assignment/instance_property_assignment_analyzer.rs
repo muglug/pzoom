@@ -1604,7 +1604,18 @@ fn verify_magic_set_call_arguments(
 }
 
 fn class_has_sealed_properties(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
-    class_info.sealed_properties.unwrap_or(false) && !class_info.no_seal_properties
+    if class_info.no_seal_properties {
+        return false;
+    }
+    // Psalm's `ClassLikeStorage::hasSealedProperties`:
+    //   sealed_properties ?? (user_defined ? config->seal_all_properties : false)
+    // `seal_all_properties` defaults to true, so a user-defined class with a
+    // `__set` and `@property` declarations seals its magic properties by
+    // default (an undeclared one is UndefinedMagicPropertyAssignment); a
+    // stubbed/builtin class does not seal unless it opts in explicitly.
+    class_info
+        .sealed_properties
+        .unwrap_or(!class_info.is_stubbed)
 }
 
 fn get_pseudo_property_set_type(

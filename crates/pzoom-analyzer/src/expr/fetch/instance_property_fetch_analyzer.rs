@@ -244,6 +244,13 @@ fn store_property_fetch_in_scope(
     prop_name: &str,
     prop_type: &TUnion,
 ) {
+    // While re-analysing a constructor to collect initialisations, a property
+    // *read* must not seed `$this->prop` into scope — otherwise reading an
+    // uninitialised property would make it look assigned (pzoom has no separate
+    // `initialized` flag, so it keys the check on scope presence).
+    if context.collect_initializations {
+        return;
+    }
     if let Some(object_key) = expression_identifier::get_expression_var_key(object_expr) {
         context.locals.insert(
             pzoom_code_info::VarName::from(format!("{}->{}", object_key, prop_name)),

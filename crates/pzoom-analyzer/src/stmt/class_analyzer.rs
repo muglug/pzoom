@@ -4312,7 +4312,15 @@ fn check_property_initialization(
     // `parent::`/ancestor static-dispatch calls unconditionally. An exhaustive
     // alternation initializes what every alternative (fully expanded)
     // initializes.
-    let mut initialized: FxHashSet<StrId> = FxHashSet::default();
+    // Own-body initialisation comes from re-analysing the constructor at
+    // analysis time (flow- and type-sensitive). When the body lives in this
+    // class's AST we trust it for the direct `$this->prop = …` assignments and
+    // ask the scan-time walk only for promoted params and the methods the
+    // constructor calls (whose bodies may be in other files); otherwise
+    // (inherited/trait constructor) the scan-time walk supplies everything.
+    let body_initialized = analyze_constructor_init_props(analyzer, class, class_info, constructor);
+    let skip_direct_assigns = body_initialized.is_some();
+    let mut initialized: FxHashSet<StrId> = body_initialized.unwrap_or_default();
     let mut visited: FxHashSet<(StrId, StrId)> = FxHashSet::default();
     expand_initializer_method(
         analyzer,
@@ -4320,6 +4328,7 @@ fn check_property_initialization(
         constructor,
         collect_nonprivate,
         &assignment_initializes,
+        skip_direct_assigns,
         &mut initialized,
         &mut visited,
     );
@@ -4433,6 +4442,10 @@ fn expand_initializer_method(
     method: &std::sync::Arc<pzoom_code_info::FunctionLikeInfo>,
     collect_nonprivate: bool,
     assignment_initializes: &dyn Fn(StrId, StrId) -> bool,
+    // When set, this method's *direct* `$this->prop = …` events are ignored —
+    // the analysis-time constructor re-analysis already supplied them. Promoted
+    // params and the methods it calls are still followed.
+    skip_direct_assigns: bool,
     initialized: &mut FxHashSet<StrId>,
     visited: &mut FxHashSet<(StrId, StrId)>,
 ) {
@@ -4462,6 +4475,7 @@ fn expand_initializer_method(
         method_class,
         collect_nonprivate,
         assignment_initializes,
+        skip_direct_assigns,
         initialized,
         visited,
     );
@@ -4475,6 +4489,7 @@ fn expand_initializer_events(
     method_class: StrId,
     collect_nonprivate: bool,
     assignment_initializes: &dyn Fn(StrId, StrId) -> bool,
+    skip_direct_assigns: bool,
     initialized: &mut FxHashSet<StrId>,
     visited: &mut FxHashSet<(StrId, StrId)>,
 ) {
@@ -4483,6 +4498,14 @@ fn expand_initializer_events(
     for event in events {
         match event {
             InitializerEvent::Assign(property_name) => {
+                if !skip_direct_assigns && assignment_initializes(method_class, *property_name) {
+                    initialized.insert(*property_name);
+                }
+            }
+            InitializerEvent::AssignByRef(property_name) => {
+                // A by-ref write-back is invisible to the constructor
+                // re-analysis, so it is honoured even when direct assignments
+                // are skipped.
                 if assignment_initializes(method_class, *property_name) {
                     initialized.insert(*property_name);
                 }
@@ -4507,6 +4530,7 @@ fn expand_initializer_events(
                         callee,
                         collect_nonprivate,
                         assignment_initializes,
+                        false,
                         initialized,
                         visited,
                     );
@@ -4534,6 +4558,7 @@ fn expand_initializer_events(
                     callee,
                     collect_nonprivate,
                     assignment_initializes,
+                    false,
                     initialized,
                     visited,
                 );
@@ -4559,6 +4584,7 @@ fn expand_initializer_events(
                     callee,
                     collect_nonprivate,
                     assignment_initializes,
+                    false,
                     initialized,
                     visited,
                 );
@@ -4577,6 +4603,7 @@ fn expand_initializer_events(
                         method_class,
                         collect_nonprivate,
                         assignment_initializes,
+                        skip_direct_assigns,
                         &mut branch_initialized,
                         &mut branch_visited,
                     );
@@ -4594,6 +4621,82 @@ fn expand_initializer_events(
             }
         }
     }
+}
+
+/// Psalm's `checkPropertyInitialization` re-analyses the constructor in a
+/// `collect_initializations` context and reads which `$this->prop` ended up in
+/// `vars_in_scope` — a flow-sensitive, type-aware definite-assignment check (a
+/// property assigned only after `exit()` or a `never`-returning call is *not*
+/// initialized). pzoom re-runs the constructor body the same way here and
+/// returns the set of properties left assigned at the end. The issues this pass
+/// produces are discarded (a throwaway analysis buffer); only the `$this->prop`
+/// scope keys are kept. Returns `None` when the constructor body is not in this
+/// class's own AST (inherited/trait constructors), so the caller falls back to
+/// the scan-time event walk for those.
+fn analyze_constructor_init_props(
+    analyzer: &StatementsAnalyzer<'_>,
+    class: &Class<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    constructor: &pzoom_code_info::FunctionLikeInfo,
+) -> Option<FxHashSet<StrId>> {
+    let body_stmts = class.members.iter().find_map(|member| {
+        let ClassLikeMember::Method(method) = member else {
+            return None;
+        };
+        if !method.name.value.eq_ignore_ascii_case("__construct") {
+            return None;
+        }
+        match &method.body {
+            MethodBody::Concrete(block) => Some(block.statements.as_slice()),
+            MethodBody::Abstract(_) => None,
+        }
+    })?;
+
+    let mut method_context = BlockContext::new();
+    method_context.collect_initializations = true;
+    method_context.self_class = Some(class_info.name);
+    method_context.has_this = true;
+    method_context.set_var_type(
+        VarName::new_static("$this"),
+        TUnion::new(TAtomic::TNamedObject {
+            name: class_info.name,
+            type_params: None,
+            is_static: true,
+            remapped_params: false,
+        }),
+    );
+    // Seed the constructor's parameters so the body analyses cleanly. Their
+    // precise types do not matter — `$this->prop = $param` records `$this->prop`
+    // regardless, and this pass's issues are thrown away.
+    for param in &constructor.params {
+        let param_name = analyzer.interner.lookup(param.name);
+        let param_type = param.get_type().cloned().unwrap_or_else(TUnion::mixed);
+        method_context.set_var_type(VarName::new(param_name.as_ref()), param_type);
+    }
+
+    let constructor_analyzer = analyzer.for_nested_function(Some(constructor));
+    let mut throwaway = FunctionAnalysisData::new();
+    let _ = crate::stmt_analyzer::analyze_stmts(
+        &constructor_analyzer,
+        body_stmts,
+        &mut throwaway,
+        &mut method_context,
+    );
+
+    // Psalm checks `vars_in_scope['$this->prop']->initialized`. pzoom records
+    // `$this->prop` in scope on both reads and writes, so distinguish an
+    // assignment from a mere read by the type's `possibly_undefined` flag — a
+    // read of an uninitialised property stays possibly-undefined, an assigned
+    // one does not.
+    let mut initialized = FxHashSet::default();
+    for (var_name, var_type) in method_context.locals.iter() {
+        if let Some(property_name) = var_name.as_str().strip_prefix("$this->")
+            && !var_type.possibly_undefined
+        {
+            initialized.insert(analyzer.interner.intern(property_name));
+        }
+    }
+    Some(initialized)
 }
 
 /// Resolve a `SomeClass::m()` class name as written in a method body against

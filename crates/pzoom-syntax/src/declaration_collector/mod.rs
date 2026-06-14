@@ -5084,6 +5084,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             initializer_summary::SummaryEvent::Assign(name) => {
                 InitializerEvent::Assign(self.interner.intern(name))
             }
+            initializer_summary::SummaryEvent::AssignByRef(name) => {
+                InitializerEvent::AssignByRef(self.interner.intern(name))
+            }
             initializer_summary::SummaryEvent::ThisCall(name) => {
                 InitializerEvent::ThisCall(self.interner.intern(name))
             }

@@ -44,9 +44,13 @@ use mago_syntax::ast::ast::variable::Variable;
 /// `collectSpecialInformation` resolves them.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SummaryEvent<'arena> {
-    /// `$this->prop = ...` (or a bare `$this->prop` passed to a followable
-    /// call, where a by-ref parameter may assign through it).
+    /// `$this->prop = ...` — a direct assignment in this method body.
     Assign(&'arena str),
+    /// A bare `$this->prop` passed to a followable call, where a by-ref
+    /// parameter may assign through it. Kept distinct from a direct assignment
+    /// because the analysis-time constructor re-analysis (which supersedes the
+    /// direct assignments) cannot see the by-ref write-back.
+    AssignByRef(&'arena str),
     /// `$this->m()`, `self::m()`, `static::m()`.
     ThisCall(&'arena str),
     /// `parent::m()`.
@@ -97,6 +101,15 @@ impl<'arena> WalkState<'arena> {
     fn note_assign(&mut self, name: &'arena str, definite: bool) {
         if definite {
             self.events.push(SummaryEvent::Assign(name));
+        }
+        if !self.may_assigned.contains(&name) {
+            self.may_assigned.push(name);
+        }
+    }
+
+    fn note_assign_by_ref(&mut self, name: &'arena str, definite: bool) {
+        if definite {
+            self.events.push(SummaryEvent::AssignByRef(name));
         }
         if !self.may_assigned.contains(&name) {
             self.may_assigned.push(name);
@@ -798,7 +811,7 @@ fn walk_followable_call_arguments<'arena>(
 ) {
     for argument in argument_list.arguments.iter() {
         if followable && let Some(name) = this_property_name(argument.value()) {
-            state.note_assign(name, definite);
+            state.note_assign_by_ref(name, definite);
             continue;
         }
         walk_expression(argument.value(), definite, state, summary);

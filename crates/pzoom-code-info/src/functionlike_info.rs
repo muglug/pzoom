@@ -226,8 +226,12 @@ pub struct FunctionLikeInfo {
 /// One initialization-relevant step of a method body, in execution order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum InitializerEvent {
-    /// `$this->prop = ...` (or a bare `$this->prop` passed by-ref).
+    /// `$this->prop = ...` — a direct assignment.
     Assign(StrId),
+    /// A bare `$this->prop` passed to a followable call by-ref (kept distinct
+    /// from a direct assignment: the analysis-time constructor re-analysis
+    /// supersedes direct assignments but cannot see a by-ref write-back).
+    AssignByRef(StrId),
     /// `$this->m()`, `self::m()`, `static::m()` — resolved against the class
     /// being checked, so overriding methods win.
     ThisCall(StrId),

@@ -243,6 +243,10 @@ pub struct BlockContext {
     /// `Context::inside_return`).
     pub inside_return: bool,
 
+    /// Whether we're re-analysing a constructor to discover which `$this->prop`
+    /// it definitely initialises (Psalm's `Context::collect_initializations`).
+    pub collect_initializations: bool,
+
     /// Whether the property fetch being analyzed is the root of an array
     /// APPEND target (`$a->foo[] = …`) — Psalm doesn't count that as a read
     /// of the property for find_unused_code (an offset write does).
@@ -444,6 +448,7 @@ impl BlockContext {
             control_actions: FxHashSet::default(),
             inside_foreach: self.inside_foreach,
             inside_try: self.inside_try,
+            collect_initializations: self.collect_initializations,
             self_class: self.self_class,
             parent_class: self.parent_class,
             has_this: self.has_this,

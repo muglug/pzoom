@@ -1021,9 +1021,18 @@ fn get_value_for_key(
                                     // A known class without the property fails
                                     // the whole key (Psalm returns null from
                                     // getValueForKey), so no narrowing entry —
-                                    // not a null/mixed-polluted union.
-                                    let property_info =
-                                        class_info.properties.get(&property_id)?;
+                                    // not a null/mixed-polluted union. A magic
+                                    // `@property` (pseudo) type is resolved so an
+                                    // `is_null($this->magicProp)` clause can be
+                                    // narrowed in a later branch.
+                                    let Some(property_info) =
+                                        class_info.properties.get(&property_id)
+                                    else {
+                                        return class_info
+                                            .pseudo_property_get_types
+                                            .get(&property_id)
+                                            .cloned();
+                                    };
                                     let mut property_type = property_info
                                         .get_type()
                                         .cloned()

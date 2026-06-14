@@ -266,6 +266,38 @@ pub fn analyze_with_known_type(
                 return;
             }
 
+            // Some members are objects and some are not (`A|int`): the write is
+            // valid for the object part but possibly wrong for the rest — Psalm's
+            // PossiblyInvalidPropertyAssignment. The object part is still
+            // processed below (no early return).
+            if has_invalid_type && has_object_type {
+                let invalid_type_id = lookup_types
+                    .iter()
+                    .find(|t| {
+                        !matches!(
+                            t,
+                            TAtomic::TNamedObject { .. }
+                                | TAtomic::TObject
+                                | TAtomic::TNull
+                                | TAtomic::TMixed
+                        )
+                    })
+                    .map(|t| t.get_id(Some(analyzer.interner)))
+                    .unwrap_or_else(|| obj_type.get_id(Some(analyzer.interner)));
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::PossiblyInvalidPropertyAssignment,
+                    format!(
+                        "Cannot assign to property ${prop_name} with possible non-object type '{invalid_type_id}'",
+                    ),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
             let prop_id = analyzer.interner.intern(prop_name);
             let has_concrete_property_candidate = lookup_types.iter().any(|atomic| {
                 let TAtomic::TNamedObject { name, .. } = atomic else {

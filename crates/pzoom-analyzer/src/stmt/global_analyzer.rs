@@ -56,7 +56,19 @@ pub fn analyze(
                 analyzer, stmt_start, &var_id,
             )
         });
+        // A function-level `@global Type $var` declaration types the import
+        // (Psalm's FunctionLikeStorage::$global_types).
+        let global_docblock_type = analyzer.function_info.and_then(|function_info| {
+            function_info
+                .global_types
+                .iter()
+                .find(|(global_var_name, _)| {
+                    analyzer.interner.lookup(*global_var_name).as_ref() == direct.name
+                })
+                .map(|(_, global_type)| global_type.clone())
+        });
         let mut var_type = comment_type
+            .or(global_docblock_type)
             .or_else(|| get_superglobal_default_type(direct.name))
             .or_else(|| analysis_data.file_global_types.get(&var_id).cloned())
             .unwrap_or_else(TUnion::mixed);

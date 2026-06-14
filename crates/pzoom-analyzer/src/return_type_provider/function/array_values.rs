@@ -33,9 +33,24 @@ fn infer_array_values_return_type(
 
     if array_info.is_list {
         let (line, col) = analyzer.get_line_column(array_pos.0);
+        let type_id = array_type.get_id(Some(analyzer.interner));
+        // Psalm's NamedFunctionCallHandler: a redundancy that follows from a
+        // docblock-provided list type is the RedundantFunctionCallGivenDocblockType
+        // variant, not the plain runtime RedundantFunctionCall.
+        let (kind, message) = if array_type.from_docblock {
+            (
+                IssueKind::RedundantFunctionCallGivenDocblockType,
+                format!("The call to array_values is unnecessary given the list docblock type {type_id}"),
+            )
+        } else {
+            (
+                IssueKind::RedundantFunctionCall,
+                format!("The call to array_values is unnecessary, {type_id} is already a list"),
+            )
+        };
         analysis_data.add_issue(Issue::new(
-            IssueKind::RedundantFunctionCall,
-            "array_values called on a list is redundant",
+            kind,
+            message,
             analyzer.file_path,
             array_pos.0,
             array_pos.1,

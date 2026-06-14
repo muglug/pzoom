@@ -163,7 +163,15 @@ fn analyze_assignment_chain<'a>(
     let suppress_undefined_root = match root_expr.unparenthesized() {
         Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) => {
             let root_var_id = VarName::new(direct.name);
+            // A superglobal (`$GLOBALS`, `$_GET`, …) is always defined with a
+            // known type, even on first use — don't reseed it as a fresh empty
+            // array, or `$GLOBALS['foo'][0] = …` would miss the mixed offset
+            // assignment (the root is read here at line 180 and supplies its
+            // superglobal type below).
             !context.locals.contains_key(&root_var_id)
+                && !crate::expr::variable_fetch_analyzer::is_superglobal(
+                    direct.name.strip_prefix('$').unwrap_or(direct.name),
+                )
         }
         _ => false,
     };

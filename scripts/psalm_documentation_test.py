@@ -98,8 +98,6 @@ DIVERGENT_EXPECTATIONS = {
 KNOWN_FAILURES: dict[str, str] = {
     # Unused-declaration gaps the per-file pass (--find-unused-code) does not
     # yet cover:
-    "UnusedConstructor": "constructor is skipped by the unused-method pass",
-    "UnusedReturnValue": "no call-site return-value usage tracking",
     "UnusedPsalmSuppress": "a suppress over an issue-free statement is not tracked",
     # Scanner / declaration-level checks not yet implemented
     "ParseError": "parse errors are recovered, not surfaced as issues",

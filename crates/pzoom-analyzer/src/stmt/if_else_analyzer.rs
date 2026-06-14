@@ -367,13 +367,35 @@ pub fn analyze(
     for (var_name, assertion_groups) in
         if_scope.negated_types.iter().chain(if_side_truths.iter())
     {
-        if var_name.contains("::$")
+        let is_static_property = var_name.contains("::$");
+        // `$this->prop` accessing a *real declared* non-nullable property: an
+        // undeclared/magic property (`$xml->child` on SimpleXMLElement) carries
+        // no initialization guarantee, and inside the constructor the property
+        // is still being initialized (Psalm keeps it possibly_undefined there).
+        let is_instance_property = var_name
+            .strip_prefix("$this->")
+            .is_some_and(|prop_path| {
+                !prop_path.contains("->")
+                    && !prop_path.contains("::")
+                    && !prop_path.contains('[')
+                    && analyzer.function_info.map(|info| info.name)
+                        != Some(pzoom_str::StrId::CONSTRUCT)
+                    && context.self_class.is_some_and(|self_class| {
+                        let prop_id = analyzer.interner.intern(prop_path);
+                        analyzer
+                            .codebase
+                            .get_class(self_class)
+                            .is_some_and(|class_info| class_info.properties.contains_key(&prop_id))
+                    })
+            });
+        if (is_static_property || is_instance_property)
             && !var_name.contains('[')
             && assertion_groups
                 .iter()
                 .flatten()
                 .any(|assertion| matches!(assertion, pzoom_code_info::Assertion::IsNotIsset))
             && let Some(declared) = reconciler::resolve_key_type(var_name, context, analyzer)
+            && !declared.possibly_undefined
             && !declared.is_nullable()
             && !declared
                 .types
@@ -384,13 +406,24 @@ pub fn analyze(
             let start = analysis_data.current_stmt_start.unwrap_or(0);
             let end = analysis_data.current_stmt_end.unwrap_or(start);
             let (line, col) = analyzer.get_line_column(start);
-            analysis_data.add_issue(pzoom_code_info::Issue::new(
-                pzoom_code_info::IssueKind::RedundantPropertyInitializationCheck,
+            // Psalm's SimpleNegatedAssertionReconciler distinguishes static
+            // (`from_static_property`) and instance (`from_property`) properties.
+            let message = if is_static_property {
                 format!(
                     "Static property {} with type {} has unexpected isset check — should it be nullable?",
                     var_name,
                     declared.get_id(Some(analyzer.interner))
-                ),
+                )
+            } else {
+                format!(
+                    "Property {} with type {} should already be set in the constructor",
+                    var_name,
+                    declared.get_id(Some(analyzer.interner))
+                )
+            };
+            analysis_data.add_issue(pzoom_code_info::Issue::new(
+                pzoom_code_info::IssueKind::RedundantPropertyInitializationCheck,
+                message,
                 analyzer.file_path,
                 start,
                 end,

@@ -1142,7 +1142,12 @@ fn report_unused_declarations(
                 let method_name = interner.lookup(*method_name_id).to_string();
                 let method_lc_name = method_name.to_lowercase();
                 let method_lc = interner.intern(&method_lc_name);
-                if magic_method_skips.contains(&method_lc_name.as_str()) {
+                // A private constructor that is never called (no `new`, no
+                // internal factory) is Psalm's UnusedConstructor — keep it in
+                // the pass; every other magic method is runtime-invoked.
+                let is_private_constructor = method_lc_name == "__construct"
+                    && matches!(method_info.visibility, Visibility::Private);
+                if magic_method_skips.contains(&method_lc_name.as_str()) && !is_private_constructor {
                     continue;
                 }
                 // Psalm: Serializable's serialize/unserialize and
@@ -1205,7 +1210,14 @@ fn report_unused_declarations(
                         continue;
                     }
                     let method_id = format!("{}::{}", class_name, method_name);
-                    if matches!(method_info.visibility, Visibility::Private) {
+                    if is_private_constructor {
+                        emit(
+                            IssueKind::UnusedConstructor,
+                            format!("Cannot find any calls to private constructor {}", method_id),
+                            method_info.start_offset,
+                            method_info.start_offset.saturating_add(1),
+                        );
+                    } else if matches!(method_info.visibility, Visibility::Private) {
                         emit(
                             IssueKind::UnusedMethod,
                             format!("Cannot find any calls to private method {}", method_id),
@@ -1234,10 +1246,9 @@ fn report_unused_declarations(
                                 pzoom_code_info::TAtomic::TNamedObject { name, .. }
                                     if *name == StrId::STATIC || *name == *class_id
                             )))
-                }) && !matches!(method_info.visibility, Visibility::Private)
-                    && !analysis_data
-                        .method_returns_used
-                        .contains(&(*class_id, method_lc))
+                }) && !analysis_data
+                    .method_returns_used
+                    .contains(&(*class_id, method_lc))
                     && !method_info.declaring_class.is_some_and(|declaring| {
                         analysis_data
                             .method_returns_used
@@ -1247,12 +1258,24 @@ fn report_unused_declarations(
                     let (start, end) = method_info
                         .return_type_location
                         .unwrap_or((method_info.start_offset, method_info.start_offset + 1));
-                    emit(
-                        IssueKind::PossiblyUnusedReturnValue,
-                        "The return value for this method is never used".to_string(),
-                        start,
-                        end,
-                    );
+                    // Psalm: a private method's unused return is the definite
+                    // UnusedReturnValue; a public/protected one is the
+                    // possibly-unused variant (it may be called externally).
+                    if matches!(method_info.visibility, Visibility::Private) {
+                        emit(
+                            IssueKind::UnusedReturnValue,
+                            "The return value for this private method is never used".to_string(),
+                            start,
+                            end,
+                        );
+                    } else {
+                        emit(
+                            IssueKind::PossiblyUnusedReturnValue,
+                            "The return value for this method is never used".to_string(),
+                            start,
+                            end,
+                        );
+                    }
                 }
             }
 

@@ -184,6 +184,11 @@ pub enum IssueKind {
     PossiblyUnusedParam,
     /// A non-void method whose return value is never used at any call site.
     PossiblyUnusedReturnValue,
+    /// A non-void *private* method whose return value is never used (Psalm
+    /// reports the definite UnusedReturnValue for private methods).
+    UnusedReturnValue,
+    /// A private constructor that is never called (Psalm find_unused_code).
+    UnusedConstructor,
     /// A docblock `@param` for a parameter that does not exist.
     UnusedDocblockParam,
     /// A class with no descendants that Psalm requires to be final
@@ -365,6 +370,8 @@ pub enum IssueKind {
 
     // Include issues
     UnresolvableInclude,
+    /// A `require`/`include` of a resolvable path that does not exist on disk.
+    MissingFile,
 
     // Constant issues
     AmbiguousConstantInheritance,

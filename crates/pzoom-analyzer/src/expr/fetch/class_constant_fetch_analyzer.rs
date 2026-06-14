@@ -151,9 +151,12 @@ pub fn analyze(
                     .types
                     .iter()
                     .filter_map(|atomic| match atomic {
-                        TAtomic::TNamedObject { .. } => Some(TAtomic::TClassString {
-                            as_type: Some(Box::new(atomic.clone())),
-                        }),
+                        // `$obj::class` on a template object `T` is `class-string<T>`.
+                        TAtomic::TNamedObject { .. } | TAtomic::TTemplateParam { .. } => {
+                            Some(TAtomic::TClassString {
+                                as_type: Some(Box::new(atomic.clone())),
+                            })
+                        }
                         TAtomic::TObject => Some(TAtomic::TClassString { as_type: None }),
                         _ => None,
                     })

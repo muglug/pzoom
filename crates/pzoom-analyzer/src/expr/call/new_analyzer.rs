@@ -1047,7 +1047,10 @@ fn infer_concrete_class_id_from_class_expr_type(
             TAtomic::TNamedObject { name, .. } if *name != StrId::STATIC => Some(*name),
             _ => None,
         },
-        TAtomic::TTemplateParam { as_type, .. } => match as_type.get_single() {
+        // `new (get_class($x))` — the dependent class-string carries the
+        // object's class as its `as_type` (Psalm's TDependentGetClass).
+        TAtomic::TTemplateParam { as_type, .. }
+        | TAtomic::TDependentGetClass { as_type, .. } => match as_type.get_single() {
             Some(TAtomic::TNamedObject { name, .. }) if *name != StrId::STATIC => Some(*name),
             _ => None,
         },

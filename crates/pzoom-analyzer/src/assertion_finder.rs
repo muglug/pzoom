@@ -2880,12 +2880,14 @@ fn replace_assertion_templates(
     assertion_type: &AssertionType,
     template_result: &TemplateResult,
 ) -> AssertionType {
+    // Mirror Psalm's `Possibilities::getUntemplatedCopy`, which runs only
+    // `TemplateInferredTypeReplacer::replace` on the assertion type — NOT the
+    // standin pass. The distinction matters for an *unbound* template: the
+    // standin replacer collapses `T` to its `as` bound (e.g. `mixed`), whereas
+    // the inferred replacer keeps `T` when the call inferred no bound for it, so
+    // `@psalm-assert-if-true T $value` narrows `$value` to `T`.
     let replace = |union: &TUnion| {
-        function_call_analyzer::replace_templates_in_union_in(
-            Some(codebase),
-            union,
-            template_result,
-        )
+        crate::template::inferred_type_replacer::replace_in(Some(codebase), union, template_result)
     };
     match assertion_type {
         AssertionType::IsType(union) => AssertionType::IsType(replace(union)),
@@ -2913,12 +2915,17 @@ pub(crate) fn get_untemplated_copy(
     static_class_id: StrId,
     parent_class_id: Option<StrId>,
 ) -> AssertionType {
+    // Psalm's `getUntemplatedCopy` runs only `TemplateInferredTypeReplacer::replace`,
+    // which keeps an unbound template `T` rather than collapsing it to its bound.
+    let replace = |union: &TUnion| {
+        crate::template::inferred_type_replacer::replace_in(Some(codebase), union, template_result)
+    };
     match assertion_type {
         AssertionType::IsType(asserted_type) => {
             AssertionType::IsType(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,
@@ -2928,7 +2935,7 @@ pub(crate) fn get_untemplated_copy(
             AssertionType::IsEqual(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,
@@ -2938,7 +2945,7 @@ pub(crate) fn get_untemplated_copy(
             AssertionType::IsLooselyEqual(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,
@@ -2948,7 +2955,7 @@ pub(crate) fn get_untemplated_copy(
             AssertionType::IsNotType(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,
@@ -2958,7 +2965,7 @@ pub(crate) fn get_untemplated_copy(
             AssertionType::IsNotEqual(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,
@@ -2968,7 +2975,7 @@ pub(crate) fn get_untemplated_copy(
             AssertionType::IsNotLooselyEqual(localize_special_class_type_union(
                 codebase,
                 interner,
-                &function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+                &replace(asserted_type),
                 self_class_id,
                 static_class_id,
                 parent_class_id,

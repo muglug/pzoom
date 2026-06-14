@@ -461,12 +461,24 @@ pub(crate) fn get_method_return_type(
                     Some(&analysis_data.type_variable_bounds),
                 )
         {
-            resolved_method = Some((
-                calling_class_id,
-                self_resolved_class_id,
-                existing_type_params,
-                self_method_info,
-            ));
+            // When collecting constructor initialisations `$this` is typed as the
+            // concrete class being constructed (a descendant of the method's
+            // lexical class), so a `$this->m()` call must late-bind to that
+            // descendant's override — exactly what PHP does for public/protected
+            // methods. Only a *private* method on the lexical class shadows the
+            // call (early binding); otherwise keep the receiver's resolution.
+            // Outside collection `$this` is the lexical class and this rebinding is
+            // a no-op, so the existing behaviour is preserved.
+            if !context.collect_initializations
+                || matches!(self_method_info.visibility, Visibility::Private)
+            {
+                resolved_method = Some((
+                    calling_class_id,
+                    self_resolved_class_id,
+                    existing_type_params,
+                    self_method_info,
+                ));
+            }
         }
     }
 
@@ -495,6 +507,15 @@ pub(crate) fn get_method_return_type(
             }
             method_info
         };
+        // While re-analysing a constructor to collect property initialisations,
+        // a `$this->method()` call is followed in place so the method's
+        // `$this->prop` writes land flow-sensitively (Psalm's
+        // `CallAnalyzer::collectSpecialInformation`, instance branch).
+        if context.collect_initializations && is_this_call {
+            crate::init_collector::follow_instance_init_call(
+                analyzer, context, class_id, &method_info,
+            );
+        }
         let class_name = analyzer.interner.lookup(class_id);
         let parent_class_id = analyzer
             .codebase
@@ -997,7 +1018,13 @@ pub(crate) fn get_method_return_type(
             // (`remember_property_assignments_after_call = true`): a non-mutation-free
             // call only invalidates the specific `$lhs->prop` narrowings for properties
             // the called method actually assigns to (its `this_property_mutations`).
-            if !method_info.this_property_mutations.is_empty()
+            //
+            // While collecting constructor initialisations the call was instead
+            // *followed* in place (`init_collector`), which already established the
+            // authoritative post-call `$this->prop` scope — dropping those keys here
+            // would discard exactly the initialisations the follow just recorded.
+            if !context.collect_initializations
+                && !method_info.this_property_mutations.is_empty()
                 && let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
             {
                 // Collect the reference cluster for the receiver variable so a

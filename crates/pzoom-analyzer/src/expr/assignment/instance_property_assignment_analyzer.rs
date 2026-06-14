@@ -1157,6 +1157,20 @@ pub fn analyze_with_known_type(
                 })
                 .unwrap_or_else(|| value_type.clone());
             context.set_var_type(property_id, stored_type);
+            // During a collect_initializations pass, remember which class context
+            // assigned this `$this->prop` (Psalm's `initialized_class`): a parent
+            // constructor's `$this->b = …` sets the *parent's* private `$b`, which
+            // the property-init check must tell apart from a same-named private
+            // `$b` on the child.
+            if context.collect_initializations
+                && object_key == "$this"
+                && let Some(self_class) = context.self_class
+            {
+                let property_name_id = analyzer.interner.intern(prop_name);
+                context
+                    .initialized_prop_classes
+                    .insert(property_name_id, self_class);
+            }
             // Psalm's AssignmentAnalyzer calls removeDescendents →
             // removeVarFromConflictingClauses for property-path assignments
             // too: clauses mentioning `$obj->prop` (or paths under it) are

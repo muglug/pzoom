@@ -151,6 +151,47 @@ pub fn analyze(
         }
     }
 
+    // While re-analysing a constructor to collect initialisations, a read of
+    // `$this->prop` that is not yet in scope is a read of an uninitialised
+    // property (Psalm's InstancePropertyFetchAnalyzer: `!$stmt_type->initialized
+    // && collect_initializations && getMethodName() === '__construct'`). It is
+    // recorded for check_property_initialization to surface as
+    // UninitializedProperty — only inside the constructor body itself, not the
+    // helper methods it follows, and not inside isset()/unset().
+    if context.collect_initializations
+        && is_this_fetch
+        && !in_assignment
+        && !context.inside_isset
+        && !context.inside_unset
+        && analyzer
+            .function_info
+            .is_some_and(|info| info.name == pzoom_str::StrId::CONSTRUCT)
+        && let Some(prop_name) = prop_name
+    {
+        let property_key = format!("$this->{}", prop_name);
+        // Uninitialised only when the property has been assigned on *no* path so
+        // far: an assignment on some earlier branch (recorded in
+        // `vars_possibly_in_scope`) means a later read may be legitimately guarded
+        // (an `isset`/`instanceof`), mirroring the previous scan-time
+        // `may_assigned` suppression.
+        if !context.locals.contains_key(property_key.as_str())
+            && !context
+                .vars_possibly_in_scope
+                .contains(property_key.as_str())
+        {
+            let property_id = analyzer.interner.intern(prop_name);
+            if !analysis_data
+                .collected_uninitialized_reads
+                .iter()
+                .any(|(existing, _)| *existing == property_id)
+            {
+                analysis_data
+                    .collected_uninitialized_reads
+                    .push((property_id, pos.0));
+            }
+        }
+    }
+
     // Psalm records NO type for an undefined-property fetch
     // (handleNonExistentProperty leaves the node untyped), so a chained
     // fetch on it stays silent. pzoom types the failed fetch `mixed` and
@@ -244,6 +285,13 @@ fn store_property_fetch_in_scope(
     prop_name: &str,
     prop_type: &TUnion,
 ) {
+    // While re-analysing a constructor to collect initialisations, a property
+    // *read* must not seed `$this->prop` into scope — otherwise reading an
+    // uninitialised property would make it look assigned (pzoom has no separate
+    // `initialized` flag, so it keys the check on scope presence).
+    if context.collect_initializations {
+        return;
+    }
     if let Some(object_key) = expression_identifier::get_expression_var_key(object_expr) {
         context.locals.insert(
             pzoom_code_info::VarName::from(format!("{}->{}", object_key, prop_name)),

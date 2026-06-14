@@ -208,36 +208,6 @@ pub struct FunctionLikeInfo {
     /// replaces the existing definition.
     #[serde(default)]
     pub declared_if_not_exists: bool,
-
-    /// Ordered initialization-relevant events of this method's body
-    /// (assignments to `$this->X`, `$this`-bound calls, exhaustive
-    /// alternations). The property-initialization check expands these the way
-    /// Psalm's `collect_initializations` constructor simulation would.
-    #[serde(default)]
-    pub initializer_events: Vec<InitializerEvent>,
-
-    /// `(property, offset)` reads of `$this->X` reached before any assignment
-    /// or `$this` method call in this body (Psalm's `UninitializedProperty`
-    /// candidates when this method is a constructor).
-    #[serde(default)]
-    pub initializer_uninit_reads: Vec<(StrId, u32)>,
-}
-
-/// One initialization-relevant step of a method body, in execution order.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum InitializerEvent {
-    /// `$this->prop = ...` (or a bare `$this->prop` passed by-ref).
-    Assign(StrId),
-    /// `$this->m()`, `self::m()`, `static::m()` — resolved against the class
-    /// being checked, so overriding methods win.
-    ThisCall(StrId),
-    /// `parent::m()` — resolved against the declaring class's parent.
-    ParentCall(StrId),
-    /// `SomeClass::m()` — the class name as written, resolved at check time
-    /// against the checked class's ancestors.
-    NamedCall(StrId, StrId),
-    /// An exhaustive alternation: every path takes exactly one alternative.
-    Branch(Vec<Vec<InitializerEvent>>),
 }
 
 /// Taint-tracking metadata for a function-like (Psalm keeps these directly on

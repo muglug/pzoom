@@ -48,7 +48,6 @@ use crate::type_resolver::resolve_hint;
 
 mod classlike_scanner;
 mod functionlike_scanner;
-mod initializer_summary;
 pub mod simple_type_inferer;
 mod taint_scanner;
 
@@ -2106,8 +2105,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut uses_variadic_builtin_args = false;
                     let mut this_property_mutations = Vec::new();
                     let mut defined_constants = Vec::new();
-                    let mut initializer_events = Vec::new();
-                    let mut initializer_uninit_reads = Vec::new();
                     if let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(body) =
                         &method.body
                     {
@@ -2128,19 +2125,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         );
                         this_property_mutations =
                             self.collect_this_property_mutations(body.statements.as_slice());
-                        let init_summary = initializer_summary::summarize_method_body(
-                            body.statements.as_slice(),
-                        );
-                        initializer_events = init_summary
-                            .events
-                            .iter()
-                            .map(|event| self.intern_initializer_event(event))
-                            .collect();
-                        initializer_uninit_reads = init_summary
-                            .uninit_reads
-                            .into_iter()
-                            .map(|(name, offset)| (self.interner.intern(name), offset))
-                            .collect();
                         self.collect_inline_docblock_annotations_in_span(
                             body_span.start.offset,
                             body_span.end.offset,
@@ -2269,8 +2253,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         this_property_mutations,
                         defined_constants,
                         taints,
-                        initializer_events,
-                        initializer_uninit_reads,
                         ..Default::default()
                     };
 
@@ -5071,43 +5053,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         assertions
-    }
-
-    /// Convert a borrowed scan-time summary event into the interned storage
-    /// form (`FunctionLikeInfo::initializer_events`).
-    fn intern_initializer_event(
-        &self,
-        event: &initializer_summary::SummaryEvent<'_>,
-    ) -> pzoom_code_info::functionlike_info::InitializerEvent {
-        use pzoom_code_info::functionlike_info::InitializerEvent;
-        match event {
-            initializer_summary::SummaryEvent::Assign(name) => {
-                InitializerEvent::Assign(self.interner.intern(name))
-            }
-            initializer_summary::SummaryEvent::ThisCall(name) => {
-                InitializerEvent::ThisCall(self.interner.intern(name))
-            }
-            initializer_summary::SummaryEvent::ParentCall(name) => {
-                InitializerEvent::ParentCall(self.interner.intern(name))
-            }
-            initializer_summary::SummaryEvent::NamedCall(class_name, method_name) => {
-                InitializerEvent::NamedCall(
-                    self.interner.intern(class_name),
-                    self.interner.intern(method_name),
-                )
-            }
-            initializer_summary::SummaryEvent::Branch(branches) => InitializerEvent::Branch(
-                branches
-                    .iter()
-                    .map(|branch| {
-                        branch
-                            .iter()
-                            .map(|event| self.intern_initializer_event(event))
-                            .collect()
-                    })
-                    .collect(),
-            ),
-        }
     }
 
     /// Collect the names of `$this->X` properties assigned anywhere within the

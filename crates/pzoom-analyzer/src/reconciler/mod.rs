@@ -1913,9 +1913,6 @@ fn adjust_tkeyed_array_type(
                     offset,
                     &result_type,
                 )),
-                // A generic list (`list<T>`) keeps its uniform element type rather
-                // than being turned into a keyed array — pzoom resolves a dynamic
-                // offset against the element type, not the fallback of a keyed list.
                 TAtomic::TArray {
                     key_type,
                     value_type,
@@ -1933,6 +1930,23 @@ fn adjust_tkeyed_array_type(
                         is_list: false,
                         sealed: false,
                         fallback_key_type: Some(key_type.clone()),
+                        fallback_value_type: Some(value_type.clone()),
+                    })
+                }
+                // Narrowing a *literal* list offset (`is_int($list[0])`) records
+                // the known element on a keyed list, the original element type
+                // staying as the unsealed fallback — so e.g. a later
+                // `array_shift` reads the narrowed first element.
+                TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type }
+                    if matches!(offset, ArrayKey::Int(_)) =>
+                {
+                    let mut properties = FxHashMap::default();
+                    properties.insert(offset.clone(), result_type.clone());
+                    Some(TAtomic::TKeyedArray {
+                        properties: std::sync::Arc::new(properties),
+                        is_list: true,
+                        sealed: false,
+                        fallback_key_type: Some(Box::new(TUnion::new(TAtomic::TInt))),
                         fallback_value_type: Some(value_type.clone()),
                     })
                 }

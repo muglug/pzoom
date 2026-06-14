@@ -9,6 +9,7 @@ mod array_column;
 mod array_fill;
 mod array_merge;
 mod array_reverse;
+mod array_shift_pop;
 mod array_splice;
 mod call_user_func;
 mod parse_url;
@@ -87,6 +88,7 @@ fn providers() -> &'static [&'static (dyn FunctionReturnTypeProvider + 'static)]
         &array_keys::ArrayKeysReturnTypeProvider,
         &array_values::ArrayValuesReturnTypeProvider,
         &array_key_first_last::ArrayKeyFirstLastReturnTypeProvider,
+        &array_shift_pop::ArrayShiftPopReturnTypeProvider,
         &array_rand::ArrayRandReturnTypeProvider,
         &filter_var::FilterVarReturnTypeProvider,
         &min_max::MinMaxReturnTypeProvider,

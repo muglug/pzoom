@@ -214,6 +214,7 @@ pub fn analyze_with_namespace(
         }
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
@@ -290,6 +291,7 @@ pub fn analyze_anonymous_class(
         check_class_relationships(analyzer, info, context, analysis_data);
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
@@ -361,6 +363,7 @@ pub fn analyze_interface_with_namespace(
         check_missing_interface_method_typehints(analyzer, info, analysis_data);
         check_invalid_override_attributes(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
     }
 
@@ -602,6 +605,7 @@ pub fn analyze_enum_with_namespace(
         );
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
@@ -4818,6 +4822,7 @@ pub fn analyze_trait_with_namespace(
         );
         check_duplicate_property_declarations(analyzer, info, analysis_data);
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
+        check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_docblock_issues(analyzer, info, analysis_data);
         check_undefined_docblock_mixins(analyzer, info, analysis_data);
@@ -5645,6 +5650,31 @@ fn check_duplicate_property_declarations(
             IssueKind::DuplicateProperty,
             format!(
                 "Property {}::${} has already been defined",
+                analyzer.interner.lookup(class_info.name),
+                analyzer.interner.lookup(duplicate.property_name)
+            ),
+            analyzer.file_path,
+            duplicate.start_offset,
+            duplicate.end_offset,
+            line,
+            col,
+        ));
+    }
+}
+
+/// Psalm's FunctionLikeNodeScanner DuplicateMethod, surfaced from the scan-time
+/// record (`property_name` carries the method name).
+fn check_duplicate_method_declarations(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for duplicate in &class_info.duplicate_method_issues {
+        let (line, col) = analyzer.get_line_column(duplicate.start_offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::DuplicateMethod,
+            format!(
+                "Method {}::{} has already been defined",
                 analyzer.interner.lookup(class_info.name),
                 analyzer.interner.lookup(duplicate.property_name)
             ),

@@ -265,6 +265,12 @@ pub struct ClassLikeInfo {
     #[serde(default)]
     pub duplicate_constant_issues: Vec<DuplicatePropertyIssue>,
 
+    /// Duplicate method declarations collected during scanning (Psalm's
+    /// FunctionLikeNodeScanner DuplicateMethod). Reuses the name+offset holder;
+    /// `property_name` carries the method name.
+    #[serde(default)]
+    pub duplicate_method_issues: Vec<DuplicatePropertyIssue>,
+
     /// Whether this class has been deprecated.
     pub is_deprecated: bool,
 

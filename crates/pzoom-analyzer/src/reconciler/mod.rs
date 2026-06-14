@@ -1021,9 +1021,18 @@ fn get_value_for_key(
                                     // A known class without the property fails
                                     // the whole key (Psalm returns null from
                                     // getValueForKey), so no narrowing entry —
-                                    // not a null/mixed-polluted union.
-                                    let property_info =
-                                        class_info.properties.get(&property_id)?;
+                                    // not a null/mixed-polluted union. A magic
+                                    // `@property` (pseudo) type is resolved so an
+                                    // `is_null($this->magicProp)` clause can be
+                                    // narrowed in a later branch.
+                                    let Some(property_info) =
+                                        class_info.properties.get(&property_id)
+                                    else {
+                                        return class_info
+                                            .pseudo_property_get_types
+                                            .get(&property_id)
+                                            .cloned();
+                                    };
                                     let mut property_type = property_info
                                         .get_type()
                                         .cloned()
@@ -1162,7 +1171,6 @@ fn apply_array_access_to_base_type(
         let candidate_type = match atomic {
             TAtomic::TKeyedArray {
                 properties,
-                is_list,
                 fallback_value_type,
                 ..
             } => {
@@ -1227,17 +1235,16 @@ fn apply_array_access_to_base_type(
                     *possibly_undefined = true;
                     if let Some(fallback) = fallback_value_type {
                         Some((**fallback).clone())
-                    } else if (*is_list
-                        || properties.keys().all(|key| matches!(key, ArrayKey::Int(_))))
-                        && !properties.is_empty()
-                    {
+                    } else if !properties.is_empty() {
+                        // A dynamic offset against a keyed array yields the union
+                        // of its known value types (Psalm's
+                        // TKeyedArray::getGenericValueType) — regardless of
+                        // whether the keys are ints or strings.
                         let mut combined = Vec::new();
                         for prop_type in properties.values() {
                             combined.extend(prop_type.types.clone());
                         }
                         Some(TUnion::from_types(combined))
-                    } else if !properties.is_empty() {
-                        Some(TUnion::mixed())
                     } else if has_isset {
                         Some(isset_mixed())
                     } else {
@@ -1288,6 +1295,48 @@ fn apply_array_access_to_base_type(
                 let mut null_type = TUnion::null();
                 null_type.ignore_nullable_issues = base_type.ignore_nullable_issues;
                 Some(null_type)
+            }
+            // A `class-string-map<T as Foo, …>` access resolves its value type
+            // against the offset's class-string (Psalm's
+            // handleArrayAccessOnClassStringMap), so `isset($map[$class])` then
+            // `$map[$class]` keeps the precise value instead of widening to
+            // mixed.
+            TAtomic::TClassStringMap {
+                param_name,
+                value_param,
+                ..
+            } => {
+                *possibly_undefined = true;
+                context
+                    .locals
+                    .get(&pzoom_code_info::VarName::new(array_key))
+                    .and_then(|offset_type| {
+                        crate::expr::fetch::array_fetch_analyzer::resolve_class_string_map_value(
+                            analyzer,
+                            *param_name,
+                            value_param,
+                            offset_type,
+                        )
+                    })
+                    .or_else(|| if has_isset { Some(isset_mixed()) } else { None })
+            }
+            // An `ArrayAccess` object (e.g. `WeakMap<K, V>`) accessed by offset
+            // yields its `offsetGet` value type, so `isset($wm[$k])` then
+            // `$wm[$k]` keeps that value instead of widening to mixed.
+            TAtomic::TNamedObject { name, .. } => {
+                if let Some((_key_type, value_type)) =
+                    crate::expr::fetch::array_fetch_analyzer::resolve_array_access_method_types(
+                        analyzer, atomic, *name,
+                    )
+                {
+                    *possibly_undefined = true;
+                    Some(value_type)
+                } else if has_isset || has_inverted_isset {
+                    *possibly_undefined = true;
+                    Some(isset_mixed())
+                } else {
+                    None
+                }
             }
             _ => {
                 if has_isset || has_inverted_isset {
@@ -1882,9 +1931,6 @@ fn adjust_tkeyed_array_type(
                     offset,
                     &result_type,
                 )),
-                // A generic list (`list<T>`) keeps its uniform element type rather
-                // than being turned into a keyed array — pzoom resolves a dynamic
-                // offset against the element type, not the fallback of a keyed list.
                 TAtomic::TArray {
                     key_type,
                     value_type,
@@ -1902,6 +1948,23 @@ fn adjust_tkeyed_array_type(
                         is_list: false,
                         sealed: false,
                         fallback_key_type: Some(key_type.clone()),
+                        fallback_value_type: Some(value_type.clone()),
+                    })
+                }
+                // Narrowing a *literal* list offset (`is_int($list[0])`) records
+                // the known element on a keyed list, the original element type
+                // staying as the unsealed fallback — so e.g. a later
+                // `array_shift` reads the narrowed first element.
+                TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type }
+                    if matches!(offset, ArrayKey::Int(_)) =>
+                {
+                    let mut properties = FxHashMap::default();
+                    properties.insert(offset.clone(), result_type.clone());
+                    Some(TAtomic::TKeyedArray {
+                        properties: std::sync::Arc::new(properties),
+                        is_list: true,
+                        sealed: false,
+                        fallback_key_type: Some(Box::new(TUnion::new(TAtomic::TInt))),
                         fallback_value_type: Some(value_type.clone()),
                     })
                 }

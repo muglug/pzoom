@@ -179,12 +179,41 @@ pub(crate) fn handle_dynamic_static_call(
                             analysis_data.referenced_classes.insert(class_info.name);
                         }
                     }
+                    // A method with no return type of its own resolves through
+                    // `getMethodReturnType` (documenting ancestor + template
+                    // binding from the args) — e.g. `$f::of($s)` where `of` is
+                    // documented by an interface with `@template U @return U`.
                     let resolved_return_type = method_info
                         .return_type
                         .as_ref()
                         .or(method_info.signature_return_type.as_ref())
                         .cloned()
-                        .unwrap_or_else(TUnion::mixed);
+                        .unwrap_or_else(|| {
+                            let arg_positions: Vec<Pos> = static_call
+                                .argument_list
+                                .arguments
+                                .iter()
+                                .map(|arg| {
+                                    let span = arg.span();
+                                    (span.start.offset, span.end.offset)
+                                })
+                                .collect();
+                            let param_arg_types =
+                                super::function_call_return_type_fetcher::collect_param_arg_types(
+                                    &method_info.params,
+                                    &arg_positions,
+                                    analysis_data,
+                                );
+                            crate::methods::get_method_return_type(
+                                analyzer,
+                                resolved_class_id,
+                                method_name,
+                                &method_info,
+                                &pzoom_code_info::TemplateResult::default(),
+                                &param_arg_types,
+                                static_call.argument_list.arguments.len(),
+                            )
+                        });
                     let parent_class_id = analyzer
                         .codebase
                         .get_class(resolved_class_id)

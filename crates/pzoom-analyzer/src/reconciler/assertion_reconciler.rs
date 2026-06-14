@@ -342,6 +342,22 @@ fn intersect_atomic_with_atomic_inner(
     if matches!(existing_atomic, TAtomic::TCallable { .. })
         && atomic_can_be_callable_representation(assertion_atomic)
     {
+        // `is_callable($cb)` asserts a *bare* `callable`. When the value is
+        // already typed with a callable signature (`callable():T`), keep that
+        // signature rather than collapsing it to a bare `callable` that
+        // returns mixed — Psalm's reconcileCallable keeps `$type` unchanged
+        // when `$type->isCallableType()`. (The TClosure side is already kept
+        // by the assertion-is-callable arm below.)
+        if matches!(
+            assertion_atomic,
+            TAtomic::TCallable {
+                params: None,
+                return_type: None,
+                ..
+            }
+        ) {
+            return Some(existing_atomic.clone());
+        }
         // `is_array` on a callable narrows to Psalm's callable-array shape
         // `{0: class-string|object, 1: non-empty-string}` — a sealed
         // two-element list (so `count()` knows it is exactly 2).

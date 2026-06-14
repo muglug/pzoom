@@ -1903,6 +1903,7 @@ fn check_array_offset_against_expected_branches(
 
     let mut has_valid_branch = false;
     let mut has_invalid_branch = false;
+    let mut mixed_coercion_expected: Option<String> = None;
 
     for expected in expected_branches {
         if expected.is_mixed() || expected.is_nothing() {
@@ -1925,11 +1926,24 @@ fn check_array_offset_against_expected_branches(
 
         // Psalm's handleArrayAccessOnKeyedArray accepts an offset whose
         // mismatch is a coercion from the wider scalar (a plain string key on
-        // a literal-keyed shape) or from mixed — no offset issue is emitted.
-        if comparison_result.type_coerced_from_scalar.unwrap_or(false)
-            || comparison_result.type_coerced_from_mixed.unwrap_or(false)
-        {
+        // a literal-keyed shape) silently.
+        if comparison_result.type_coerced_from_scalar.unwrap_or(false) {
             has_valid_branch = true;
+            continue;
+        }
+
+        // An offset coerced from a mixed-ish origin (e.g. an `array-key` offset
+        // on an `array<int, _>`) is Psalm's MixedArrayTypeCoercion: the offset
+        // is strictly wider than the array's key type. The offset can still be
+        // identical at runtime (`canExpressionTypesBeIdentical`), so the branch
+        // counts as valid and only the coercion warning is emitted — never an
+        // InvalidArrayOffset on top. (A genuinely mixed offset was reported as
+        // MixedArrayOffset before this point.)
+        if comparison_result.type_coerced_from_mixed.unwrap_or(false) && !index_type.is_mixed() {
+            has_valid_branch = true;
+            if mixed_coercion_expected.is_none() {
+                mixed_coercion_expected = Some(expected.get_id(Some(analyzer.interner)));
+            }
             continue;
         }
 
@@ -1963,6 +1977,30 @@ fn check_array_offset_against_expected_branches(
         } else {
             has_invalid_branch = true;
         }
+    }
+
+    // A mixed-coercion offset is reported even when every branch is otherwise
+    // valid (Psalm emits MixedArrayTypeCoercion before the InvalidArrayOffset
+    // path). `unset`/`isset` guards suppress offset-type reports.
+    if let Some(expected_id) = mixed_coercion_expected
+        && !suppress_possible_issue
+    {
+        let span = access.index.span();
+        let start_line = get_line_number(analyzer.source, span.start.offset);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::MixedArrayTypeCoercion,
+            format!(
+                "Coercion from array offset type '{}' to the expected type '{}'",
+                index_type.get_id(Some(analyzer.interner)),
+                expected_id,
+            ),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        return true;
     }
 
     if !has_invalid_branch {

@@ -1162,7 +1162,6 @@ fn apply_array_access_to_base_type(
         let candidate_type = match atomic {
             TAtomic::TKeyedArray {
                 properties,
-                is_list,
                 fallback_value_type,
                 ..
             } => {
@@ -1227,17 +1226,16 @@ fn apply_array_access_to_base_type(
                     *possibly_undefined = true;
                     if let Some(fallback) = fallback_value_type {
                         Some((**fallback).clone())
-                    } else if (*is_list
-                        || properties.keys().all(|key| matches!(key, ArrayKey::Int(_))))
-                        && !properties.is_empty()
-                    {
+                    } else if !properties.is_empty() {
+                        // A dynamic offset against a keyed array yields the union
+                        // of its known value types (Psalm's
+                        // TKeyedArray::getGenericValueType) — regardless of
+                        // whether the keys are ints or strings.
                         let mut combined = Vec::new();
                         for prop_type in properties.values() {
                             combined.extend(prop_type.types.clone());
                         }
                         Some(TUnion::from_types(combined))
-                    } else if !properties.is_empty() {
-                        Some(TUnion::mixed())
                     } else if has_isset {
                         Some(isset_mixed())
                     } else {

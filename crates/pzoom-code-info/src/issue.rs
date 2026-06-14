@@ -370,6 +370,8 @@ pub enum IssueKind {
 
     // Include issues
     UnresolvableInclude,
+    /// A `require`/`include` of a resolvable path that does not exist on disk.
+    MissingFile,
 
     // Constant issues
     AmbiguousConstantInheritance,

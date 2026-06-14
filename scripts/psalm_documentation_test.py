@@ -107,12 +107,6 @@ KNOWN_FAILURES: dict[str, str] = {
     # docblock array shapes), so surfacing its diagnostics as ParseError
     # regresses ~5 inference tests. Revisit when mago's parser matures.
     "ParseError": "mago parser mis-flags valid constructs; surfacing false-positives",
-    # Resolving an include path needs Psalm's getPathTo (constant folding,
-    # __DIR__/__FILE__/dirname) plus filesystem existence checks, which pzoom
-    # intentionally omits — a `require $var` heuristic would flag the common
-    # `require __DIR__ . '/autoload.php'` pattern.
-    "MissingFile": "needs include-path + filesystem resolution",
-    "UnresolvableInclude": "needs include-path resolution (getPathTo)",
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")

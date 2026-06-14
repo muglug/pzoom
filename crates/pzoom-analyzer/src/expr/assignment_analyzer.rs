@@ -166,6 +166,42 @@ pub fn analyze(
         .expr_types.get(&rhs_pos).cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
+
+    // Psalm's AssignmentAnalyzer: assigning a literal int to a variable that is
+    // a protected loop counter (the for-init/increment var or foreach target of
+    // an enclosing loop) invalidates the loop's own conditional —
+    // LoopInvalidation. The literal-int guard skips the loop's `$i++` increment
+    // (whose value is `int`, not a literal).
+    if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
+        && matches!(assignment.operator, AssignmentOperator::Assign(_))
+        && rhs_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TLiteralInt { .. }))
+    {
+        let var_name = VarName::new(direct_var.name);
+        if analysis_data
+            .loop_scopes
+            .iter()
+            .any(|scope| scope.protected_var_ids.contains(&var_name))
+        {
+            let span = assignment.lhs.span();
+            let (line, col) = analyzer.get_line_column(span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::LoopInvalidation,
+                format!(
+                    "Variable {} has already been assigned in a for/foreach loop",
+                    direct_var.name
+                ),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                line,
+                col,
+            ));
+        }
+    }
+
     let rhs_type = if matches!(assignment.operator, AssignmentOperator::Concat(_)) {
         let mut concat_type =
             infer_concat_assignment_type(analyzer, assignment.lhs, &rhs_type, context);

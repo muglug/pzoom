@@ -365,7 +365,12 @@ impl<'a> FileAnalyzer<'a> {
                 let (line, col) = stmt_analyzer.get_line_column(candidate.offset as u32);
                 filtered.push(Issue::new(
                     IssueKind::UnusedPsalmSuppress,
-                    "This suppression is never used",
+                    // Psalm's message is the bare "This suppression is never
+                    // used" and identifies the suppression only by the reported
+                    // range. We name the suppressed issue too so a spurious
+                    // UnusedPsalmSuppress (pzoom not emitting an issue Psalm
+                    // does) can be grouped by which suppression went unused.
+                    format!("Suppression of {} is never used", candidate.name),
                     file_path,
                     candidate.offset as u32,
                     (candidate.offset + candidate.name.len()) as u32,

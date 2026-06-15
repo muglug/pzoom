@@ -20,6 +20,28 @@ const LITERAL_LIMIT: usize = 500;
 
 /// Combine multiple atomic types into a simplified list of atomic types.
 pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic> {
+    combine_inner(types, overwrite_empty_array, None)
+}
+
+/// Like [`combine`] but with codebase access, so a union holding both a class
+/// and a descendant of it collapses to the ancestor (`Stmt|Return_` -> `Stmt`).
+/// Mirrors `TypeCombiner::combine`'s `?Codebase` parameter: Psalm performs this
+/// object-subtype absorption only when the codebase is known, so scan-time
+/// combines (declared `@return A|B`) keep both members while analysis-time
+/// combines simplify.
+pub fn combine_with_codebase(
+    types: Vec<TAtomic>,
+    overwrite_empty_array: bool,
+    codebase: &crate::CodebaseInfo,
+) -> Vec<TAtomic> {
+    combine_inner(types, overwrite_empty_array, Some(codebase))
+}
+
+fn combine_inner(
+    types: Vec<TAtomic>,
+    overwrite_empty_array: bool,
+    codebase: Option<&crate::CodebaseInfo>,
+) -> Vec<TAtomic> {
     if types.len() == 1 {
         return types;
     }
@@ -296,7 +318,77 @@ pub fn combine(types: Vec<TAtomic>, overwrite_empty_array: bool) -> Vec<TAtomic>
         return vec![TAtomic::TNothing];
     }
 
+    // Object-subtype absorption (Psalm's `TypeCombiner`, only with a codebase):
+    // a union that ended up with both a class and a descendant of it reads as
+    // the ancestor. Applied to the assembled result and recursively to nested
+    // container values, so `array<Stmt>|array<Return_>` becomes `array<Stmt>`.
+    if let Some(codebase) = codebase {
+        absorb_object_subtypes_deep(&mut new_types, codebase);
+    }
+
     new_types
+}
+
+/// Remove a bare named-object atomic when another atomic in the same union is a
+/// supertype of it (`TypeCombiner`'s `classExtendsOrImplements` / `interfaceExtends`
+/// absorption), recursing into container value types.
+fn absorb_object_subtypes_deep(types: &mut Vec<TAtomic>, codebase: &crate::CodebaseInfo) {
+    for atomic in types.iter_mut() {
+        match atomic {
+            TAtomic::TArray { key_type, value_type }
+            | TAtomic::TNonEmptyArray { key_type, value_type }
+            | TAtomic::TIterable { key_type, value_type } => {
+                absorb_object_subtypes_deep(&mut key_type.types, codebase);
+                absorb_object_subtypes_deep(&mut value_type.types, codebase);
+            }
+            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+                absorb_object_subtypes_deep(&mut value_type.types, codebase);
+            }
+            _ => {}
+        }
+    }
+
+    // Only bare named objects participate; a generic object's parameters would
+    // be lost by collapsing it into an un-parameterised ancestor.
+    let named: Vec<(usize, StrId)> = types
+        .iter()
+        .enumerate()
+        .filter_map(|(index, atomic)| match atomic {
+            TAtomic::TNamedObject {
+                name,
+                type_params: None,
+                ..
+            } => Some((index, *name)),
+            _ => None,
+        })
+        .collect();
+    if named.len() < 2 {
+        return;
+    }
+
+    let mut redundant = vec![false; types.len()];
+    for &(descendant_index, descendant) in &named {
+        for &(_, ancestor) in &named {
+            if ancestor != descendant
+                && codebase.get_class(descendant).is_some_and(|info| {
+                    info.all_parent_classes.contains(&ancestor)
+                        || info.all_parent_interfaces.contains(&ancestor)
+                })
+            {
+                redundant[descendant_index] = true;
+                break;
+            }
+        }
+    }
+
+    if redundant.iter().any(|&drop| drop) {
+        let mut index = 0;
+        types.retain(|_| {
+            let keep = !redundant[index];
+            index += 1;
+            keep
+        });
+    }
 }
 
 /// Scrape properties from an atomic type into the combination state.
@@ -1723,6 +1815,27 @@ pub fn combine_union_types(
     type_2: &TUnion,
     overwrite_empty_array: bool,
 ) -> TUnion {
+    combine_union_types_inner(type_1, type_2, overwrite_empty_array, None)
+}
+
+/// Like [`combine_union_types`] but with codebase access, so object subtypes are
+/// absorbed (`Stmt|Return_` -> `Stmt`). Mirrors `Type::combineUnionTypes`'s
+/// `?Codebase` parameter.
+pub fn combine_union_types_with_codebase(
+    type_1: &TUnion,
+    type_2: &TUnion,
+    overwrite_empty_array: bool,
+    codebase: &crate::CodebaseInfo,
+) -> TUnion {
+    combine_union_types_inner(type_1, type_2, overwrite_empty_array, Some(codebase))
+}
+
+fn combine_union_types_inner(
+    type_1: &TUnion,
+    type_2: &TUnion,
+    overwrite_empty_array: bool,
+    codebase: Option<&crate::CodebaseInfo>,
+) -> TUnion {
     if type_1 == type_2 {
         return type_1.clone();
     }
@@ -1730,7 +1843,8 @@ pub fn combine_union_types(
     let mut all_atomic_types = type_1.types.clone();
     all_atomic_types.extend(type_2.types.clone());
 
-    let mut combined_type = TUnion::from_types(combine(all_atomic_types, overwrite_empty_array));
+    let mut combined_type =
+        TUnion::from_types(combine_inner(all_atomic_types, overwrite_empty_array, codebase));
     combined_type.from_docblock = type_1.from_docblock || type_2.from_docblock;
 
     // Per-atomic docblock provenance: a result member inherits the provenance

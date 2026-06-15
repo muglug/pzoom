@@ -1170,8 +1170,30 @@ pub(crate) fn get_method_return_type(
         for (secondary_receiver_id, secondary_class_id, _secondary_type_params, secondary_info) in
             secondary_methods
         {
-            let Some(secondary_return) = secondary_info.get_return_type() else {
-                continue;
+            // When this override carries only a native hint (no own docblock
+            // return), fold in its documenting ancestor's docblock return — the
+            // same getMethodReturnType resolution the primary atomic uses (Psalm
+            // runs it per receiver atomic). Otherwise keep the raw stored type so
+            // a receiver template param still localizes (an own `@return R|null`
+            // must not be prematurely resolved). This stops e.g.
+            // `ClassMethod::getStmts(): ?array` leaking the native `array`'s
+            // `mixed` on a union receiver while inheriting `@return Stmt[]|null`.
+            let documented_secondary = if secondary_info.return_type.is_none() {
+                crate::methods::get_inherited_method_return_type(
+                    analyzer,
+                    secondary_class_id,
+                    method_name,
+                    &TemplateResult::default(),
+                    &rustc_hash::FxHashMap::default(),
+                    args.len(),
+                )
+            } else {
+                None
+            };
+            let secondary_return = match (&documented_secondary, secondary_info.get_return_type()) {
+                (Some(documented), _) => documented,
+                (None, Some(raw)) => raw,
+                (None, None) => continue,
             };
             if secondary_return
                 .types
@@ -1193,10 +1215,15 @@ pub(crate) fn get_method_return_type(
                 secondary_parent,
                 false,
             );
-            localized_return_type = pzoom_code_info::combine_union_types(
+            // Codebase-aware combine: merging a method's return type across
+            // receiver atomics can leave a class beside a descendant of it
+            // (`array<Stmt>|array<Return_>`); the combiner collapses the subtype
+            // (Psalm's `TypeCombiner` does this whenever a codebase is passed).
+            localized_return_type = pzoom_code_info::combine_union_types_with_codebase(
                 &localized_return_type,
                 &localized_secondary,
                 false,
+                analyzer.codebase,
             );
         }
 

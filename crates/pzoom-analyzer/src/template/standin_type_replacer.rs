@@ -837,19 +837,20 @@ fn infer_template_replacements_from_atomic(
 
             // Bounds mined from a NOMINAL as-clause (`TIterator as
             // RecursiveIterator<TKey, TValue>`, matched against the arg's
-            // @implements chain) are FALLBACKS: they insert at depth 1 so a
-            // direct bound from another argument position (a callable's
-            // declared param types) takes precedence in get_relevant_bounds
+            // @implements chain) are the weakest FALLBACKS: they insert at
+            // depth 2 so that bounds from a callable's declared param types
+            // (depth 1, contravariant) take precedence in get_relevant_bounds
             // instead of unioning with the iterator's element types.
             // Structural as-clauses (`TArray as array<T>`) stay authoritative
-            // — Psalm's usort tests expect the array's element type to win.
+            // at depth 0 — Psalm's usort tests expect the array's element type
+            // to win over the (depth-1) callback parameter bound.
             let bound_is_nominal = bound
                 .types
                 .iter()
                 .any(|atomic| matches!(atomic, TAtomic::TNamedObject { type_params: Some(_), .. }));
             let previous_depth = template_result.bound_insertion_depth;
             if bound_is_nominal {
-                template_result.bound_insertion_depth = previous_depth + 1;
+                template_result.bound_insertion_depth = previous_depth + 2;
             }
             infer_template_replacements_from_union(
                 analyzer,
@@ -930,7 +931,7 @@ fn infer_template_replacements_from_atomic(
                     });
                     let previous_depth = template_result.bound_insertion_depth;
                     if bound_is_nominal {
-                        template_result.bound_insertion_depth = previous_depth + 1;
+                        template_result.bound_insertion_depth = previous_depth + 2;
                     }
                     infer_template_replacements_from_union(
                         analyzer,
@@ -1171,6 +1172,16 @@ fn infer_template_replacements_from_atomic(
                 _ => return,
             };
 
+            // A callable's PARAMETER positions are contravariant: a bound mined
+            // from them (e.g. usort's `callable(T,T)` matched against an
+            // `fn(array,array)` callback, binding `T = array`) is a fallback
+            // that must lose to a covariant bound for the same template from
+            // another argument — the sorted array's element type. Insert these
+            // one level deeper so get_relevant_bounds keeps the array element
+            // (depth 0) over the callback parameter (depth 1); nominal
+            // as-clause bounds sit deeper still (depth 2).
+            let previous_depth = template_result.bound_insertion_depth;
+            template_result.bound_insertion_depth = previous_depth + 1;
             for (param_param, arg_param) in param_params.iter().zip(arg_params.iter()) {
                 infer_template_replacements_from_union(
                     analyzer,
@@ -1179,7 +1190,9 @@ fn infer_template_replacements_from_atomic(
                     template_result,
                 );
             }
+            template_result.bound_insertion_depth = previous_depth;
 
+            // The return type is covariant and stays authoritative (depth 0).
             if let (Some(param_return_type), Some(arg_return_type)) =
                 (param_return_type, arg_return_type)
             {

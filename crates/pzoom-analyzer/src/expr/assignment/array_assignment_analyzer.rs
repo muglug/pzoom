@@ -447,6 +447,10 @@ fn analyze_assignment_chain<'a>(
                 container_type,
                 dim.key_type.as_ref(),
                 &updated_child_type,
+                // Psalm passes `$replacement_type` only on the last (leaf)
+                // dimension; intermediate dimensions get null and so report a
+                // PossiblyNullArrayAssignment on a null container.
+                is_leaf,
                 dim.result_pos,
                 is_root_assignment,
                 emit_mixed_issues,
@@ -819,6 +823,13 @@ fn apply_assignment_to_container(
     container_type: &TUnion,
     key_type: Option<&TUnion>,
     assigned_type: &TUnion,
+    // Psalm's `$replacement_type` to `getArrayAccessTypeGivenOffset` is present
+    // only for the leaf dimension of an assignment (`!$is_last ? null :
+    // $assignment_type`). When it is set, a null container autovivifies
+    // silently; when it is absent (an intermediate dimension), Psalm reports a
+    // PossiblyNullArrayAssignment instead. We always carry `assigned_type` for
+    // the container build, so this flag separately tracks that presence.
+    has_replacement_type: bool,
     issue_pos: Pos,
     is_root_assignment: bool,
     emit_mixed_issues: bool,
@@ -930,11 +941,18 @@ fn apply_assignment_to_container(
                 }
             }
             TAtomic::TNull => {
-                // PHP autovivifies null into an array on offset write, but Psalm
-                // still flags it (the value was — or could be — null): a
-                // PossiblyNullArrayAssignment, emitted after the loop.
+                // PHP autovivifies null into an array on offset write. Psalm only
+                // flags this when there is no replacement value at this level:
+                // in getArrayAccessTypeGivenOffset the TNull/in-assignment branch
+                // combines `$replacement_type` in silently when it is set (the
+                // leaf write, `$a[k] = v`) and reports PossiblyNullArrayAssignment
+                // only when it is null (an intermediate dimension, e.g. the `$a`
+                // step of `$a[0][] = 1`). Mirror that: autovivify always, but
+                // defer the issue (after the loop) to the no-replacement case.
                 has_writable = true;
-                saw_null = true;
+                if !has_replacement_type {
+                    saw_null = true;
+                }
                 updated.push(create_autovivified_array_atomic(key_type, assigned_type));
             }
             TAtomic::TFalse => {
@@ -1077,6 +1095,8 @@ fn apply_assignment_to_container(
                             as_type,
                             key_type,
                             assigned_type,
+                            // the written value is the replacement itself
+                            true,
                             issue_pos,
                             false,
                             false,

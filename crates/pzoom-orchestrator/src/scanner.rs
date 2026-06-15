@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::composer_autoload::ComposerAutoload;
 use bumpalo::Bump;
 use glob::Pattern;
 use pzoom_code_info::CodebaseInfo;
@@ -13,7 +14,7 @@ use pzoom_str::{Interner, StrId, ThreadedInterner};
 use std::sync::Arc;
 use pzoom_code_info::class_type_alias::ClassTypeAlias;
 use pzoom_syntax::declaration_collector::CollectedDeclarations;
-use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content};
+use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content, resolve_names};
 use rustc_hash::FxHashMap;
 use rust_embed::Embed;
 use rustc_hash::FxHashSet;
@@ -106,6 +107,112 @@ impl Scanner {
         for dir in dirs {
             self.scan_directory(dir);
         }
+        self.scanning_dependencies = false;
+    }
+
+    /// Scan dependency sources the way Psalm does — on demand via the Composer
+    /// autoloader, rather than walking the whole `vendor/` tree. Starting from
+    /// the already-scanned project files, repeatedly harvest the class names they
+    /// reference, resolve each undefined one to a file through the autoload maps,
+    /// and scan only those, until the referenced set is closed. Test fixtures,
+    /// example data, and unreferenced packages are never autoloadable, so — like
+    /// Psalm — they are never scanned (and can't shadow builtins or add noise).
+    pub fn scan_dependencies_on_demand(&mut self, autoload: &ComposerAutoload) {
+        self.scanning_dependencies = true;
+
+        // Composer's eager `files` autoloads (global functions / bootstrap) load
+        // on every request, so scan them up front.
+        let eager: Vec<(String, String)> = autoload
+            .eager_files
+            .iter()
+            .filter_map(|path| {
+                std::fs::read_to_string(path)
+                    .ok()
+                    .map(|contents| (path.to_string_lossy().into_owned(), contents))
+            })
+            .collect();
+        if !eager.is_empty() {
+            self.scan_contents_parallel(eager);
+        }
+
+        // Transitive closure: harvest references, resolve via autoload, scan,
+        // repeat until no new file is reached.
+        let mut harvested: FxHashSet<StrId> = FxHashSet::default();
+        loop {
+            let pending: Vec<(StrId, String)> = self
+                .codebase
+                .files
+                .iter()
+                .filter(|(id, _)| !harvested.contains(id))
+                .map(|(id, file)| (*id, file.contents.clone()))
+                .collect();
+            if pending.is_empty() {
+                break;
+            }
+
+            let mut referenced: FxHashSet<StrId> = FxHashSet::default();
+            for (file_id, contents) in &pending {
+                harvested.insert(*file_id);
+                let arena = Bump::new();
+                let path = self.interner.lookup(*file_id);
+                let parse_id = FileId::new(&*path);
+                let (program, _) = parse_file_content(&arena, parse_id, contents);
+                let resolved = resolve_names(&program, &self.interner);
+                referenced.extend(resolved.values().copied());
+            }
+
+            let mut new_paths: Vec<String> = Vec::new();
+            let mut queued: FxHashSet<String> = FxHashSet::default();
+            for name_id in referenced {
+                // Skip only when a *real* (non-stub) definition already exists.
+                // A class the bundled stubs cover incompletely (e.g. php-parser's
+                // `Node\Name`, whose stub omits `getParts()`) must still pull in
+                // its vendor source, which the file-precedence merge completes —
+                // just as a full `vendor/` walk used to.
+                let defined_by_real_file = self
+                    .codebase
+                    .classlike_infos
+                    .get(&name_id)
+                    .map(|info| info.file_path)
+                    .and_then(|file_path| self.codebase.files.get(&file_path))
+                    .is_some_and(|file| !file.is_stub);
+                if defined_by_real_file {
+                    continue;
+                }
+                let name = self.interner.lookup(name_id);
+                let Some(file) = autoload.resolve_class(&name) else {
+                    continue; // not an autoloadable class (function/const/builtin)
+                };
+                let canonical = file
+                    .canonicalize()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| file.to_string_lossy().into_owned());
+                if self
+                    .interner
+                    .find(&canonical)
+                    .is_some_and(|id| self.codebase.files.contains_key(&id))
+                {
+                    continue; // already scanned
+                }
+                if queued.insert(canonical.clone()) {
+                    new_paths.push(canonical);
+                }
+            }
+
+            if new_paths.is_empty() {
+                break;
+            }
+
+            let batch: Vec<(String, String)> = new_paths
+                .into_iter()
+                .filter_map(|path| std::fs::read_to_string(&path).ok().map(|c| (path, c)))
+                .collect();
+            if batch.is_empty() {
+                break;
+            }
+            self.scan_contents_parallel(batch);
+        }
+
         self.scanning_dependencies = false;
     }
 

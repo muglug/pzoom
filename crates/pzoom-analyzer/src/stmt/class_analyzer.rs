@@ -4198,13 +4198,12 @@ fn check_property_initialization(
 
         // No (followable) constructor anywhere in the hierarchy: every typed
         // candidate is a MissingConstructor (Psalm reports one per property).
-        if analyzer.config.is_issue_suppressed("MissingConstructor")
-            || docblock_before_offset_suppresses(
-                analyzer.source,
-                class.span().start.offset,
-                "MissingConstructor",
-            )
-        {
+        if crate::issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            class.span().start.offset,
+            "MissingConstructor",
+        ) {
             return;
         }
         for property_name in candidates {
@@ -4228,8 +4227,9 @@ fn check_property_initialization(
             }
             let own_property = property.declaring_class == class_info.name;
             if own_property
-                && docblock_before_offset_suppresses(
-                    analyzer.source,
+                && crate::issue_suppression::is_issue_suppressed_at(
+                    analyzer,
+                    analysis_data,
                     property.start_offset,
                     "MissingConstructor",
                 )
@@ -4311,15 +4311,12 @@ fn check_property_initialization(
     }
 
     // Class-level suppression covers every property.
-    if analyzer
-        .config
-        .is_issue_suppressed("PropertyNotSetInConstructor")
-        || docblock_before_offset_suppresses(
-            analyzer.source,
-            class.span().start.offset,
-            "PropertyNotSetInConstructor",
-        )
-    {
+    if crate::issue_suppression::is_issue_suppressed_at(
+        analyzer,
+        analysis_data,
+        class.span().start.offset,
+        "PropertyNotSetInConstructor",
+    ) {
         return;
     }
 
@@ -4340,8 +4337,9 @@ fn check_property_initialization(
         }
 
         // Property-level suppression.
-        if docblock_before_offset_suppresses(
-            analyzer.source,
+        if crate::issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
             property.start_offset,
             "PropertyNotSetInConstructor",
         ) {
@@ -4495,30 +4493,6 @@ fn analyze_constructor_init_props(
 
 /// Whether the `/** ... */` docblock immediately preceding `offset` carries a
 /// `@psalm-suppress <issue_name>` tag.
-fn docblock_before_offset_suppresses(source: &str, offset: u32, issue_name: &str) -> bool {
-    let offset = (offset as usize).min(source.len());
-    let head = &source[..offset];
-    let Some(end) = head.rfind("*/") else {
-        return false;
-    };
-    // The docblock must be adjacent (only whitespace between it and the target).
-    if head[end + 2..].chars().any(|c| !c.is_whitespace()) {
-        return false;
-    }
-    let Some(start) = head[..end].rfind("/**") else {
-        return false;
-    };
-    let docblock = &head[start..end + 2];
-
-    docblock.lines().any(|line| {
-        line.find("@psalm-suppress").is_some_and(|idx| {
-            line[idx + "@psalm-suppress".len()..]
-                .split(|c: char| c.is_whitespace() || c == ',')
-                .map(|token| token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\'))
-                .any(|token| token == issue_name)
-        })
-    })
-}
 
 fn check_immutable_relationships(
     analyzer: &StatementsAnalyzer<'_>,

@@ -1445,7 +1445,7 @@ function strtolower(string $string): string
  * @param string $needle
  * @param int $offset
  * @psalm-assert-if-true =non-empty-string $haystack
- * @psalm-return positive-int|0|false
+ * @psalm-return int<0, max>|false
  */
 function strpos(string $haystack, string $needle, int $offset = 0): int|false
 {
@@ -1457,7 +1457,7 @@ function strpos(string $haystack, string $needle, int $offset = 0): int|false
  * @param string $needle
  * @param int $offset
  * @psalm-assert-if-true =non-empty-string $haystack
- * @psalm-return positive-int|0|false
+ * @psalm-return int<0, max>|false
  */
 function stripos(string $haystack, string $needle, int $offset = 0): int|false
 {

@@ -1,7 +1,6 @@
 <?php
 /**
  * @psalm-suppress MixedAssignment
- * @psalm-suppress MixedOperand
  * @psalm-suppress MixedArrayAssignment
  * @param mixed[] $line
  */

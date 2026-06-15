@@ -10,5 +10,4 @@ function iterator(iterable $iter): void
 }
 
 iterator([1, 2, 3, 4]);
-/** @psalm-suppress MixedArgumentTypeCoercion */
 iterator(new SplFixedArray(5));

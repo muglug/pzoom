@@ -12,7 +12,6 @@ class E {
      * @param class-string<T> $c_class
      *
      * @psalm-return T
-     * @psalm-suppress MixedMethodCall
      */
     public static function get(string $c_class) {
         return new $c_class;

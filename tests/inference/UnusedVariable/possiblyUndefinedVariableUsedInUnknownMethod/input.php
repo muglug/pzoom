@@ -8,7 +8,6 @@ function foo(string $a, object $b): void {
 
     /**
      * @psalm-suppress PossiblyUndefinedVariable
-     * @psalm-suppress MixedMethodCall
      */
     $b->foo($hue);
 }

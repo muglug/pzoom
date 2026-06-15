@@ -6,7 +6,6 @@
  */
 function maker(string $className) {
    return function(...$args) use ($className) {
-      /** @psalm-suppress MixedMethodCall */
       return new $className(...$args);
    };
 }

@@ -19,8 +19,6 @@ class C {
             $this->a = ["something"];
 
             /**
-             * @psalm-suppress MixedArrayAccess
-             * @psalm-suppress MixedArgument
              */
             echo $this->a[0];
         }

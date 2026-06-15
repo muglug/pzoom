@@ -20,7 +20,6 @@ class Foo {
 
     /**
      * @return T
-     * @psalm-suppress MixedMethodCall
      */
     public function bar() {
         $t = $this->T;

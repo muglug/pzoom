@@ -21,5 +21,4 @@ $expect_object = get($class_string);
 
 $expect_a_object = get(A::class);
 
-/** @psalm-suppress MixedAssignment */
 $expect_mixed_from_literal = get("LiteralDirect");

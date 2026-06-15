@@ -23,7 +23,6 @@ function app(?string $className = null) {
     }
 
     /**
-     * @psalm-suppress MixedMethodCall
      */
     return new $className();
 }

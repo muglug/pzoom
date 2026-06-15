@@ -9,7 +9,6 @@ class B {}
  * @param-out array<T> $map
  * @param int $id
  * @return T
- * @psalm-suppress MixedMethodCall
  */
 function get(string $className, array &$map, int $id) {
     if(!array_key_exists($id, $map)) {

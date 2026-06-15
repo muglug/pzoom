@@ -12,7 +12,6 @@ class Builder {
     }
 
     public function __call(string $method, array $parameters) {
-        /** @psalm-suppress MixedMethodCall */
         return $this->t->$method($parameters);
     }
 }

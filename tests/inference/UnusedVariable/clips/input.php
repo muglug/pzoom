@@ -1,6 +1,5 @@
 <?php declare(strict_types=1);
 function foo(array $clips) : void {
-    /** @psalm-suppress MixedAssignment */
     foreach ($clips as &$clip) {
         /** @psalm-suppress MixedArgument */
         if (!empty($clip)) {

@@ -14,7 +14,6 @@ class S {
 
         $popped = array_pop($this->a);
 
-        /** @psalm-suppress MixedArrayAccess */
         [$this->b, $this->c] = $popped;
     }
 }

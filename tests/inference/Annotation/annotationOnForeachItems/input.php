@@ -21,7 +21,6 @@ function bat(array $arr) : void {
     $item = null;
 
     /**
-     * @psalm-suppress MixedArrayAccess
      * @var string $item
      */
     foreach ($arr as list($item)) {}
@@ -33,7 +32,6 @@ function baz(array $arr) : void {
     $item = null;
 
     /**
-     * @psalm-suppress MixedArrayAccess
      * @var string $item
      */
     foreach ($arr as list($item => $_)) {}

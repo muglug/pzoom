@@ -1,7 +1,6 @@
 <?php
 function foo(array $arr): array {
     /**
-     * @psalm-suppress MixedAssignment
      * @psalm-suppress MixedArrayAssignment
      */
     foreach ($arr as &$element) {

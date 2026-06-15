@@ -5,7 +5,6 @@
  * @param iterable<mixed,mixed> $i
  */
 function assertAllStrings(iterable $i): void {
-    /** @psalm-suppress MixedAssignment */
     foreach ($i as $s) {
         if (!is_string($s)) {
             throw new \UnexpectedValueException("");

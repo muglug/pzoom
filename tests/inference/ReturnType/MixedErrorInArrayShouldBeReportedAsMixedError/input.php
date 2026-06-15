@@ -9,7 +9,6 @@ function produceParameters(array $configuration): array
     $parameters = [];
 
     foreach (["a", "b"] as $parameter) {
-        /** @psalm-suppress MixedAssignment */
         $parameters[$parameter] = $configuration;
     }
 

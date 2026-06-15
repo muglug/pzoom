@@ -11,7 +11,6 @@ function updateBackgroundClip(?B $b): void {
     if (!$b || !($a = $b->c)) {
         // do something
     } else {
-        /** @psalm-suppress MixedMethodCall */
         $a->foo();
     }
 }

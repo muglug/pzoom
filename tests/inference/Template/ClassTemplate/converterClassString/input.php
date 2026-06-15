@@ -36,7 +36,6 @@ class Converter
      *
      * @return array<I, V|Q>
      *
-     * @psalm-suppress MixedMethodCall
      */
     private function appender(string $obj2): array
     {

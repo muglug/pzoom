@@ -9,7 +9,6 @@ function createProxy(
     string $className,
     Closure $outmaker
 ) : object {
-    /** @psalm-suppress MixedMethodCall */
     $t = new $className();
     $outmaker($t);
     return $t;

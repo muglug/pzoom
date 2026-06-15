@@ -1,6 +1,5 @@
 <?php
 /**
- * @psalm-suppress MixedMethodCall
  * @psalm-suppress MixedArgument
  */
 function foo(array $array = []): void {

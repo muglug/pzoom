@@ -24,10 +24,8 @@ $d = $stmt->fetchAll(PDO::FETCH_CLASS);
 $e = $stmt->fetchAll(PDO::FETCH_CLASS, B::class);
 $f = $stmt->fetch(PDO::FETCH_ASSOC);
 $g = $stmt->fetchAll(PDO::FETCH_ASSOC);
-/** @psalm-suppress MixedAssignment */
 $h = $stmt2->fetch();
 $i = $stmt2->fetchAll();
 $j = $stmt2->fetch(PDO::FETCH_BOTH);
 $k = $stmt2->fetchAll(PDO::FETCH_BOTH);
-/** @psalm-suppress MixedAssignment */
 $l = $stmt3->fetch();

@@ -3,7 +3,6 @@
  * @template T as object
  * @param T|class-string<T> $s
  * @return T
- * @psalm-suppress MixedMethodCall
  */
 function bar($s) {
     if (is_object($s)) {

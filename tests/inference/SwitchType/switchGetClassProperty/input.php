@@ -11,7 +11,6 @@ class C {
             $this->a = new A();
         }
 
-        /** @psalm-suppress MixedArgument */
         switch (get_class($this->a)) {
             case B::class:
                 echo "here";

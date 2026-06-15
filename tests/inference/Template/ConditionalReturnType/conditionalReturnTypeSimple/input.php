@@ -21,5 +21,4 @@ class A {
 
 $a = (new A)->getAttribute("colour", "red"); // typed as string
 $b = (new A)->getAttribute(null); // typed as array<string, string>
-/** @psalm-suppress MixedArgument */
 $c = (new A)->getAttribute($GLOBALS["foo"]); // typed as string|array<string, string>

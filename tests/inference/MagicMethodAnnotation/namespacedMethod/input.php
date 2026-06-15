@@ -13,7 +13,6 @@ class Foo
     private \IteratorAggregate $items;
 
     /**
-     * @psalm-suppress MixedReturnTypeCoercion
      */
     public function getAll(): \IteratorAggregate
     {
@@ -27,7 +26,6 @@ class Foo
 }
 
 /**
- * @psalm-suppress MixedReturnTypeCoercion
  * @method \IteratorAggregate<int, FooInterface> getAll():\IteratorAggregate
  */
 class Bar
@@ -35,7 +33,6 @@ class Bar
     private \IteratorAggregate $items;
 
     /**
-     * @psalm-suppress MixedReturnTypeCoercion
      */
     public function getAll(): \IteratorAggregate
     {

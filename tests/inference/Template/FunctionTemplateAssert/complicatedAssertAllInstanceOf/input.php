@@ -8,7 +8,6 @@
  * @param class-string<T>|interface-string<T> $type
  */
 function allInstanceOf(iterable $i, string $type): bool {
-    /** @psalm-suppress MixedAssignment */
     foreach ($i as $elt) {
         if (!$elt instanceof $type) {
             return false;

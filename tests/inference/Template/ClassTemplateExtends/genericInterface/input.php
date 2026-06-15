@@ -43,7 +43,6 @@ class C implements I {
  * @template T as object
  * @param class-string<T> $t
  * @return I<T>
- * @psalm-suppress MixedMethodCall
  */
 function f(string $t) {
     return new C(new $t);

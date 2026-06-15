@@ -9,7 +9,6 @@ for ($i = 0; $i < $size; $i++) {
 $sum = 0;
 /** @psalm-suppress MixedAssignment */
 foreach ($a as $n) {
-    /** @psalm-suppress MixedOperand */
     $sum += $n;
 }
                 

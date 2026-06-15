@@ -6,7 +6,6 @@
  *
  * @return T
  *
- * @psalm-suppress MixedMethodCall
  */
 function Foo(string $foo) : object {
   return new $foo;

@@ -1,7 +1,6 @@
 <?php
 /**
  * @psalm-suppress MixedAssignment
- * @psalm-suppress MixedArrayOffset
  *
  * @psalm-return array<true>
  */

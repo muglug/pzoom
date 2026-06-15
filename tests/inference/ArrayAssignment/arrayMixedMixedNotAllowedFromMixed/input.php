@@ -5,7 +5,6 @@ function foo($a) : array {
 
     /**
      * @psalm-suppress MixedAssignment
-     * @psalm-suppress MixedArrayOffset
      */
     foreach ($a as $k => $v) {
         $arr[$k] = $v;

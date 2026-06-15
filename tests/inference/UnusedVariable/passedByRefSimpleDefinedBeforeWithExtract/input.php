@@ -1,7 +1,6 @@
 <?php
 function foo(array $arr) : void {
     while (rand(0, 1)) {
-        /** @psalm-suppress MixedArgument */
         extract($arr);
         $a = [];
         takes_ref($a);

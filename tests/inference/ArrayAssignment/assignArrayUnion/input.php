@@ -1,6 +1,5 @@
 <?php
 /**
- * @psalm-suppress MixedArrayOffset
  */
 function foo(array $out) : array {
     $key = 1;

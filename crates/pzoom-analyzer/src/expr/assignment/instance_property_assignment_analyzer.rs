@@ -193,7 +193,14 @@ pub fn analyze_with_known_type(
     // Verify property type if we can resolve it
     if let Some(obj_type) = obj_type {
         if let Some(prop_name) = prop_name {
-            let lookup_types = expand_intersection_lookup_types(&obj_type);
+            // A `false`/`null` member the receiver marks ignorable
+            // (`@psalm-ignore-falsable-return` / `-nullable-return`) is not a
+            // real non-object case — Psalm runs the assignment containment with
+            // those flags so the false/null part raises nothing. Drop them
+            // before classifying the union (e.g. DOMDocument::createElement
+            // returns `DOMElement|false` with `@psalm-ignore-falsable-return`).
+            let lookup_obj_type = strip_ignored_null_false(&obj_type);
+            let lookup_types = expand_intersection_lookup_types(&lookup_obj_type);
 
             // Check for null/invalid types in the union
             let has_object_type = lookup_types

@@ -1362,16 +1362,19 @@ pub(crate) fn apply_param_out_types(
 
         // Psalm's ArrayFunctionArgumentsAnalyzer::handleSplice: with a
         // replacement argument, the by-ref array becomes the combination of
-        // its (list-ified) own type and the replacement's value type.
+        // its (list-ified) own type and the replacement's value type. Psalm
+        // keys the write-back by the extended var id, so a property path
+        // (array_splice($obj->prop, ...)) is handled the same as a plain
+        // variable instead of falling through to the generic @param-out, which
+        // would drop the element type to mixed.
         if param_idx == 0 && analyzer.interner.lookup(function_id).as_ref() == "array_splice" {
-            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
-                arg.value().unparenthesized()
+            if let Some(var_key) = crate::expression_identifier::get_expression_var_key(arg.value())
                 && super::array_function_arguments_analyzer::handle_splice_by_ref(
                     context,
                     analysis_data,
                     args,
                     arg_positions,
-                    direct.name,
+                    &var_key,
                 )
             {
                 continue;

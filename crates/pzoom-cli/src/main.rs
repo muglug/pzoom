@@ -233,9 +233,19 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // Scan dependency sources for type information, but don't analyze them
     // unless explicitly targeted. They are not project files (Psalm's
     // isInProjectDirs), so stub classes may member-override theirs.
+    //
+    // Resolve dependencies on demand through Composer's autoload maps (like
+    // Psalm), scanning only the referenced subset of `vendor/`. Walking the
+    // whole tree pulls in every package's tests, fixtures, and example data —
+    // files PHP never autoloads, which only add noise and can shadow builtins
+    // (an illegal global `function strlen(){}` test fixture, say). Fall back to
+    // a full walk when there is no Composer autoloader.
     let vendor_dir = display_root.join("vendor");
     if vendor_dir.is_dir() {
-        scanner.scan_dependency_directories(&[vendor_dir.as_path()]);
+        match pzoom_orchestrator::ComposerAutoload::load(&vendor_dir) {
+            Some(autoload) => scanner.scan_dependencies_on_demand(&autoload),
+            None => scanner.scan_dependency_directories(&[vendor_dir.as_path()]),
+        }
     }
 
     for file in &analysis_files {

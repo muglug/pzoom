@@ -120,9 +120,11 @@ impl<'a> FileAnalyzer<'a> {
         // `@psalm-import-type` source validation (Psalm's ClassLikeNodeScanner):
         // the source class must exist and define the imported alias.
         for (source_class, imported_alias) in &file_info.type_alias_imports {
-            let scoped_alias = self
-                .interner
-                .intern(&format!("{}::{}", self.interner.lookup(*source_class), imported_alias));
+            let scoped_alias = self.interner.intern(&format!(
+                "{}::{}",
+                self.interner.lookup(*source_class),
+                imported_alias
+            ));
             if self.codebase.type_aliases.contains_key(&scoped_alias) {
                 continue;
             }
@@ -149,15 +151,7 @@ impl<'a> FileAnalyzer<'a> {
                     ),
                 )
             };
-            analysis_data.add_issue(Issue::new(
-                kind,
-                message,
-                file_path,
-                0,
-                1,
-                1,
-                1,
-            ));
+            analysis_data.add_issue(Issue::new(kind, message, file_path, 0, 1, 1, 1));
         }
 
         for (offset, message) in &file_info.docblock_parse_issues {
@@ -359,26 +353,12 @@ impl<'a> FileAnalyzer<'a> {
                 .map(|(pos, _)| *pos)
                 .collect();
             for candidate in collect_suppression_candidates(&file_info.contents) {
-                if string_literal_spans
-                    .iter()
-                    .any(|(start, end)| (candidate.offset as u32) >= *start && (candidate.offset as u32) < *end)
-                {
+                if string_literal_spans.iter().any(|(start, end)| {
+                    (candidate.offset as u32) >= *start && (candidate.offset as u32) < *end
+                }) {
                     continue;
                 }
-                // Psalm reports every unused suppression here. pzoom cannot
-                // yet: a suppression looks unused whenever pzoom fails to
-                // generate the issue Psalm would have suppressed, so full
-                // reporting needs issue-generation parity first (a corpus
-                // sweep showed ~180 such gaps). Until then only the provable
-                // case is reported: a lone `@psalm-suppress
-                // UnusedPsalmSuppress` can never be used, since
-                // UnusedPsalmSuppress reports bypass suppression entirely
-                // (IssueBuffer::processUnusedSuppressions calls add()
-                // directly) — Psalm's "by itself should be marked as unused"
-                // rule.
-                if candidate.name != "UnusedPsalmSuppress" {
-                    continue;
-                }
+
                 if used_suppressions.contains(&candidate.offset) {
                     continue;
                 }
@@ -448,10 +428,12 @@ fn report_unused_variables(
     let (unused_nodes, unused_but_referenced_nodes) =
         crate::unused_variable_analyzer::check_variables_used(&analysis_data.data_flow_graph);
 
-
     let mut new_issues: Vec<Issue> = Vec::new();
     let mut unused_ids: rustc_hash::FxHashSet<DataFlowNodeId> = rustc_hash::FxHashSet::default();
-    for node in unused_nodes.iter().chain(unused_but_referenced_nodes.iter()) {
+    for node in unused_nodes
+        .iter()
+        .chain(unused_but_referenced_nodes.iter())
+    {
         unused_ids.insert(node.id.clone());
 
         let DataFlowNodeKind::VariableUseSource { kind, pos, .. } = &node.kind else {
@@ -519,8 +501,7 @@ fn report_unused_variables(
             // properties. No trailing-position rule applies.
             if stmt_analyzer.config.find_unused_code {
                 for param in &params {
-                    let Some((method_final, in_interface, has_overrides)) =
-                        param.method_param_meta
+                    let Some((method_final, in_interface, has_overrides)) = param.method_param_meta
                     else {
                         continue;
                     };
@@ -539,7 +520,10 @@ fn report_unused_variables(
                         } else {
                             IssueKind::PossiblyUnusedParam
                         },
-                        format!("Param #{} is never referenced in this method", param.param_index + 1),
+                        format!(
+                            "Param #{} is never referenced in this method",
+                            param.param_index + 1
+                        ),
                         file_path,
                         param.span.0,
                         param.span.1,
@@ -552,10 +536,11 @@ fn report_unused_variables(
         }
 
         // func_get_args() reads every param.
-        if params
-            .first()
-            .is_some_and(|param| analysis_data.func_get_args_functions.contains(&param.function_key))
-        {
+        if params.first().is_some_and(|param| {
+            analysis_data
+                .func_get_args_functions
+                .contains(&param.function_key)
+        }) {
             continue;
         }
 
@@ -679,8 +664,7 @@ fn class_docblock_suppression_match_for_issue(
         let Some(prefix) = contents.get(..class_start as usize) else {
             continue;
         };
-        let Some((docblock_start, docblock)) =
-            crate::issue_suppression::preceding_docblock(prefix)
+        let Some((docblock_start, docblock)) = crate::issue_suppression::preceding_docblock(prefix)
         else {
             continue;
         };
@@ -791,17 +775,17 @@ fn line_start_offsets(contents: &str) -> Vec<usize> {
 fn line_suppression_match(line: &str, issue_name: &str) -> Option<usize> {
     let content_start = crate::issue_suppression::suppression_tag_content_start(line)?;
 
-    for (col, token) in suppression_tokens(line, content_start) {
-        if token.eq_ignore_ascii_case("all") || suppresses_issue(token, issue_name) {
-            return Some(col);
-        }
+    if let Some((col, token)) = suppression_tokens(line, content_start)
+        && (token.eq_ignore_ascii_case("all") || suppresses_issue(token, issue_name))
+    {
+        return Some(col);
     }
     None
 }
 
 /// `(byte column, token)` pairs following a `@psalm-suppress` tag at
 /// `content_start` within `line`.
-fn suppression_tokens(line: &str, content_start: usize) -> Vec<(usize, &str)> {
+fn suppression_tokens(line: &str, content_start: usize) -> Option<(usize, &str)> {
     let content = &line[content_start..];
     let mut tokens = Vec::new();
     let mut token_start: Option<usize> = None;
@@ -821,7 +805,11 @@ fn suppression_tokens(line: &str, content_start: usize) -> Vec<(usize, &str)> {
         }
     }
 
-    tokens
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens[0])
+    }
 }
 
 fn function_docblock_suppression_match(
@@ -902,8 +890,8 @@ fn collect_suppression_candidates(contents: &str) -> Vec<SuppressionCandidate> {
     let mut in_comment_block = false;
 
     let flush_group = |group: &mut Vec<SuppressionCandidate>,
-                           group_has_unused_suppress: &mut bool,
-                           candidates: &mut Vec<SuppressionCandidate>| {
+                       group_has_unused_suppress: &mut bool,
+                       candidates: &mut Vec<SuppressionCandidate>| {
         let keep = group.len() == 1 || !*group_has_unused_suppress;
         if keep {
             candidates.append(group);
@@ -926,19 +914,19 @@ fn collect_suppression_candidates(contents: &str) -> Vec<SuppressionCandidate> {
 
         in_comment_block = (in_comment_block || trimmed.contains("/*")) && !trimmed.contains("*/");
 
-        if let Some(content_start) = crate::issue_suppression::suppression_tag_content_start(line) {
-            for (col, token) in suppression_tokens(line, content_start) {
-                if token.starts_with("Tainted") || token == "InaccessibleMethod" {
-                    continue;
-                }
-                if token == "UnusedPsalmSuppress" {
-                    group_has_unused_suppress = true;
-                }
-                group.push(SuppressionCandidate {
-                    offset: line_offsets[line_index] + col,
-                    name: token.to_string(),
-                });
+        if let Some(content_start) = crate::issue_suppression::suppression_tag_content_start(line)
+            && let Some((col, token)) = suppression_tokens(line, content_start)
+        {
+            if token.starts_with("Tainted") || token == "InaccessibleMethod" {
+                continue;
             }
+            if token == "UnusedPsalmSuppress" {
+                group_has_unused_suppress = true;
+            }
+            group.push(SuppressionCandidate {
+                offset: line_offsets[line_index] + col,
+                name: token.to_string(),
+            });
         }
 
         if !line_is_comment && !in_comment_block {
@@ -1026,7 +1014,9 @@ fn report_unused_declarations(
     ) {
         for atomic in &union.types {
             match atomic {
-                pzoom_code_info::TAtomic::TNamedObject { name, type_params, .. } => {
+                pzoom_code_info::TAtomic::TNamedObject {
+                    name, type_params, ..
+                } => {
                     out.insert(*name);
                     if let Some(type_params) = type_params {
                         for param in type_params.iter() {
@@ -1147,7 +1137,8 @@ fn report_unused_declarations(
                 // the pass; every other magic method is runtime-invoked.
                 let is_private_constructor = method_lc_name == "__construct"
                     && matches!(method_info.visibility, Visibility::Private);
-                if magic_method_skips.contains(&method_lc_name.as_str()) && !is_private_constructor {
+                if magic_method_skips.contains(&method_lc_name.as_str()) && !is_private_constructor
+                {
                     continue;
                 }
                 // Psalm: Serializable's serialize/unserialize and
@@ -1198,11 +1189,9 @@ fn report_unused_declarations(
                                     .get_class(*parent_id)
                                     .and_then(|parent| parent.methods.get(method_name_id))
                                     .is_some_and(|parent_method| parent_method.is_abstract)
-                                    || codebase
-                                        .get_class(*parent_id)
-                                        .is_some_and(|parent| {
-                                            parent.kind == ClassLikeKind::Interface
-                                        });
+                                    || codebase.get_class(*parent_id).is_some_and(|parent| {
+                                        parent.kind == ClassLikeKind::Interface
+                                    });
                                 !parent_abstract || parent_referenced
                             })
                         });
@@ -1311,8 +1300,7 @@ fn report_unused_declarations(
                 if overrides_parent {
                     continue;
                 }
-                let property_id =
-                    format!("{}::${}", class_name, interner.lookup(*prop_name_id));
+                let property_id = format!("{}::${}", class_name, interner.lookup(*prop_name_id));
                 if matches!(prop_info.visibility, Visibility::Private) {
                     emit(
                         IssueKind::UnusedProperty,

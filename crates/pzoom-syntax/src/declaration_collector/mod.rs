@@ -3321,9 +3321,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let marked_initialized = parsed_docblock.as_ref().is_some_and(|parsed| {
             parsed.tags.get("psalm-suppress").is_some_and(|entries| {
                 entries.values().any(|value| {
-                    value
-                        .split(|c: char| c.is_whitespace() || c == ',')
-                        .any(|token| token == "PropertyNotSetInConstructor")
+                    value.starts_with("PropertyNotSetInConstructor")
                 })
             })
         });

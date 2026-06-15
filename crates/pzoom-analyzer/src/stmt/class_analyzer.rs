@@ -5073,6 +5073,54 @@ fn check_deprecated_and_internal_relationships(
             }
         }
     }
+
+    // A property whose declared type (native or `@var`) names a deprecated
+    // class/interface/trait reports at the property, mirroring Psalm's
+    // ClassLikeAnalyzer property-type deprecation check.
+    for property in class_info.properties.values() {
+        if property.declaring_class != class_info.name {
+            continue;
+        }
+        let Some(property_type) = property.get_type() else {
+            continue;
+        };
+        let mut referenced_classes = Vec::new();
+        for atomic in &property_type.types {
+            collect_named_docblock_classes(atomic, &mut referenced_classes);
+        }
+        let mut emitted: FxHashMap<StrId, ()> = FxHashMap::default();
+        for referenced_class in referenced_classes {
+            if emitted.insert(referenced_class, ()).is_some() {
+                continue;
+            }
+            let Some(referenced_info) = analyzer.codebase.get_class(referenced_class) else {
+                continue;
+            };
+            if !referenced_info.is_deprecated {
+                continue;
+            }
+            let referenced_name = analyzer.interner.lookup(referenced_class);
+            let issue_kind = match referenced_info.kind {
+                pzoom_code_info::class_like_info::ClassLikeKind::Interface => {
+                    IssueKind::DeprecatedInterface
+                }
+                pzoom_code_info::class_like_info::ClassLikeKind::Trait => {
+                    IssueKind::DeprecatedTrait
+                }
+                _ => IssueKind::DeprecatedClass,
+            };
+            let (line, col) = analyzer.get_line_column(property.start_offset);
+            analysis_data.add_issue(Issue::new(
+                issue_kind,
+                format!("{} is marked deprecated", referenced_name),
+                analyzer.file_path,
+                property.start_offset,
+                property.start_offset,
+                line,
+                col,
+            ));
+        }
+    }
 }
 
 fn check_undefined_docblock_mixins(

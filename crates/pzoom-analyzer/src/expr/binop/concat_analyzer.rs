@@ -45,7 +45,10 @@ struct ConcatUnionInfo {
     all_castable: bool,
     all_lowercase: bool,
     all_non_empty: bool,
-    any_truthy: bool,
+    /// Whether the whole operand is non-falsy (every atomic truthy) — Psalm's
+    /// `isContainedBy($operand, non-falsy-string)`. A union like `''|'a'` is
+    /// NOT all_non_falsy even though one member is truthy.
+    all_non_falsy: bool,
     all_numericish: bool,
     all_non_negative_int: bool,
     all_literal: bool,
@@ -114,6 +117,13 @@ pub(crate) fn infer_concat_type(
 
     let all_lowercase = left_info.all_lowercase && right_info.all_lowercase;
     let has_non_empty = left_info.all_non_empty || right_info.all_non_empty;
+    // Psalm's ConcatAnalyzer: the result is non-falsy when both operands are
+    // non-empty (the concatenation is >= 2 chars, so never `''` or `'0'`) or
+    // when either operand is itself non-falsy. A single non-empty operand only
+    // guarantees a non-empty (possibly `'0'`) result.
+    let non_falsy = (left_info.all_non_empty && right_info.all_non_empty)
+        || left_info.all_non_falsy
+        || right_info.all_non_falsy;
 
     // Psalm's all-literals concat keeps literal-string-ness
     // (TNonspecificLiteralString / its non-empty flavor).
@@ -131,11 +141,10 @@ pub(crate) fn infer_concat_type(
         return TUnion::new(TAtomic::TLowercaseString);
     }
 
-    if left_info.any_truthy || right_info.any_truthy {
-        return TUnion::new(TAtomic::TTruthyString);
-    }
-
     if has_non_empty {
+        if non_falsy {
+            return TUnion::new(TAtomic::TTruthyString);
+        }
         return TUnion::new(TAtomic::TNonEmptyString);
     }
 
@@ -285,7 +294,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
     let mut all_castable = !union.types.is_empty();
     let mut all_lowercase = !union.types.is_empty();
     let mut all_non_empty = !union.types.is_empty();
-    let mut any_truthy = false;
+    let mut all_non_falsy = !union.types.is_empty();
     let mut all_numericish = !union.types.is_empty();
     let mut all_non_negative_int = !union.types.is_empty();
     // Psalm's Union::allLiterals: literal strings (including the nonspecific
@@ -308,6 +317,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
             all_castable = false;
             all_lowercase = false;
             all_non_empty = false;
+            all_non_falsy = false;
             all_numericish = false;
             all_non_negative_int = false;
             all_literal = false;
@@ -316,7 +326,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
 
         all_lowercase &= info.lowercase;
         all_non_empty &= info.non_empty;
-        any_truthy |= info.truthy;
+        all_non_falsy &= info.truthy;
         all_numericish &= info.numericish;
         all_non_negative_int &= info.non_negative_int;
     }
@@ -325,7 +335,7 @@ fn get_concat_union_info(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> C
         all_castable,
         all_lowercase,
         all_non_empty,
-        any_truthy,
+        all_non_falsy,
         all_numericish,
         all_non_negative_int,
         all_literal,
@@ -491,7 +501,7 @@ fn get_concat_atomic_info(
             Some(ConcatAtomicInfo {
                 lowercase: nested_info.all_lowercase,
                 non_empty: nested_info.all_non_empty,
-                truthy: nested_info.any_truthy,
+                truthy: nested_info.all_non_falsy,
                 numericish: nested_info.all_numericish,
                 non_negative_int: nested_info.all_non_negative_int,
             })
@@ -510,7 +520,7 @@ fn get_concat_atomic_info(
             Some(ConcatAtomicInfo {
                 lowercase: nested_info.all_lowercase,
                 non_empty: nested_info.all_non_empty,
-                truthy: nested_info.any_truthy,
+                truthy: nested_info.all_non_falsy,
                 numericish: nested_info.all_numericish,
                 non_negative_int: nested_info.all_non_negative_int,
             })

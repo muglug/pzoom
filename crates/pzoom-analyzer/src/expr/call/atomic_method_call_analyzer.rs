@@ -1193,10 +1193,15 @@ pub(crate) fn get_method_return_type(
                 secondary_parent,
                 false,
             );
-            localized_return_type = pzoom_code_info::combine_union_types(
+            // Codebase-aware combine: merging a method's return type across
+            // receiver atomics can leave a class beside a descendant of it
+            // (`array<Stmt>|array<Return_>`); the combiner collapses the subtype
+            // (Psalm's `TypeCombiner` does this whenever a codebase is passed).
+            localized_return_type = pzoom_code_info::combine_union_types_with_codebase(
                 &localized_return_type,
                 &localized_secondary,
                 false,
+                analyzer.codebase,
             );
         }
 

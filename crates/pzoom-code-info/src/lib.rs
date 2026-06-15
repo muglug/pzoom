@@ -51,7 +51,7 @@ pub use symbol::SymbolKind;
 pub use t_atomic::{ArrayKey, FunctionLikeParameter, TAtomic};
 pub use t_union::TUnion;
 pub use ttype::template::{GenericParent, TemplateBound, TemplateResult, TypeVariableBounds};
-pub use ttype::{add_union_type, combine_union_types};
+pub use ttype::{add_union_type, combine_union_types, combine_union_types_with_codebase};
 
 /// Prefix of the synthetic classlike name given to anonymous classes:
 /// `@anonymous-class:{file}:{offset}` (Psalm registers them as

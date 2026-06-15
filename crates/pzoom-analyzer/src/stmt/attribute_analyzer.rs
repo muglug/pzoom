@@ -205,10 +205,18 @@ pub fn analyze_attribute_lists(
         let name_span = attribute.name.span();
         let attr_name_offset = name_span.start.offset;
 
-        let suppress_invalid =
-            should_suppress_issue(analyzer, attr_span.start.offset, "InvalidAttribute");
-        let suppress_undefined =
-            should_suppress_issue(analyzer, attr_span.start.offset, "UndefinedAttributeClass");
+        let suppress_invalid = crate::issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            attr_span.start.offset,
+            "InvalidAttribute",
+        );
+        let suppress_undefined = crate::issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            attr_span.start.offset,
+            "UndefinedAttributeClass",
+        );
 
         let mut attribute_name_id = analyzer
             .get_resolved_name(attr_name_offset)
@@ -834,47 +842,6 @@ fn extract_single_literal_class_name(
     }
 }
 
-fn should_suppress_issue(
-    analyzer: &StatementsAnalyzer<'_>,
-    issue_offset: u32,
-    issue_name: &str,
-) -> bool {
-    if analyzer.config.is_issue_suppressed(issue_name) {
-        return true;
-    }
-
-    let source = analyzer.source;
-    let offset = issue_offset as usize;
-    if offset == 0 || offset > source.len() {
-        return false;
-    }
-
-    let bytes = source.as_bytes();
-    let mut cursor = offset;
-    while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-        cursor -= 1;
-    }
-
-    if cursor < 2 || &source[cursor - 2..cursor] != "*/" {
-        return false;
-    }
-
-    let doc_end = cursor;
-    let Some(doc_start) = source[..doc_end - 2].rfind("/**") else {
-        return false;
-    };
-
-    let docblock = &source[doc_start..doc_end];
-    docblock
-        .split('\n')
-        .filter(|line| line.contains("@psalm-suppress"))
-        .any(|line| {
-            line.split_whitespace()
-                .skip_while(|part| *part != "@psalm-suppress")
-                .nth(1)
-                .is_some_and(|suppressed| suppressed == issue_name)
-        })
-}
 
 fn emit_invalid_attribute_issue(
     analyzer: &StatementsAnalyzer<'_>,

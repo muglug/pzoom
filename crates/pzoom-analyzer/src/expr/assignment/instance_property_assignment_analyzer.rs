@@ -571,10 +571,11 @@ pub fn analyze_with_known_type(
                                     // assigned to").
                                     if value_type.is_mixed() {
                                         if !prop_type.is_mixed()
-                                            && !should_suppress_issue(
+                                            && !crate::issue_suppression::is_issue_suppressed_at(
                                                 analyzer,
+                                                analysis_data,
                                                 pos.0,
-                                                &["MixedAssignment"],
+                                                "MixedAssignment",
                                             )
                                         {
                                             let var_id = expression_identifier::get_expression_var_key(
@@ -1116,7 +1117,12 @@ pub fn analyze_with_known_type(
                         if is_this_assignment && !context.has_this {
                             continue;
                         }
-                        if should_suppress_issue(analyzer, pos.0, &["MixedPropertyAssignment"]) {
+                        if crate::issue_suppression::is_issue_suppressed_at(
+                            analyzer,
+                            analysis_data,
+                            pos.0,
+                            "MixedPropertyAssignment",
+                        ) {
                             continue;
                         }
                         let (line, col) = analyzer.get_line_column(pos.0);
@@ -1415,58 +1421,6 @@ fn class_allows_dynamic_property_assignment(
     false
 }
 
-fn should_suppress_issue(
-    analyzer: &StatementsAnalyzer<'_>,
-    issue_offset: u32,
-    issue_names: &[&str],
-) -> bool {
-    if issue_names
-        .iter()
-        .any(|issue_name| analyzer.config.is_issue_suppressed(issue_name))
-    {
-        return true;
-    }
-
-    let source = analyzer.source;
-    let offset = issue_offset as usize;
-    if offset == 0 || offset > source.len() {
-        return false;
-    }
-
-    let bytes = source.as_bytes();
-    let mut cursor = offset;
-    while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-        cursor -= 1;
-    }
-
-    if cursor < 2 || &source[cursor - 2..cursor] != "*/" {
-        return false;
-    }
-
-    let doc_end = cursor;
-    let Some(doc_start) = source[..doc_end - 2].rfind("/**") else {
-        return false;
-    };
-
-    let docblock = &source[doc_start..doc_end];
-    docblock
-        .split('\n')
-        .filter(|line| line.contains("@psalm-suppress"))
-        .flat_map(|line| {
-            line.split_whitespace()
-                .skip_while(|part| *part != "@psalm-suppress")
-                .skip(1)
-                .flat_map(|part| part.split(','))
-                .map(|part| part.trim().trim_end_matches(','))
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .any(|suppressed| {
-            issue_names
-                .iter()
-                .any(|issue_name| suppressed == *issue_name)
-        })
-}
 
 fn class_has_magic_setter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::SET)

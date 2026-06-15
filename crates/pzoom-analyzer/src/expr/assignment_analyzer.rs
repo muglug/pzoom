@@ -120,7 +120,12 @@ pub fn analyze(
             return;
         }
 
-        if !should_suppress_issue(analyzer, pos.0, "UnsupportedReferenceUsage") {
+        if !issue_suppression::is_issue_suppressed_at(
+            analyzer,
+            analysis_data,
+            pos.0,
+            "UnsupportedReferenceUsage",
+        ) {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UnsupportedReferenceUsage,
@@ -487,7 +492,8 @@ fn emit_mixed_assignment_issue_if_needed(
     }
 
     let issue_offset = analysis_data.current_stmt_start.unwrap_or(pos.0);
-    if should_suppress_issue(analyzer, issue_offset, "MixedAssignment") {
+    if issue_suppression::is_issue_suppressed_at(analyzer, analysis_data, issue_offset, "MixedAssignment")
+    {
         return;
     }
 
@@ -1552,47 +1558,6 @@ fn has_unnamed_inline_var_annotation(analyzer: &StatementsAnalyzer<'_>, offset: 
         })
 }
 
-fn should_suppress_issue(
-    analyzer: &StatementsAnalyzer<'_>,
-    issue_offset: u32,
-    issue_name: &str,
-) -> bool {
-    if analyzer.config.is_issue_suppressed(issue_name) {
-        return true;
-    }
-
-    let source = analyzer.source;
-    let offset = issue_offset as usize;
-    if offset == 0 || offset > source.len() {
-        return false;
-    }
-
-    let bytes = source.as_bytes();
-    let mut cursor = offset;
-    while cursor > 0 && bytes[cursor - 1].is_ascii_whitespace() {
-        cursor -= 1;
-    }
-
-    if cursor < 2 || &source[cursor - 2..cursor] != "*/" {
-        return false;
-    }
-
-    let doc_end = cursor;
-    let Some(doc_start) = source[..doc_end - 2].rfind("/**") else {
-        return false;
-    };
-
-    let docblock = &source[doc_start..doc_end];
-    docblock
-        .split('\n')
-        .filter(|line| line.contains("@psalm-suppress"))
-        .any(|line| {
-            line.split_whitespace()
-                .skip_while(|part| *part != "@psalm-suppress")
-                .nth(1)
-                .is_some_and(|suppressed| suppressed == issue_name)
-        })
-}
 
 /// Psalm parses `@psalm-taint-escape <kind>` from the docblock attached to
 /// an assignment statement (`VarDocblockComment::removed_taints`) and removes

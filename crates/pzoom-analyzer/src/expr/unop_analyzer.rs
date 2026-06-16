@@ -165,7 +165,12 @@ pub fn analyze_prefix(
             } else {
                 -1
             };
-            let result_type = get_increment_result_type(operand_type.as_deref(), delta, context.inside_loop, context.inside_assignment);
+            let result_type = get_increment_result_type(
+                operand_type.as_deref(),
+                delta,
+                context.inside_loop,
+                context.inside_assignment,
+            );
             maybe_emit_undefined_increment_variable(
                 analyzer,
                 unary.operand,
@@ -255,7 +260,12 @@ pub fn analyze_postfix(
     } else {
         -1
     };
-    let new_var_type = get_increment_result_type(operand_type.as_deref(), delta, context.inside_loop, context.inside_assignment);
+    let new_var_type = get_increment_result_type(
+        operand_type.as_deref(),
+        delta,
+        context.inside_loop,
+        context.inside_assignment,
+    );
     update_var_type_for_increment(
         analyzer,
         unary.operand,
@@ -315,8 +325,7 @@ fn get_increment_result_type(
             // Psalm's ArithmeticOpAnalyzer: incrementing a numeric string
             // yields int|float (from calculation); other strings stay strings.
             if t.types.iter().all(is_numericish_string_atomic) {
-                let mut result =
-                    TUnion::from_types(vec![TAtomic::TFloat, TAtomic::TInt]);
+                let mut result = TUnion::from_types(vec![TAtomic::TFloat, TAtomic::TInt]);
                 result.from_calculation = true;
                 return result;
             }
@@ -369,9 +378,7 @@ fn get_increment_result_type(
                                 TAtomic::TInt
                             } else {
                                 match value.checked_add(delta) {
-                                    Some(new_value) => {
-                                        TAtomic::TLiteralInt { value: new_value }
-                                    }
+                                    Some(new_value) => TAtomic::TLiteralInt { value: new_value },
                                     None => TAtomic::TInt,
                                 }
                             }
@@ -391,8 +398,7 @@ fn get_increment_result_type(
                 return shifted_union;
             }
 
-            if t
-                .types
+            if t.types
                 .iter()
                 .any(|a| matches!(a, TAtomic::TFloat | TAtomic::TLiteralFloat { .. }))
             {
@@ -415,9 +421,9 @@ fn get_increment_result_type(
                         continue;
                     }
                     incremented.push(match atomic {
-                        TAtomic::TInt
-                        | TAtomic::TLiteralInt { .. }
-                        | TAtomic::TIntRange { .. } => TAtomic::TInt,
+                        TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. } => {
+                            TAtomic::TInt
+                        }
                         TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => TAtomic::TFloat,
                         TAtomic::TString
                         | TAtomic::TLiteralString { .. }
@@ -499,13 +505,15 @@ fn update_var_type_for_increment(
                     );
                 }
             }
-            analysis_data.data_flow_graph.add_node(assignment_node.clone());
+            analysis_data
+                .data_flow_graph
+                .add_node(assignment_node.clone());
             stored_type.parent_nodes = vec![assignment_node];
         }
         context.set_var_type(var_id, stored_type);
 
-        clear_dependent_property_types( context, direct.name);
-        clear_dependent_array_access_types( context, direct.name);
+        clear_dependent_property_types(context, direct.name);
+        clear_dependent_array_access_types(context, direct.name);
         context.invalidate_dependent_types(direct.name);
         remove_var_clauses_from_context(context, direct.name);
         return;
@@ -539,10 +547,7 @@ fn update_var_type_for_increment(
     remove_var_clauses_from_context(context, &var_name);
 }
 
-fn clear_dependent_property_types(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_dependent_property_types(context: &mut BlockContext, var_name: &str) {
     let property_prefix = format!("{var_name}->");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -558,10 +563,7 @@ fn clear_dependent_property_types(
     }
 }
 
-fn clear_dependent_array_access_types(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_dependent_array_access_types(context: &mut BlockContext, var_name: &str) {
     let key_fragment = format!("[{var_name}]");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -580,7 +582,6 @@ fn clear_dependent_array_access_types(
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
     context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
-
 
 fn maybe_emit_undefined_increment_variable(
     analyzer: &StatementsAnalyzer<'_>,

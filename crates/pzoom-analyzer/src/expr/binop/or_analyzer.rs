@@ -5,8 +5,8 @@ use mago_syntax::ast::ast::binary::BinaryOperator;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, TUnion};
 use rustc_hash::FxHashSet;
 
@@ -106,9 +106,15 @@ pub fn analyze(
     // `left`, combine it with the clauses already known here, simplify, and extract
     // the truths. This folds in prior context knowledge and feeds a single reconcile.
     let left_cond_id = (left.start_offset() as u32, left.end_offset() as u32);
-    let left_clauses =
-        formula_generator::get_formula(left_cond_id, left_cond_id, left, analyzer, analysis_data, false)
-            .unwrap_or_default();
+    let left_clauses = formula_generator::get_formula(
+        left_cond_id,
+        left_cond_id,
+        left,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     let negated_left_clauses = negate_formula(left_clauses).unwrap_or_default();
     let mut clauses_for_right_analysis: Vec<Clause> =
         context.clauses.iter().map(|c| (**c).clone()).collect();
@@ -151,8 +157,7 @@ pub fn analyze(
         // duplicates collapse through the dupe key.
         let left_span = left.span();
         let previous_reconcile_pos = analysis_data.current_reconcile_pos;
-        analysis_data.current_reconcile_pos =
-            Some((left_span.start.offset, left_span.end.offset));
+        analysis_data.current_reconcile_pos = Some((left_span.start.offset, left_span.end.offset));
         reconciler::reconcile_keyed_types(
             &negated_assertions,
             &mut right_context,
@@ -165,7 +170,7 @@ pub fn analyze(
             Some(&active_negated_assertions),
         );
         analysis_data.current_reconcile_pos = previous_reconcile_pos;
-        promote_asserted_vars_to_assigned( &assertions.if_false, &mut right_context);
+        promote_asserted_vars_to_assigned(&assertions.if_false, &mut right_context);
 
         // Mirror Hakana: variables whose type the left-negation narrowed have their
         // now-stale clauses dropped before the right operand is analyzed, and the
@@ -174,15 +179,15 @@ pub fn analyze(
         if !changed_var_ids.is_empty() {
             let (right_kept, right_removed) = BlockContext::partition_reconciled_clause_refs(
                 &right_context.clauses,
-                &changed_var_ids);
+                &changed_var_ids,
+            );
             right_context.clauses = right_kept;
             right_context
                 .reconciled_expression_clauses
                 .extend(right_removed);
 
-            let (left_kept, left_removed) = BlockContext::partition_reconciled_clause_refs(
-                &context.clauses,
-                &changed_var_ids);
+            let (left_kept, left_removed) =
+                BlockContext::partition_reconciled_clause_refs(&context.clauses, &changed_var_ids);
             context.clauses = left_kept;
             context.reconciled_expression_clauses.extend(left_removed);
         }
@@ -192,8 +197,7 @@ pub fn analyze(
     let pre_right_assigned = right_context.assigned_var_ids.clone();
     let right_pos =
         expression_analyzer::analyze(analyzer, right, analysis_data, &mut right_context);
-    if context.inside_conditional || !matches!(right.unparenthesized(), Expression::Assignment(_))
-    {
+    if context.inside_conditional || !matches!(right.unparenthesized(), Expression::Assignment(_)) {
         if_conditional_analyzer::handle_paradoxical_condition(
             analyzer,
             right,
@@ -210,17 +214,26 @@ pub fn analyze(
     // right operand's own formula) to surface redundant/paradoxical right operands.
     // The narrowing target is a throwaway clone — only the emitted issues matter.
     let right_cond_id = (right.start_offset() as u32, right.end_offset() as u32);
-    let right_clauses =
-        formula_generator::get_formula(right_cond_id, right_cond_id, right, analyzer, analysis_data, false)
-            .unwrap_or_default();
+    let right_clauses = formula_generator::get_formula(
+        right_cond_id,
+        right_cond_id,
+        right,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     let right_assigned_var_ids: FxHashSet<VarName> = right_context
         .assigned_var_ids
         .iter()
         .filter(|(var_id, count)| **count > pre_right_assigned.get(*var_id).copied().unwrap_or(0))
         .map(|(var_id, _)| var_id.clone())
         .collect();
-    let base_clauses: Vec<std::rc::Rc<Clause>> =
-        simplified_clauses.iter().cloned().map(std::rc::Rc::new).collect();
+    let base_clauses: Vec<std::rc::Rc<Clause>> = simplified_clauses
+        .iter()
+        .cloned()
+        .map(std::rc::Rc::new)
+        .collect();
     let base_clauses =
         BlockContext::remove_reconciled_clause_refs(&base_clauses, &right_assigned_var_ids).0;
     let mut combined_right_clauses: Vec<Clause> =
@@ -299,8 +312,11 @@ pub fn analyze(
                     // wrong. Psalm's OrAnalyzer only merges right-context vars that
                     // already exist in the base context, so carry over just the
                     // ones the right operand actually assigned.
-                    let right_count =
-                        right_context.assigned_var_ids.get(var_id).copied().unwrap_or(0);
+                    let right_count = right_context
+                        .assigned_var_ids
+                        .get(var_id)
+                        .copied()
+                        .unwrap_or(0);
                     let pre_count = pre_right_assigned.get(var_id).copied().unwrap_or(0);
                     if right_count > pre_count {
                         inner.locals.insert(var_id.clone(), right_type.clone());
@@ -341,7 +357,11 @@ pub fn analyze(
             let combined = pzoom_code_info::combine_union_types(existing, right_type, false);
             context.locals.insert(var_id.clone(), combined);
         }
-        let right_count = right_context.assigned_var_ids.get(var_id).copied().unwrap_or(0);
+        let right_count = right_context
+            .assigned_var_ids
+            .get(var_id)
+            .copied()
+            .unwrap_or(0);
         let pre_count = pre_right_assigned.get(var_id).copied().unwrap_or(0);
         if right_count > pre_count {
             // A var the right operand created (`!$b || !($a = $b->c)`) must
@@ -359,9 +379,10 @@ pub fn analyze(
     }
 
     // The result type is always bool
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::bool()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::bool()));
 }
-
 
 /// Mini-port of Psalm's `IfAnalyzer::addConditionallyAssignedVarsToContext`:
 /// replay each definitely-evaluated ored subexpression in order against a
@@ -440,12 +461,13 @@ pub(crate) fn apply_recorded_assignments(
     match expr.unparenthesized() {
         Expression::Assignment(assignment) => {
             apply_recorded_assignments(assignment.rhs, analysis_data, replay_context);
-            if let Expression::Variable(Variable::Direct(direct)) =
-                assignment.lhs.unparenthesized()
+            if let Expression::Variable(Variable::Direct(direct)) = assignment.lhs.unparenthesized()
             {
                 let span = assignment.rhs.span();
-                if let Some(assigned_type) =
-                    analysis_data.expr_types.get(&(span.start.offset, span.end.offset)).cloned()
+                if let Some(assigned_type) = analysis_data
+                    .expr_types
+                    .get(&(span.start.offset, span.end.offset))
+                    .cloned()
                 {
                     replay_context
                         .set_var_type(VarName::new(direct.name), assigned_type.as_ref().clone());

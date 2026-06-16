@@ -468,9 +468,7 @@ pub fn is_contained_by(
                     None => key_union,
                 });
                 container_value = Some(match container_value {
-                    Some(existing) => {
-                        pzoom_code_info::combine_union_types(&existing, value, false)
-                    }
+                    Some(existing) => pzoom_code_info::combine_union_types(&existing, value, false),
                     None => value.clone(),
                 });
             }

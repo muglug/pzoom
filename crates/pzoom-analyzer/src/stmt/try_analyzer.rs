@@ -4,8 +4,8 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::r#try::Try;
 use mago_syntax::ast::ast::type_hint::Hint;
 
-use pzoom_code_info::combine_union_types;
 use pzoom_code_info::VarName;
+use pzoom_code_info::combine_union_types;
 use pzoom_code_info::{
     DataFlowNode, DataFlowNodeId, DataFlowNodeKind, GraphKind, PathKind, TAtomic, TUnion, VarId,
     VariableSourceKind,
@@ -137,21 +137,20 @@ pub fn analyze(
                 (var_span.start.offset, var_span.end.offset),
             );
 
-            let new_parent_node =
-                if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody {
-                    DataFlowNode::get_for_variable_source(
-                        VariableSourceKind::Default,
-                        VarId(analyzer.interner.intern(&var_name_id)),
-                        var_pos,
-                        false,
-                        true,
-                        false,
-                        false,
-                        false,
-                    )
-                } else {
-                    DataFlowNode::get_for_lvar(VarId(analyzer.interner.intern(&var_name_id)), var_pos)
-                };
+            let new_parent_node = if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody {
+                DataFlowNode::get_for_variable_source(
+                    VariableSourceKind::Default,
+                    VarId(analyzer.interner.intern(&var_name_id)),
+                    var_pos,
+                    false,
+                    true,
+                    false,
+                    false,
+                    false,
+                )
+            } else {
+                DataFlowNode::get_for_lvar(VarId(analyzer.interner.intern(&var_name_id)), var_pos)
+            };
 
             analysis_data
                 .data_flow_graph
@@ -222,7 +221,11 @@ pub fn analyze(
         // intersection).
         if !catch_exits {
             definitely_newly_assigned.retain(|var_id| {
-                catch_context.assigned_var_ids.get(var_id).copied().unwrap_or(0)
+                catch_context
+                    .assigned_var_ids
+                    .get(var_id)
+                    .copied()
+                    .unwrap_or(0)
                     > catch_entry_assigned.get(var_id).copied().unwrap_or(0)
             });
         }
@@ -344,7 +347,10 @@ pub fn analyze(
                 }
             }
             for (var_id, count) in &finally_context.assigned_var_ids {
-                context.assigned_var_ids.entry(var_id.clone()).or_insert(*count);
+                context
+                    .assigned_var_ids
+                    .entry(var_id.clone())
+                    .or_insert(*count);
             }
             context
                 .vars_possibly_in_scope
@@ -507,7 +513,9 @@ fn augment_catch_union_with_throwable(
                         TAtomic::TNamedObject {
                             name: StrId::THROWABLE,
                             type_params: None,
-                        is_static: false, remapped_params: false },
+                            is_static: false,
+                            remapped_params: false,
+                        },
                     ],
                 });
             }

@@ -1707,22 +1707,26 @@ fn resolve_method_callable(
         analysis_data
             .referenced_class_members
             .insert((class_id, method_lc));
-        analysis_data.symbol_references.add_reference_to_class_member(
-            callee_context.referencing_id.as_ref(),
-            callee_context.referencing_class,
-            (class_id, method_lc),
-            false,
-        );
+        analysis_data
+            .symbol_references
+            .add_reference_to_class_member(
+                callee_context.referencing_id.as_ref(),
+                callee_context.referencing_class,
+                (class_id, method_lc),
+                false,
+            );
         if let Some(declaring) = method_info.declaring_class {
             analysis_data
                 .referenced_class_members
                 .insert((declaring, method_lc));
-            analysis_data.symbol_references.add_reference_to_class_member(
-                callee_context.referencing_id.as_ref(),
-                callee_context.referencing_class,
-                (declaring, method_lc),
-                false,
-            );
+            analysis_data
+                .symbol_references
+                .add_reference_to_class_member(
+                    callee_context.referencing_id.as_ref(),
+                    callee_context.referencing_class,
+                    (declaring, method_lc),
+                    false,
+                );
         }
         analysis_data.referenced_classes.insert(class_id);
         analysis_data
@@ -3427,14 +3431,12 @@ pub(crate) fn infer_invokable_object_return_type(
             // A `callable():R` (or `Closure():R`) member of an intersection like
             // `object&callable():int` carries the invocation's return type
             // directly (Psalm reads the TCallable/TClosure return type).
-            TAtomic::TCallable { return_type, .. } | TAtomic::TClosure { return_type, .. } => {
-                Some(
-                    return_type
-                        .as_ref()
-                        .map(|return_type| (**return_type).clone())
-                        .unwrap_or_else(TUnion::mixed),
-                )
-            }
+            TAtomic::TCallable { return_type, .. } | TAtomic::TClosure { return_type, .. } => Some(
+                return_type
+                    .as_ref()
+                    .map(|return_type| (**return_type).clone())
+                    .unwrap_or_else(TUnion::mixed),
+            ),
             TAtomic::TObjectIntersection { types } => {
                 let mut intersection_return: Option<TUnion> = None;
                 for intersection_atomic in types {

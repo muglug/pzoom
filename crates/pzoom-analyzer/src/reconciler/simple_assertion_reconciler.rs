@@ -230,9 +230,7 @@ pub fn reconcile(
                 // (RedundantConditionGivenDocblockType vs RedundantCondition) in
                 // triggerIssueForImpossible. A loop-narrowed value is exempt
                 // (its type is still settling across iterations).
-                TAtomic::TInt | TAtomic::TString | TAtomic::TFloat | TAtomic::TBool => {
-                    !inside_loop
-                }
+                TAtomic::TInt | TAtomic::TString | TAtomic::TFloat | TAtomic::TBool => !inside_loop,
                 TAtomic::TNamedObject {
                     name: StrId::STATIC,
                     ..
@@ -524,8 +522,7 @@ fn reconcile_ordering_comparison(
     let mut kept_null_or_false = false;
     if !assertion.ordering_filters_null_or_false() {
         for atomic in &existing_var_type.types {
-            if matches!(atomic, TAtomic::TNull | TAtomic::TFalse)
-                && !result_types.contains(atomic)
+            if matches!(atomic, TAtomic::TNull | TAtomic::TFalse) && !result_types.contains(atomic)
             {
                 result_types.push(atomic.clone());
                 kept_null_or_false = true;
@@ -544,10 +541,7 @@ fn reconcile_ordering_comparison(
     // triggerIssueForImpossible when the comparison leaves the type untouched
     // (e.g. `int<min, 5> < 10`). Report it here directly (intersection clears
     // the data-flow nodes, so the caller's `==` redundancy check can't see it).
-    if key.is_some()
-        && !existing_var_type.is_mixed()
-        && result.types == existing_var_type.types
-    {
+    if key.is_some() && !existing_var_type.is_mixed() && result.types == existing_var_type.types {
         super::trigger_issue_for_impossible(
             analysis_data,
             analyzer,

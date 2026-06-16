@@ -2,8 +2,8 @@
 
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::r#static::Static;
-use pzoom_code_info::{Issue, IssueKind, TUnion};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{Issue, IssueKind, TUnion};
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -45,7 +45,9 @@ pub fn analyze(
             let expr_pos =
                 expression_analyzer::analyze(analyzer, default_expr, analysis_data, context);
             analysis_data
-                .expr_types.get(&expr_pos).cloned()
+                .expr_types
+                .get(&expr_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed)
         } else {

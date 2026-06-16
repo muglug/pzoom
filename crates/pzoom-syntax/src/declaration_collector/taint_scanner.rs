@@ -86,7 +86,8 @@ impl DeclarationCollector<'_, '_> {
                 if content.starts_with('(') {
                     raw_conditional_escapes.push(content.to_string());
                 } else if let Some(kind) = content.split_whitespace().next() {
-                    for sink in SinkType::kinds_from_name(kind.trim_matches('\'').trim_matches('"')) {
+                    for sink in SinkType::kinds_from_name(kind.trim_matches('\'').trim_matches('"'))
+                    {
                         if !taints.removed_taints.contains(&sink) {
                             taints.removed_taints.push(sink);
                         }
@@ -118,12 +119,7 @@ impl DeclarationCollector<'_, '_> {
     }
 
     /// Port of Psalm's `FunctionLikeDocblockScanner::handleTaintFlow`.
-    fn scan_taint_flow(
-        &self,
-        flow: &str,
-        params: &[ParamInfo],
-        taints: &mut FunctionLikeTaints,
-    ) {
+    fn scan_taint_flow(&self, flow: &str, params: &[ParamInfo], taints: &mut FunctionLikeTaints) {
         let mut path_type = "arg".to_string();
         let mut flow = flow.trim().to_string();
 
@@ -175,13 +171,13 @@ impl DeclarationCollector<'_, '_> {
                 }
             }
 
-            taints.proxy_calls.push(
-                pzoom_code_info::functionlike_info::TaintProxyCall {
+            taints
+                .proxy_calls
+                .push(pzoom_code_info::functionlike_info::TaintProxyCall {
                     fqn: fqn.trim().trim_start_matches('\\').to_string(),
                     params: call_params,
                     returns: flow_parts.get(1).is_some_and(|p| p.trim() == "return"),
-                },
-            );
+                });
         }
     }
 }

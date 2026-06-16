@@ -211,9 +211,9 @@ fn get_child_nodes(
         // into nodes positioned inside a suppressed statement.
         if !suppressed_ranges.is_empty()
             && let Some(dest_pos) = destination_node.get_pos()
-            && suppressed_ranges
-                .iter()
-                .any(|(start, end)| dest_pos.start_offset >= *start && dest_pos.start_offset <= *end)
+            && suppressed_ranges.iter().any(|(start, end)| {
+                dest_pos.start_offset >= *start && dest_pos.start_offset <= *end
+            })
         {
             continue;
         }

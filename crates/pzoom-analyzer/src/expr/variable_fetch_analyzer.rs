@@ -2,8 +2,8 @@
 
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, TAtomic, TUnion, VarId};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, TAtomic, TUnion, VarId};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -28,7 +28,12 @@ pub fn analyze(
             let var_id = VarName::new(var_name);
 
             if var_id == "$this" && context.get_var_type("$this").is_none() {
-                if !issue_suppression::is_issue_suppressed_at(analyzer, analysis_data, pos.0, "InvalidScope") {
+                if !issue_suppression::is_issue_suppressed_at(
+                    analyzer,
+                    analysis_data,
+                    pos.0,
+                    "InvalidScope",
+                ) {
                     let (line, col) = analyzer.get_line_column(pos.0);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::InvalidScope,
@@ -40,15 +45,15 @@ pub fn analyze(
                         col,
                     ));
                 }
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
 
             // Psalm: referencing `$this` from a `@psalm-pure` context is impure, since a
             // pure function may not depend on instance state.
-            if var_id == "$this"
-                && analyzer.function_info.is_some_and(|info| info.is_pure)
-            {
+            if var_id == "$this" && analyzer.function_info.is_some_and(|info| info.is_pure) {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::ImpureVariable,
@@ -77,7 +82,9 @@ pub fn analyze(
                     analysis_data,
                 );
                 context.set_var_type(var_id.clone(), annotation_type.clone());
-                analysis_data.expr_types.insert(pos, Rc::new(annotation_type));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(annotation_type));
                 return;
             }
 
@@ -159,7 +166,9 @@ pub fn analyze(
                     analysis_data.data_flow_graph.add_node(source_node);
                 }
                 context.set_var_type(var_id.clone(), superglobal_type.clone());
-                analysis_data.expr_types.insert(pos, Rc::new(superglobal_type));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(superglobal_type));
             } else if let alt_var_id = get_alternate_var_id(var_name)
                 && context.get_var_type(&alt_var_id).is_some()
             {
@@ -171,13 +180,17 @@ pub fn analyze(
                         analysis_data,
                         context,
                     );
-                    analysis_data.expr_types.insert(pos, Rc::new(var_type.clone()));
+                    analysis_data
+                        .expr_types
+                        .insert(pos, Rc::new(var_type.clone()));
                 } else {
                     maybe_emit_undefined_variable(analyzer, var_name, pos, analysis_data, context);
 
                     // Variable not yet assigned - could be undefined
                     // For now, treat as mixed
-                    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                    analysis_data
+                        .expr_types
+                        .insert(pos, Rc::new(TUnion::mixed()));
                 }
             } else {
                 maybe_emit_undefined_variable(analyzer, var_name, pos, analysis_data, context);
@@ -213,11 +226,15 @@ pub fn analyze(
         }
         Variable::Indirect(_indirect) => {
             // Variable variables ($$name) - type is unknown at static analysis time
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
         }
         Variable::Nested(_nested) => {
             // Nested variables - type is unknown at static analysis time
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
         }
     }
 }

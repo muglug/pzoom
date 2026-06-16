@@ -46,11 +46,8 @@ impl FunctionReturnTypeProvider for ParseUrlReturnTypeProvider {
                 && !component_type.is_mixed()
             {
                 if union_is_int_literals_in(&component_type, STRING_COMPONENTS) {
-                    let mut result = TUnion::from_types(vec![
-                        TAtomic::TString,
-                        TAtomic::TFalse,
-                        TAtomic::TNull,
-                    ]);
+                    let mut result =
+                        TUnion::from_types(vec![TAtomic::TString, TAtomic::TFalse, TAtomic::TNull]);
                     result.ignore_nullable_issues = true;
                     result.ignore_falsable_issues = true;
                     return Some(result);
@@ -80,7 +77,9 @@ impl FunctionReturnTypeProvider for ParseUrlReturnTypeProvider {
         }
 
         let mut properties = FxHashMap::default();
-        for key in ["scheme", "user", "pass", "host", "path", "query", "fragment"] {
+        for key in [
+            "scheme", "user", "pass", "host", "path", "query", "fragment",
+        ] {
             let mut component = TUnion::string();
             component.possibly_undefined = true;
             properties.insert(ArrayKey::String(key.to_string()), component);

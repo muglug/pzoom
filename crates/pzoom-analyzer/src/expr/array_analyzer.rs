@@ -167,10 +167,13 @@ pub fn analyze_array(
 ) {
     if array.elements.is_empty() {
         // Empty array
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TArray {
+        analysis_data.expr_types.insert(
+            pos,
+            Rc::new(TUnion::new(TAtomic::TArray {
                 key_type: Box::new(TUnion::nothing()),
                 value_type: Box::new(TUnion::nothing()),
-            })));
+            })),
+        );
         return;
     }
 
@@ -283,7 +286,9 @@ fn analyze_array_element(
             let spread_pos =
                 expression_analyzer::analyze(analyzer, variadic.value, analysis_data, context);
             let spread_type = analysis_data
-                .expr_types.get(&spread_pos).cloned()
+                .expr_types
+                .get(&spread_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
@@ -314,7 +319,9 @@ fn analyze_array_element(
             let value_pos =
                 expression_analyzer::analyze(analyzer, value_element.value, analysis_data, context);
             let value_type = analysis_data
-                .expr_types.get(&value_pos).cloned()
+                .expr_types
+                .get(&value_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
@@ -369,11 +376,15 @@ fn analyze_array_element(
                 expression_analyzer::analyze(analyzer, key_value.value, analysis_data, context);
 
             let raw_key_type = analysis_data
-                .expr_types.get(&key_pos).cloned()
+                .expr_types
+                .get(&key_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::array_key);
             let value_type = analysis_data
-                .expr_types.get(&value_pos).cloned()
+                .expr_types
+                .get(&value_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
@@ -648,7 +659,9 @@ fn extract_unpacked_iterable_params(
             fallback_key_type.as_deref(),
             fallback_value_type.as_deref(),
         )),
-        TAtomic::TNamedObject { name, type_params , .. } => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } => {
             if !named_object_is_traversable(analyzer, *name) {
                 return None;
             }
@@ -1100,7 +1113,9 @@ pub fn analyze_list(
                 let elem_pos: Pos = (elem_span.start.offset, elem_span.end.offset);
                 let _inner_pos =
                     expression_analyzer::analyze(analyzer, val.value, analysis_data, context);
-                analysis_data.expr_types.insert(elem_pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(elem_pos, Rc::new(TUnion::mixed()));
             }
             ArrayElement::KeyValue(kv) => {
                 // Keyed destructuring: list('key' => $var)
@@ -1110,7 +1125,9 @@ pub fn analyze_list(
                 let elem_pos: Pos = (elem_span.start.offset, elem_span.end.offset);
                 let _inner_pos =
                     expression_analyzer::analyze(analyzer, kv.value, analysis_data, context);
-                analysis_data.expr_types.insert(elem_pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(elem_pos, Rc::new(TUnion::mixed()));
             }
             ArrayElement::Missing(_) => {
                 // Skipped element
@@ -1122,7 +1139,9 @@ pub fn analyze_list(
     }
 
     // The list expression itself has an array type
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// Combine multiple types into a union.

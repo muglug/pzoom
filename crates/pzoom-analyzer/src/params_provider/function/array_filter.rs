@@ -30,7 +30,12 @@ impl FunctionParamsProvider for ArrayFilterParamsProvider {
             && event
                 .args
                 .get(1)
-                .and_then(|_| analysis_data.expr_types.get(&event.arg_positions[1]).cloned())
+                .and_then(|_| {
+                    analysis_data
+                        .expr_types
+                        .get(&event.arg_positions[1])
+                        .cloned()
+                })
                 .is_some_and(|arg_type| arg_type.is_null())
         {
             let arg_pos = event.arg_positions[1];

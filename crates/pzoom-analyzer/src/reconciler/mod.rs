@@ -12,8 +12,10 @@ mod simple_negated_assertion_reconciler;
 
 use std::collections::BTreeMap;
 
-use pzoom_code_info::{ArrayKey, Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{
+    ArrayKey, Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types,
+};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -345,7 +347,6 @@ pub fn reconcile_keyed_types(
                     )
                     && !is_literal_value_assertion(assertion)
                     && current_type != type_before_assertion;
-
             } else {
                 // Disjunction: union of reconciling each alternative against the
                 // type as it was before this clause.
@@ -721,10 +722,7 @@ fn get_union_count_bounds(union: &TUnion) -> Option<(usize, Option<usize>)> {
     }
 }
 
-fn not_in_array_is_provably_redundant(
-    existing_var_type: &TUnion,
-    assertion_type: &TUnion,
-) -> bool {
+fn not_in_array_is_provably_redundant(existing_var_type: &TUnion, assertion_type: &TUnion) -> bool {
     let Some(assertion_value_union) = normalize_in_array_assertion_union(assertion_type) else {
         return false;
     };
@@ -943,10 +941,9 @@ fn get_value_for_key(
     let mut key_parts = break_up_path_into_parts(key);
 
     if key_parts.len() == 1 {
-        let var_type = context
-            .locals
-            .get(key)
-            .or_else(|| get_alternate_var_id(context, key).and_then(|alt| context.locals.get(&alt)));
+        let var_type = context.locals.get(key).or_else(|| {
+            get_alternate_var_id(context, key).and_then(|alt| context.locals.get(&alt))
+        });
         return var_type.cloned();
     }
 
@@ -972,8 +969,8 @@ fn get_value_for_key(
             get_alternate_var_id(context, &base_key)
                 .and_then(|alt| context.locals.get(&alt).cloned())
         })
-    .or_else(|| resolve_class_constant_type_from_key(&base_key, analyzer))
-    .or_else(|| resolve_static_property_type_from_key(&base_key, analyzer))?;
+        .or_else(|| resolve_class_constant_type_from_key(&base_key, analyzer))
+        .or_else(|| resolve_static_property_type_from_key(&base_key, analyzer))?;
 
     // Psalm's getValueForKey consults `$existing_keys[$new_base_key]` at every
     // step: a narrowed context entry for an intermediate path (e.g.
@@ -1195,7 +1192,8 @@ fn apply_array_access_to_base_type(
                 fallback_value_type,
                 ..
             } => {
-                if let Some(dict_key) = if array_key.starts_with('\'') || array_key.starts_with('"') {
+                if let Some(dict_key) = if array_key.starts_with('\'') || array_key.starts_with('"')
+                {
                     let key_str = array_key[1..array_key.len() - 1].to_string();
                     Some(ArrayKey::String(key_str))
                 } else if let Ok(int_key) = array_key.parse::<i64>() {
@@ -1203,7 +1201,8 @@ fn apply_array_access_to_base_type(
                 } else {
                     None
                 } {
-                    if let Some(prop_type) = lookup_property_type_by_runtime_key(properties, &dict_key)
+                    if let Some(prop_type) =
+                        lookup_property_type_by_runtime_key(properties, &dict_key)
                     {
                         Some(prop_type.clone())
                     } else if let Some(fallback) = fallback_value_type {
@@ -1443,7 +1442,8 @@ fn resolve_class_id_from_key(class_name: &str, analyzer: &StatementsAnalyzer<'_>
         let normalized_fq = fq_class_name.trim_start_matches('\\');
         let short_name = normalized_fq.rsplit('\\').next().unwrap_or(normalized_fq);
 
-        if normalized_fq.eq_ignore_ascii_case(normalized) || short_name.eq_ignore_ascii_case(normalized)
+        if normalized_fq.eq_ignore_ascii_case(normalized)
+            || short_name.eq_ignore_ascii_case(normalized)
         {
             if matched_class.is_some_and(|existing| existing != *class_id) {
                 return None;
@@ -1527,12 +1527,9 @@ fn find_static_property_in_hierarchy(
     }
 
     if let Some(parent_class) = class_info.parent_class {
-        if let Some(parent_property_type) = find_static_property_in_hierarchy(
-            analyzer,
-            parent_class,
-            property_id,
-            seen_classes,
-        ) {
+        if let Some(parent_property_type) =
+            find_static_property_in_hierarchy(analyzer, parent_class, property_id, seen_classes)
+        {
             return Some(parent_property_type);
         }
     }
@@ -1548,12 +1545,9 @@ fn resolve_keyed_array_value_for_variable_key(
     analyzer: &StatementsAnalyzer<'_>,
     possibly_undefined: &mut bool,
 ) -> Option<(Option<TUnion>, bool)> {
-    let Some(var_type) = resolve_variable_key_type(
-        array_key_var,
-        context,
-        analyzer,
-        possibly_undefined,
-    ) else {
+    let Some(var_type) =
+        resolve_variable_key_type(array_key_var, context, analyzer, possibly_undefined)
+    else {
         return None;
     };
 
@@ -1903,7 +1897,9 @@ fn adjust_tkeyed_array_type(
 
         literal_keys
     } else if array_key.starts_with('\'') || array_key.starts_with('"') {
-        vec![ArrayKey::String(array_key[1..array_key.len() - 1].to_string())]
+        vec![ArrayKey::String(
+            array_key[1..array_key.len() - 1].to_string(),
+        )]
     } else if let Ok(int_key) = array_key.parse::<i64>() {
         vec![ArrayKey::Int(int_key)]
     } else {

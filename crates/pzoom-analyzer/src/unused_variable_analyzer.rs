@@ -11,10 +11,10 @@
 //! referenced-but-not-used ones and filters array/property fetch paths that
 //! don't correspond to an earlier assignment.
 
+use pzoom_code_info::PathKind;
 use pzoom_code_info::data_flow::graph::DataFlowGraph;
 use pzoom_code_info::data_flow::node::{DataFlowNode, DataFlowNodeId, DataFlowNodeKind};
 use pzoom_code_info::data_flow::path::ArrayDataKind;
-use pzoom_code_info::PathKind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 
@@ -29,7 +29,9 @@ enum VariableUsage {
 /// `check_variables_used`: a never-referenced pure default-kind source counts
 /// as plainly unused; everything else that fails to reach a sink lands in the
 /// referenced-but-not-used bucket.
-pub(crate) fn check_variables_used(graph: &DataFlowGraph) -> (Vec<DataFlowNode>, Vec<DataFlowNode>) {
+pub(crate) fn check_variables_used(
+    graph: &DataFlowGraph,
+) -> (Vec<DataFlowNode>, Vec<DataFlowNode>) {
     if std::env::var("PZOOM_DEBUG_USE_GRAPH").is_ok() {
         eprintln!("=== use graph ===");
         for (from, edges) in &graph.forward_edges {

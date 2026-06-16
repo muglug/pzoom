@@ -35,8 +35,8 @@ use pzoom_code_info::codebase_info::{
     InlineTypeAnnotations, InlineVarTypeAnnotation,
 };
 use pzoom_code_info::functionlike_info::{
-    Assertion, AssertionType, ConditionalReturnType, FunctionLikeInfo,
-    FunctionTemplateType, ParamInfo,
+    Assertion, AssertionType, ConditionalReturnType, FunctionLikeInfo, FunctionTemplateType,
+    ParamInfo,
 };
 use pzoom_code_info::t_atomic::PropertiesOfVisibility;
 use pzoom_code_info::type_resolution::TypeResolutionContext;
@@ -226,8 +226,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 };
                 for content in tags.values() {
-                    let Some((alias_name, type_definition)) =
-                        parse_type_alias_tag_content(content)
+                    let Some((alias_name, type_definition)) = parse_type_alias_tag_content(content)
                     else {
                         continue;
                     };
@@ -235,11 +234,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     // shape-entry type recovers as mixed), so also flag
                     // entries whose `:` is followed by no type at all.
                     let has_empty_shape_entry = {
-                        let compact: String =
-                            type_definition.chars().filter(|c| !c.is_whitespace()).collect();
-                        compact.ends_with(':')
-                            || compact.contains(":}")
-                            || compact.contains(":,")
+                        let compact: String = type_definition
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+                        compact.ends_with(':') || compact.contains(":}") || compact.contains(":,")
                     };
                     // Psalm's TypeParser throws on duplicate shape keys and
                     // self-referencing definitions.
@@ -249,8 +248,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     if has_empty_shape_entry
                         || has_duplicate_shape_key
                         || references_itself
-                        || crate::docblock::parse_type_string(&type_definition, self.interner.parent_ref())
-                            .is_err()
+                        || crate::docblock::parse_type_string(
+                            &type_definition,
+                            self.interner.parent_ref(),
+                        )
+                        .is_err()
                     {
                         entries.push((
                             trivia.span.start.offset,
@@ -275,10 +277,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             && parts[3].eq_ignore_ascii_case("as")
                             && parts.len() < 5);
                     if malformed {
-                        entries.push((
-                            trivia.span.start.offset,
-                            "Invalid type import".to_string(),
-                        ));
+                        entries.push((trivia.span.start.offset, "Invalid type import".to_string()));
                     }
                 }
             }
@@ -292,15 +291,17 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     /// node (`$node->getComments()`), and ClassLikeNodeScanner reads
     /// `@psalm-type` aliases from every one of them — e.g. an alias block
     /// separated from the class by a second `@internal` docblock.
-    fn find_preceding_docblock_run(&self, start_offset: u32) -> Vec<crate::docblock::ParsedDocblock> {
+    fn find_preceding_docblock_run(
+        &self,
+        start_offset: u32,
+    ) -> Vec<crate::docblock::ParsedDocblock> {
         let mut run: Vec<&'p Trivia<'p>> = Vec::new();
 
         let mut docblocks: Vec<&'p Trivia<'p>> = self
             .trivia
             .iter()
             .filter(|trivia| {
-                trivia.kind == TriviaKind::DocBlockComment
-                    && trivia.span.end.offset < start_offset
+                trivia.kind == TriviaKind::DocBlockComment && trivia.span.end.offset < start_offset
             })
             .collect();
         docblocks.sort_by_key(|trivia| trivia.span.start.offset);
@@ -320,7 +321,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .map(|trivia| crate::docblock::parse(trivia.value, 0))
             .collect()
     }
-
 
     /// Whether a docblock-to-node gap carries no real code: whitespace and
     /// LINE comments are permeable (Psalm attaches the docblock through a
@@ -608,7 +608,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             };
 
-            let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type =
+                crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                    .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -664,7 +666,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 };
 
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -690,7 +694,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     .and_then(|content| crate::docblock::extract_type_string_from_content(content))
             })
             .map(|type_str| {
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -814,9 +820,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         for (end, comment) in docblocks {
             if comment.contains("@psalm-check-type") {
                 let parsed = crate::docblock::parse(comment, 0);
-                let target_offset = self
-                    .find_next_non_whitespace_offset(end)
-                    .unwrap_or(end);
+                let target_offset = self.find_next_non_whitespace_offset(end).unwrap_or(end);
                 self.collect_inline_check_type_annotations_from_docblock(&parsed, target_offset);
             }
         }
@@ -829,7 +833,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     ) {
         let mut annotations = Vec::new();
 
-        for (key, is_exact) in [("psalm-check-type", false), ("psalm-check-type-exact", true)] {
+        for (key, is_exact) in [
+            ("psalm-check-type", false),
+            ("psalm-check-type-exact", true),
+        ] {
             let Some(tags) = parsed.tags.get(key) else {
                 continue;
             };
@@ -853,7 +860,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let check_type = if rhs.is_empty() {
                     None
                 } else {
-                    let parsed_type = crate::docblock::parse_type_string(rhs, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(rhs, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     Some(self.resolve_docblock_union_type(parsed_type, None, None, None))
                 };
 
@@ -1030,9 +1039,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
             self.current_guard_classes
                 .truncate(self.current_guard_classes.len() - guard_count);
-            self.current_not_exists_function_guards.truncate(
-                self.current_not_exists_function_guards.len() - not_exists_count,
-            );
+            self.current_not_exists_function_guards
+                .truncate(self.current_not_exists_function_guards.len() - not_exists_count);
         }
         if if_condition == Some(true) {
             entered_definite_branch = true;
@@ -1056,11 +1064,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         if let Some(else_statements) = if_stmt.body.else_statements()
-            && !entered_definite_branch {
-                for stmt in else_statements {
-                    self.visit_statement(stmt);
-                }
+            && !entered_definite_branch
+        {
+            for stmt in else_statements {
+                self.visit_statement(stmt);
             }
+        }
     }
 
     /// Collect function names from `!function_exists('name')` conjuncts of an
@@ -1147,9 +1156,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             && let Expression::Identifier(class_identifier) =
                                 class_constant_access.class.unparenthesized()
                         {
-                            Some(self.interner.intern(
-                                class_identifier.value().trim_start_matches('\\'),
-                            ))
+                            Some(
+                                self.interner
+                                    .intern(class_identifier.value().trim_start_matches('\\')),
+                            )
                         } else {
                             None
                         }
@@ -1299,7 +1309,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         self.use_aliases.insert(alias_key, target_id);
     }
 
-
     fn visit_constant(&mut self, constant: &Constant<'_>) {
         for item in &constant.items {
             let name = self.make_fqn(item.name.value);
@@ -1313,18 +1322,21 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let resolve_global_constant = |raw: &str| -> Option<TUnion> {
                 let candidates: [Option<String>; 2] = [
                     Some(raw.to_string()),
-                    self.current_namespace.map(|namespace| {
-                        format!("{}\\{}", self.interner.lookup(namespace), raw)
-                    }),
+                    self.current_namespace
+                        .map(|namespace| format!("{}\\{}", self.interner.lookup(namespace), raw)),
                 ];
-                self.declarations.constants.iter().rev().find_map(|existing| {
-                    let existing_name = self.interner.lookup(existing.name);
-                    candidates
-                        .iter()
-                        .flatten()
-                        .any(|candidate| *candidate == *existing_name)
-                        .then(|| existing.constant_type.clone())
-                })
+                self.declarations
+                    .constants
+                    .iter()
+                    .rev()
+                    .find_map(|existing| {
+                        let existing_name = self.interner.lookup(existing.name);
+                        candidates
+                            .iter()
+                            .flatten()
+                            .any(|candidate| *candidate == *existing_name)
+                            .then(|| existing.constant_type.clone())
+                    })
             };
             // Platform-dependent runtime constants take their curated types
             // regardless of the stub initializer (Psalm's ConstFetchAnalyzer
@@ -1427,8 +1439,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         Some((first, rest)) => (first, Some(rest)),
                         None => (raw, None),
                     };
-                    if let Some(alias_target) = alias_map.get(&first_segment.to_ascii_lowercase())
-                    {
+                    if let Some(alias_target) = alias_map.get(&first_segment.to_ascii_lowercase()) {
                         return match remainder {
                             Some(rest) => format!("{}\\{}", alias_target, rest),
                             None => alias_target.clone(),
@@ -1459,13 +1470,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 // Psalm's ClassLikeNodeScanner: a constant name colliding
                 // with an existing constant is a DuplicateConstant.
                 if class_info.constants.contains_key(&const_name) {
-                    class_info
-                        .duplicate_constant_issues
-                        .push(pzoom_code_info::class_like_info::DuplicatePropertyIssue {
+                    class_info.duplicate_constant_issues.push(
+                        pzoom_code_info::class_like_info::DuplicatePropertyIssue {
                             property_name: const_name,
                             start_offset: span.start.offset,
                             end_offset: span.end.offset,
-                        });
+                        },
+                    );
                 }
                 class_info.constants.insert(
                     const_name,
@@ -1483,7 +1494,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         unresolved_initializer: None,
                         enum_case_value: None,
                         circular: false,
-                    resolution_failures: Vec::new(),
+                        resolution_failures: Vec::new(),
                         declared_type: None,
                         has_type_hint: class_const.hint.is_some(),
                     },
@@ -1585,13 +1596,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             // An enum case colliding with an existing constant (or case) is
             // a DuplicateConstant (Psalm's visitEnumDeclaration check).
             if class_info.constants.contains_key(&case_name) {
-                class_info
-                    .duplicate_constant_issues
-                    .push(pzoom_code_info::class_like_info::DuplicatePropertyIssue {
+                class_info.duplicate_constant_issues.push(
+                    pzoom_code_info::class_like_info::DuplicatePropertyIssue {
                         property_name: case_name,
                         start_offset: case_name_span.start.offset,
                         end_offset: case_name_span.end.offset,
-                    });
+                    },
+                );
             }
             class_info.constants.insert(
                 case_name,
@@ -1691,7 +1702,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             TUnion::new(TAtomic::TNamedObject {
                 name: class_info.name,
                 type_params: None,
-            is_static: false, remapped_params: false })
+                is_static: false,
+                remapped_params: false,
+            })
         };
 
         let cases_return_type = TUnion::new(if has_enum_cases {
@@ -1705,10 +1718,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         });
 
         let cases_name = StrId::CASES;
-        class_info
-            .methods
-            .entry(cases_name)
-            .or_insert_with(|| std::sync::Arc::new(FunctionLikeInfo {
+        class_info.methods.entry(cases_name).or_insert_with(|| {
+            std::sync::Arc::new(FunctionLikeInfo {
                 name: cases_name,
                 declaring_class: Some(class_info.name),
                 params: Vec::new(),
@@ -1722,7 +1733,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 start_offset: class_info.start_offset,
                 end_offset: class_info.end_offset,
                 ..Default::default()
-            }));
+            })
+        });
 
         let Some(backing_atomic) = enum_backing_atomic.cloned() else {
             return;
@@ -1750,11 +1762,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let from_return_type = TUnion::new(TAtomic::TNamedObject {
             name: class_info.name,
             type_params: None,
-        is_static: false, remapped_params: false });
-        class_info
-            .methods
-            .entry(from_name)
-            .or_insert_with(|| std::sync::Arc::new(FunctionLikeInfo {
+            is_static: false,
+            remapped_params: false,
+        });
+        class_info.methods.entry(from_name).or_insert_with(|| {
+            std::sync::Arc::new(FunctionLikeInfo {
                 name: from_name,
                 declaring_class: Some(class_info.name),
                 params: vec![value_param.clone()],
@@ -1768,18 +1780,19 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 start_offset: class_info.start_offset,
                 end_offset: class_info.end_offset,
                 ..Default::default()
-            }));
+            })
+        });
 
         let try_from_name = StrId::TRY_FROM;
         let mut try_from_return_type = TUnion::new(TAtomic::TNamedObject {
             name: class_info.name,
             type_params: None,
-        is_static: false, remapped_params: false });
+            is_static: false,
+            remapped_params: false,
+        });
         try_from_return_type.add_type(TAtomic::TNull);
-        class_info
-            .methods
-            .entry(try_from_name)
-            .or_insert_with(|| std::sync::Arc::new(FunctionLikeInfo {
+        class_info.methods.entry(try_from_name).or_insert_with(|| {
+            std::sync::Arc::new(FunctionLikeInfo {
                 name: try_from_name,
                 declaring_class: Some(class_info.name),
                 params: vec![value_param],
@@ -1793,7 +1806,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 start_offset: class_info.start_offset,
                 end_offset: class_info.end_offset,
                 ..Default::default()
-            }));
+            })
+        });
     }
 
     fn collect_class_members(
@@ -1983,9 +1997,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             )
                         {
                             return_type = Some(match docblock_conditional_return {
-                                Some(conditional) => {
-                                    docblock_conditional_union(conditional)
-                                }
+                                Some(conditional) => docblock_conditional_union(conditional),
                                 None => docblock_return,
                             });
                             return_type_mentions_static_const = parsed
@@ -1994,18 +2006,19 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                     crate::docblock::extract_type_string_from_content(content)
                                 })
                                 .is_some_and(|type_str: &str| type_str.contains("static::"));
-                            return_type_location = parsed.get_return_with_offset().and_then(
-                                |(offset, content)| {
-                                    crate::docblock::extract_type_string_from_content(content)
-                                        .map(|type_str| {
-                                            (
-                                                docblock_start + offset as u32,
-                                                docblock_start
-                                                    + (offset + type_str.len()) as u32,
-                                            )
-                                        })
-                                },
-                            );
+                            return_type_location =
+                                parsed
+                                    .get_return_with_offset()
+                                    .and_then(|(offset, content)| {
+                                        crate::docblock::extract_type_string_from_content(content)
+                                            .map(|type_str| {
+                                                (
+                                                    docblock_start + offset as u32,
+                                                    docblock_start
+                                                        + (offset + type_str.len()) as u32,
+                                                )
+                                            })
+                                    });
                         }
                         // `@psalm-taint-escape (<conditional>)` parses while
                         // the conditional-subject scope is alive (see
@@ -2033,9 +2046,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         if_true_assertions.extend(parsed_assertions.if_true_assertions);
                         if_false_assertions.extend(parsed_assertions.if_false_assertions);
 
-                        let generated_conditional_templates = std::mem::take(
-                            &mut self.conditional_subject_scope.generated_templates,
-                        );
+                        let generated_conditional_templates =
+                            std::mem::take(&mut self.conditional_subject_scope.generated_templates);
                         template_types.extend(generated_conditional_templates);
                         for template_type in &mut template_types {
                             if self
@@ -2080,8 +2092,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
                     // JetBrains' #[Pure] attribute (phpstorm-stubs); see
                     // visit_function for the bare-vs-Pure(true) semantics.
-                    is_pure = is_pure
-                        || self.has_attribute_named(&method.attribute_lists, "Pure");
+                    is_pure = is_pure || self.has_attribute_named(&method.attribute_lists, "Pure");
 
                     // Builtin sinks (Psalm's InternalTaintSinkMap) are
                     // looked up at call time, mirroring Hakana.
@@ -2169,26 +2180,26 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut is_external_mutation_free =
                         is_mutation_free || docblock_external_mutation_free;
                     let mut mutation_free_inferred = false;
-                    if !is_pure && !is_mutation_free
-                        && let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(
-                            body,
-                        ) = &method.body
-                        {
-                            let stmts = body.statements.as_slice();
-                            if method_name == StrId::CONSTRUCT {
-                                if constructor_is_external_mutation_free(stmts) {
-                                    is_external_mutation_free = true;
-                                    mutation_free_inferred = true;
-                                }
-                            } else if params.is_empty()
-                                && statements_are_simple_property_getter(stmts)
-                                && !class_info.is_immutable
-                            {
-                                is_mutation_free = true;
+                    if !is_pure
+                        && !is_mutation_free
+                        && let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(body) =
+                            &method.body
+                    {
+                        let stmts = body.statements.as_slice();
+                        if method_name == StrId::CONSTRUCT {
+                            if constructor_is_external_mutation_free(stmts) {
                                 is_external_mutation_free = true;
-                                mutation_free_inferred = !is_final && !class_info.is_final;
+                                mutation_free_inferred = true;
                             }
+                        } else if params.is_empty()
+                            && statements_are_simple_property_getter(stmts)
+                            && !class_info.is_immutable
+                        {
+                            is_mutation_free = true;
+                            is_external_mutation_free = true;
+                            mutation_free_inferred = !is_final && !class_info.is_final;
                         }
+                    }
 
                     let method_info = FunctionLikeInfo {
                         name: method_name,
@@ -2233,10 +2244,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         docblock_issues: method_docblock_issues,
                         has_override_attribute: self
                             .has_attribute_named(&method.attribute_lists, "Override"),
-                        has_return_type_will_change_attribute: self.has_attribute_named(
-                            &method.attribute_lists,
-                            "ReturnTypeWillChange",
-                        ),
+                        has_return_type_will_change_attribute: self
+                            .has_attribute_named(&method.attribute_lists, "ReturnTypeWillChange"),
                         this_property_mutations,
                         defined_constants,
                         taints,
@@ -2246,13 +2255,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     // Psalm's FunctionLikeNodeScanner: a method whose name is
                     // already declared on this class is a DuplicateMethod.
                     if class_info.methods.contains_key(&method_name) {
-                        class_info
-                            .duplicate_method_issues
-                            .push(pzoom_code_info::class_like_info::DuplicatePropertyIssue {
+                        class_info.duplicate_method_issues.push(
+                            pzoom_code_info::class_like_info::DuplicatePropertyIssue {
                                 property_name: method_name,
                                 start_offset: span.start.offset,
                                 end_offset: span.end.offset,
-                            });
+                            },
+                        );
                     }
 
                     class_info
@@ -2291,10 +2300,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             None,
                             &[],
                         )
-                        && let Ok(parsed_type) = crate::docblock::parse_type_string(
-                            type_str,
-                            self.interner.parent_ref(),
-                        )
+                        && let Ok(parsed_type) =
+                            crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
                     {
                         declared_const_type = Some(self.resolve_docblock_union_type(
                             parsed_type,
@@ -2323,7 +2330,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                 Some((first, rest)) => (first, Some(rest)),
                                 None => (raw, None),
                             };
-                            if let Some(alias_target) = alias_map.get(&first_segment.to_ascii_lowercase())
+                            if let Some(alias_target) =
+                                alias_map.get(&first_segment.to_ascii_lowercase())
                             {
                                 return match remainder {
                                     Some(rest) => format!("{}\\{}", alias_target, rest),
@@ -2367,9 +2375,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             .or_else(|| inferred_const_type.clone());
                         for (start_offset, end_offset) in key_overflow_sink.take() {
                             class_info.docblock_issues.push(DocblockIssue {
-                                message:
-                                    "Cannot add an item with an offset beyond i64::MAX"
-                                        .to_string(),
+                                message: "Cannot add an item with an offset beyond i64::MAX"
+                                    .to_string(),
                                 start_offset,
                                 end_offset,
                             });
@@ -2403,7 +2410,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             unresolved_initializer,
                             enum_case_value: None,
                             circular: false,
-                    resolution_failures: Vec::new(),
+                            resolution_failures: Vec::new(),
                             declared_type: declared_const_type_for_item,
                             has_type_hint: class_const.hint.is_some(),
                         };
@@ -2591,7 +2598,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 };
 
                 let prop_name = self.interner.intern(var_name.trim_start_matches('$'));
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -2678,7 +2687,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 }
 
-                let parsed_type = crate::docblock::parse_type_string(requirement, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(requirement, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -2745,7 +2756,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             }
 
-            let parsed_type = crate::docblock::parse_type_string(mixin, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type = crate::docblock::parse_type_string(mixin, self.interner.parent_ref())
+                .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -2889,22 +2901,23 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 // Psalm reports a malformed `@template-extends`/`@template-implements`/
                 // `@template-use` type as an `InvalidDocblock` rather than silently
                 // treating it as `mixed`.
-                let parsed_type = match crate::docblock::parse_type_string(content, self.interner.parent_ref()) {
-                    Ok(parsed_type) => parsed_type,
-                    Err(_) => {
-                        self.push_docblock_issue(
-                            class_info,
-                            format!(
-                                "@{} annotation \"{}\" could not be parsed",
-                                tag_name,
-                                content.trim()
-                            ),
-                            class_info.start_offset,
-                            class_info.start_offset.saturating_add(1),
-                        );
-                        continue;
-                    }
-                };
+                let parsed_type =
+                    match crate::docblock::parse_type_string(content, self.interner.parent_ref()) {
+                        Ok(parsed_type) => parsed_type,
+                        Err(_) => {
+                            self.push_docblock_issue(
+                                class_info,
+                                format!(
+                                    "@{} annotation \"{}\" could not be parsed",
+                                    tag_name,
+                                    content.trim()
+                                ),
+                                class_info.start_offset,
+                                class_info.start_offset.saturating_add(1),
+                            );
+                            continue;
+                        }
+                    };
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -3057,8 +3070,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         let return_type = if let Some(return_type_str) = return_type_str {
-            let parsed_type =
-                crate::docblock::parse_type_string(return_type_str.trim(), self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type = crate::docblock::parse_type_string(
+                return_type_str.trim(),
+                self.interner.parent_ref(),
+            )
+            .unwrap_or_else(|_| TUnion::mixed());
             Some(self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -3167,7 +3183,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     None
                 } else {
                     let parsed_type =
-                        crate::docblock::parse_type_string(type_source, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                        crate::docblock::parse_type_string(type_source, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     Some(self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3193,7 +3210,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     is_variadic,
                     by_ref,
                     is_promoted: false,
-            expect_variable: false,
+                    expect_variable: false,
                     default_type: None,
                     description: None,
                     start_offset: idx as u32,
@@ -3271,7 +3288,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 None,
                 &[],
             ) {
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 docblock_type = Some(self.resolve_docblock_union_type(
                     parsed_type,
                     Some(class_info.name),
@@ -3307,9 +3326,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // property initialized for the whole hierarchy.
         let marked_initialized = parsed_docblock.as_ref().is_some_and(|parsed| {
             parsed.tags.get("psalm-suppress").is_some_and(|entries| {
-                entries.values().any(|value| {
-                    value.starts_with("PropertyNotSetInConstructor")
-                })
+                entries
+                    .values()
+                    .any(|value| value.starts_with("PropertyNotSetInConstructor"))
             })
         });
 
@@ -3450,9 +3469,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 // Legacy PHP signatures like `A $a = null` are nullable at runtime.
                 if default_type.as_ref().is_some_and(TUnion::is_null)
                     && let Some(signature_type) = signature_type.as_mut()
-                        && !signature_type.is_nullable() {
-                            signature_type.add_type(TAtomic::TNull);
-                        }
+                    && !signature_type.is_nullable()
+                {
+                    signature_type.add_type(TAtomic::TNull);
+                }
 
                 // Method-level `@param` docblocks are resolved during analysis, but a
                 // docblock attached directly to the parameter (e.g. a promoted property
@@ -3476,7 +3496,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         &[],
                     )
                 {
-                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     param_type = Some(self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3580,7 +3602,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 return;
             };
             let Some(param_info) = params.iter().find(|param| {
-                self.interner.lookup(param.name).as_ref().trim_start_matches('$') == param_name
+                self.interner
+                    .lookup(param.name)
+                    .as_ref()
+                    .trim_start_matches('$')
+                    == param_name
             }) else {
                 return;
             };
@@ -3674,8 +3700,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             };
 
             class_info
-            .properties
-            .insert(prop_name, std::sync::Arc::new(prop_info));
+                .properties
+                .insert(prop_name, std::sync::Arc::new(prop_info));
         }
     }
 
@@ -3733,7 +3759,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     class_constants,
                 )
                 .unwrap_or_else(|| {
-                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3763,9 +3791,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let docblock_type = parsed_tags
                 .iter()
                 .find_map(|(name, ty)| {
-                    if name
-                        .as_deref()
-                        .map(|name| name.trim_start_matches('$'))
+                    if name.as_deref().map(|name| name.trim_start_matches('$'))
                         == Some(normalized_name)
                     {
                         Some(ty.clone())
@@ -3839,7 +3865,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     class_constants,
                 )
                 .unwrap_or_else(|| {
-                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3870,9 +3898,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let docblock_type = parsed_tags
                 .iter()
                 .find_map(|(name, ty, docblock_variadic)| {
-                    if name
-                        .as_deref()
-                        .map(|name| name.trim_start_matches('$'))
+                    if name.as_deref().map(|name| name.trim_start_matches('$'))
                         == Some(normalized_name)
                     {
                         Some((ty.clone(), *docblock_variadic))
@@ -3915,7 +3941,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut unmatched_bits: u32 = 0;
                     let mut any_unmatched = false;
                     for (index, atomic) in docblock_type.types.iter().enumerate() {
-                        if !signature_keys.contains(&loose_atomic_key(self.interner.parent_ref(), atomic)) {
+                        if !signature_keys
+                            .contains(&loose_atomic_key(self.interner.parent_ref(), atomic))
+                        {
                             any_unmatched = true;
                             if index < 32 {
                                 unmatched_bits |= 1 << index;
@@ -3944,10 +3972,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     .signature_type
                     .as_ref()
                     .is_some_and(|signature_type| signature_type.is_nullable())
-                    || param
-                        .default_type
-                        .as_ref()
-                        .is_some_and(|default_type| default_type.is_nullable() || default_type.is_null());
+                    || param.default_type.as_ref().is_some_and(|default_type| {
+                        default_type.is_nullable() || default_type.is_null()
+                    });
                 if param_is_nullable && !docblock_type.is_nullable() {
                     docblock_type.add_type(TAtomic::TNull);
                 }
@@ -4073,8 +4100,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             ("protected-properties-of", inner.trim())
         } else {
             let inner = trimmed
-            .strip_prefix("private-properties-of<")
-            .and_then(|s| s.strip_suffix('>'))?;
+                .strip_prefix("private-properties-of<")
+                .and_then(|s| s.strip_suffix('>'))?;
             ("private-properties-of", inner.trim())
         };
 
@@ -4131,13 +4158,15 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         })
                 });
             if static_class || missing_self_constant {
-                return Some(TUnion::new(TAtomic::named_object(self.interner.intern(
-                    &format!("{}<{}>", utility_name, inner),
-                ))));
+                return Some(TUnion::new(TAtomic::named_object(
+                    self.interner
+                        .intern(&format!("{}<{}>", utility_name, inner)),
+                )));
             }
         }
 
-        let parsed_inner = crate::docblock::parse_type_string(inner, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+        let parsed_inner = crate::docblock::parse_type_string(inner, self.interner.parent_ref())
+            .unwrap_or_else(|_| TUnion::mixed());
         let resolved_inner =
             self.resolve_docblock_union_type(parsed_inner, self_class, parent_class, template_map);
         let expanded_inner = self.expand_docblock_class_constant_wildcards(
@@ -4434,7 +4463,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .and_then(crate::docblock::extract_type_string_from_content)?;
 
         // Psalm maps `@return $this` to `static` (FunctionLikeDocblockParser).
-        let type_str = if type_str == "$this" { "static" } else { type_str };
+        let type_str = if type_str == "$this" {
+            "static"
+        } else {
+            type_str
+        };
 
         if !self.is_valid_docblock_type_string(
             type_str,
@@ -4456,7 +4489,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         ) {
             utility_type
         } else {
-            let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type =
+                crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                    .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -4505,7 +4540,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 };
 
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -4657,7 +4694,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             return utility_type;
         }
 
-        let parsed_branch_type = crate::docblock::parse_type_string(branch_type, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+        let parsed_branch_type =
+            crate::docblock::parse_type_string(branch_type, self.interner.parent_ref())
+                .unwrap_or_else(|_| TUnion::mixed());
         let resolved_branch_type = self.resolve_docblock_union_type(
             parsed_branch_type,
             self_class,
@@ -4748,7 +4787,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         let binding = template_map.and_then(|map| map.get(lhs))?;
-        self.conditional_subject_scope.subject_names.push(binding.name);
+        self.conditional_subject_scope
+            .subject_names
+            .push(binding.name);
 
         Some((
             binding.name,
@@ -4845,7 +4886,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         continue;
                     };
 
-                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            .unwrap_or_else(|_| TUnion::mixed());
                     let parsed_type = self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -5053,7 +5096,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             walker.walk_statement(statement, &mut names);
         }
 
-        names.into_iter().map(|name| self.interner.intern(name)).collect()
+        names
+            .into_iter()
+            .map(|name| self.interner.intern(name))
+            .collect()
     }
 
     /// Whether a method body reads or writes any static property
@@ -5172,8 +5218,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             };
 
-            let Some(constant_name) = self.resolve_define_name_expression(name_arg.value())
-            else {
+            let Some(constant_name) = self.resolve_define_name_expression(name_arg.value()) else {
                 continue;
             };
             let constant_name = constant_name.trim_start_matches('\\').to_string();
@@ -5337,20 +5382,22 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 ) =>
             {
                 if let Some(var_name) = extract_direct_var(binary.lhs)
-                    && is_null_expression(binary.rhs) {
-                        return vec![Assertion {
-                            var_id: self.interner.intern(&var_name),
-                            assertion_type: AssertionType::NotNull,
-                        }];
-                    }
+                    && is_null_expression(binary.rhs)
+                {
+                    return vec![Assertion {
+                        var_id: self.interner.intern(&var_name),
+                        assertion_type: AssertionType::NotNull,
+                    }];
+                }
 
                 if let Some(var_name) = extract_direct_var(binary.rhs)
-                    && is_null_expression(binary.lhs) {
-                        return vec![Assertion {
-                            var_id: self.interner.intern(&var_name),
-                            assertion_type: AssertionType::NotNull,
-                        }];
-                    }
+                    && is_null_expression(binary.lhs)
+                {
+                    return vec![Assertion {
+                        var_id: self.interner.intern(&var_name),
+                        assertion_type: AssertionType::NotNull,
+                    }];
+                }
 
                 Vec::new()
             }
@@ -5380,7 +5427,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     assertion_type: AssertionType::IsType(TUnion::new(TAtomic::TNamedObject {
                         name: class_id,
                         type_params: None,
-                    is_static: false, remapped_params: false })),
+                        is_static: false,
+                        remapped_params: false,
+                    })),
                 }]
             }
             Expression::Binary(binary)
@@ -5392,20 +5441,22 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 ) =>
             {
                 if let Some(var_name) = extract_direct_var(binary.lhs)
-                    && is_null_expression(binary.rhs) {
-                        return vec![Assertion {
-                            var_id: self.interner.intern(&var_name),
-                            assertion_type: AssertionType::NotNull,
-                        }];
-                    }
+                    && is_null_expression(binary.rhs)
+                {
+                    return vec![Assertion {
+                        var_id: self.interner.intern(&var_name),
+                        assertion_type: AssertionType::NotNull,
+                    }];
+                }
 
                 if let Some(var_name) = extract_direct_var(binary.rhs)
-                    && is_null_expression(binary.lhs) {
-                        return vec![Assertion {
-                            var_id: self.interner.intern(&var_name),
-                            assertion_type: AssertionType::NotNull,
-                        }];
-                    }
+                    && is_null_expression(binary.lhs)
+                {
+                    return vec![Assertion {
+                        var_id: self.interner.intern(&var_name),
+                        assertion_type: AssertionType::NotNull,
+                    }];
+                }
 
                 Vec::new()
             }
@@ -5553,7 +5604,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let import_record = (source_class, imported_alias.clone());
             if !self
                 .declarations
-                .type_alias_imports.contains(&import_record)
+                .type_alias_imports
+                .contains(&import_record)
             {
                 self.declarations.type_alias_imports.push(import_record);
             }
@@ -5602,11 +5654,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             // A CLASSLIKE's own @psalm-type definitions resolve only against
             // the class's aliases (earlier definitions + imports); another
             // class's alias must be imported first (Psalm).
-            let previous_restrict = std::mem::replace(
-                &mut self.restrict_aliases_to_active,
-                self_class.is_some(),
-            );
-            let parsed_type = crate::docblock::parse_type_string(&type_definition, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+            let previous_restrict =
+                std::mem::replace(&mut self.restrict_aliases_to_active, self_class.is_some());
+            let parsed_type =
+                crate::docblock::parse_type_string(&type_definition, self.interner.parent_ref())
+                    .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -5660,10 +5712,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     }
                 }
 
-                let merged = merge_intersected_shapes(&resolved_members)
-                    .unwrap_or(TAtomic::TObjectIntersection {
+                let merged = merge_intersected_shapes(&resolved_members).unwrap_or(
+                    TAtomic::TObjectIntersection {
                         types: resolved_members,
-                    });
+                    },
+                );
                 if !resolved_types.contains(&merged) {
                     resolved_types.push(merged);
                 }
@@ -5683,7 +5736,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     }
 
     fn resolve_docblock_type_alias_atomic(&self, atomic: &TAtomic) -> Option<TUnion> {
-        let TAtomic::TNamedObject { name, type_params , .. } = atomic else {
+        let TAtomic::TNamedObject {
+            name, type_params, ..
+        } = atomic
+        else {
             return None;
         };
 
@@ -5742,7 +5798,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         template_map: Option<&TemplateMap>,
     ) {
         match atomic {
-            TAtomic::TNamedObject { name, type_params , .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if type_params.is_none() {
                     let template_key = self.interner.lookup(*name);
                     if let Some(template_binding) =
@@ -5776,8 +5834,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             // use-aliases like any other docblock class name (Psalm fully
             // qualifies them during type resolution).
             TAtomic::TLiteralClassString { name } => {
-                if let Some(template_binding) =
-                    template_map.and_then(|map| map.get(name.as_str()))
+                if let Some(template_binding) = template_map.and_then(|map| map.get(name.as_str()))
                 {
                     *atomic = TAtomic::TClassString {
                         as_type: Some(Box::new(TAtomic::TTemplateParam {
@@ -6205,7 +6262,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     ))
                 }),
             }],
-            TAtomic::TNamedObject { name, type_params , .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if let Some(type_params) = type_params {
                     vec![TAtomic::TNamedObject {
                         name,
@@ -6222,12 +6281,16 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                 })
                                 .collect(),
                         ),
-                    is_static: false, remapped_params: false }]
+                        is_static: false,
+                        remapped_params: false,
+                    }]
                 } else {
                     vec![TAtomic::TNamedObject {
                         name,
                         type_params: None,
-                    is_static: false, remapped_params: false }]
+                        is_static: false,
+                        remapped_params: false,
+                    }]
                 }
             }
             TAtomic::TTemplateParam {
@@ -6255,7 +6318,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         parent_class: Option<StrId>,
         class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
     ) -> Option<TUnion> {
-        let TAtomic::TNamedObject { name, type_params , .. } = atomic else {
+        let TAtomic::TNamedObject {
+            name, type_params, ..
+        } = atomic
+        else {
             return None;
         };
 
@@ -6410,36 +6476,38 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let as_type = if let Some(template_bound) = template_bound {
                 self.try_resolve_template_key_of_type(&template_bound, Some(&template_map))
                     .unwrap_or_else(|| {
-                        let parsed_type =
-                            match crate::docblock::parse_type_string(&template_bound, self.interner.parent_ref()) {
-                                Ok(parsed_type) => parsed_type,
-                                Err(parse_error) => {
-                                    // Psalm: a malformed `@template` bound is an
-                                    // InvalidDocblock — `... in docblock for C`
-                                    // (ClassLikeNodeScanner) for classes,
-                                    // `Template T has invalid as type - ...`
-                                    // (FunctionLikeDocblockScanner) otherwise —
-                                    // and the bound falls back to mixed.
-                                    let message = match defining_entity {
-                                        GenericParent::ClassLike(owner) => format!(
-                                            "{} in docblock for {}",
-                                            parse_error.message,
-                                            self.interner.lookup(owner)
-                                        ),
-                                        _ => format!(
-                                            "Template {} has invalid as type - {}",
-                                            template_name, parse_error.message
-                                        ),
-                                    };
-                                    let offset = offset as u32;
-                                    docblock_issues.push(DocblockIssue {
-                                        message,
-                                        start_offset: offset,
-                                        end_offset: offset.saturating_add(1),
-                                    });
-                                    TUnion::mixed()
-                                }
-                            };
+                        let parsed_type = match crate::docblock::parse_type_string(
+                            &template_bound,
+                            self.interner.parent_ref(),
+                        ) {
+                            Ok(parsed_type) => parsed_type,
+                            Err(parse_error) => {
+                                // Psalm: a malformed `@template` bound is an
+                                // InvalidDocblock — `... in docblock for C`
+                                // (ClassLikeNodeScanner) for classes,
+                                // `Template T has invalid as type - ...`
+                                // (FunctionLikeDocblockScanner) otherwise —
+                                // and the bound falls back to mixed.
+                                let message = match defining_entity {
+                                    GenericParent::ClassLike(owner) => format!(
+                                        "{} in docblock for {}",
+                                        parse_error.message,
+                                        self.interner.lookup(owner)
+                                    ),
+                                    _ => format!(
+                                        "Template {} has invalid as type - {}",
+                                        template_name, parse_error.message
+                                    ),
+                                };
+                                let offset = offset as u32;
+                                docblock_issues.push(DocblockIssue {
+                                    message,
+                                    start_offset: offset,
+                                    end_offset: offset.saturating_add(1),
+                                });
+                                TUnion::mixed()
+                            }
+                        };
                         self.resolve_docblock_union_type(
                             parsed_type,
                             self_class,
@@ -6962,7 +7030,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         .map(|atomic| loose_atomic_key(self.interner.parent_ref(), atomic))
                         .collect();
                     !param_tag_type.types.iter().all(|atomic| {
-                        signature_keys.contains(&loose_atomic_key(self.interner.parent_ref(), atomic))
+                        signature_keys
+                            .contains(&loose_atomic_key(self.interner.parent_ref(), atomic))
                     })
                 }
                 None => true,
@@ -7116,16 +7185,15 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     if key == "param" || key == "param-out" {
                         if let Some(var_name) =
                             crate::docblock::extract_var_name_from_content(content)
-                            && typed_param_tags.contains(var_name.trim_start_matches('$')) {
-                                continue;
-                            }
+                            && typed_param_tags.contains(var_name.trim_start_matches('$'))
+                        {
+                            continue;
+                        }
 
                         // Psalm's FunctionLikeDocblockParser skips a var-only
                         // `@param $x` outright (allowEmptyVarAnnotation).
                         let trimmed = content.trim();
-                        if trimmed.starts_with('$')
-                            && !trimmed.contains(char::is_whitespace)
-                        {
+                        if trimmed.starts_with('$') && !trimmed.contains(char::is_whitespace) {
                             continue;
                         }
                     }
@@ -7154,9 +7222,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     if (key == "param" || key == "param-out")
                         && let Some(var_name) =
                             crate::docblock::extract_var_name_from_content(content)
-                            && typed_param_tags.contains(var_name.trim_start_matches('$')) {
-                                continue;
-                            }
+                        && typed_param_tags.contains(var_name.trim_start_matches('$'))
+                    {
+                        continue;
+                    }
 
                     issues.push(DocblockIssue {
                         message: "Missing docblock type".to_string(),
@@ -7177,7 +7246,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 }
 
-                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type =
+                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_union = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -7241,12 +7312,14 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // Psalm's getConditionalSanitizedTypeTokens), so feed them via the context.
         let mut context = TypeResolutionContext::new();
         context.param_names = param_names.to_vec();
-        let parsed_type =
-            match crate::docblock::parse_type_string_with_context(type_str, self.interner.parent_ref(), &context)
-            {
-                Ok(parsed) => parsed,
-                Err(_) => return false,
-            };
+        let parsed_type = match crate::docblock::parse_type_string_with_context(
+            type_str,
+            self.interner.parent_ref(),
+            &context,
+        ) {
+            Ok(parsed) => parsed,
+            Err(_) => return false,
+        };
 
         if has_invalid_docblock_type_syntax(type_str) {
             return false;
@@ -7408,15 +7481,18 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         case_name: &str,
         wants_name: bool,
     ) -> Option<TUnion> {
-        let class_info = self.declarations.classes.iter().find(|class_info| {
-            self.interner.lookup(class_info.name).as_ref() == class_name
-        })?;
+        let class_info = self
+            .declarations
+            .classes
+            .iter()
+            .find(|class_info| self.interner.lookup(class_info.name).as_ref() == class_name)?;
         if class_info.kind != ClassLikeKind::Enum {
             return None;
         }
-        let const_info = class_info.constants.values().find(|const_info| {
-            self.interner.lookup(const_info.name).as_ref() == case_name
-        })?;
+        let const_info = class_info
+            .constants
+            .values()
+            .find(|const_info| self.interner.lookup(const_info.name).as_ref() == case_name)?;
         if !matches!(
             const_info.constant_type.get_single(),
             Some(TAtomic::TEnumCase { .. })
@@ -7733,9 +7809,7 @@ fn take_first_docblock_union_token(content: &str) -> String {
                     j += 1;
                 }
                 let next = chars.get(j).copied();
-                if matches!(prev, Some('|') | Some('&'))
-                    || matches!(next, Some('|') | Some('&'))
-                {
+                if matches!(prev, Some('|') | Some('&')) || matches!(next, Some('|') | Some('&')) {
                     i = j;
                     continue;
                 }
@@ -7811,8 +7885,7 @@ fn shape_has_duplicate_keys(definition: &str) -> bool {
 /// circular-reference rejection).
 fn definition_references_alias(definition: &str, alias_name: &str) -> bool {
     let bytes = definition.as_bytes();
-    let is_name_char =
-        |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'\\' || b == b'-';
+    let is_name_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'\\' || b == b'-';
     let mut search_start = 0;
     while let Some(found) = definition[search_start..].find(alias_name) {
         let start = search_start + found;
@@ -8088,10 +8161,12 @@ pub(crate) fn clear_docblock_flag_when_signature_backed(
     // containing an object (the #6931 can't-check-yet concession).
     if signature_return_type.is_nullable()
         && !return_type.is_nullable()
-        && !return_type
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. } | TAtomic::TConditional(_)))
+        && !return_type.types.iter().any(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TTemplateParam { .. } | TAtomic::TConditional(_)
+            )
+        })
     {
         let has_object_type = return_type.types.iter().any(|atomic| {
             matches!(
@@ -8104,8 +8179,7 @@ pub(crate) fn clear_docblock_flag_when_signature_backed(
         });
         let contained_by_signature = return_type.types.iter().all(|atomic| {
             signature_keys.contains(&psalm_signature_match_key(atomic))
-                || loose_scalar_family(atomic)
-                    .is_some_and(|family| signature_keys.contains(family))
+                || loose_scalar_family(atomic).is_some_and(|family| signature_keys.contains(family))
         });
         if has_object_type || contained_by_signature {
             return_type.add_type(TAtomic::TNull);
@@ -9048,8 +9122,11 @@ fn constructor_is_external_mutation_free(stmts: &[Statement<'_>]) -> bool {
 struct AnonymousClassCollectorWalker;
 
 impl<'ast, 'arena>
-    mago_syntax::walker::Walker<'ast, 'arena, Vec<&'ast mago_syntax::ast::ast::class_like::AnonymousClass<'arena>>>
-    for AnonymousClassCollectorWalker
+    mago_syntax::walker::Walker<
+        'ast,
+        'arena,
+        Vec<&'ast mago_syntax::ast::ast::class_like::AnonymousClass<'arena>>,
+    > for AnonymousClassCollectorWalker
 {
     fn walk_in_anonymous_class(
         &self,
@@ -9089,16 +9166,16 @@ impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, Vec<&'arena str>>
             assignment.lhs.unparenthesized()
             && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(var)) =
                 property_access.object.unparenthesized()
-                && var.name == "$this"
-                    && let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
-                        identifier,
-                    ) = &property_access.property
-                        && !context.contains(&identifier.value) {
-                            context.push(identifier.value);
-                        }
+            && var.name == "$this"
+            && let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+                identifier,
+            ) = &property_access.property
+            && !context.contains(&identifier.value)
+        {
+            context.push(identifier.value);
+        }
     }
 }
-
 
 /// Psalm `Atomic::getKey()` approximation for the duplicate-doc rule: array
 /// shapes/lists key as plain "array"; named objects key by class name.
@@ -9128,9 +9205,7 @@ fn compute_template_readonly(class_info: &mut ClassLikeInfo) {
     class_info.template_readonly = class_info
         .template_types
         .iter()
-        .filter(|template_type| {
-            !matches!(template_type.variance, TemplateVariance::Contravariant)
-        })
+        .filter(|template_type| !matches!(template_type.variance, TemplateVariance::Contravariant))
         .map(|template_type| template_type.name)
         .collect();
 
@@ -9263,7 +9338,9 @@ fn remove_used_templates_atomic(template_readonly: &mut FxHashSet<StrId>, atomic
 /// as `"ns\cons"` still contains the backslash). mago's `value` drops the
 /// backslash for unknown escapes, which corrupts namespaced constant names in
 /// `define("ns\\const", ...)`.
-pub(crate) fn php_unescape_string_literal(literal: &mago_syntax::ast::ast::literal::LiteralString<'_>) -> String {
+pub(crate) fn php_unescape_string_literal(
+    literal: &mago_syntax::ast::ast::literal::LiteralString<'_>,
+) -> String {
     use mago_syntax::ast::ast::literal::LiteralStringKind;
 
     let raw = literal.raw;
@@ -9422,8 +9499,7 @@ fn merge_same_class_generic_members(resolved_types: &mut Vec<TAtomic>) {
             }
         }
 
-        if merged_any
-            && let TAtomic::TNamedObject { type_params, .. } = &mut resolved_types[index]
+        if merged_any && let TAtomic::TNamedObject { type_params, .. } = &mut resolved_types[index]
         {
             *type_params = Some(merged_params);
         }

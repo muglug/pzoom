@@ -5,9 +5,9 @@
 //! type system.
 
 pub mod declaration_collector;
-mod property_map;
 pub mod docblock;
 pub mod name_resolver;
+mod property_map;
 pub mod type_resolver;
 
 pub use declaration_collector::DeclarationCollector;

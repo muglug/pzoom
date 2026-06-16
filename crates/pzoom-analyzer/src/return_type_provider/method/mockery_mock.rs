@@ -39,7 +39,11 @@ impl MethodReturnTypeProvider for MockeryMockReturnTypeProvider {
         }
 
         let first_arg_pos = event.arg_positions.first()?;
-        let first_arg_type = event.analysis_data.expr_types.get(&*first_arg_pos).cloned()?;
+        let first_arg_type = event
+            .analysis_data
+            .expr_types
+            .get(&*first_arg_pos)
+            .cloned()?;
 
         let mocked_class_id = match first_arg_type.get_single()? {
             TAtomic::TLiteralClassString { name } => event.analyzer.interner.intern(name),

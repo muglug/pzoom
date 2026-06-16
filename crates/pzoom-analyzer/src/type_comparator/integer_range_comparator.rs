@@ -64,7 +64,11 @@ pub(crate) fn is_contained_by_union(
 ) -> bool {
     // A whole `int` in the container covers any integer range (Psalm's `int`
     // key short-circuit).
-    if container.types.iter().any(|atomic| matches!(atomic, TAtomic::TInt)) {
+    if container
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TInt))
+    {
         return true;
     }
 
@@ -116,13 +120,15 @@ fn reduce_range_incrementally(
                         // if it was higher.
                         (Some(x), None) => {
                             let candidate = x - 1;
-                            *reduced_max = Some(reduced_max.map_or(candidate, |m| m.min(candidate)));
+                            *reduced_max =
+                                Some(reduced_max.map_or(candidate, |m| m.min(candidate)));
                         }
                         // `int<min, X>`: X+1 becomes the min of the reduced range
                         // if it was lower.
                         (None, Some(x)) => {
                             let candidate = x + 1;
-                            *reduced_min = Some(reduced_min.map_or(candidate, |m| m.max(candidate)));
+                            *reduced_min =
+                                Some(reduced_min.map_or(candidate, |m| m.max(candidate)));
                         }
                         // Fully-bounded container range: trim whichever reduced
                         // bound it contains.

@@ -1,17 +1,11 @@
 //! Method visibility checks. Mirrors Psalm `MethodVisibilityAnalyzer`.
 
-
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
-use pzoom_code_info::{
-    TAtomic, TUnion,
-};
+use pzoom_code_info::{TAtomic, TUnion};
 use pzoom_str::StrId;
 
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
-
-
-
 
 pub(crate) fn receiver_allows_method_visibility_override(
     analyzer: &StatementsAnalyzer<'_>,

@@ -6,8 +6,8 @@ use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
 use pzoom_code_info::VarName;
+use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
 use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
@@ -40,7 +40,9 @@ pub fn analyze(
     let value_pos = expression_analyzer::analyze(analyzer, value_expr, analysis_data, context);
     context.inside_general_use = was_inside_general_use;
     let mut value_type = analysis_data
-        .expr_types.get(&value_pos).cloned()
+        .expr_types
+        .get(&value_pos)
+        .cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -75,7 +77,9 @@ pub fn analyze(
         unnamed_match
     }) {
         value_type = annotation_type;
-        analysis_data.expr_types.insert(value_pos, Rc::new(value_type.clone()));
+        analysis_data
+            .expr_types
+            .insert(value_pos, Rc::new(value_type.clone()));
     }
 
     analyze_with_known_type(analyzer, access, value_type, pos, analysis_data, context);
@@ -151,11 +155,10 @@ pub fn analyze_with_known_type(
     // method; fresh `new`/`clone` values keep allow_mutations and are fine).
     // Readonly / immutable-class properties are policed by the
     // InaccessibleProperty path instead, so they're exempt here.
-    let lhs_var_disallows_mutations = crate::expression_identifier::get_expression_var_key(
-        access.object,
-    )
-    .and_then(|var_id| context.get_var_type(&var_id).cloned())
-    .is_some_and(|lhs_type| !lhs_type.allow_mutations);
+    let lhs_var_disallows_mutations =
+        crate::expression_identifier::get_expression_var_key(access.object)
+            .and_then(|var_id| context.get_var_type(&var_id).cloned())
+            .is_some_and(|lhs_type| !lhs_type.allow_mutations);
 
     let impure_assignment_candidate = explicit_mutation_free_context
         && lhs_var_disallows_mutations
@@ -319,7 +322,9 @@ pub fn analyze_with_known_type(
 
             for atomic in &lookup_types {
                 match atomic {
-                    TAtomic::TNamedObject { name, type_params , .. } => {
+                    TAtomic::TNamedObject {
+                        name, type_params, ..
+                    } => {
                         // A private property is not inherited into a subclass's
                         // table: retarget to the enclosing class when it
                         // declares the property (Psalm's context-self fallback
@@ -356,14 +361,8 @@ pub fn analyze_with_known_type(
                                                 analyzer,
                                                 analysis_data,
                                                 &lhs_var_id,
-                                                (
-                                                    object_span.start.offset,
-                                                    object_span.end.offset,
-                                                ),
-                                                (
-                                                    name_span.start.offset,
-                                                    name_span.end.offset,
-                                                ),
+                                                (object_span.start.offset, object_span.end.offset),
+                                                (name_span.start.offset, name_span.end.offset),
                                                 (*name, prop_id),
                                                 &value_type,
                                                 context,
@@ -578,12 +577,13 @@ pub fn analyze_with_known_type(
                                                 "MixedAssignment",
                                             )
                                         {
-                                            let var_id = expression_identifier::get_expression_var_key(
-                                                access.object,
-                                            )
-                                            .map(|object_key| {
-                                                format!("{}->{}", object_key, prop_name)
-                                            });
+                                            let var_id =
+                                                expression_identifier::get_expression_var_key(
+                                                    access.object,
+                                                )
+                                                .map(|object_key| {
+                                                    format!("{}->{}", object_key, prop_name)
+                                                });
                                             let message = match var_id {
                                                 Some(var_id) => format!(
                                                     "Unable to determine the type that {} is being assigned to",
@@ -710,15 +710,14 @@ pub fn analyze_with_known_type(
                                         } else if !localized_value_type.ignore_falsable_issues
                                             && localized_value_type.is_falsable()
                                             && !prop_accepts_false
-                                            && !prop_type
-                                                .types
-                                                .iter()
-                                                .any(|atomic| matches!(
+                                            && !prop_type.types.iter().any(|atomic| {
+                                                matches!(
                                                     atomic,
                                                     TAtomic::TBool
                                                         | TAtomic::TTrue
                                                         | TAtomic::TScalar
-                                                ))
+                                                )
+                                            })
                                         {
                                             analysis_data.add_issue(Issue::new(
                                                 IssueKind::PossiblyFalsePropertyAssignmentValue,
@@ -880,8 +879,9 @@ pub fn analyze_with_known_type(
                                                         else {
                                                             return false;
                                                         };
-                                                        let Some(other_info) =
-                                                            analyzer.codebase.get_class(*other_name)
+                                                        let Some(other_info) = analyzer
+                                                            .codebase
+                                                            .get_class(*other_name)
                                                         else {
                                                             return false;
                                                         };
@@ -1151,7 +1151,7 @@ pub fn analyze_with_known_type(
                 .locals
                 .contains_key(format!("{}->{}", object_key, prop_name).as_str())
         });
-        clear_object_member_tracking( context, &object_key, prop_name);
+        clear_object_member_tracking(context, &object_key, prop_name);
 
         if let Some(prop_name) = prop_name {
             let property_key = format!("{}->{}", object_key, prop_name);
@@ -1228,10 +1228,8 @@ fn add_instance_property_assignment_dataflow(
             .interner
             .intern(&pzoom_code_info::VarName::new(lhs_var_id)),
     );
-    let var_node = DataFlowNode::get_for_lvar(
-        var_str_id,
-        make_data_flow_node_position(analyzer, var_pos),
-    );
+    let var_node =
+        DataFlowNode::get_for_lvar(var_str_id, make_data_flow_node_position(analyzer, var_pos));
     let property_node = DataFlowNode::get_for_local_property_fetch(
         var_str_id,
         property_id.1,
@@ -1239,7 +1237,9 @@ fn add_instance_property_assignment_dataflow(
     );
 
     analysis_data.data_flow_graph.add_node(var_node.clone());
-    analysis_data.data_flow_graph.add_node(property_node.clone());
+    analysis_data
+        .data_flow_graph
+        .add_node(property_node.clone());
     analysis_data.data_flow_graph.add_path(
         &property_node.id,
         &var_node.id,
@@ -1287,7 +1287,9 @@ pub(crate) fn add_unspecialized_property_assignment_dataflow(
 
     let property_node = DataFlowNode::get_for_property(property_id);
 
-    analysis_data.data_flow_graph.add_node(property_node.clone());
+    analysis_data
+        .data_flow_graph
+        .add_node(property_node.clone());
     analysis_data.data_flow_graph.add_path(
         &localized_property_node.id,
         &property_node.id,
@@ -1421,7 +1423,6 @@ fn class_allows_dynamic_property_assignment(
     false
 }
 
-
 fn class_has_magic_setter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::SET)
 }
@@ -1516,7 +1517,12 @@ fn verify_magic_set_call_arguments(
         match crate::template::lower_bounds_get(&template_result, name, entity) {
             Some(existing) if !existing.is_nothing() => {}
             _ => {
-                crate::template::lower_bounds_insert(&mut template_result, name, entity, replacement);
+                crate::template::lower_bounds_insert(
+                    &mut template_result,
+                    name,
+                    entity,
+                    replacement,
+                );
             }
         }
     }
@@ -1612,7 +1618,10 @@ fn get_pseudo_property_set_type(
 fn strip_ignored_null_false(union: &TUnion) -> TUnion {
     if (!union.ignore_nullable_issues || !union.is_nullable())
         && (!union.ignore_falsable_issues
-            || !union.types.iter().any(|atomic| matches!(atomic, TAtomic::TFalse)))
+            || !union
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TFalse)))
     {
         return union.clone();
     }
@@ -1632,7 +1641,6 @@ fn strip_ignored_null_false(union: &TUnion) -> TUnion {
     stripped.types = kept;
     stripped
 }
-
 
 fn substitute_class_template_params(
     class_info: &pzoom_code_info::ClassLikeInfo,

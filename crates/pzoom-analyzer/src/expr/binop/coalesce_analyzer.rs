@@ -36,8 +36,7 @@ pub fn analyze(
     // nothing), rather than the mixed placeholder our variable fetch returns.
     let left_var_undefined = match left.unparenthesized() {
         Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) => {
-            !is_superglobal(direct.name)
-                && !context.locals.contains_key(&VarName::new(direct.name))
+            !is_superglobal(direct.name) && !context.locals.contains_key(&VarName::new(direct.name))
         }
         _ => false,
     };
@@ -139,14 +138,20 @@ pub fn analyze(
     // vars it narrowed/seeded (unless the right operand itself reassigned
     // them) so the merge can't leak `$a['k'] = null` into the outer scope.
     for var_id in null_assumed_vars {
-        let right_count = right_context.assigned_var_ids.get(&var_id).copied().unwrap_or(0);
+        let right_count = right_context
+            .assigned_var_ids
+            .get(&var_id)
+            .copied()
+            .unwrap_or(0);
         let pre_count = context.assigned_var_ids.get(&var_id).copied().unwrap_or(0);
         if right_count > pre_count {
             continue;
         }
         match context.locals.get(&var_id) {
             Some(outer_type) => {
-                right_context.locals.insert(var_id.clone(), outer_type.clone());
+                right_context
+                    .locals
+                    .insert(var_id.clone(), outer_type.clone());
             }
             None => {
                 right_context.locals.remove(&var_id);
@@ -159,9 +164,7 @@ pub fn analyze(
     // (a guard like `!isset(\$o['k']) || is_string(\$o['k'])`) to a narrower
     // present-side type than the raw fetch.
     let left_type = match (left_type, clause_resolved_left_type) {
-        (Some(raw_left), Some(mut resolved))
-            if !resolved.is_mixed() && !resolved.is_nothing() =>
-        {
+        (Some(raw_left), Some(mut resolved)) if !resolved.is_mixed() && !resolved.is_nothing() => {
             resolved.parent_nodes = raw_left.parent_nodes.clone();
             Some(std::rc::Rc::new(resolved))
         }
@@ -175,52 +178,52 @@ pub fn analyze(
             .unwrap_or_else(TUnion::mixed)
     } else {
         match (left_type, right_type) {
-        (Some(lt), Some(rt)) => {
-            // Remove null from left type
-            let left_without_null: Vec<_> = lt
-                .types
-                .iter()
-                .filter(|t| !matches!(t, TAtomic::TNull))
-                .cloned()
-                .collect();
+            (Some(lt), Some(rt)) => {
+                // Remove null from left type
+                let left_without_null: Vec<_> = lt
+                    .types
+                    .iter()
+                    .filter(|t| !matches!(t, TAtomic::TNull))
+                    .cloned()
+                    .collect();
 
-            if left_without_null.is_empty() {
-                // Left was only null, result is just right type
-                (*rt).clone()
-            } else {
-                // Combine non-null left types with right types. Keep the
-                // left's dataflow parents — from_types builds a fresh union
-                // and would otherwise sever the flow through the coalesce.
-                let mut left_non_null = TUnion::from_types(left_without_null);
-                left_non_null.parent_nodes = lt.parent_nodes.clone();
-                let mut combined = combine_union_types(&left_non_null, &rt, false);
-                // An internal-function falsable-leniency flag survives the
-                // coalesce (parse_url(...) ?? '' stays assignable to string).
-                combined.ignore_falsable_issues =
-                    lt.ignore_falsable_issues || rt.ignore_falsable_issues;
-                combined
+                if left_without_null.is_empty() {
+                    // Left was only null, result is just right type
+                    (*rt).clone()
+                } else {
+                    // Combine non-null left types with right types. Keep the
+                    // left's dataflow parents — from_types builds a fresh union
+                    // and would otherwise sever the flow through the coalesce.
+                    let mut left_non_null = TUnion::from_types(left_without_null);
+                    left_non_null.parent_nodes = lt.parent_nodes.clone();
+                    let mut combined = combine_union_types(&left_non_null, &rt, false);
+                    // An internal-function falsable-leniency flag survives the
+                    // coalesce (parse_url(...) ?? '' stays assignable to string).
+                    combined.ignore_falsable_issues =
+                        lt.ignore_falsable_issues || rt.ignore_falsable_issues;
+                    combined
+                }
             }
-        }
-        (Some(lt), None) => {
-            // Remove null from left type
-            let left_without_null: Vec<_> = lt
-                .types
-                .iter()
-                .filter(|t| !matches!(t, TAtomic::TNull))
-                .cloned()
-                .collect();
+            (Some(lt), None) => {
+                // Remove null from left type
+                let left_without_null: Vec<_> = lt
+                    .types
+                    .iter()
+                    .filter(|t| !matches!(t, TAtomic::TNull))
+                    .cloned()
+                    .collect();
 
-            if left_without_null.is_empty() {
-                TUnion::mixed()
-            } else {
-                let mut left_non_null = TUnion::from_types(left_without_null);
-                left_non_null.parent_nodes = lt.parent_nodes.clone();
-                left_non_null.ignore_falsable_issues = lt.ignore_falsable_issues;
-                left_non_null
+                if left_without_null.is_empty() {
+                    TUnion::mixed()
+                } else {
+                    let mut left_non_null = TUnion::from_types(left_without_null);
+                    left_non_null.parent_nodes = lt.parent_nodes.clone();
+                    left_non_null.ignore_falsable_issues = lt.ignore_falsable_issues;
+                    left_non_null
+                }
             }
-        }
-        (None, Some(rt)) => (*rt).clone(),
-        (None, None) => TUnion::mixed(),
+            (None, Some(rt)) => (*rt).clone(),
+            (None, None) => TUnion::mixed(),
         }
     };
 
@@ -338,8 +341,19 @@ fn resolve_left_isset_type(
 ) -> Option<TUnion> {
     let left_var_name = expression_identifier::get_expression_var_key(left)?;
     if std::env::var("PZDBG").is_ok() {
-        eprintln!("DBG resolver key={} clauses={:?}", left_var_name,
-            context.clauses.iter().map(|c| c.possibilities.keys().map(|k| format!("{:?}", k)).collect::<Vec<_>>()).collect::<Vec<_>>());
+        eprintln!(
+            "DBG resolver key={} clauses={:?}",
+            left_var_name,
+            context
+                .clauses
+                .iter()
+                .map(|c| c
+                    .possibilities
+                    .keys()
+                    .map(|k| format!("{:?}", k))
+                    .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        );
     }
     if context.clauses.is_empty() {
         return None;

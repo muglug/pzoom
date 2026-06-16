@@ -128,12 +128,20 @@ fn parse_map_entry(line: &str, vendor_dir: &Path, base_dir: &Path) -> Option<(St
     let line = line.trim();
     let (key_part, value_part) = line.split_once("=>")?;
     let key = single_quoted(key_part)?.to_string();
-    let path = join_var_path(value_part.trim().trim_end_matches(','), vendor_dir, base_dir)?;
+    let path = join_var_path(
+        value_part.trim().trim_end_matches(','),
+        vendor_dir,
+        base_dir,
+    )?;
     Some((key, path))
 }
 
 /// Parse a `'Prefix\\' => array($vendorDir . '/a', $vendorDir . '/b'),` line.
-fn parse_psr4_entry(line: &str, vendor_dir: &Path, base_dir: &Path) -> Option<(String, Vec<PathBuf>)> {
+fn parse_psr4_entry(
+    line: &str,
+    vendor_dir: &Path,
+    base_dir: &Path,
+) -> Option<(String, Vec<PathBuf>)> {
     let line = line.trim();
     let (key_part, value_part) = line.split_once("=>")?;
     let prefix = single_quoted(key_part)?.to_string();

@@ -95,8 +95,7 @@ pub fn analyze(
                     }
                 }
                 TAtomic::TNamedObject { name, .. } => {
-                    if !named_object_is_pseudo_castable(analyzer, *name) && invalid_cast.is_none()
-                    {
+                    if !named_object_is_pseudo_castable(analyzer, *name) && invalid_cast.is_none() {
                         invalid_cast = Some(atomic.get_id(Some(analyzer.interner)));
                     }
                 }
@@ -129,7 +128,10 @@ pub fn analyze(
                         risky_id
                     )
                 } else {
-                    format!("Casting {} to int has possibly unintended value of 0/1", risky_id)
+                    format!(
+                        "Casting {} to int has possibly unintended value of 0/1",
+                        risky_id
+                    )
                 },
                 analyzer.file_path,
                 pos.0,
@@ -220,13 +222,11 @@ pub fn analyze(
         UnaryPrefixOperator::StringCast(_, _) | UnaryPrefixOperator::BinaryCast(_, _)
     ) && inner_union.has_object()
     {
-        result_type
-            .parent_nodes
-            .extend(add_to_string_call_dataflow(
-                analyzer,
-                analysis_data,
-                &inner_union,
-            ));
+        result_type.parent_nodes.extend(add_to_string_call_dataflow(
+            analyzer,
+            analysis_data,
+            &inner_union,
+        ));
     }
 
     analysis_data.expr_types.insert(pos, Rc::new(result_type));
@@ -286,10 +286,9 @@ fn infer_string_cast_type(analyzer: &StatementsAnalyzer<'_>, inner_type: &TUnion
                     });
                 }
             }
-            TAtomic::TInt
-            | TAtomic::TIntRange { .. }
-            | TAtomic::TFloat
-            | TAtomic::TNumeric => casted.push(TAtomic::TNumericString),
+            TAtomic::TInt | TAtomic::TIntRange { .. } | TAtomic::TFloat | TAtomic::TNumeric => {
+                casted.push(TAtomic::TNumericString)
+            }
             TAtomic::TNamedObject { .. } => {
                 if let Some(to_string_type) = get_to_string_return_type(analyzer, atomic) {
                     if union_is_non_empty_string(&to_string_type) {

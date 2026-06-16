@@ -136,10 +136,7 @@ pub fn is_contained_by_in_context(
                 if intersection_result.type_coerced.unwrap_or(false) {
                     atomic_comparison_result.type_coerced = Some(true);
                 }
-                if intersection_result
-                    .type_coerced_from_mixed
-                    .unwrap_or(false)
-                {
+                if intersection_result.type_coerced_from_mixed.unwrap_or(false) {
                     atomic_comparison_result.type_coerced_from_mixed = Some(true);
                 }
                 return false;
@@ -213,10 +210,7 @@ pub fn is_contained_by_in_context(
     // Invalid classification).
     if let TAtomic::TTemplateParam { as_type, .. } = container_type_part {
         // Psalm: `mixed` input is contained by an as-mixed template container.
-        if matches!(
-            input_type_part,
-            TAtomic::TMixed | TAtomic::TNonEmptyMixed
-        ) {
+        if matches!(input_type_part, TAtomic::TMixed | TAtomic::TNonEmptyMixed) {
             if as_type.is_mixed() {
                 return true;
             }
@@ -353,11 +347,7 @@ pub fn is_contained_by_in_context(
         },
     ) = (input_type_part, container_type_part)
         && (input_enum == container_name
-            || object_type_comparator::is_class_subtype_of(
-                *input_enum,
-                *container_name,
-                codebase,
-            ))
+            || object_type_comparator::is_class_subtype_of(*input_enum, *container_name, codebase))
     {
         return true;
     }
@@ -370,11 +360,7 @@ pub fn is_contained_by_in_context(
         },
     ) = (input_type_part, container_type_part)
         && (input_enum == container_name
-            || object_type_comparator::is_class_subtype_of(
-                *input_enum,
-                *container_name,
-                codebase,
-            ))
+            || object_type_comparator::is_class_subtype_of(*input_enum, *container_name, codebase))
     {
         return true;
     }
@@ -604,30 +590,32 @@ pub fn is_contained_by_in_context(
             {
                 use pzoom_code_info::ArrayKey;
 
-                let key_contained = |key_union: &pzoom_code_info::TUnion,
-                                     atomic_comparison_result: &mut TypeComparisonResult| {
-                    container_key.is_mixed()
-                        || union_type_comparator::is_contained_by(
-                            codebase,
-                            key_union,
-                            container_key,
-                            false,
-                            false,
-                            atomic_comparison_result,
-                        )
-                };
-                let value_contained = |value_union: &pzoom_code_info::TUnion,
-                                       atomic_comparison_result: &mut TypeComparisonResult| {
-                    container_value.is_mixed()
-                        || union_type_comparator::is_contained_by(
-                            codebase,
-                            value_union,
-                            container_value,
-                            false,
-                            false,
-                            atomic_comparison_result,
-                        )
-                };
+                let key_contained =
+                    |key_union: &pzoom_code_info::TUnion,
+                     atomic_comparison_result: &mut TypeComparisonResult| {
+                        container_key.is_mixed()
+                            || union_type_comparator::is_contained_by(
+                                codebase,
+                                key_union,
+                                container_key,
+                                false,
+                                false,
+                                atomic_comparison_result,
+                            )
+                    };
+                let value_contained =
+                    |value_union: &pzoom_code_info::TUnion,
+                     atomic_comparison_result: &mut TypeComparisonResult| {
+                        container_value.is_mixed()
+                            || union_type_comparator::is_contained_by(
+                                codebase,
+                                value_union,
+                                container_value,
+                                false,
+                                false,
+                                atomic_comparison_result,
+                            )
+                    };
 
                 for (key, value) in properties.iter() {
                     let key_union = match key {
@@ -685,7 +673,10 @@ pub fn is_contained_by_in_context(
         }
 
         // Only classes implementing Traversable (or descendants) are iterable.
-        if let TAtomic::TNamedObject { name, type_params , .. } = input_type_part {
+        if let TAtomic::TNamedObject {
+            name, type_params, ..
+        } = input_type_part
+        {
             if named_object_is_iterable(codebase, *name) {
                 if container_key.is_mixed() && container_value.is_mixed() {
                     return true;
@@ -959,8 +950,7 @@ fn array_atomic_key_value_types(
             fallback_value_type,
             ..
         } => {
-            let mut key_union: Option<TUnion> =
-                fallback_key_type.as_ref().map(|k| (**k).clone());
+            let mut key_union: Option<TUnion> = fallback_key_type.as_ref().map(|k| (**k).clone());
             let mut value_union: Option<TUnion> =
                 fallback_value_type.as_ref().map(|v| (**v).clone());
 
@@ -1257,9 +1247,9 @@ enum StrictScalarIdentityFamily {
 
 fn strict_scalar_identity_family(atomic: &TAtomic) -> Option<StrictScalarIdentityFamily> {
     match atomic {
-        TAtomic::TInt
-        | TAtomic::TLiteralInt { .. }
-        | TAtomic::TIntRange { .. } => Some(StrictScalarIdentityFamily::Int),
+        TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. } => {
+            Some(StrictScalarIdentityFamily::Int)
+        }
         TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => Some(StrictScalarIdentityFamily::Float),
         TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse => Some(StrictScalarIdentityFamily::Bool),
         TAtomic::TString

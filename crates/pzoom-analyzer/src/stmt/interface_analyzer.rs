@@ -40,7 +40,11 @@ pub fn analyze(
     let interface_name = interface_stmt.name.value;
     let fqn = match context.namespace {
         Some(namespace) => {
-            format!("{}\\{}", analyzer.interner.lookup(namespace), interface_name)
+            format!(
+                "{}\\{}",
+                analyzer.interner.lookup(namespace),
+                interface_name
+            )
         }
         None => interface_name.to_string(),
     };

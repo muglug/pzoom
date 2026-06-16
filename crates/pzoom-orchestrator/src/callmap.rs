@@ -117,10 +117,7 @@ pub fn apply_call_map(codebase: &mut CodebaseInfo, interner: &Interner, php_vers
             serde_json::from_str(PSALM_STUB_FUNCTIONS).expect("psalm_stub_functions.json parses");
         let special_names: Vec<&str> = serde_json::from_str(PSALM_SPECIAL_FUNCTIONS)
             .expect("psalm_special_functions.json parses");
-        stub_names
-            .into_iter()
-            .chain(special_names)
-            .collect()
+        stub_names.into_iter().chain(special_names).collect()
     };
 
     for (name, entry) in map.iter() {
@@ -246,8 +243,7 @@ pub fn apply_call_map(codebase: &mut CodebaseInfo, interner: &Interner, php_vers
     // CallMap types aren't native-hint expressible. They model Psalm's
     // CallMap storage all the same: non-docblock provenance. Flip every stub
     // function outside Psalm's stub/special sets.
-    let function_ids: Vec<pzoom_str::StrId> =
-        codebase.functionlike_infos.keys().copied().collect();
+    let function_ids: Vec<pzoom_str::StrId> = codebase.functionlike_infos.keys().copied().collect();
     for function_id in function_ids {
         let name = interner.lookup(function_id);
         if name.contains("::") || psalm_stubbed.contains(name.as_ref()) {

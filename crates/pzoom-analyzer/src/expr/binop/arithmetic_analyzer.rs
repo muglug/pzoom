@@ -46,7 +46,10 @@ pub fn analyze(
     // Hakana's arithmetic analyzer: a type-variable operand flows through to
     // the result and is constrained from above to `num` (int|float).
     let mut type_variable_atomics = Vec::new();
-    for operand_type in [left_type.as_deref(), right_type.as_deref()].into_iter().flatten() {
+    for operand_type in [left_type.as_deref(), right_type.as_deref()]
+        .into_iter()
+        .flatten()
+    {
         for atomic in &operand_type.types {
             if let TAtomic::TTypeVariable { name } = atomic {
                 if let Some(pzoom_code_info::TypeVariableBounds { upper_bounds, .. }) =

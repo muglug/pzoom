@@ -189,10 +189,7 @@ fn mul_range_result(
 /// Modulo of two int ranges, mirroring Psalm's `analyzeModBetweenIntRange`.
 /// The sign of `%` follows the dividend (left); the magnitude is bounded by the
 /// divisor (right). A literal `0` divisor yields `never` (Psalm's `NoValue`).
-fn mod_range_result(
-    left: (Option<i64>, Option<i64>),
-    right: (Option<i64>, Option<i64>),
-) -> TUnion {
+fn mod_range_result(left: (Option<i64>, Option<i64>), right: (Option<i64>, Option<i64>)) -> TUnion {
     // Divisor is a single literal value: we can be precise.
     if let Some(rv) = r_literal(right) {
         if rv == 0 {
@@ -242,10 +239,7 @@ fn mod_range_result(
 /// `analyzePowBetweenIntRange`. A negative exponent forces a float result; an
 /// exponent of `0` yields `1` (or `-1` for a negative base of magnitude 1 — see
 /// Psalm). Even/odd literal exponents decide the sign for a negative base.
-fn pow_range_result(
-    left: (Option<i64>, Option<i64>),
-    right: (Option<i64>, Option<i64>),
-) -> TUnion {
+fn pow_range_result(left: (Option<i64>, Option<i64>), right: (Option<i64>, Option<i64>)) -> TUnion {
     let right_zero = right == (Some(0), Some(0));
     let left_zero = left == (Some(0), Some(0));
     let right_even_literal = matches!(r_literal(right), Some(v) if v % 2 == 0);
@@ -491,14 +485,12 @@ pub(crate) fn emit_arithmetic_operand_issue(
 
     // Psalm's ArithmeticOpAnalyzer reports a mixed operand as MixedOperand
     // and skips the remaining validation for it.
-    if union
-        .types
-        .iter()
-        .any(|atomic| matches!(
+    if union.types.iter().any(|atomic| {
+        matches!(
             atomic,
             TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
-        ))
-    {
+        )
+    }) {
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::MixedOperand,

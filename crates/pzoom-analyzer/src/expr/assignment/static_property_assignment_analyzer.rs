@@ -4,8 +4,8 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::access::StaticPropertyAccess;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::class_like_info::Visibility;
 use pzoom_code_info::VarName;
+use pzoom_code_info::class_like_info::Visibility;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use crate::context::BlockContext;
@@ -48,12 +48,8 @@ pub fn analyze(
             // inner expression (general use).
             let was_inside_general_use = context.inside_general_use;
             context.inside_general_use = true;
-            let _ = expression_analyzer::analyze(
-                analyzer,
-                indirect.expression,
-                analysis_data,
-                context,
-            );
+            let _ =
+                expression_analyzer::analyze(analyzer, indirect.expression, analysis_data, context);
             context.inside_general_use = was_inside_general_use;
             None
         }
@@ -67,7 +63,9 @@ pub fn analyze(
     let value_pos = expression_analyzer::analyze(analyzer, value_expr, analysis_data, context);
     context.inside_general_use = was_inside_general_use;
     let mut value_type = analysis_data
-        .expr_types.get(&value_pos).cloned()
+        .expr_types
+        .get(&value_pos)
+        .cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -102,7 +100,9 @@ pub fn analyze(
         unnamed_match
     }) {
         value_type = annotation_type;
-        analysis_data.expr_types.insert(value_pos, Rc::new(value_type.clone()));
+        analysis_data
+            .expr_types
+            .insert(value_pos, Rc::new(value_type.clone()));
     }
 
     // Verify property type if we can resolve it
@@ -447,10 +447,7 @@ fn check_assigned_value_against_property_type(
 
     // Check for type coercion
     if comparison_result.type_coerced.unwrap_or(false) {
-        if comparison_result
-            .type_coerced_from_mixed
-            .unwrap_or(false)
-        {
+        if comparison_result.type_coerced_from_mixed.unwrap_or(false) {
             analysis_data.add_issue(Issue::new(
                 IssueKind::MixedPropertyTypeCoercion,
                 format!(
@@ -502,8 +499,11 @@ fn check_assigned_value_against_property_type(
                 col,
             ));
         } else {
-            let can_be_contained =
-                union_type_comparator::can_be_contained_by(analyzer.codebase, value_type, prop_type);
+            let can_be_contained = union_type_comparator::can_be_contained_by(
+                analyzer.codebase,
+                value_type,
+                prop_type,
+            );
 
             if can_be_contained {
                 analysis_data.add_issue(Issue::new(

@@ -17,12 +17,10 @@ use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 use std::collections::BTreeMap;
 
-use pzoom_code_info::algebra::{
-    Clause, get_truths_from_formula, negate_formula, simplify_cnf,
-};
-use pzoom_code_info::{Issue, IssueKind};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, TAtomic, TUnion, combine_union_types};
+use pzoom_code_info::{Issue, IssueKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::assertion_finder;
@@ -31,8 +29,8 @@ use crate::function_analysis_data::FunctionAnalysisData;
 use crate::reconciler;
 use crate::scope::IfScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::{self, ControlAction};
 use crate::stmt::if_conditional_analyzer;
+use crate::stmt::scope_analyzer::{self, ControlAction};
 use crate::stmt::{else_analyzer, elseif_analyzer};
 use crate::stmt_analyzer::analyze_stmts;
 use std::rc::Rc;
@@ -58,16 +56,18 @@ pub fn analyze(
     // below runs against this pre-condition scope.
     let cond_is_binaryish = match if_stmt.condition.unparenthesized() {
         Expression::Binary(_) => true,
-        Expression::UnaryPrefix(unary)
-            if matches!(unary.operator, UnaryPrefixOperator::Not(_)) =>
-        {
+        Expression::UnaryPrefix(unary) if matches!(unary.operator, UnaryPrefixOperator::Not(_)) => {
             matches!(unary.operand.unparenthesized(), Expression::Binary(_))
         }
         _ => false,
     };
     let mut post_leaving_if_context = if cond_is_binaryish {
-        let pre_actions =
-            scope_analyzer::get_control_actions(if_stmt.body.statements(), analysis_data, &[], true);
+        let pre_actions = scope_analyzer::get_control_actions(
+            if_stmt.body.statements(),
+            analysis_data,
+            &[],
+            true,
+        );
         let has_leaving = !pre_actions.is_empty() && !pre_actions.contains(&ControlAction::None);
         has_leaving.then(|| context.clone())
     } else {
@@ -95,11 +95,14 @@ pub fn analyze(
         if let Some(condition_is_always_truthy) =
             infer_condition_truthiness_from_clauses(&context.clauses, &assertion_result)
         {
-            analysis_data.expr_types.insert(cond_pos, Rc::new(if condition_is_always_truthy {
+            analysis_data.expr_types.insert(
+                cond_pos,
+                Rc::new(if condition_is_always_truthy {
                     TUnion::new(TAtomic::TTrue)
                 } else {
                     TUnion::new(TAtomic::TFalse)
-                }));
+                }),
+            );
         }
     }
     if_conditional_analyzer::handle_paradoxical_condition(
@@ -163,7 +166,10 @@ pub fn analyze(
     // hakana's if_body_context), before the clause-based reconciliation narrows more.
     if_context.locals = cond_if_body_context.locals.clone();
     for (var_id, count) in &cond_if_body_context.assigned_var_ids {
-        if_context.assigned_var_ids.entry(var_id.clone()).or_insert(*count);
+        if_context
+            .assigned_var_ids
+            .entry(var_id.clone())
+            .or_insert(*count);
     }
 
     // Combine parent clauses with the new if-true clauses
@@ -183,9 +189,7 @@ pub fn analyze(
     let pre_narrowed_vars: FxHashSet<VarName> = if_context
         .locals
         .iter()
-        .filter(|(var_id, seeded_type)| {
-            context.locals.get(*var_id) != Some(seeded_type)
-        })
+        .filter(|(var_id, seeded_type)| context.locals.get(*var_id) != Some(seeded_type))
         .map(|(var_id, _)| var_id.clone())
         .collect();
     // Psalm's IfAnalyzer $omit_keys: vars mentioned in the OUTER context's
@@ -193,8 +197,11 @@ pub fn analyze(
     // redundancy at the entry reconcile (an inherited `||` clause means the
     // var's narrowing can't be reasoned about simply).
     let mut omit_report_vars: FxHashSet<VarName> = {
-        let outer_clause_refs: Vec<&Clause> =
-            context.clauses.iter().map(|clause| clause.as_ref()).collect();
+        let outer_clause_refs: Vec<&Clause> = context
+            .clauses
+            .iter()
+            .map(|clause| clause.as_ref())
+            .collect();
         let mut outer_referenced = FxHashSet::default();
         let (outer_truths, _) = get_truths_from_formula(
             outer_clause_refs.iter().copied().collect(),
@@ -225,7 +232,7 @@ pub fn analyze(
         Some(&omit_report_vars),
         true,
     );
-    promote_asserted_vars_to_assigned( &assertion_result.if_true, &mut if_context);
+    promote_asserted_vars_to_assigned(&assertion_result.if_true, &mut if_context);
     promote_guaranteed_true_condition_assignments(analyzer, if_stmt.condition, &mut if_context);
 
     // The if context as it stands after condition narrowing but before the body —
@@ -258,7 +265,6 @@ pub fn analyze(
         context.remove_var_name_from_conflicting_clauses(&var_name);
     }
 
-
     // Determine the if branch's control actions.
     let if_actions = scope_analyzer::get_control_actions(if_stmts, analysis_data, &[], true);
     let if_exits = !if_actions.contains(&ControlAction::None);
@@ -277,7 +283,6 @@ pub fn analyze(
     )
     .unwrap_or_default();
 
-
     // reasonable_clauses = the clauses true on the if path (parent ∧ condition).
     // Built from the formula so a continuing-if/leaving-else like
     // `if ($a || $b) {} else { return; }` carries `$a || $b` to the outer context.
@@ -289,7 +294,6 @@ pub fn analyze(
             .map(std::rc::Rc::new)
             .collect()
     };
-
 
     // ----- Build the IfScope (Psalm `IfElseAnalyzer` setup) -----
     let mut if_scope = IfScope {
@@ -364,30 +368,25 @@ pub fn analyze(
         let mut referenced = FxHashSet::default();
         get_truths_from_formula(if_clauses.iter().collect(), None, &mut referenced).0
     };
-    for (var_name, assertion_groups) in
-        if_scope.negated_types.iter().chain(if_side_truths.iter())
-    {
+    for (var_name, assertion_groups) in if_scope.negated_types.iter().chain(if_side_truths.iter()) {
         let is_static_property = var_name.contains("::$");
         // `$this->prop` accessing a *real declared* non-nullable property: an
         // undeclared/magic property (`$xml->child` on SimpleXMLElement) carries
         // no initialization guarantee, and inside the constructor the property
         // is still being initialized (Psalm keeps it possibly_undefined there).
-        let is_instance_property = var_name
-            .strip_prefix("$this->")
-            .is_some_and(|prop_path| {
-                !prop_path.contains("->")
-                    && !prop_path.contains("::")
-                    && !prop_path.contains('[')
-                    && analyzer.function_info.map(|info| info.name)
-                        != Some(pzoom_str::StrId::CONSTRUCT)
-                    && context.self_class.is_some_and(|self_class| {
-                        let prop_id = analyzer.interner.intern(prop_path);
-                        analyzer
-                            .codebase
-                            .get_class(self_class)
-                            .is_some_and(|class_info| class_info.properties.contains_key(&prop_id))
-                    })
-            });
+        let is_instance_property = var_name.strip_prefix("$this->").is_some_and(|prop_path| {
+            !prop_path.contains("->")
+                && !prop_path.contains("::")
+                && !prop_path.contains('[')
+                && analyzer.function_info.map(|info| info.name) != Some(pzoom_str::StrId::CONSTRUCT)
+                && context.self_class.is_some_and(|self_class| {
+                    let prop_id = analyzer.interner.intern(prop_path);
+                    analyzer
+                        .codebase
+                        .get_class(self_class)
+                        .is_some_and(|class_info| class_info.properties.contains_key(&prop_id))
+                })
+        });
         if (is_static_property || is_instance_property)
             && !var_name.contains('[')
             && assertion_groups
@@ -490,7 +489,6 @@ pub fn analyze(
             &if_cond_changed,
             true,
         );
-
     } else if !(if_actions.len() == 1 && if_actions.contains(&ControlAction::Break))
         && !assigned_in_conditional_var_ids.is_empty()
         && let Some(replay_context) = post_leaving_if_context.as_mut()
@@ -527,7 +525,9 @@ pub fn analyze(
                 .get(var_id)
                 .or_else(|| cond_if_body_context.locals.get(var_id))
             {
-                replay_context.locals.insert(var_id.clone(), post_type.clone());
+                replay_context
+                    .locals
+                    .insert(var_id.clone(), post_type.clone());
             }
             if let Some(final_type) = replay_context.locals.get(var_id) {
                 let mut final_type = final_type.clone();
@@ -548,7 +548,9 @@ pub fn analyze(
                         }
                     }
                 }
-                replay_context.locals.insert(var_id.clone(), final_type.clone());
+                replay_context
+                    .locals
+                    .insert(var_id.clone(), final_type.clone());
                 context.locals.insert(var_id.clone(), final_type);
                 context.vars_possibly_in_scope.insert(var_id.clone());
             }
@@ -666,7 +668,8 @@ pub fn analyze(
     let mut has_elseifs = false;
     for (elseif_cond, elseif_stmts) in if_stmt.body.else_if_clauses() {
         has_elseifs = true;
-        let elseif_actions = scope_analyzer::get_control_actions(elseif_stmts, analysis_data, &[], true);
+        let elseif_actions =
+            scope_analyzer::get_control_actions(elseif_stmts, analysis_data, &[], true);
         all_elseifs_leave = all_elseifs_leave && !elseif_actions.contains(&ControlAction::None);
         elseif_analyzer::analyze(
             analyzer,
@@ -702,16 +705,14 @@ pub fn analyze(
     // mixed-bearing type to a non-mixed one was effectively guarded, so the
     // MixedAssignment reported at the variable's first assignment is
     // retracted (`IssueBuffer::remove`).
-    if !if_actions.is_empty()
-        && !if_actions.contains(&ControlAction::None)
-        && !has_elseifs
-    {
+    if !if_actions.is_empty() && !if_actions.contains(&ControlAction::None) && !has_elseifs {
         for (var_id, reconciled_type) in &pre_assignment_else_redefined_vars {
             if post_if_locals
                 .get(var_id)
                 .is_some_and(|post_if_type| post_if_type.is_mixed())
                 && !reconciled_type.is_mixed()
-                && let Some(first_appearance) = analysis_data.first_var_appearances.get(var_id).copied()
+                && let Some(first_appearance) =
+                    analysis_data.first_var_appearances.get(var_id).copied()
             {
                 analysis_data.remove_issue(IssueKind::MixedAssignment, first_appearance);
             }
@@ -737,12 +738,20 @@ pub fn analyze(
         }
 
         let mut combined: Vec<Clause> = context.clauses.iter().map(|c| (**c).clone()).collect();
-        combined.extend(if_scope.negated_clauses.iter().filter(|clause| {
-            !clause.possibilities.keys().any(|key| match key {
-                pzoom_code_info::algebra::ClauseKey::Name(name) => stale_vars.contains(name),
-                pzoom_code_info::algebra::ClauseKey::Range(..) => false,
-            })
-        }).cloned());
+        combined.extend(
+            if_scope
+                .negated_clauses
+                .iter()
+                .filter(|clause| {
+                    !clause.possibilities.keys().any(|key| match key {
+                        pzoom_code_info::algebra::ClauseKey::Name(name) => {
+                            stale_vars.contains(name)
+                        }
+                        pzoom_code_info::algebra::ClauseKey::Range(..) => false,
+                    })
+                })
+                .cloned(),
+        );
         context.clauses = simplify_cnf(combined.iter().collect())
             .into_iter()
             .map(std::rc::Rc::new)
@@ -786,10 +795,9 @@ pub fn analyze(
                 crate::reconciler::EmissionMode::Silent,
                 None,
             );
-            promote_asserted_vars_to_assigned( &assertion_result.if_false, context);
+            promote_asserted_vars_to_assigned(&assertion_result.if_false, context);
         }
     }
-
 
     // ----- Apply the IfScope back into the outer context (Psalm tail) -----
     // Psalm: vars_possibly_in_scope = new_vars_possibly_in_scope + existing.
@@ -828,12 +836,9 @@ pub fn analyze(
 
     if let Some(redefined_vars) = if_scope.redefined_vars.clone() {
         for (var_id, var_type) in redefined_vars {
-            let structurally_changed = context
-                .locals
-                .get(&var_id)
-                .map_or(true, |existing| {
-                    !crate::context::unions_structurally_equal(&var_type, existing)
-                });
+            let structurally_changed = context.locals.get(&var_id).map_or(true, |existing| {
+                !crate::context::unions_structurally_equal(&var_type, existing)
+            });
             context.locals.insert(var_id.clone(), var_type);
             if_scope.updated_vars.insert(var_id.clone());
 
@@ -853,7 +858,6 @@ pub fn analyze(
             }
         }
     }
-
 
     if !if_scope.reasonable_clauses.is_empty()
         && (if_scope.reasonable_clauses.len() > 1 || !if_scope.reasonable_clauses[0].wedge)
@@ -900,11 +904,6 @@ pub fn analyze(
         }
     }
 
-
-
-
-
-
     // If no branch can fall through, control never reaches the code after the if.
     if !if_scope.final_actions.contains(&ControlAction::None) {
         context.has_returned = true;
@@ -919,7 +918,6 @@ pub fn analyze(
             .final_actions
             .extend(if_scope.final_actions.iter().copied());
     }
-
 
     Ok(())
 }
@@ -1009,24 +1007,23 @@ pub(crate) fn update_if_scope(
     // longer known after the if — Hakana records these on the IfScope and the
     // merge drops them from the outer context.
     removed_vars.retain(|var_id| post_condition_locals.contains_key(var_id));
-    if_scope.removed_var_ids.extend(removed_vars.iter().cloned());
+    if_scope
+        .removed_var_ids
+        .extend(removed_vars.iter().cloned());
 
     // The `||`/`&&` analyzers can re-emit a variable's type with fresh data-flow
     // nodes but the same structure; treating that as a redefinition would wrongly
     // invalidate clauses about the variable (e.g. drop `$a || $b` after an empty
     // `if ($a || $b)` body). Keep only genuine structural changes.
     redefined_vars.retain(|var_id, branch_type| {
-        outer_context
-            .locals
-            .get(var_id)
-            .map_or(true, |outer_type| {
-                // Parent-only differences stay (their dataflow must merge —
-                // a branch assignment with the same structural type still has
-                // its own assignment node); the structural rule below keeps
-                // clause invalidation honest.
-                !crate::context::unions_structurally_equal(branch_type, outer_type)
-                    || branch_type.parent_nodes != outer_type.parent_nodes
-            })
+        outer_context.locals.get(var_id).map_or(true, |outer_type| {
+            // Parent-only differences stay (their dataflow must merge —
+            // a branch assignment with the same structural type still has
+            // its own assignment node); the structural rule below keeps
+            // clause invalidation honest.
+            !crate::context::unions_structurally_equal(branch_type, outer_type)
+                || branch_type.parent_nodes != outer_type.parent_nodes
+        })
     });
 
     match &mut if_scope.new_vars {
@@ -1133,7 +1130,10 @@ pub(crate) fn promote_asserted_vars_to_assigned(
         } else {
             let with_dollar = VarName::from(format!("${var_name}"));
             if context.locals.contains_key(&with_dollar) {
-                *context.assigned_var_ids.entry(with_dollar.clone()).or_insert(0) += 1;
+                *context
+                    .assigned_var_ids
+                    .entry(with_dollar.clone())
+                    .or_insert(0) += 1;
                 context.possibly_assigned_var_ids.remove(&with_dollar);
             }
         }
@@ -1183,7 +1183,9 @@ pub(crate) fn condition_has_assignments(expr: &Expression<'_>) -> bool {
             condition_has_assignments(binary.lhs) || condition_has_assignments(binary.rhs)
         }
         Expression::UnaryPrefix(unary) => condition_has_assignments(unary.operand),
-        Expression::Parenthesized(parenthesized) => condition_has_assignments(parenthesized.expression),
+        Expression::Parenthesized(parenthesized) => {
+            condition_has_assignments(parenthesized.expression)
+        }
         _ => false,
     }
 }
@@ -1407,11 +1409,8 @@ fn apply_clauses_to_context_full(
         }
     }
     if !clause_removal_ids.is_empty() {
-        context.clauses = BlockContext::remove_reconciled_clause_refs(
-            &context.clauses,
-            &clause_removal_ids,
-        )
-        .0;
+        context.clauses =
+            BlockContext::remove_reconciled_clause_refs(&context.clauses, &clause_removal_ids).0;
     }
     if !clause_removal_ids.is_empty() && sweep_dependent_keys {
         // Psalm's IfAnalyzer/ElseIfAnalyzer/ElseAnalyzer follow the reconcile
@@ -1493,8 +1492,11 @@ fn emit_active_assertion_contradictions(
     // without reporting ("if the if has an || in the conditional, we cannot
     // easily reason about it").
     let omit_report_vars: FxHashSet<VarName> = {
-        let outer_clause_refs: Vec<&Clause> =
-            context.clauses.iter().map(|clause| clause.as_ref()).collect();
+        let outer_clause_refs: Vec<&Clause> = context
+            .clauses
+            .iter()
+            .map(|clause| clause.as_ref())
+            .collect();
         let mut outer_referenced = FxHashSet::default();
         let (outer_truths, _) = get_truths_from_formula(
             outer_clause_refs.iter().copied().collect(),
@@ -1624,7 +1626,6 @@ fn formula_contradicts_entry_clauses(
 
     false
 }
-
 
 /// Psalm `IfAnalyzer::addConditionallyAssignedVarsToContext`: replay the
 /// negated condition against the pre-condition context when the if body always

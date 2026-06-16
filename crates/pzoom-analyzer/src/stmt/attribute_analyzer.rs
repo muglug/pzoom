@@ -842,7 +842,6 @@ fn extract_single_literal_class_name(
     }
 }
 
-
 fn emit_invalid_attribute_issue(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,

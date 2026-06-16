@@ -7,8 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ClassLikeInfo, FunctionLikeInfo, TAtomic, TUnion,
-    class_type_alias::ClassTypeAlias,
+    ClassLikeInfo, FunctionLikeInfo, TAtomic, TUnion, class_type_alias::ClassTypeAlias,
     functionlike_info::AssertionType,
 };
 
@@ -95,8 +94,7 @@ pub struct ConstantInfo {
     /// Initializer parts unresolvable at scan time (`const X = Other::CONST;`)
     /// — the populator resolves them once every class is known.
     #[serde(default)]
-    pub unresolved_initializer:
-        Option<crate::class_constant_info::UnresolvedConstExpr>,
+    pub unresolved_initializer: Option<crate::class_constant_info::UnresolvedConstExpr>,
 }
 
 /// A `define()` call collected at scan time.
@@ -550,13 +548,12 @@ fn functionlike_info_quality(info: &FunctionLikeInfo) -> usize {
         }
     }
 
-    if info
-        .return_type
-        .as_ref()
-        .is_some_and(|return_type| return_type.types.iter().any(|atomic| {
-            matches!(atomic, crate::TAtomic::TConditional(_))
-        }))
-    {
+    if info.return_type.as_ref().is_some_and(|return_type| {
+        return_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, crate::TAtomic::TConditional(_)))
+    }) {
         score += 100;
     }
     if info.if_this_is_type.is_some() {
@@ -661,9 +658,10 @@ fn merge_functionlike_info(existing: &mut FunctionLikeInfo, incoming: FunctionLi
 
         if (existing_param.param_type.is_none()
             || (incoming_param_has_template && !existing_param_has_template))
-            && let Some(incoming_param_type) = incoming_param.param_type {
-                existing_param.param_type = Some(incoming_param_type);
-            }
+            && let Some(incoming_param_type) = incoming_param.param_type
+        {
+            existing_param.param_type = Some(incoming_param_type);
+        }
 
         if existing_param.param_out_type.is_none() && incoming_param.param_out_type.is_some() {
             existing_param.param_out_type = incoming_param.param_out_type;

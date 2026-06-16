@@ -73,7 +73,10 @@ pub(crate) fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
-    if let TAtomic::TLiteralClassString { name: container_name } = container_type_part {
+    if let TAtomic::TLiteralClassString {
+        name: container_name,
+    } = container_type_part
+    {
         if let TAtomic::TLiteralClassString { name: input_name } = input_type_part {
             return container_name == input_name;
         }
@@ -92,7 +95,9 @@ pub(crate) fn is_contained_by(
         let fake_container_object = TAtomic::TNamedObject {
             name: container_class_id,
             type_params: None,
-        is_static: false, remapped_params: false };
+            is_static: false,
+            remapped_params: false,
+        };
 
         return object_like_atomic_is_contained_by(
             codebase,
@@ -149,13 +154,15 @@ pub(crate) fn is_contained_by(
         return false;
     }
 
-    let Some(fake_container_object) = classlike_string_to_object_bound(codebase, container_type_part)
+    let Some(fake_container_object) =
+        classlike_string_to_object_bound(codebase, container_type_part)
     else {
         atomic_comparison_result.type_coerced = Some(true);
         return false;
     };
 
-    let Some(fake_input_object) = classlike_string_to_object_bound(codebase, input_type_part) else {
+    let Some(fake_input_object) = classlike_string_to_object_bound(codebase, input_type_part)
+    else {
         atomic_comparison_result.type_coerced = Some(true);
         return false;
     };
@@ -192,12 +199,16 @@ fn classlike_string_to_object_bound(codebase: &CodebaseInfo, atomic: &TAtomic) -
         TAtomic::TTemplateParamClass { as_type, .. } => {
             Some(template_class_string_bound_object(as_type))
         }
-        TAtomic::TLiteralClassString { name } => codebase.resolve_classlike_name(name).map(|class_id| {
-            TAtomic::TNamedObject {
-                name: class_id,
-                type_params: None,
-            is_static: false, remapped_params: false }
-        }),
+        TAtomic::TLiteralClassString { name } => {
+            codebase
+                .resolve_classlike_name(name)
+                .map(|class_id| TAtomic::TNamedObject {
+                    name: class_id,
+                    type_params: None,
+                    is_static: false,
+                    remapped_params: false,
+                })
+        }
         _ => None,
     }
 }
@@ -208,13 +219,9 @@ fn classlike_string_to_object_bound(codebase: &CodebaseInfo, atomic: &TAtomic) -
 /// reaches the object comparison.
 fn template_class_string_bound_object(as_type: &TAtomic) -> TAtomic {
     match as_type {
-        TAtomic::TTemplateParam {
-            as_type: bound, ..
-        } => bound
-            .get_single()
-            .cloned()
-            .unwrap_or(TAtomic::TObject),
+        TAtomic::TTemplateParam { as_type: bound, .. } => {
+            bound.get_single().cloned().unwrap_or(TAtomic::TObject)
+        }
         other => other.clone(),
     }
 }
-

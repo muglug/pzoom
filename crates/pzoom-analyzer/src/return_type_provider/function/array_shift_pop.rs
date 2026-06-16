@@ -63,8 +63,9 @@ fn infer_array_shift_pop_return(array_type: &TUnion, is_shift: bool) -> Option<T
                     },
                 }
             }
-            TAtomic::TNonEmptyList { value_type }
-            | TAtomic::TNonEmptyArray { value_type, .. } => ((**value_type).clone(), false),
+            TAtomic::TNonEmptyList { value_type } | TAtomic::TNonEmptyArray { value_type, .. } => {
+                ((**value_type).clone(), false)
+            }
             TAtomic::TList { value_type } | TAtomic::TArray { value_type, .. } => {
                 ((**value_type).clone(), true)
             }

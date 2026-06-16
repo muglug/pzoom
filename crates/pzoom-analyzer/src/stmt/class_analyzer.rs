@@ -5182,7 +5182,6 @@ pub(crate) fn check_deprecated_and_internal_relationships(
             ));
         }
     }
-
 }
 
 pub(crate) fn check_undefined_docblock_mixins(
@@ -6819,15 +6818,19 @@ pub(crate) fn analyze_method(
                 .contains_key(&method_name_id)
                 || mi.signature_return_type.is_none();
             let inherited_return_type = if inherits {
-                crate::methods::get_specialized_inherited_return_type(analyzer, current_class_info, method_name_id)
-                    .map(|documented| {
-                        crate::methods::reconcile_documented_return_type(
-                            analyzer,
-                            current_class_info,
-                            documented,
-                            mi.signature_return_type.as_ref(),
-                        )
-                    })
+                crate::methods::get_specialized_inherited_return_type(
+                    analyzer,
+                    current_class_info,
+                    method_name_id,
+                )
+                .map(|documented| {
+                    crate::methods::reconcile_documented_return_type(
+                        analyzer,
+                        current_class_info,
+                        documented,
+                        mi.signature_return_type.as_ref(),
+                    )
+                })
             } else {
                 None
             };
@@ -6867,8 +6870,9 @@ pub(crate) fn analyze_method(
     {
         let method_lc_id = analyzer.interner.intern(&method_name.to_lowercase());
         method_context.function_context.calling_class = Some(class_name_id);
-        method_context.function_context.calling_functionlike_id =
-            Some(crate::context::FunctionLikeId::Method(class_name_id, method_lc_id));
+        method_context.function_context.calling_functionlike_id = Some(
+            crate::context::FunctionLikeId::Method(class_name_id, method_lc_id),
+        );
         if let Some(method_info) = method_info {
             analysis_data
                 .record_signature_references(&method_context.function_context, method_info);
@@ -7130,12 +7134,9 @@ pub(crate) fn analyze_method(
     // accepts a stray `{}` body, Psalm treats them as bodyless and never
     // analyses it (so no return-statement check etc.). Only the signature
     // checks above apply — the body is skipped, as for any abstract method.
-    let is_interface_method = class_info.is_some_and(|ci| {
-        ci.kind == pzoom_code_info::class_like_info::ClassLikeKind::Interface
-    });
-    if !is_interface_method
-        && let MethodBody::Concrete(block) = &method.body
-    {
+    let is_interface_method = class_info
+        .is_some_and(|ci| ci.kind == pzoom_code_info::class_like_info::ClassLikeKind::Interface);
+    if !is_interface_method && let MethodBody::Concrete(block) = &method.body {
         let yield_types_start = analysis_data.inferred_yield_types.len();
         let return_types_start = analysis_data.inferred_return_types.len();
         let prev_is_generator = analysis_data.current_function_is_generator;
@@ -7836,7 +7837,8 @@ pub fn replace_extended_templates_in_union(
                     .and_then(|map| map.get(param_name))
                 {
                     changed = true;
-                    let bound = replace_extended_templates_in_union(bound, template_extended_params);
+                    let bound =
+                        replace_extended_templates_in_union(bound, template_extended_params);
                     let resolved = if is_key_of {
                         pzoom_code_info::ttype::get_key_of_union(&bound)
                     } else {

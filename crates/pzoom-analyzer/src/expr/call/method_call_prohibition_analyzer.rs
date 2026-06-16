@@ -8,7 +8,9 @@ use pzoom_code_info::{FunctionLikeInfo, Issue, IssueKind};
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
-use crate::internal_access::{can_access_internal, format_caller_context, format_internal_scope_phrase};
+use crate::internal_access::{
+    can_access_internal, format_caller_context, format_internal_scope_phrase,
+};
 use crate::statements_analyzer::StatementsAnalyzer;
 
 /// Report deprecation / `@internal` access for a resolved method call.

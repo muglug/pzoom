@@ -7,6 +7,7 @@ use pzoom_code_info::{
     IssueKind, PathKind, TAtomic, TUnion,
 };
 
+use super::callable_validation::*;
 use crate::context::BlockContext;
 use crate::data_flow::make_data_flow_node_position;
 use crate::expression_analyzer;
@@ -15,10 +16,8 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
 use mago_syntax::ast::ast::expression::Expression;
-use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_code_info::combine_union_types;
-use super::callable_validation::*;
-
+use pzoom_code_info::functionlike_info::ParamInfo;
 
 /// Analyze a single function/method argument.
 pub fn analyze(
@@ -78,8 +77,7 @@ pub fn analyze(
                     let (line, col) = analyzer.get_line_column(arg_pos.0);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::MixedArgument,
-                        "Unpacking requires a collection type, but mixed was provided"
-                            .to_string(),
+                        "Unpacking requires a collection type, but mixed was provided".to_string(),
                         analyzer.file_path,
                         arg_pos.0,
                         arg_pos.1,
@@ -191,9 +189,8 @@ pub fn verify_type(
                 analysis_data.data_flow_graph.kind,
                 pzoom_code_info::GraphKind::WholeProgram(_)
             )
-            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
-                direct,
-            )) = arg.value().unparenthesized()
+            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+                arg.value().unparenthesized()
         {
             let mut untainted_type = arg_type.clone();
             untainted_type.parent_nodes = vec![];
@@ -294,7 +291,6 @@ pub fn verify_type(
     let param_type = normalize_class_constant_param_type(analyzer, &param_type, callable_name);
     let param_type = expand_bare_generic_param_type(analyzer, &param_type);
 
-
     if argument_offset == 0
         && (callable_name.eq_ignore_ascii_case("is_a")
             || callable_name.eq_ignore_ascii_case("is_subclass_of"))
@@ -336,11 +332,13 @@ pub fn verify_type(
             // function is declared, not per-argument — Psalm accepts it
             // (noCrashTemplatedClosure). After standin replacement the
             // docblock side may also be an unresolved type variable.
-            let docblock_is_templated = docblock_type.types.iter().any(|atomic| {
-                matches!(atomic, TAtomic::TTypeVariable { .. })
-            }) || crate::type_comparator::generic_type_comparator::union_has_template(
-                docblock_type,
-            );
+            let docblock_is_templated = docblock_type
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TTypeVariable { .. }))
+                || crate::type_comparator::generic_type_comparator::union_has_template(
+                    docblock_type,
+                );
 
             if signature_has_callable != docblock_has_callable
                 && !suppress_callable_string_mismatch
@@ -616,9 +614,7 @@ pub fn verify_type(
 
     // Psalm: the input is a parent (less specific) type of the parameter.
     if comparison_result.type_coerced.unwrap_or(false) && !arg_has_mixed {
-        let kind = if comparison_result
-            .type_coerced_from_mixed
-            .unwrap_or(false)
+        let kind = if comparison_result.type_coerced_from_mixed.unwrap_or(false)
             && !comparison_result
                 .type_coerced_from_as_mixed
                 .unwrap_or(false)
@@ -753,12 +749,11 @@ pub fn verify_type(
                 stripped
             }
         };
-        let (identity_arg, identity_param) =
-            if param_type.is_nullable() && arg_type.is_nullable() {
-                (strip_null(arg_type), strip_null(&param_type))
-            } else {
-                (arg_type.clone(), param_type.clone())
-            };
+        let (identity_arg, identity_param) = if param_type.is_nullable() && arg_type.is_nullable() {
+            (strip_null(arg_type), strip_null(&param_type))
+        } else {
+            (arg_type.clone(), param_type.clone())
+        };
         let types_can_be_identical = union_type_comparator::can_be_contained_by(
             analyzer.codebase,
             &identity_arg,
@@ -768,8 +763,8 @@ pub fn verify_type(
         // pzoom proxy for Psalm's `!container_type_part->from_docblock`: a scalar
         // mismatch only escalates to `InvalidScalarArgument` for a native/signature
         // parameter type, not a docblock-only one.
-        let should_emit_scalar_mismatch =
-            param.signature_type.is_some() || (!param.has_docblock_type && param.param_type.is_some());
+        let should_emit_scalar_mismatch = param.signature_type.is_some()
+            || (!param.has_docblock_type && param.param_type.is_some());
 
         if comparison_result.scalar_type_match_found == Some(true) {
             if !is_echo_or_print {
@@ -886,12 +881,13 @@ pub fn verify_type(
         if arg_type.is_nullable()
             && !param.by_ref
             && analyzer.file_uses_strict_types
-            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
-                direct,
-            )) = arg.value().unparenthesized()
+            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+                arg.value().unparenthesized()
         {
             let mut narrowed = arg_type.clone();
-            narrowed.types.retain(|atomic| !matches!(atomic, TAtomic::TNull));
+            narrowed
+                .types
+                .retain(|atomic| !matches!(atomic, TAtomic::TNull));
             if !narrowed.types.is_empty() {
                 analysis_data
                     .pending_gatekeeper_coercions
@@ -911,11 +907,7 @@ pub fn verify_type(
         .iter()
         .any(|atomic| matches!(atomic, TAtomic::TScalar));
 
-    if !param_type.is_falsable()
-        && !param_has_bool
-        && !param_has_scalar
-        && !is_echo_or_print
-    {
+    if !param_type.is_falsable() && !param_has_bool && !param_has_scalar && !is_echo_or_print {
         let arg_is_false =
             arg_type.types.len() == 1 && matches!(arg_type.types.first(), Some(TAtomic::TFalse));
 
@@ -999,12 +991,12 @@ pub(crate) fn add_dataflow(
     // arguments entirely, but that loses sleep taints flowing through int
     // params - Psalm's TaintForIntSleep.) An empty taint set kills the path
     // in the BFS.
-    let arg_removed_taints =
-        if let GraphKind::WholeProgram(_) = &analysis_data.data_flow_graph.kind {
-            input_type.get_taints_to_remove()
-        } else {
-            vec![]
-        };
+    let arg_removed_taints = if let GraphKind::WholeProgram(_) = &analysis_data.data_flow_graph.kind
+    {
+        input_type.get_taints_to_remove()
+    } else {
+        vec![]
+    };
 
     let function_call_node_pos = make_data_flow_node_position(analyzer, call_pos);
 
@@ -1072,7 +1064,9 @@ pub(crate) fn add_dataflow(
                 None,
             );
 
-            analysis_data.data_flow_graph.add_node(declaring_node.clone());
+            analysis_data
+                .data_flow_graph
+                .add_node(declaring_node.clone());
             analysis_data.data_flow_graph.add_path(
                 &method_node.id,
                 &declaring_node.id,
@@ -1341,7 +1335,6 @@ pub fn verify_unpacked_argument(
     }
 }
 
-
 /// Psalm's `coerceValueAfterGatekeeperArgument` (the mixed branch): passing a
 /// mixed variable to a natively-typed parameter narrows the variable to the
 /// signature type afterwards — the call gatekeeps the value.
@@ -1352,7 +1345,10 @@ fn coerce_value_after_gatekeeper_argument(
     context: &BlockContext,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    if param.get_type().is_none_or(|param_type| param_type.is_mixed()) {
+    if param
+        .get_type()
+        .is_none_or(|param_type| param_type.is_mixed())
+    {
         return;
     }
 
@@ -1382,7 +1378,6 @@ fn coerce_value_after_gatekeeper_argument(
         .pending_gatekeeper_coercions
         .push((var_id, narrowed));
 }
-
 
 /// Mirror of Hakana `argument_analyzer::get_argument_taints` with the data
 /// from Psalm's `dictionaries/InternalTaintSinkMap.php`: builtin functions
@@ -1416,11 +1411,17 @@ pub(crate) fn get_builtin_argument_taints(
                 "header" => &[&[SinkType::Header]],
                 "igbinary_unserialize" | "unserialize" => &[&[SinkType::Unserialize]],
                 "ldap_search" => &[&[], &[SinkType::Ldap], &[SinkType::Ldap]],
-                "mysqli_query" | "mysqli_real_query" | "mysqli_multi_query" | "mysqli_prepare"
-                | "mysqli_stmt_prepare" | "pg_exec" | "pg_put_line" | "pg_query"
-                | "pg_query_params" | "pg_send_query" | "pg_send_query_params" => {
-                    &[&[], &[SinkType::Sql]]
-                }
+                "mysqli_query"
+                | "mysqli_real_query"
+                | "mysqli_multi_query"
+                | "mysqli_prepare"
+                | "mysqli_stmt_prepare"
+                | "pg_exec"
+                | "pg_put_line"
+                | "pg_query"
+                | "pg_query_params"
+                | "pg_send_query"
+                | "pg_send_query_params" => &[&[], &[SinkType::Sql]],
                 "pg_prepare" | "pg_send_prepare" => &[&[], &[], &[SinkType::Sql]],
                 "setcookie" => &[&[SinkType::Cookie], &[SinkType::Cookie]],
                 "curl_init" | "getimagesize" => &[&[SinkType::Ssrf]],
@@ -1456,10 +1457,7 @@ pub(crate) fn get_builtin_argument_taints(
 /// structurally and cannot defer a variable to bound reconciliation).
 fn resolve_nested_type_variables_in_callables(
     param_type: &TUnion,
-    type_variable_bounds: &rustc_hash::FxHashMap<
-        String,
-        pzoom_code_info::TypeVariableBounds,
-    >,
+    type_variable_bounds: &rustc_hash::FxHashMap<String, pzoom_code_info::TypeVariableBounds>,
 ) -> TUnion {
     let mut resolved = param_type.clone();
 
@@ -1486,10 +1484,8 @@ fn resolve_nested_type_variables_in_callables(
         }
 
         if let Some(return_type) = return_type {
-            **return_type = crate::template::resolve_type_variables_in_union(
-                return_type,
-                type_variable_bounds,
-            );
+            **return_type =
+                crate::template::resolve_type_variables_in_union(return_type, type_variable_bounds);
         }
     }
 

@@ -1,8 +1,8 @@
+use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
 use pzoom_code_info::{
     DataFlowGraph, DataFlowNode, DataFlowNodeId, DataFlowNodeKind, DataFlowNodePosition, GraphKind,
     PathKind, VarId, VariableSourceKind,
 };
-use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
 
 use crate::{function_analysis_data::Pos, statements_analyzer::StatementsAnalyzer};
 

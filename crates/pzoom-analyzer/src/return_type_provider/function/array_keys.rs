@@ -3,8 +3,8 @@
 use pzoom_code_info::{TAtomic, TUnion};
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
-use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::expr::call::function_call_analyzer as fca;
+use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 pub(super) struct ArrayKeysReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayKeysReturnTypeProvider {

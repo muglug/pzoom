@@ -15,10 +15,10 @@ use crate::type_comparator::union_type_comparator;
 // Import statement-specific analyzers
 use crate::stmt::class_analyzer::ClassLikeDeclaration;
 use crate::stmt::{
-    break_analyzer, class_analyzer, continue_analyzer, declare_analyzer, do_analyzer, echo_analyzer,
-    expression_stmt_analyzer, for_analyzer, foreach_analyzer, function_analyzer, global_analyzer,
-    if_else_analyzer, interface_analyzer, return_analyzer, static_analyzer, switch_analyzer,
-    trait_analyzer, try_analyzer, unset_analyzer, while_analyzer,
+    break_analyzer, class_analyzer, continue_analyzer, declare_analyzer, do_analyzer,
+    echo_analyzer, expression_stmt_analyzer, for_analyzer, foreach_analyzer, function_analyzer,
+    global_analyzer, if_else_analyzer, interface_analyzer, return_analyzer, static_analyzer,
+    switch_analyzer, trait_analyzer, try_analyzer, unset_analyzer, while_analyzer,
 };
 
 /// Returns true if any statement in `statements` contains a `yield`/`yield from`,
@@ -82,17 +82,15 @@ pub fn analyze_stmts(
                     if analyzer.config.report_unused {
                         let span = stmt.span();
                         let (line, col) = analyzer.get_line_column(span.start.offset);
-                        analysis_data.add_issue(
-                            pzoom_code_info::issue::Issue::new(
-                                pzoom_code_info::issue::IssueKind::UnevaluatedCode,
-                                "Expressions after return/throw/continue",
-                                analyzer.file_path,
-                                span.start.offset,
-                                span.end.offset,
-                                line,
-                                col,
-                            ),
-                        );
+                        analysis_data.add_issue(pzoom_code_info::issue::Issue::new(
+                            pzoom_code_info::issue::IssueKind::UnevaluatedCode,
+                            "Expressions after return/throw/continue",
+                            analyzer.file_path,
+                            span.start.offset,
+                            span.end.offset,
+                            line,
+                            col,
+                        ));
                     }
                     continue;
                 }
@@ -231,7 +229,9 @@ pub fn analyze_stmt(
             unset_analyzer::analyze(analyzer, unset_stmt, analysis_data, context)
         }
         Statement::HaltCompiler(_) => Ok(()),
-        Statement::EchoTag(tag) => echo_analyzer::analyze_tag(analyzer, tag, analysis_data, context),
+        Statement::EchoTag(tag) => {
+            echo_analyzer::analyze_tag(analyzer, tag, analysis_data, context)
+        }
         Statement::Noop(_) => Ok(()),
         // Non-exhaustive enum - catch future variants
         _ => Ok(()),
@@ -419,7 +419,8 @@ fn emit_check_type_annotations(
 
         for annotation in annotations {
             // Malformed assertions are handled by the file-level sweep.
-            let (Some(var_id), Some(check_type)) = (annotation.var_id, annotation.check_type.as_ref())
+            let (Some(var_id), Some(check_type)) =
+                (annotation.var_id, annotation.check_type.as_ref())
             else {
                 continue;
             };
@@ -478,7 +479,11 @@ fn emit_check_type_annotations(
             let check_var = format!(
                 "{}{}",
                 var_name,
-                if checked_type.possibly_undefined { "?" } else { "" }
+                if checked_type.possibly_undefined {
+                    "?"
+                } else {
+                    ""
+                }
             );
 
             analysis_data.add_issue(Issue::new(
@@ -537,7 +542,6 @@ fn analyze_namespace(
 
     Ok(())
 }
-
 
 /// Psalm's StatementsAnalyzer: a statement-level `@var` docblock assigns the
 /// commented types into the context ONCE, before the statement is analyzed —
@@ -604,9 +608,9 @@ fn apply_statement_var_annotations(
         Statement::Foreach(_) | Statement::Return(_) => return,
         Statement::Expression(expr_stmt) => {
             if let Expression::Assignment(assignment) = expr_stmt.expression {
-                if let Expression::Variable(
-                    mago_syntax::ast::ast::variable::Variable::Direct(direct),
-                ) = assignment.lhs.unparenthesized()
+                if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
+                    direct,
+                )) = assignment.lhs.unparenthesized()
                 {
                     excluded_assignment_target = Some(analyzer.interner.intern(direct.name));
                 }

@@ -53,8 +53,15 @@ pub fn get_true_assertions(
     analysis_data: &FunctionAnalysisData,
 ) -> BTreeMap<VarName, Vec<Vec<Assertion>>> {
     let cond_id = span_id(conditional);
-    let clauses =
-        get_formula(cond_id, cond_id, conditional, analyzer, analysis_data, false).unwrap_or_default();
+    let clauses = get_formula(
+        cond_id,
+        cond_id,
+        conditional,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     truths_for_clauses(clauses, Some(cond_id))
 }
 
@@ -66,8 +73,15 @@ pub fn get_false_assertions(
     analysis_data: &FunctionAnalysisData,
 ) -> BTreeMap<VarName, Vec<Vec<Assertion>>> {
     let cond_id = span_id(conditional);
-    let clauses =
-        get_formula(cond_id, cond_id, conditional, analyzer, analysis_data, false).unwrap_or_default();
+    let clauses = get_formula(
+        cond_id,
+        cond_id,
+        conditional,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     let negated = negate_formula(clauses).unwrap_or_default();
     truths_for_clauses(negated, None)
 }
@@ -134,8 +148,8 @@ pub fn get_formula(
 
     // Leaf (atomic) condition. pzoom's assertion scraper already produces clause
     // form for atomic conditions, so reuse it.
-    let leaf_clauses = assertion_finder::get_assertions(analyzer, conditional, analysis_data)
-        .if_true_clauses;
+    let leaf_clauses =
+        assertion_finder::get_assertions(analyzer, conditional, analysis_data).if_true_clauses;
 
     if !leaf_clauses.is_empty() {
         return Ok(leaf_clauses);
@@ -373,8 +387,7 @@ fn negated_and(
     // negate_formula over its positive CNF.
     let mut left_clauses =
         get_negated_formula(conditional_object_id, left, analyzer, analysis_data)?;
-    let right_clauses =
-        get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
+    let right_clauses = get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
     left_clauses.extend(right_clauses);
     Ok(left_clauses)
 }
@@ -389,9 +402,7 @@ fn negated_or(
 ) -> Result<Vec<Clause>, String> {
     // `!(a && b)` => `!a || !b`, with each side recursively De Morganed
     // (Psalm's VirtualBooleanOr of VirtualBooleanNots).
-    let left_clauses =
-        get_negated_formula(conditional_object_id, left, analyzer, analysis_data)?;
-    let right_clauses =
-        get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
+    let left_clauses = get_negated_formula(conditional_object_id, left, analyzer, analysis_data)?;
+    let right_clauses = get_negated_formula(conditional_object_id, right, analyzer, analysis_data)?;
     combine_ored_clauses(left_clauses, right_clauses, conditional_object_id)
 }

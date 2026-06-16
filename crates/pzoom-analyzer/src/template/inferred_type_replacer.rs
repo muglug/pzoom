@@ -182,12 +182,7 @@ fn replace_union(
             _ => {
                 push_unique(
                     &mut new_types,
-                    replace_atomic(
-                        codebase,
-                        atomic_type,
-                        template_result,
-                        resolving_templates,
-                    ),
+                    replace_atomic(codebase, atomic_type, template_result, resolving_templates),
                 );
             }
         }
@@ -426,12 +421,7 @@ fn replace_atomic(
             for (key, value) in properties.iter() {
                 new_properties.insert(
                     key.clone(),
-                    replace_union(
-                        codebase,
-                        value,
-                        template_result,
-                        resolving_templates,
-                    ),
+                    replace_union(codebase, value, template_result, resolving_templates),
                 );
             }
 
@@ -468,12 +458,7 @@ fn replace_atomic(
                 type_params
                     .iter()
                     .map(|type_param| {
-                        replace_union(
-                            codebase,
-                            type_param,
-                            template_result,
-                            resolving_templates,
-                        )
+                        replace_union(codebase, type_param, template_result, resolving_templates)
                     })
                     .collect()
             }),
@@ -484,12 +469,7 @@ fn replace_atomic(
             types: types
                 .iter()
                 .map(|nested_type| {
-                    replace_atomic(
-                        codebase,
-                        nested_type,
-                        template_result,
-                        resolving_templates,
-                    )
+                    replace_atomic(codebase, nested_type, template_result, resolving_templates)
                 })
                 .collect(),
         },
@@ -678,12 +658,11 @@ fn resolve_template_union(
     template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
-    let replacement = lower_bounds_get(template_result, template_name, defining_entity).or_else(
-        || {
+    let replacement =
+        lower_bounds_get(template_result, template_name, defining_entity).or_else(|| {
             template_types_get(template_result, template_name, defining_entity)
                 .map(|mapped_type| (**mapped_type).clone())
-        },
-    )?;
+        })?;
 
     // A self-referential replacement (`T -> T`) means the parameter is bound to
     // itself — typically a `$this`/`self` method call inside the defining class,
@@ -722,12 +701,11 @@ fn resolve_template_class_union(
     template_result: &TemplateResult,
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> Option<TUnion> {
-    let replacement = lower_bounds_get(template_result, template_name, defining_entity).or_else(
-        || {
+    let replacement =
+        lower_bounds_get(template_result, template_name, defining_entity).or_else(|| {
             template_types_get(template_result, template_name, defining_entity)
                 .map(|mapped_type| (**mapped_type).clone())
-        },
-    )?;
+        })?;
 
     if !resolving_templates.insert(template_name) {
         return Some(TUnion::new(TAtomic::TClassString {

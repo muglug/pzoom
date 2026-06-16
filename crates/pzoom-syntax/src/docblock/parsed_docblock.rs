@@ -91,7 +91,9 @@ impl TagList {
     /// The `(offset, content)` pairs, in document order. Mirrors the old
     /// `FxHashMap::iter` element type so callers are unaffected.
     pub fn iter(&self) -> impl Iterator<Item = (&usize, &String)> {
-        self.entries.iter().map(|(offset, content)| (offset, content))
+        self.entries
+            .iter()
+            .map(|(offset, content)| (offset, content))
     }
 }
 
@@ -168,9 +170,10 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
             last_tag_line = None;
             last_tag_can_continue = false;
         } else if let Some(last) = last_tag_line
-            && last_tag_can_continue {
-                merge_info.push((k, last));
-            }
+            && last_tag_can_continue
+        {
+            merge_info.push((k, last));
+        }
     }
 
     // Second pass: perform merges in source order so multiline tag content
@@ -200,13 +203,14 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
 
         // Detect first line padding
         if first_line_padding.is_none()
-            && let Some(asterisk_pos) = line.find('*') {
-                first_line_padding = Some(if asterisk_pos > 1 {
-                    line[..asterisk_pos - 1].to_string()
-                } else {
-                    String::new()
-                });
-            }
+            && let Some(asterisk_pos) = line.find('*')
+        {
+            first_line_padding = Some(if asterisk_pos > 1 {
+                line[..asterisk_pos - 1].to_string()
+            } else {
+                String::new()
+            });
+        }
 
         // Try to parse as a tag line
         if let Some((tag_type, data, data_offset)) = parse_tag_line(line) {
@@ -224,7 +228,10 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
             if let Some(list) = special.get_mut(tag_type) {
                 list.push(absolute_offset, data);
             } else {
-                special.insert(tag_type.to_string(), TagList::with_one(absolute_offset, data));
+                special.insert(
+                    tag_type.to_string(),
+                    TagList::with_one(absolute_offset, data),
+                );
             }
         } else {
             // Not a tag line - part of description
@@ -256,7 +263,8 @@ fn is_tag_line(line: &str) -> bool {
     let trimmed = trimmed.strip_prefix('*').unwrap_or(trimmed).trim_start();
     trimmed.starts_with('@')
         && trimmed
-            .chars().nth(1)
+            .chars()
+            .nth(1)
             .map(|c| c.is_alphanumeric())
             .unwrap_or(false)
 }
@@ -455,9 +463,13 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
     }
 
     if present & TEMPLATE != 0 {
-        let combined =
-            combine_tag_groups(&docblock.tags, &["template", "phpstan-template", "psalm-template"]);
-        docblock.combined_tags.insert("template".to_string(), combined);
+        let combined = combine_tag_groups(
+            &docblock.tags,
+            &["template", "phpstan-template", "psalm-template"],
+        );
+        docblock
+            .combined_tags
+            .insert("template".to_string(), combined);
     }
 
     if present & TEMPLATE_COVARIANT != 0 {
@@ -490,7 +502,9 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
                 "psalm-extends",
             ],
         );
-        docblock.combined_tags.insert("extends".to_string(), combined);
+        docblock
+            .combined_tags
+            .insert("extends".to_string(), combined);
     }
 
     if present & IMPLEMENTS != 0 {
@@ -524,7 +538,9 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
 
     if present & METHOD != 0 {
         let combined = combine_tag_groups(&docblock.tags, &["method", "psalm-method"]);
-        docblock.combined_tags.insert("method".to_string(), combined);
+        docblock
+            .combined_tags
+            .insert("method".to_string(), combined);
     }
 
     if present & PROPERTY != 0 {
@@ -532,7 +548,9 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
             &docblock.tags,
             &["property", "phpstan-property", "psalm-property"],
         );
-        docblock.combined_tags.insert("property".to_string(), combined);
+        docblock
+            .combined_tags
+            .insert("property".to_string(), combined);
     }
 
     if present & PROPERTY_READ != 0 {
@@ -572,7 +590,9 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
             .or_else(|| docblock.tags.get("return"))
             .cloned()
             .unwrap_or_default();
-        docblock.combined_tags.insert("return".to_string(), combined);
+        docblock
+            .combined_tags
+            .insert("return".to_string(), combined);
     }
 
     // Param tags. A single parameter may be documented by more than one tag
@@ -602,8 +622,7 @@ fn resolve_tags(docblock: &mut ParsedDocblock) {
 
     // Var tags (suppressed by an ignore-var tag).
     if present & VAR != 0 && present & IGNORE_VAR == 0 {
-        let combined =
-            combine_tag_groups(&docblock.tags, &["var", "phpstan-var", "psalm-var"]);
+        let combined = combine_tag_groups(&docblock.tags, &["var", "phpstan-var", "psalm-var"]);
         docblock.combined_tags.insert("var".to_string(), combined);
     }
 
@@ -710,4 +729,3 @@ impl ParsedDocblock {
             .map(|s| s.as_str())
     }
 }
-

@@ -14,8 +14,8 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
 use mago_syntax::ast::ast::variable::Variable;
-use pzoom_code_info::algebra::{Clause, combine_ored_clauses, negate_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, combine_ored_clauses, negate_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 
@@ -134,7 +134,9 @@ pub(crate) fn analyze(
             case_condition_context.inside_conditional = was_inside_conditional;
             case_context = case_condition_context;
             case_type = analysis_data
-                .expr_types.get(&case_expr_pos).cloned()
+                .expr_types
+                .get(&case_expr_pos)
+                .cloned()
                 .map(|t| (*t).clone());
             let mut effective_case_type = case_type.clone();
 
@@ -158,18 +160,18 @@ pub(crate) fn analyze(
                     analysis_data,
                 );
 
-                let assertions = assertion_finder::get_assertions(
-                    analyzer,
-                    expr_case.expression,
-                    analysis_data,
-                );
+                let assertions =
+                    assertion_finder::get_assertions(analyzer, expr_case.expression, analysis_data);
                 apply_assertion_map(
                     analyzer,
                     &assertions.if_true,
                     &mut case_context,
                     analysis_data,
                 );
-                merge_assertion_maps(&mut scope.accumulated_false_assertions, &assertions.if_false);
+                merge_assertion_maps(
+                    &mut scope.accumulated_false_assertions,
+                    &assertions.if_false,
+                );
             } else if let Some((origin_var_id, is_debug_type)) = gettype_origin {
                 let case_type = if is_debug_type {
                     // get_debug_type() labels: scalar spellings or class
@@ -203,12 +205,7 @@ pub(crate) fn analyze(
                     None
                 };
                 if let Some(asserted_type) = case_type {
-                    narrow_var_to_type(
-                        analyzer,
-                        &mut case_context,
-                        origin_var_id,
-                        &asserted_type,
-                    );
+                    narrow_var_to_type(analyzer, &mut case_context, origin_var_id, &asserted_type);
                 }
             } else if let Some(origin_var_id) = class_string_origin {
                 if let Some(case_class_id) = get_case_class_id(analyzer, expr_case.expression) {
@@ -431,7 +428,10 @@ fn apply_case_equality_clauses(
         rhs: case_cond,
     }));
 
-    let id = (case_cond.start_offset() as u32, case_cond.end_offset() as u32);
+    let id = (
+        case_cond.start_offset() as u32,
+        case_cond.end_offset() as u32,
+    );
 
     let this_case_clauses =
         formula_generator::get_formula(id, id, case_equality_expr, analyzer, analysis_data, false)
@@ -440,8 +440,7 @@ fn apply_case_equality_clauses(
     // OR-combine with any deferred fall-through cases (`case "a": case "b":`),
     // so the group's body is narrowed to `$x === "a" || $x === "b" || …`.
     let case_clauses = if let Some(leftover) = scope.leftover_case_equality_clauses.take() {
-        combine_ored_clauses(leftover, this_case_clauses.clone(), id)
-            .unwrap_or(this_case_clauses)
+        combine_ored_clauses(leftover, this_case_clauses.clone(), id).unwrap_or(this_case_clauses)
     } else {
         this_case_clauses
     };
@@ -449,8 +448,11 @@ fn apply_case_equality_clauses(
     // entry_clauses = original-context clauses ∧ negations of all earlier cases.
     let entry_clauses: Vec<Rc<Clause>> =
         if !scope.negated_clauses.is_empty() && scope.negated_clauses.len() < 50 {
-            let mut refs: Vec<&Clause> =
-                original_context.clauses.iter().map(|c| c.as_ref()).collect();
+            let mut refs: Vec<&Clause> = original_context
+                .clauses
+                .iter()
+                .map(|c| c.as_ref())
+                .collect();
             refs.extend(scope.negated_clauses.iter());
             simplify_cnf(refs).into_iter().map(Rc::new).collect()
         } else {
@@ -660,7 +662,9 @@ fn narrow_var_to_type(
         .unwrap_or_else(|| TUnion::new(asserted_atomic.clone()));
         context.locals.insert(var_id.clone(), narrowed);
     } else {
-        context.locals.insert(var_id.clone(), TUnion::new(asserted_atomic));
+        context
+            .locals
+            .insert(var_id.clone(), TUnion::new(asserted_atomic));
     }
 }
 
@@ -727,10 +731,7 @@ fn get_case_string_literal(expr: &Expression<'_>) -> Option<String> {
 }
 
 /// get_debug_type() label resolution: PHP type spellings, or a class name.
-fn get_debug_type_case_type(
-    analyzer: &StatementsAnalyzer<'_>,
-    case_label: &str,
-) -> Option<TUnion> {
+fn get_debug_type_case_type(analyzer: &StatementsAnalyzer<'_>, case_label: &str) -> Option<TUnion> {
     match case_label {
         "string" => Some(TUnion::new(TAtomic::TString)),
         "int" => Some(TUnion::new(TAtomic::TInt)),
@@ -786,9 +787,7 @@ fn union_is_class_string(union: &TUnion) -> bool {
         })
 }
 
-pub(crate) fn get_switch_class_string_origin(
-    expr: &Expression<'_>,
-) -> Option<VarName> {
+pub(crate) fn get_switch_class_string_origin(expr: &Expression<'_>) -> Option<VarName> {
     match expr.unparenthesized() {
         Expression::Call(Call::Function(function_call)) => {
             let Expression::Identifier(function_name) = function_call.function.unparenthesized()
@@ -827,9 +826,7 @@ pub(crate) fn switch_dependent_type_var(switch_expr_type: &TUnion) -> Option<Var
     }
 }
 
-pub(crate) fn get_switch_gettype_origin(
-    expr: &Expression<'_>,
-) -> Option<(VarName, bool)> {
+pub(crate) fn get_switch_gettype_origin(expr: &Expression<'_>) -> Option<(VarName, bool)> {
     let Expression::Call(Call::Function(function_call)) = expr.unparenthesized() else {
         return None;
     };

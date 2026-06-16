@@ -44,7 +44,8 @@ fn infer_array_reduce_return_type(
     let callback_type = analysis_data.expr_types.get(&arg_positions[1]).cloned()?;
 
     // The value type of the input array (the second closure parameter must accept it).
-    let array_value_type = fca::extract_array_like_info_from_union(&array_type).map(|info| info.value_type);
+    let array_value_type =
+        fca::extract_array_like_info_from_union(&array_type).map(|info| info.value_type);
 
     // The initial/carry type: the third argument, or `null` when omitted.
     let initial_type = match arg_positions.get(2) {
@@ -108,8 +109,8 @@ fn infer_array_reduce_return_type(
         // running reduced value.
         if let Some(carry_type) = params.first().map(|p| &p.param_type) {
             let initial_fits = is_contained_by(analyzer, &initial_type, carry_type);
-            let reduce_fits =
-                reduce_return_type.is_mixed() || is_contained_by(analyzer, &reduce_return_type, carry_type);
+            let reduce_fits = reduce_return_type.is_mixed()
+                || is_contained_by(analyzer, &reduce_return_type, carry_type);
             if !initial_fits || !reduce_fits {
                 emit_invalid_argument(
                     analyzer,

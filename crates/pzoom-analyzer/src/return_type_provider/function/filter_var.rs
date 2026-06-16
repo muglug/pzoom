@@ -53,7 +53,9 @@ impl FunctionReturnTypeProvider for FilterVarReturnTypeProvider {
 
         let filter_id = match filter_pos {
             Some(pos) => match analysis_data
-                .expr_types.get(&pos).cloned()
+                .expr_types
+                .get(&pos)
+                .cloned()
                 .as_deref()
                 .and_then(TUnion::get_single)
             {

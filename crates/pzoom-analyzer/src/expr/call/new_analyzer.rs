@@ -51,7 +51,9 @@ pub fn analyze(
             line,
             col,
         ));
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     }
 
@@ -66,7 +68,11 @@ pub fn analyze(
         context.inside_general_use = was_inside_general_use;
         pos
     };
-    let mut class_expr_type = analysis_data.expr_types.get(&class_pos).cloned().map(|t| (*t).clone());
+    let mut class_expr_type = analysis_data
+        .expr_types
+        .get(&class_pos)
+        .cloned()
+        .map(|t| (*t).clone());
 
     // Try to get the resolved class ID
     let requested_class_id = get_resolved_class_id(analyzer, instantiation.class).map(|class_id| {
@@ -173,7 +179,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
                 return;
             }
 
@@ -191,7 +199,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
                 return;
             }
         }
@@ -938,7 +948,9 @@ pub fn analyze(
     }
 
     // Fall back to generic object
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::new(TAtomic::TObject)));
 }
 
 /// Port of Hakana `new_analyzer::add_dataflow`. Function-body branch: the
@@ -1065,7 +1077,13 @@ fn get_resolved_class_id(
                 // Names inside subtrees the resolver does not visit (e.g.
                 // partial applications) fall back to the literal text, with
                 // any fully-qualified leading backslash stripped.
-                .or_else(|| Some(analyzer.interner.intern(id.value().trim_start_matches('\\'))))
+                .or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .intern(id.value().trim_start_matches('\\')),
+                    )
+                })
         }
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
         Expression::Parent(_) => analyzer.get_declaring_class().and_then(|class_id| {
@@ -1114,11 +1132,12 @@ fn infer_concrete_class_id_from_class_expr_type(
         },
         // `new (get_class($x))` — the dependent class-string carries the
         // object's class as its `as_type` (Psalm's TDependentGetClass).
-        TAtomic::TTemplateParam { as_type, .. }
-        | TAtomic::TDependentGetClass { as_type, .. } => match as_type.get_single() {
-            Some(TAtomic::TNamedObject { name, .. }) if *name != StrId::STATIC => Some(*name),
-            _ => None,
-        },
+        TAtomic::TTemplateParam { as_type, .. } | TAtomic::TDependentGetClass { as_type, .. } => {
+            match as_type.get_single() {
+                Some(TAtomic::TNamedObject { name, .. }) if *name != StrId::STATIC => Some(*name),
+                _ => None,
+            }
+        }
         _ => None,
     }?;
 
@@ -2035,9 +2054,10 @@ fn find_inherited_constructor(
 fn is_dynamic_instantiable_union(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> bool {
     // An internal function's falsable return (get_parent_class) keeps its
     // false-leniency here (Psalm's ignore_internal_falsable_issues).
-    let mut atomics = union.types.iter().filter(|atomic| {
-        !(union.ignore_falsable_issues && matches!(atomic, TAtomic::TFalse))
-    });
+    let mut atomics = union
+        .types
+        .iter()
+        .filter(|atomic| !(union.ignore_falsable_issues && matches!(atomic, TAtomic::TFalse)));
     let mut any = false;
     for atomic in &mut atomics {
         if !is_dynamic_instantiable_atomic(analyzer, atomic) {
@@ -2175,4 +2195,3 @@ fn union_has_unresolved_class_string_target(union: &TUnion) -> bool {
         _ => false,
     })
 }
-

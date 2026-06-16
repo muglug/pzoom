@@ -14,11 +14,12 @@
 //! [`collect`] is wired into the method-call template context the same way
 //! Hakana wires it from the existing-method-call analyzer.
 
-
-use pzoom_code_info::class_like_info::{ClassLikeInfo, TemplateType};
-use pzoom_code_info::{CodebaseInfo, GenericParent, TAtomic, TUnion, TemplateBound, TemplateResult};
-use pzoom_str::StrId;
 use indexmap::IndexMap;
+use pzoom_code_info::class_like_info::{ClassLikeInfo, TemplateType};
+use pzoom_code_info::{
+    CodebaseInfo, GenericParent, TAtomic, TUnion, TemplateBound, TemplateResult,
+};
+use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 
 /// The shape of `TemplateResult::lower_bounds` (Hakana's `collect` returns the
@@ -32,7 +33,12 @@ fn bounds_insert(bounds: &mut LowerBounds, name: StrId, entity: GenericParent, u
         .insert(entity, vec![TemplateBound::new(union, 0, None, None)]);
 }
 
-fn bounds_insert_combined(bounds: &mut LowerBounds, name: StrId, entity: GenericParent, union: TUnion) {
+fn bounds_insert_combined(
+    bounds: &mut LowerBounds,
+    name: StrId,
+    entity: GenericParent,
+    union: TUnion,
+) {
     bounds
         .entry(name)
         .or_default()
@@ -177,8 +183,10 @@ fn resolve_template_param(
                 .position(|template_type| template_type.name == *param_name)
             {
                 if let Some(type_param) = type_params.get(mapped_offset) {
-                    output_type_extends =
-                        Some(add_optional_union_type(type_param, output_type_extends.as_ref()));
+                    output_type_extends = Some(add_optional_union_type(
+                        type_param,
+                        output_type_extends.as_ref(),
+                    ));
                 }
             } else if let Some(nested_input_type_extends) = static_class_storage
                 .template_extended_params

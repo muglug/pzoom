@@ -163,7 +163,9 @@ fn handle_fetch(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option<TUnion>
 fn pdo_fetch_class_name(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option<StrId> {
     let arg_type = event
         .analysis_data
-        .expr_types.get(&*event.arg_positions.get(1)?).cloned()?;
+        .expr_types
+        .get(&*event.arg_positions.get(1)?)
+        .cloned()?;
     match arg_type.get_single() {
         Some(TAtomic::TClassString {
             as_type: Some(as_type),

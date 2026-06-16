@@ -7,8 +7,8 @@ use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 
-use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -213,7 +213,9 @@ fn handle_dependent_type_function(
                 as_type: Some(Box::new(TAtomic::TNamedObject {
                     name: self_class_id,
                     type_params: None,
-                is_static: false, remapped_params: false })),
+                    is_static: false,
+                    remapped_params: false,
+                })),
             }));
         }
 
@@ -459,7 +461,9 @@ fn infer_get_class_return_type(arg_type: &TUnion) -> TUnion {
                 as_type: Some(Box::new(TAtomic::TNamedObject {
                     name: *name,
                     type_params: None,
-                is_static: false, remapped_params: false })),
+                    is_static: false,
+                    remapped_params: false,
+                })),
             }),
             Some(
                 template @ TAtomic::TTemplateParam { .. }
@@ -535,7 +539,9 @@ fn infer_get_parent_class_return_type(
             as_type: Some(Box::new(TAtomic::TNamedObject {
                 name: parent_class_id,
                 type_params: None,
-            is_static: false, remapped_params: false })),
+                is_static: false,
+                remapped_params: false,
+            })),
         });
     }
 
@@ -736,18 +742,19 @@ fn class_has_method_case_insensitive(
             .cased_method_for(analyzer.interner, method_id)
             .is_some()
         || class_info.pseudo_methods.keys().any(|method_id| {
-        analyzer
-            .interner
-            .lookup(*method_id)
-            .as_ref()
-            .eq_ignore_ascii_case(method_name)
-    }) || class_info.pseudo_static_methods.keys().any(|method_id| {
-        analyzer
-            .interner
-            .lookup(*method_id)
-            .as_ref()
-            .eq_ignore_ascii_case(method_name)
-    })
+            analyzer
+                .interner
+                .lookup(*method_id)
+                .as_ref()
+                .eq_ignore_ascii_case(method_name)
+        })
+        || class_info.pseudo_static_methods.keys().any(|method_id| {
+            analyzer
+                .interner
+                .lookup(*method_id)
+                .as_ref()
+                .eq_ignore_ascii_case(method_name)
+        })
 }
 
 fn extract_literal_string_arg(expr: &Expression<'_>) -> Option<String> {

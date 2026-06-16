@@ -6,9 +6,7 @@ use mago_syntax::ast::ast::argument::Argument;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind};
-use pzoom_code_info::{
-    Issue, IssueKind, TAtomic, TUnion, combine_union_types,
-};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -18,13 +16,10 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::object_type_comparator;
 
 use super::argument_analyzer;
-use super::{
-    arguments_analyzer, function_call_analyzer,
-};
+use super::{arguments_analyzer, function_call_analyzer};
 
 use super::static_call_analyzer::*;
 use pzoom_code_info::TemplateResult;
-
 
 pub(crate) fn can_call_non_static_via_class_scope(
     analyzer: &StatementsAnalyzer<'_>,
@@ -89,15 +84,12 @@ pub(crate) fn resolve_named_object_static_method(
         || class_has_magic_callstatic(class_info)
         || class_has_magic_call(class_info)
     {
-        if let Some(method_info) =
-            get_pseudo_static_method_info(analyzer, class_info, method_name)
+        if let Some(method_info) = get_pseudo_static_method_info(analyzer, class_info, method_name)
         {
             return Some((class_info.name, None, method_info.clone(), false));
         }
 
-        if let Some(method_info) =
-            get_pseudo_method_info(analyzer, class_info, method_name)
-        {
+        if let Some(method_info) = get_pseudo_method_info(analyzer, class_info, method_name) {
             return Some((class_info.name, None, method_info.clone(), false));
         }
     }
@@ -143,7 +135,8 @@ fn resolve_named_mixin_static_method(
             let TAtomic::TNamedObject {
                 name: mixin_class_id,
                 type_params: mixin_type_params,
-            .. } = localized_atomic
+                ..
+            } = localized_atomic
             else {
                 continue;
             };
@@ -152,17 +145,13 @@ fn resolve_named_mixin_static_method(
                 continue;
             };
 
-            if let Some(method_info) =
-                get_method_info(analyzer, mixin_class_info, method_name)
-            {
+            if let Some(method_info) = get_method_info(analyzer, mixin_class_info, method_name) {
                 return Some((mixin_class_id, mixin_type_params, method_info.clone()));
             }
 
-            if let Some(method_info) = get_pseudo_static_method_info(
-                analyzer,
-                mixin_class_info,
-                method_name,
-            ) {
+            if let Some(method_info) =
+                get_pseudo_static_method_info(analyzer, mixin_class_info, method_name)
+            {
                 return Some((mixin_class_id, mixin_type_params, method_info.clone()));
             }
 
@@ -195,9 +184,7 @@ pub(crate) fn resolve_descendant_static_method(
         let Some(descendant_info) = analyzer.codebase.get_class(*descendant_id) else {
             continue;
         };
-        let Some(method_info) =
-            get_method_info(analyzer, descendant_info, method_name)
-        else {
+        let Some(method_info) = get_method_info(analyzer, descendant_info, method_name) else {
             continue;
         };
         if !method_info.is_static {
@@ -306,7 +293,6 @@ pub(crate) fn get_method_info<'a>(
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-
     class_info.methods.get(&method_id).map(|method| &**method)
 }
 
@@ -317,7 +303,6 @@ pub(crate) fn get_pseudo_method_info<'a>(
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-
     class_info.pseudo_methods.get(&method_id)
 }
 
@@ -327,7 +312,6 @@ fn get_pseudo_static_method_info<'a>(
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
-
 
     class_info.pseudo_static_methods.get(&method_id)
 }
@@ -510,12 +494,18 @@ pub(crate) fn get_inherited_method_return_type(
         for (template_name, entries) in
             function_call_analyzer::get_class_template_defaults(candidate_class_info).template_types
         {
-            candidate_result.template_types.entry(template_name).or_insert(entries);
+            candidate_result
+                .template_types
+                .entry(template_name)
+                .or_insert(entries);
         }
         for (template_name, entries) in
             function_call_analyzer::get_template_defaults(candidate_method_info).template_types
         {
-            candidate_result.template_types.entry(template_name).or_insert(entries);
+            candidate_result
+                .template_types
+                .entry(template_name)
+                .or_insert(entries);
         }
 
         if let Some(candidate_template_map) =
@@ -665,7 +655,9 @@ pub(crate) fn verify_method_arguments(
                         )
                     };
 
-                effective_param.param_type = Some(localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+                effective_param.param_type = Some(localize_special_class_type_union(
+                    analyzer.codebase,
+                    analyzer.interner,
                     &replaced_param_type,
                     self_class_id,
                     static_class_id,

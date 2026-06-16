@@ -6,9 +6,9 @@
 //! do via the issue buffer).
 
 mod array_filter;
-mod min_max;
 mod array_multisort;
 mod array_u_array;
+mod min_max;
 
 use mago_syntax::ast::ast::argument::Argument;
 use pzoom_code_info::functionlike_info::ParamInfo;

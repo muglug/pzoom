@@ -214,11 +214,7 @@ pub fn tokenize(string_type: &str) -> Result<Vec<TypeToken>, String> {
 
             was_char = false;
 
-            if ch == '\\'
-                && !escaped
-                && i < c - 1
-                && (chars[i + 1] == qc || chars[i + 1] == '\\')
-            {
+            if ch == '\\' && !escaped && i < c - 1 && (chars[i + 1] == qc || chars[i + 1] == '\\') {
                 escaped = true;
                 i += 1;
                 continue;
@@ -300,10 +296,7 @@ pub fn tokenize(string_type: &str) -> Result<Vec<TypeToken>, String> {
 
         // Dot: float fragment or '...'
         if ch == '.' {
-            if i + 1 < c
-                && chars[i + 1].is_ascii_digit()
-                && i > 0
-                && chars[i - 1].is_ascii_digit()
+            if i + 1 < c && chars[i + 1].is_ascii_digit() && i > 0 && chars[i - 1].is_ascii_digit()
             {
                 type_tokens.last_mut().unwrap().value.push(ch);
                 was_char = false;
@@ -410,7 +403,10 @@ mod tests {
 
     #[test]
     fn class_constant() {
-        assert_eq!(values("MyClass::CONSTANT"), vec!["MyClass", "::", "CONSTANT"]);
+        assert_eq!(
+            values("MyClass::CONSTANT"),
+            vec!["MyClass", "::", "CONSTANT"]
+        );
     }
 
     #[test]
@@ -436,10 +432,7 @@ mod tests {
 
     #[test]
     fn template_as_keyword() {
-        assert_eq!(
-            values("T as Foo"),
-            vec!["T", "as", "Foo"]
-        );
+        assert_eq!(values("T as Foo"), vec!["T", "as", "Foo"]);
     }
 
     #[test]

@@ -33,10 +33,7 @@ impl<'a> FileAnalyzer<'a> {
     }
 
     /// Analyze a single file and return its (non line-suppressed) issues.
-    pub fn analyze(
-        &self,
-        file_path: StrId,
-    ) -> (Vec<Issue>, FileReferenceData) {
+    pub fn analyze(&self, file_path: StrId) -> (Vec<Issue>, FileReferenceData) {
         let Some(file_info) = self.codebase.files.get(&file_path) else {
             return (Vec::new(), FileReferenceData::default());
         };
@@ -392,9 +389,7 @@ impl<'a> FileAnalyzer<'a> {
                 // off, so a `@psalm-suppress` of one is not "unused" — Psalm's
                 // findUnusedPsalmSuppress pass does not flag it. Skip the
                 // candidate to match.
-                if !self.config.report_unused
-                    && issue_gated_on_report_unused(&candidate.name)
-                {
+                if !self.config.report_unused && issue_gated_on_report_unused(&candidate.name) {
                     continue;
                 }
                 // Unused-definition issues are emitted by the codebase-wide pass
@@ -498,17 +493,16 @@ fn report_complex_functions(
     // (span_start, span_end, report): report = Some((is_method, name_offset))
     // for a method/top-level function; None for closures/arrows (they bound
     // attribution but never report).
-    let func_spans: Vec<(u32, u32, Option<(bool, u32)>)> =
-        N::Program(program).filter_map(|node| {
-            let report = match node {
-                N::Method(m) => Some((true, m.name.span().start.offset)),
-                N::Function(f) => Some((false, f.name.span().start.offset)),
-                N::Closure(_) | N::ArrowFunction(_) => None,
-                _ => return None,
-            };
-            let s = node.span();
-            Some((s.start.offset, s.end.offset, report))
-        });
+    let func_spans: Vec<(u32, u32, Option<(bool, u32)>)> = N::Program(program).filter_map(|node| {
+        let report = match node {
+            N::Method(m) => Some((true, m.name.span().start.offset)),
+            N::Function(f) => Some((false, f.name.span().start.offset)),
+            N::Closure(_) | N::ArrowFunction(_) => None,
+            _ => return None,
+        };
+        let s = node.span();
+        Some((s.start.offset, s.end.offset, report))
+    });
     if func_spans.is_empty() {
         return;
     }
@@ -533,11 +527,15 @@ fn report_complex_functions(
                 .and_then(|n| n.get_pos())
         };
         let mut owner_len: rustc_hash::FxHashMap<usize, u64> = rustc_hash::FxHashMap::default();
-        let mut owner_dest: rustc_hash::FxHashMap<usize, rustc_hash::FxHashMap<&DataFlowNodeId, usize>> =
-            rustc_hash::FxHashMap::default();
+        let mut owner_dest: rustc_hash::FxHashMap<
+            usize,
+            rustc_hash::FxHashMap<&DataFlowNodeId, usize>,
+        > = rustc_hash::FxHashMap::default();
         for (from, dests) in &g.forward_edges {
             let Some(fp) = node_pos(from) else { continue };
-            let Some(of) = innermost(fp.start_offset) else { continue };
+            let Some(of) = innermost(fp.start_offset) else {
+                continue;
+            };
             for (to, _) in dests {
                 let Some(tp) = node_pos(to) else { continue };
                 if tp.file_path != fp.file_path || innermost(tp.start_offset) != Some(of) {
@@ -562,7 +560,9 @@ fn report_complex_functions(
             }
             let mean = owner_len[owner] as f64 / count as f64;
             let branch_ratio = count as f64 / dests.len().max(1) as f64;
-            if count > MAX_GRAPH_SIZE && mean > MAX_AVG_PATH_LENGTH && branch_ratio > MIN_BRANCH_RATIO
+            if count > MAX_GRAPH_SIZE
+                && mean > MAX_AVG_PATH_LENGTH
+                && branch_ratio > MIN_BRANCH_RATIO
             {
                 emits.push((is_method, name_offset, count, mean.round() as i64));
             }
@@ -1316,8 +1316,7 @@ pub(crate) fn report_unused_declarations(
                 {
                     continue;
                 }
-                let method_referenced = referenced_class_members
-                    .contains(&(*class_id, method_lc))
+                let method_referenced = referenced_class_members.contains(&(*class_id, method_lc))
                     || method_info.declaring_class.is_some_and(|declaring| {
                         referenced_class_members.contains(&(declaring, method_lc))
                     });
@@ -1424,10 +1423,8 @@ pub(crate) fn report_unused_declarations(
                 {
                     continue;
                 }
-                let prop_referenced = referenced_properties
-                    .contains(&(*class_id, *prop_name_id))
-                    || referenced_properties
-                        .contains(&(prop_info.declaring_class, *prop_name_id));
+                let prop_referenced = referenced_properties.contains(&(*class_id, *prop_name_id))
+                    || referenced_properties.contains(&(prop_info.declaring_class, *prop_name_id));
                 if prop_referenced {
                     continue;
                 }

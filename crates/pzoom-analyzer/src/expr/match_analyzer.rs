@@ -26,7 +26,11 @@ pub fn analyze(
 
     let subject_pos =
         expression_analyzer::analyze(analyzer, match_expr.expression, analysis_data, context);
-    let subject_type = analysis_data.expr_types.get(&subject_pos).cloned().map(|t| (*t).clone());
+    let subject_type = analysis_data
+        .expr_types
+        .get(&subject_pos)
+        .cloned()
+        .map(|t| (*t).clone());
 
     let mut result_types = Vec::new();
     let mut matched_conditions = Vec::new();
@@ -116,7 +120,8 @@ pub fn analyze(
                         .unwrap_or(this_clauses),
                     });
                 }
-                if let Some(condition_type) = analysis_data.expr_types.get(&condition_pos).cloned() {
+                if let Some(condition_type) = analysis_data.expr_types.get(&condition_pos).cloned()
+                {
                     for literal in extract_matchable_literals(&condition_type) {
                         let already_seen = seen_conditions
                             .iter()
@@ -319,7 +324,10 @@ fn extract_matchable_literals(t_union: &TUnion) -> Vec<TAtomic> {
         .collect()
 }
 
-fn collect_match_subject_values(analyzer: &StatementsAnalyzer<'_>, subject_type: &TUnion) -> Vec<TAtomic> {
+fn collect_match_subject_values(
+    analyzer: &StatementsAnalyzer<'_>,
+    subject_type: &TUnion,
+) -> Vec<TAtomic> {
     let mut values = Vec::new();
 
     for atomic in &subject_type.types {
@@ -393,7 +401,6 @@ fn match_literals_equal(subject: &TAtomic, condition: &TAtomic) -> bool {
     }
 }
 
-
 /// The CNF clauses a match arm condition contributes: the condition itself
 /// for `match (true)`, otherwise the synthetic `subject === condition`
 /// equality (Psalm's MatchAnalyzer builds `VirtualIdentical` ternaries; the
@@ -422,8 +429,8 @@ fn build_match_condition_clauses(
         return Vec::new();
     };
 
-    let equality_expr: &mago_syntax::ast::ast::expression::Expression = arena.alloc(
-        mago_syntax::ast::ast::expression::Expression::Binary(
+    let equality_expr: &mago_syntax::ast::ast::expression::Expression =
+        arena.alloc(mago_syntax::ast::ast::expression::Expression::Binary(
             mago_syntax::ast::ast::binary::Binary {
                 lhs: subject,
                 operator: mago_syntax::ast::ast::binary::BinaryOperator::Identical(
@@ -431,8 +438,7 @@ fn build_match_condition_clauses(
                 ),
                 rhs: condition,
             },
-        ),
-    );
+        ));
 
     crate::formula_generator::get_formula(
         cond_id,
@@ -463,11 +469,8 @@ fn narrow_match_arm_body(
 
     if !arm_clauses.is_empty() {
         let mut referenced = rustc_hash::FxHashSet::default();
-        let (truths, active_truths) = get_truths_from_formula(
-            arm_clauses.iter().collect(),
-            Some(cond_id),
-            &mut referenced,
-        );
+        let (truths, active_truths) =
+            get_truths_from_formula(arm_clauses.iter().collect(), Some(cond_id), &mut referenced);
         if !truths.is_empty() {
             let inside_loop = base.inside_loop;
             crate::reconciler::reconcile_keyed_types(
@@ -487,9 +490,7 @@ fn narrow_match_arm_body(
     let mut narrowed_vars = Vec::new();
     for var_id in changed.iter().chain(inherited_negation_vars.iter()) {
         if let Some(var_type) = base.locals.get(var_id)
-            && !narrowed_vars
-                .iter()
-                .any(|(existing, _)| existing == var_id)
+            && !narrowed_vars.iter().any(|(existing, _)| existing == var_id)
         {
             narrowed_vars.push((var_id.clone(), var_type.clone()));
         }
@@ -547,13 +548,15 @@ fn check_match_arm_condition(
             // Psalm reports impossibilities for match arms but not
             // redundancies (a structurally-true arm is normal control flow).
             let arm_issues = analysis_data.issues.split_off(issues_before);
-            analysis_data.issues.extend(arm_issues.into_iter().filter(|issue| {
-                !matches!(
-                    issue.kind,
-                    IssueKind::RedundantCondition
-                        | IssueKind::RedundantConditionGivenDocblockType
-                )
-            }));
+            analysis_data
+                .issues
+                .extend(arm_issues.into_iter().filter(|issue| {
+                    !matches!(
+                        issue.kind,
+                        IssueKind::RedundantCondition
+                            | IssueKind::RedundantConditionGivenDocblockType
+                    )
+                }));
         }
     }
 

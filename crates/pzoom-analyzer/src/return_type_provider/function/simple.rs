@@ -78,5 +78,3 @@ impl FunctionReturnTypeProvider for FilterInputArrayReturnTypeProvider {
         ]))
     }
 }
-
-

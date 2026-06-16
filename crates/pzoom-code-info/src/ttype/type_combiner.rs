@@ -335,9 +335,18 @@ fn combine_inner(
 fn absorb_object_subtypes_deep(types: &mut Vec<TAtomic>, codebase: &crate::CodebaseInfo) {
     for atomic in types.iter_mut() {
         match atomic {
-            TAtomic::TArray { key_type, value_type }
-            | TAtomic::TNonEmptyArray { key_type, value_type }
-            | TAtomic::TIterable { key_type, value_type } => {
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TNonEmptyArray {
+                key_type,
+                value_type,
+            }
+            | TAtomic::TIterable {
+                key_type,
+                value_type,
+            } => {
                 absorb_object_subtypes_deep(&mut key_type.types, codebase);
                 absorb_object_subtypes_deep(&mut value_type.types, codebase);
             }
@@ -533,15 +542,13 @@ fn scrape_type_properties(
             let mut iterable_value = *value_type;
 
             if let Some(existing) = combination.builtin_type_params.remove("iterable")
-                && existing.len() >= 2 {
-                    iterable_key =
-                        combine_iterable_param(&existing[0], &iterable_key, overwrite_empty_array);
-                    iterable_value = combine_iterable_param(
-                        &existing[1],
-                        &iterable_value,
-                        overwrite_empty_array,
-                    );
-                }
+                && existing.len() >= 2
+            {
+                iterable_key =
+                    combine_iterable_param(&existing[0], &iterable_key, overwrite_empty_array);
+                iterable_value =
+                    combine_iterable_param(&existing[1], &iterable_value, overwrite_empty_array);
+            }
 
             // iterable absorbs a generic-array side (Psalm merges array params
             // into the iterable when the iterable has docblock params or the
@@ -564,25 +571,27 @@ fn scrape_type_properties(
             // iterable absorbs Traversable (Psalm merges its params and unsets
             // both the parameterised and paramless forms).
             if let Some(traversable_params) = combination.builtin_type_params.remove("Traversable")
-                && traversable_params.len() >= 2 {
-                    iterable_key = combine_iterable_param(
-                        &iterable_key,
-                        &traversable_params[0],
-                        overwrite_empty_array,
-                    );
-                    iterable_value = combine_iterable_param(
-                        &iterable_value,
-                        &traversable_params[1],
-                        overwrite_empty_array,
-                    );
-                }
+                && traversable_params.len() >= 2
+            {
+                iterable_key = combine_iterable_param(
+                    &iterable_key,
+                    &traversable_params[0],
+                    overwrite_empty_array,
+                );
+                iterable_value = combine_iterable_param(
+                    &iterable_value,
+                    &traversable_params[1],
+                    overwrite_empty_array,
+                );
+            }
             let traversable_key = format!("named#{}", StrId::TRAVERSABLE.0);
             if let Some(ref mut named_types) = combination.named_object_types
-                && named_types.remove(&traversable_key).is_some() {
-                    // A paramless Traversable is Traversable<mixed, mixed>.
-                    iterable_key = TUnion::mixed();
-                    iterable_value = TUnion::mixed();
-                }
+                && named_types.remove(&traversable_key).is_some()
+            {
+                // A paramless Traversable is Traversable<mixed, mixed>.
+                iterable_key = TUnion::mixed();
+                iterable_value = TUnion::mixed();
+            }
 
             combination
                 .builtin_type_params
@@ -601,7 +610,8 @@ fn scrape_type_properties(
         TAtomic::TNamedObject {
             ref name,
             ref type_params,
-        .. } => {
+            ..
+        } => {
             // Track static qualifier
             if !combination.object_static.contains_key(name) {
                 combination.object_static.insert(*name, false);
@@ -941,13 +951,9 @@ fn scrape_type_properties(
         TAtomic::TCallable { .. } => {
             // Absorb callable-string and callable arrays (Psalm's TypeCombiner
             // drops a callable-string when a plain callable joins).
-            if combination
-                .value_types
-                .get("string")
-                .is_some_and(|t| {
-                    matches!(t, TAtomic::TClassString { .. } | TAtomic::TCallableString)
-                })
-            {
+            if combination.value_types.get("string").is_some_and(|t| {
+                matches!(t, TAtomic::TClassString { .. } | TAtomic::TCallableString)
+            }) {
                 combination.value_types.remove("string");
             }
             combination
@@ -1143,11 +1149,11 @@ fn scrape_keyed_array_properties(
         if (candidate_possibly_undefined || prior_entry_possibly_undefined.unwrap_or(true))
             && fallback_key_contains(combination.objectlike_key_type.as_ref(), &key)
             && let Some(fallback_value) = combination.objectlike_value_type.clone()
-                && let Some(entry_type) = combination.objectlike_entries.get(&key) {
-                    let combined =
-                        combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
-                    combination.objectlike_entries.insert(key.clone(), combined);
-                }
+            && let Some(entry_type) = combination.objectlike_entries.get(&key)
+        {
+            let combined = combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
+            combination.objectlike_entries.insert(key.clone(), combined);
+        }
 
         missing_entries.retain(|k| k != &key);
 
@@ -1193,16 +1199,14 @@ fn scrape_keyed_array_properties(
             }
             if fallback_key_contains(combination.objectlike_key_type.as_ref(), &missing_key)
                 && let Some(fallback_value) = combination.objectlike_value_type.clone()
-                    && let Some(entry_type) = combination.objectlike_entries.get(&missing_key) {
-                        let combined = combine_union_types(
-                            entry_type,
-                            &fallback_value,
-                            overwrite_empty_array,
-                        );
-                        combination
-                            .objectlike_entries
-                            .insert(missing_key.clone(), combined);
-                    }
+                && let Some(entry_type) = combination.objectlike_entries.get(&missing_key)
+            {
+                let combined =
+                    combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
+                combination
+                    .objectlike_entries
+                    .insert(missing_key.clone(), combined);
+            }
         }
     }
 
@@ -1578,9 +1582,7 @@ fn merge_string_types(existing: &TAtomic, new: &TAtomic) -> TAtomic {
         (TAtomic::TCallableString, TAtomic::TNumericString)
         | (TAtomic::TNumericString, TAtomic::TCallableString)
         | (TAtomic::TCallableString, TAtomic::TNonEmptyLowercaseString)
-        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TCallableString) => {
-            TAtomic::TNonEmptyString
-        }
+        | (TAtomic::TNonEmptyLowercaseString, TAtomic::TCallableString) => TAtomic::TNonEmptyString,
 
         // truthy + numeric = non-empty (numeric includes "0")
         (TAtomic::TTruthyString, TAtomic::TNumericString)
@@ -1621,22 +1623,22 @@ fn handle_keyed_array_entries(
     // into definite entries (Psalm handleKeyedArrayEntries step one).
     if let Some((generic_key_type, generic_value_type)) = combination.array_type_params.clone()
         && combination.array_always_filled
-            && !generic_key_type.types.is_empty()
-            && generic_key_type
-                .types
-                .iter()
-                .all(|atomic| matches!(atomic, TAtomic::TLiteralString { .. }))
-        {
-            for atomic in &generic_key_type.types {
-                if let TAtomic::TLiteralString { value } = atomic {
-                    combination
-                        .objectlike_entries
-                        .insert(ArrayKey::String(value.clone()), generic_value_type.clone());
-                }
+        && !generic_key_type.types.is_empty()
+        && generic_key_type
+            .types
+            .iter()
+            .all(|atomic| matches!(atomic, TAtomic::TLiteralString { .. }))
+    {
+        for atomic in &generic_key_type.types {
+            if let TAtomic::TLiteralString { value } = atomic {
+                combination
+                    .objectlike_entries
+                    .insert(ArrayKey::String(value.clone()), generic_value_type.clone());
             }
-            combination.array_type_params = None;
-            combination.objectlike_sealed = false;
         }
+        combination.array_type_params = None;
+        combination.objectlike_sealed = false;
+    }
 
     // When the generic side is present and non-empty, the shape is normally NOT
     // kept: entries fold into the generic array in
@@ -1663,13 +1665,10 @@ fn handle_keyed_array_entries(
             return new_types;
         }
         if let Some((list_key, list_value)) = combination.array_type_params.take() {
-            combination.objectlike_key_type =
-                Some(match combination.objectlike_key_type.take() {
-                    Some(existing) => {
-                        combine_union_types(&existing, &list_key, overwrite_empty_array)
-                    }
-                    None => list_key,
-                });
+            combination.objectlike_key_type = Some(match combination.objectlike_key_type.take() {
+                Some(existing) => combine_union_types(&existing, &list_key, overwrite_empty_array),
+                None => list_key,
+            });
             combination.objectlike_value_type =
                 Some(match combination.objectlike_value_type.take() {
                     Some(existing) => {
@@ -1706,16 +1705,20 @@ fn handle_keyed_array_entries(
             None
         } else {
             let fallback_key_type = combination.objectlike_key_type.take().or_else(|| {
-                combination.array_type_params.as_ref().and_then(|(key_type, _)| {
-                    (key_type.types.len() == 1
-                        && matches!(key_type.types[0], TAtomic::TArrayKey))
-                    .then(|| key_type.clone())
-                })
+                combination
+                    .array_type_params
+                    .as_ref()
+                    .and_then(|(key_type, _)| {
+                        (key_type.types.len() == 1
+                            && matches!(key_type.types[0], TAtomic::TArrayKey))
+                        .then(|| key_type.clone())
+                    })
             });
             let fallback_value_type = combination.objectlike_value_type.take().or_else(|| {
-                combination.array_type_params.as_ref().and_then(|(_, value_type)| {
-                    value_type.is_mixed().then(|| value_type.clone())
-                })
+                combination
+                    .array_type_params
+                    .as_ref()
+                    .and_then(|(_, value_type)| value_type.is_mixed().then(|| value_type.clone()))
             });
             if let (Some(key_type), Some(value_type)) = (fallback_key_type, fallback_value_type) {
                 Some((Box::new(key_type), Box::new(value_type)))
@@ -1885,8 +1888,11 @@ fn combine_union_types_inner(
     let mut all_atomic_types = type_1.types.clone();
     all_atomic_types.extend(type_2.types.clone());
 
-    let mut combined_type =
-        TUnion::from_types(combine_inner(all_atomic_types, overwrite_empty_array, codebase));
+    let mut combined_type = TUnion::from_types(combine_inner(
+        all_atomic_types,
+        overwrite_empty_array,
+        codebase,
+    ));
     combined_type.from_docblock = type_1.from_docblock || type_2.from_docblock;
 
     // Per-atomic docblock provenance: a result member inherits the provenance

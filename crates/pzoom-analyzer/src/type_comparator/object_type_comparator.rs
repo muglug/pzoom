@@ -91,7 +91,9 @@ pub fn is_contained_by(
             // KeyedArrayComparator::isContainedByObjectWithProperties);
             // stdClass accepts dynamic properties, so it always satisfies the
             // shape (Psalm returns true before the property check).
-            TAtomic::TNamedObject { name, type_params, .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if *name == StrId::STDCLASS {
                     return true;
                 }
@@ -439,7 +441,9 @@ fn declares_to_string(codebase: &CodebaseInfo, input_type_part: &TAtomic) -> boo
     };
 
     if class_info.methods.contains_key(&StrId::TO_STRING)
-        || class_info.all_parent_interfaces.contains(&StrId::STRINGABLE)
+        || class_info
+            .all_parent_interfaces
+            .contains(&StrId::STRINGABLE)
     {
         return true;
     }

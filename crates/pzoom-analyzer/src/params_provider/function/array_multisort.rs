@@ -352,4 +352,3 @@ fn all_literal_ints(union: &TUnion) -> Option<Vec<i64>> {
     }
     Some(values)
 }
-

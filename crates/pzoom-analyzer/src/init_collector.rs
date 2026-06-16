@@ -253,9 +253,7 @@ fn follow_init_call(
     // getMethodMutations writeback).
     for (var_name, var_type) in call_context.locals.iter() {
         if var_name.as_str().starts_with("$this->") {
-            context
-                .locals
-                .insert(var_name.clone(), var_type.clone());
+            context.locals.insert(var_name.clone(), var_type.clone());
         }
     }
     for (property_name, assigning_class) in &call_context.initialized_prop_classes {
@@ -293,7 +291,11 @@ pub(crate) fn assignment_initializes(
     let from_declaring =
         from_info.and_then(|info| info.declaring_property_ids.get(&property_name).copied());
     from_declaring.is_some()
-        && from_declaring == child_info.declaring_property_ids.get(&property_name).copied()
+        && from_declaring
+            == child_info
+                .declaring_property_ids
+                .get(&property_name)
+                .copied()
 }
 
 /// Whether the current `self` is `class_id` or a descendant of it — the gate for

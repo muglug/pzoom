@@ -6,10 +6,8 @@ use mago_syntax::ast::ast::call::{MethodCall, NullSafeMethodCall};
 use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::{
-    Issue, IssueKind, TAtomic, TUnion,
-};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -18,9 +16,7 @@ use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
-use super::{
-    argument_analyzer, callable_validation, function_call_analyzer,
-};
+use super::{argument_analyzer, callable_validation, function_call_analyzer};
 
 use super::atomic_method_call_analyzer::*;
 use std::rc::Rc;
@@ -150,7 +146,9 @@ pub fn analyze(
     analyze_closure_args_without_context(analyzer, &args, analysis_data, context);
 
     // Fall back to mixed
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// Whether the receiver chain contains a null-safe operator (Psalm's
@@ -247,7 +245,7 @@ pub fn analyze_nullsafe(
         ) {
             // If the object could be null, the result could be null
             let object_type_for_nullsafe =
-                get_reconciled_receiver_type_for_expression( context, method_call.object)
+                get_reconciled_receiver_type_for_expression(context, method_call.object)
                     .unwrap_or_else(|| (**obj_t).clone());
             if object_type_for_nullsafe.is_nullable() {
                 return_type.add_type(TAtomic::TNull);
@@ -384,7 +382,9 @@ fn emit_invalid_dynamic_method_name_issues(
     }
 }
 
-pub(crate) fn is_closure_like_argument(arg: &mago_syntax::ast::ast::argument::Argument<'_>) -> bool {
+pub(crate) fn is_closure_like_argument(
+    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+) -> bool {
     get_closure_like_argument_offset(arg).is_some()
 }
 
@@ -515,17 +515,16 @@ pub(crate) fn analyze_pending_closure_args_for_method(
         };
 
         let expected_param_type = param.and_then(|param| param.get_type()).map(|param_type| {
-            let replaced_param_type =
-                if crate::template::template_result_is_empty(&template_result) {
-                    param_type.clone()
-                } else {
-                    function_call_analyzer::replace_templates_in_union(
-                        param_type,
-                        &template_result,
-                    )
-                };
+            let replaced_param_type = if crate::template::template_result_is_empty(&template_result)
+            {
+                param_type.clone()
+            } else {
+                function_call_analyzer::replace_templates_in_union(param_type, &template_result)
+            };
 
-            localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+            localize_special_class_type_union(
+                analyzer.codebase,
+                analyzer.interner,
                 &replaced_param_type,
                 self_class_id,
                 static_class_id,
@@ -546,9 +545,7 @@ pub(crate) fn analyze_pending_closure_args_for_method(
     }
 }
 
-pub(crate) fn invalidate_property_narrowings_after_mutation(
-    context: &mut BlockContext,
-) {
+pub(crate) fn invalidate_property_narrowings_after_mutation(context: &mut BlockContext) {
     // Mirror Psalm's default config (`remember_property_assignments_after_call = true`):
     // a non-mutation-free method call does NOT clear property narrowings such as
     // `$a->prop`. Only memoized method-call results (e.g. `$a->foo()`) are dropped,
@@ -596,9 +593,12 @@ pub(crate) fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> boo
     }
 
     if let Some(class_id) = function_info.declaring_class {
-        return analyzer.codebase.get_class(class_id).is_some_and(|class_info| {
-            class_info.is_immutable || class_info.is_external_mutation_free
-        });
+        return analyzer
+            .codebase
+            .get_class(class_id)
+            .is_some_and(|class_info| {
+                class_info.is_immutable || class_info.is_external_mutation_free
+            });
     }
 
     false

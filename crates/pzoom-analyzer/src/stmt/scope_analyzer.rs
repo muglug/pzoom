@@ -56,8 +56,10 @@ fn condition_is_always_truthy(
     analysis_data: &FunctionAnalysisData,
 ) -> bool {
     let span = mago_span::HasSpan::span(condition);
-    if let Some(condition_type) =
-        analysis_data.expr_types.get(&(span.start.offset, span.end.offset)).cloned()
+    if let Some(condition_type) = analysis_data
+        .expr_types
+        .get(&(span.start.offset, span.end.offset))
+        .cloned()
     {
         return condition_type.is_always_truthy();
     }
@@ -263,8 +265,7 @@ pub fn get_control_actions(
                     return_is_exit,
                 );
 
-                let while_true =
-                    condition_is_always_truthy(while_stmt.condition, analysis_data);
+                let while_true = condition_is_always_truthy(while_stmt.condition, analysis_data);
                 let breaks_out = loop_actions.contains(&ControlAction::Break)
                     || loop_actions.contains(&ControlAction::BreakImmediateLoop);
 

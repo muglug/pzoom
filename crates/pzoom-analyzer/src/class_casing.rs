@@ -110,9 +110,6 @@ pub fn undefined_method_message(
             method_name,
             analyzer.interner.lookup(cased)
         ),
-        None => format!(
-            "Method {}::{} does not exist",
-            class_name, method_name
-        ),
+        None => format!("Method {}::{} does not exist", class_name, method_name),
     }
 }

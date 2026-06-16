@@ -7,9 +7,9 @@
 //! is flagged at the right position.
 
 use pzoom_code_info::functionlike_info::ParamInfo;
-use pzoom_str::StrId;
 use pzoom_code_info::t_atomic::FunctionLikeParameter;
 use pzoom_code_info::{TAtomic, TUnion};
+use pzoom_str::StrId;
 
 use crate::function_analysis_data::FunctionAnalysisData;
 
@@ -41,11 +41,14 @@ impl FunctionParamsProvider for ArrayUArrayParamsProvider {
         let normalized = event.function_id.trim_start_matches('\\');
         // (trailing callback count, whether the first callback compares values)
         let (callback_count, first_callback_is_value) = match normalized {
-            "array_diff_ukey" | "array_diff_uassoc" | "array_intersect_ukey"
+            "array_diff_ukey"
+            | "array_diff_uassoc"
+            | "array_intersect_ukey"
             | "array_intersect_uassoc" => (1usize, false),
             "array_udiff_uassoc" | "array_uintersect_uassoc" => (2, true),
-            "array_udiff" | "array_udiff_assoc" | "array_uintersect"
-            | "array_uintersect_assoc" => (1, true),
+            "array_udiff" | "array_udiff_assoc" | "array_uintersect" | "array_uintersect_assoc" => {
+                (1, true)
+            }
             _ => return None,
         };
 

@@ -65,13 +65,17 @@ pub fn analyze(
         analysis_data.loop_scopes.len(),
         continue_stmt.level.as_ref(),
     );
-    if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index)) {
+    if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index))
+    {
         loop_scope.final_actions.insert(ControlAction::Continue);
         context.control_actions.insert(ControlAction::Continue);
 
         let mut removed_var_ids = FxHashSet::default();
-        let redefined_vars =
-            context.get_redefined_locals(&loop_scope.parent_context_vars, false, &mut removed_var_ids);
+        let redefined_vars = context.get_redefined_locals(
+            &loop_scope.parent_context_vars,
+            false,
+            &mut removed_var_ids,
+        );
 
         for (var_id, var_type) in redefined_vars {
             let combined = match loop_scope.possibly_redefined_loop_vars.get(&var_id) {

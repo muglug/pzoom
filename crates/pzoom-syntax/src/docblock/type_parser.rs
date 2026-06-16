@@ -286,10 +286,7 @@ impl std::fmt::Display for TypeParseError {
 
 /// Parse a type string into a `TUnion`, or a [`TypeParseError`] on malformed
 /// input (Psalm's `TypeParseTreeException`). Public for `declaration_collector`.
-pub fn parse_type_string(
-    type_str: &str,
-    interner: &Interner,
-) -> Result<TUnion, TypeParseError> {
+pub fn parse_type_string(type_str: &str, interner: &Interner) -> Result<TUnion, TypeParseError> {
     parse_type_string_with_context(type_str, interner, &TypeResolutionContext::new())
 }
 
@@ -308,7 +305,6 @@ pub fn parse_type_string_with_context(
     mark_array_param_unions_from_docblock(&mut parsed);
     Ok(parsed)
 }
-
 
 /// Extract the type string from tag content like "Type $name description".
 fn extract_type_string(content: &str) -> Option<&str> {
@@ -851,7 +847,13 @@ fn parse_tokens(
     // pzoom's tag extraction preserves newlines/tabs, so normalise them here.
     let normalized: String = trimmed
         .chars()
-        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+        .map(|c| {
+            if c == '\n' || c == '\r' || c == '\t' {
+                ' '
+            } else {
+                c
+            }
+        })
         .collect();
     let trimmed = normalized.as_str();
 
@@ -892,18 +894,19 @@ fn strip_param_conditional_spaces(
     let mut i = 0;
     while i < tokens.len() {
         if tokens[i].value == " "
-            && let (Some(name_tok), Some(is_tok)) = (tokens.get(i + 1), tokens.get(i + 2)) {
-                // Param names are stored as written (including the `$`), matching
-                // the token value here and `ParamInfo.name`.
-                if is_tok.value == "is"
-                    && name_tok.value.starts_with('$')
-                    && ctx.is_param(interner.intern(name_tok.value.as_str()))
-                {
-                    // Skip the space token.
-                    i += 1;
-                    continue;
-                }
+            && let (Some(name_tok), Some(is_tok)) = (tokens.get(i + 1), tokens.get(i + 2))
+        {
+            // Param names are stored as written (including the `$`), matching
+            // the token value here and `ParamInfo.name`.
+            if is_tok.value == "is"
+                && name_tok.value.starts_with('$')
+                && ctx.is_param(interner.intern(name_tok.value.as_str()))
+            {
+                // Skip the space token.
+                i += 1;
+                continue;
             }
+        }
         out.push(tokens[i].clone());
         i += 1;
     }
@@ -912,16 +915,15 @@ fn strip_param_conditional_spaces(
 
 /// Drop any `,` token that is immediately followed by a closing bracket, so
 /// trailing commas in shapes/generics/callables parse (a pzoom leniency).
-fn strip_trailing_commas(
-    tokens: Vec<type_tokenizer::TypeToken>,
-) -> Vec<type_tokenizer::TypeToken> {
+fn strip_trailing_commas(tokens: Vec<type_tokenizer::TypeToken>) -> Vec<type_tokenizer::TypeToken> {
     let mut out: Vec<type_tokenizer::TypeToken> = Vec::with_capacity(tokens.len());
     for (i, token) in tokens.iter().enumerate() {
         if token.value == ","
             && let Some(next) = tokens.get(i + 1)
-                && matches!(next.value.as_str(), "}" | ")" | ">" | "]") {
-                    continue;
-                }
+            && matches!(next.value.as_str(), "}" | ")" | ">" | "]")
+        {
+            continue;
+        }
         out.push(token.clone());
     }
     out
@@ -1032,7 +1034,9 @@ fn get_type_from_tree(
             TypeResult::Atomic(TAtomic::TTemplateParam {
                 name: interner.intern(&param_name),
                 defining_entity: GenericParent::TypeDefinition(StrId::CLASS_STRING_MAP),
-                as_type: Box::new(TUnion::new(TAtomic::named_object(interner.intern(&as_type)))),
+                as_type: Box::new(TUnion::new(TAtomic::named_object(
+                    interner.intern(&as_type),
+                ))),
             })
         }
 
@@ -1092,7 +1096,11 @@ fn value_to_type(
 
     // `Foo::class` and friends.
     if let Some(class_name) = strip_case_insensitive_suffix(value, "::class") {
-        return TypeResult::Atomic(class_string_from_class_const(class_name.trim(), interner, ctx));
+        return TypeResult::Atomic(class_string_from_class_const(
+            class_name.trim(),
+            interner,
+            ctx,
+        ));
     }
 
     // Other class constants `Foo::BAR` — kept as a token-named object so that
@@ -1106,9 +1114,10 @@ fn value_to_type(
         return TypeResult::Atomic(TAtomic::TLiteralInt { value: int_value });
     }
     if let Ok(float_value) = value.parse::<f64>()
-        && (value.contains('.') || value.contains('e') || value.contains('E')) {
-            return TypeResult::Atomic(TAtomic::TLiteralFloat { value: float_value });
-        }
+        && (value.contains('.') || value.contains('e') || value.contains('E'))
+    {
+        return TypeResult::Atomic(TAtomic::TLiteralFloat { value: float_value });
+    }
 
     // Psalm matches docblock keywords case-sensitively after fixScalarTerms
     // canonicalizes the case-insensitive scalar list — `Numeric`, `Scalar`,
@@ -1255,14 +1264,9 @@ fn generic_tree_to_type(
             if params.len() == 1 {
                 params.insert(0, TUnion::mixed());
             }
-            let traversable = TAtomic::named_object_with_params(
-                StrId::TRAVERSABLE,
-                Some(params.clone()),
-            );
-            let array_access = TAtomic::named_object_with_params(
-                StrId::ARRAY_ACCESS,
-                Some(params),
-            );
+            let traversable =
+                TAtomic::named_object_with_params(StrId::TRAVERSABLE, Some(params.clone()));
+            let array_access = TAtomic::named_object_with_params(StrId::ARRAY_ACCESS, Some(params));
             let countable = TAtomic::named_object(StrId::COUNTABLE);
             return TypeResult::Atomic(TAtomic::TObjectIntersection {
                 types: vec![traversable, array_access, countable],
@@ -1546,8 +1550,12 @@ fn intersection_tree_to_type(
 /// property types make Psalm intersect them (or fail the parse); pzoom only
 /// folds when they agree, falling back to the raw intersection otherwise.
 fn fold_keyed_array_intersection(intersection_types: &[TAtomic]) -> Option<TAtomic> {
-    let is_generic_array =
-        |atomic: &TAtomic| matches!(atomic, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. });
+    let is_generic_array = |atomic: &TAtomic| {
+        matches!(
+            atomic,
+            TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }
+        )
+    };
 
     let first_is_keyed = matches!(intersection_types.first()?, TAtomic::TKeyedArray { .. });
     let last_is_keyed = matches!(intersection_types.last()?, TAtomic::TKeyedArray { .. });
@@ -1716,10 +1724,11 @@ fn keyed_array_tree_to_type(
     let mut extra_params: Option<Vec<NodeId>> = None;
     if let Some(last) = children.last()
         && let NodeKind::Generic { value: gv } = tree.kind(*last)
-            && gv.is_empty() {
-                extra_params = Some(tree.children(*last).to_vec());
-                children.pop();
-            }
+        && gv.is_empty()
+    {
+        extra_params = Some(tree.children(*last).to_vec());
+        children.pop();
+    }
 
     // Strip the trailing `callable-` marker for the is_list/`type` checks,
     // mirroring Psalm's `str_starts_with($type, 'callable-')` handling.
@@ -1862,17 +1871,18 @@ fn build_named_atomic(
     match base_name {
         "int" | "integer" => {
             if let Some(params) = generic_params.as_ref()
-                && params.len() == 2 {
-                    let min = params[0].get_single().and_then(|a| match a {
-                        TAtomic::TLiteralInt { value } => Some(*value),
-                        _ => None,
-                    });
-                    let max = params[1].get_single().and_then(|a| match a {
-                        TAtomic::TLiteralInt { value } => Some(*value),
-                        _ => None,
-                    });
-                    return TAtomic::TIntRange { min, max };
-                }
+                && params.len() == 2
+            {
+                let min = params[0].get_single().and_then(|a| match a {
+                    TAtomic::TLiteralInt { value } => Some(*value),
+                    _ => None,
+                });
+                let max = params[1].get_single().and_then(|a| match a {
+                    TAtomic::TLiteralInt { value } => Some(*value),
+                    _ => None,
+                });
+                return TAtomic::TIntRange { min, max };
+            }
             TAtomic::TInt
         }
         "float" | "double" => TAtomic::TFloat,
@@ -1897,7 +1907,7 @@ fn build_named_atomic(
 
         "array-key" => TAtomic::TArrayKey,
         "scalar" => TAtomic::TScalar,
-"non-empty-scalar" => TAtomic::TNonEmptyScalar,
+        "non-empty-scalar" => TAtomic::TNonEmptyScalar,
         "numeric" => TAtomic::TNumeric,
         "positive-int" => TAtomic::TIntRange {
             min: Some(1),
@@ -2143,13 +2153,14 @@ fn build_named_atomic(
             // TTemplateParam inline, mirroring Hakana's typehint resolver and
             // Psalm's Atomic::create template_type_map check.
             if generic_params.is_none()
-                && let Some(binding) = ctx.get_template(name) {
-                    return TAtomic::TTemplateParam {
-                        name: binding.name,
-                        defining_entity: binding.defining_entity,
-                        as_type: Box::new(binding.as_type.clone()),
-                    };
-                }
+                && let Some(binding) = ctx.get_template(name)
+            {
+                return TAtomic::TTemplateParam {
+                    name: binding.name,
+                    defining_entity: binding.defining_entity,
+                    as_type: Box::new(binding.as_type.clone()),
+                };
+            }
 
             let generic_params = normalize_iterator_family_params(name, generic_params, interner);
 
@@ -2238,8 +2249,7 @@ mod tests {
 
     // A space precedes `$string` here (as it does after multi-line docblocks are
     // collapsed to a single line), which is what trips the parser.
-    const SPACED_PARAM_CONDITIONAL: &str =
-        "( $string is non-empty-string ? positive-int : int )";
+    const SPACED_PARAM_CONDITIONAL: &str = "( $string is non-empty-string ? positive-int : int )";
 
     #[test]
     fn parameter_conditional_errors_without_param_context() {

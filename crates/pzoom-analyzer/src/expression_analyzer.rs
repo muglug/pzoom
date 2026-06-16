@@ -1,6 +1,5 @@
 //! Expression analyzer - dispatches to specific expression type analyzers.
 
-use std::rc::Rc;
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::class_like::AnonymousClass;
 use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
@@ -8,12 +7,13 @@ use mago_syntax::ast::ast::class_like::method::MethodBody;
 use mago_syntax::ast::ast::construct::Construct;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::string::{CompositeString, StringPart};
+use std::rc::Rc;
 
+use pzoom_code_info::VarName;
 use pzoom_code_info::{
     DataFlowNode, FunctionLikeInfo, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion,
     combine_union_types,
 };
-use pzoom_code_info::VarName;
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
@@ -29,10 +29,9 @@ use crate::expr::fetch::{
 };
 use crate::expr::{
     array_analyzer, assignment_analyzer, binop_analyzer, call_analyzer, clone_analyzer,
-    closure_analyzer, const_fetch_analyzer, exit_analyzer, include_analyzer,
-    empty_analyzer, isset_analyzer, match_analyzer, print_analyzer, ternary_analyzer,
-    throw_analyzer, unop_analyzer,
-    variable_fetch_analyzer, yield_analyzer,
+    closure_analyzer, const_fetch_analyzer, empty_analyzer, exit_analyzer, include_analyzer,
+    isset_analyzer, match_analyzer, print_analyzer, ternary_analyzer, throw_analyzer,
+    unop_analyzer, variable_fetch_analyzer, yield_analyzer,
 };
 
 /// Analyze an expression, determining its type and recording it in analysis_data.
@@ -85,8 +84,7 @@ pub fn analyze(
                 for (var_id, narrowed) in
                     std::mem::take(&mut analysis_data.pending_gatekeeper_coercions)
                 {
-                    if context.inside_conditional
-                        && !context.assigned_var_ids.contains_key(&var_id)
+                    if context.inside_conditional && !context.assigned_var_ids.contains_key(&var_id)
                     {
                         context.assigned_var_ids.insert(var_id.clone(), 0);
                     }
@@ -116,7 +114,9 @@ pub fn analyze(
         Expression::Parenthesized(paren) => {
             let inner_pos = analyze(analyzer, paren.expression, analysis_data, context);
             if let Some(inner_type) = analysis_data.expr_types.get(&inner_pos).cloned() {
-                analysis_data.expr_types.insert(pos, Rc::new((*inner_type).clone()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new((*inner_type).clone()));
             }
         }
 
@@ -157,12 +157,15 @@ pub fn analyze(
                     }
                 }
 
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TNamedObject {
+                analysis_data.expr_types.insert(
+                    pos,
+                    Rc::new(TUnion::new(TAtomic::TNamedObject {
                         name: anon_class_id,
                         type_params: None,
                         is_static: false,
                         remapped_params: false,
-                    })));
+                    })),
+                );
 
                 let _ = crate::stmt::class_analyzer::analyze_anonymous_class(
                     analyzer,
@@ -172,7 +175,10 @@ pub fn analyze(
                     context,
                 );
             } else {
-                analysis_data.expr_types.insert(pos, Rc::new(infer_anonymous_class_object_type(analyzer, anonymous_class)));
+                analysis_data.expr_types.insert(
+                    pos,
+                    Rc::new(infer_anonymous_class_object_type(analyzer, anonymous_class)),
+                );
                 analyze_anonymous_class_members(analyzer, anonymous_class, analysis_data, context);
             }
         }
@@ -237,12 +243,16 @@ pub fn analyze(
                 line,
                 col,
             ));
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
         }
 
         // Default to mixed for unhandled cases
         _ => {
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
         }
     }
 
@@ -262,7 +272,9 @@ pub(crate) fn add_decision_dataflow(
     if let GraphKind::WholeProgram(_) = &analysis_data.data_flow_graph.kind {
         // Hakana skips decision dataflow entirely in whole-program graphs; pzoom
         // still records the resulting type so inference is unchanged.
-        analysis_data.expr_types.insert(expr_pos, Rc::new(cond_type));
+        analysis_data
+            .expr_types
+            .insert(expr_pos, Rc::new(cond_type));
         return;
     }
 
@@ -270,7 +282,10 @@ pub(crate) fn add_decision_dataflow(
         DataFlowNode::get_for_unlabelled_sink(make_data_flow_node_position(analyzer, expr_pos));
 
     let lhs_span = lhs_expr.span();
-    if let Some(lhs_type) = analysis_data.expr_types.get(&(lhs_span.start.offset, lhs_span.end.offset)).cloned()
+    if let Some(lhs_type) = analysis_data
+        .expr_types
+        .get(&(lhs_span.start.offset, lhs_span.end.offset))
+        .cloned()
     {
         cond_type.parent_nodes.push(decision_node.clone());
 
@@ -287,8 +302,10 @@ pub(crate) fn add_decision_dataflow(
 
     if let Some(rhs_expr) = rhs_expr {
         let rhs_span = rhs_expr.span();
-        if let Some(rhs_type) =
-            analysis_data.expr_types.get(&(rhs_span.start.offset, rhs_span.end.offset)).cloned()
+        if let Some(rhs_type) = analysis_data
+            .expr_types
+            .get(&(rhs_span.start.offset, rhs_span.end.offset))
+            .cloned()
         {
             cond_type.parent_nodes.push(decision_node.clone());
 
@@ -304,7 +321,9 @@ pub(crate) fn add_decision_dataflow(
         }
     }
 
-    analysis_data.expr_types.insert(expr_pos, Rc::new(cond_type));
+    analysis_data
+        .expr_types
+        .insert(expr_pos, Rc::new(cond_type));
 
     analysis_data.data_flow_graph.add_node(decision_node);
 }
@@ -348,13 +367,7 @@ fn analyze_construct(
             );
         }
         Construct::Print(print_construct) => {
-            print_analyzer::analyze(
-                analyzer,
-                print_construct.value,
-                pos,
-                analysis_data,
-                context,
-            );
+            print_analyzer::analyze(analyzer, print_construct.value, pos, analysis_data, context);
         }
         Construct::Exit(exit) => {
             exit_analyzer::analyze_exit(analyzer, exit, pos, analysis_data, context);
@@ -388,7 +401,9 @@ fn analyze_construct(
                 );
             }
 
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
         }
     }
 }
@@ -474,11 +489,9 @@ fn analyze_magic_constant(
             Some(function_info) if function_info.name != pzoom_str::StrId::EMPTY => {
                 let method_name = analyzer.interner.lookup(function_info.name).to_string();
                 let value = match analyzer.get_declaring_class() {
-                    Some(class_id) => format!(
-                        "{}::{}",
-                        analyzer.interner.lookup(class_id),
-                        method_name
-                    ),
+                    Some(class_id) => {
+                        format!("{}::{}", analyzer.interner.lookup(class_id), method_name)
+                    }
                     None => method_name,
                 };
                 TUnion::new(TAtomic::TLiteralString { value })
@@ -517,10 +530,13 @@ fn analyze_legacy_array(
     use rustc_hash::FxHashMap;
 
     if array.elements.is_empty() {
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TArray {
+        analysis_data.expr_types.insert(
+            pos,
+            Rc::new(TUnion::new(TAtomic::TArray {
                 key_type: Box::new(TUnion::nothing()),
                 value_type: Box::new(TUnion::nothing()),
-            })));
+            })),
+        );
         return;
     }
 
@@ -709,7 +725,9 @@ fn infer_anonymous_class_object_type(
         object_parts.push(TAtomic::TNamedObject {
             name: parent_id,
             type_params: None,
-        is_static: false, remapped_params: false });
+            is_static: false,
+            remapped_params: false,
+        });
     }
 
     if let Some(implements) = &anonymous_class.implements {
@@ -721,7 +739,9 @@ fn infer_anonymous_class_object_type(
             let interface_atomic = TAtomic::TNamedObject {
                 name: interface_id,
                 type_params: None,
-            is_static: false, remapped_params: false };
+                is_static: false,
+                remapped_params: false,
+            };
             if !object_parts.contains(&interface_atomic) {
                 object_parts.push(interface_atomic);
             }
@@ -743,7 +763,9 @@ fn infer_anonymous_class_object_type(
     TUnion::new(TAtomic::TNamedObject {
         name: anon_class_id,
         type_params: None,
-    is_static: false, remapped_params: false })
+        is_static: false,
+        remapped_params: false,
+    })
 }
 
 /// Prefix shared by all synthetic anonymous-class names.
@@ -905,16 +927,21 @@ fn analyze_anonymous_class_members(
                 })
                 .unwrap_or_else(TUnion::mixed);
             resolve_unqualified_named_objects(analyzer, &mut param_type, context.namespace);
-            method_info.params.push(pzoom_code_info::functionlike_info::ParamInfo {
-                name: param_name,
-                param_type: Some(param_type.clone()),
-                signature_type: param.hint.as_ref().map(|_| param_type.clone()),
-                is_optional: param.default_value.is_some(),
-                is_variadic: param.ellipsis.is_some(),
-                start_offset: param.span().start.offset,
-                ..pzoom_code_info::functionlike_info::ParamInfo::default()
-            });
-            method_context.set_var_type(VarName::new(&analyzer.interner.lookup(param_name)), param_type);
+            method_info
+                .params
+                .push(pzoom_code_info::functionlike_info::ParamInfo {
+                    name: param_name,
+                    param_type: Some(param_type.clone()),
+                    signature_type: param.hint.as_ref().map(|_| param_type.clone()),
+                    is_optional: param.default_value.is_some(),
+                    is_variadic: param.ellipsis.is_some(),
+                    start_offset: param.span().start.offset,
+                    ..pzoom_code_info::functionlike_info::ParamInfo::default()
+                });
+            method_context.set_var_type(
+                VarName::new(&analyzer.interner.lookup(param_name)),
+                param_type,
+            );
         }
 
         let method_analyzer = analyzer.for_nested_function(Some(&method_info));
@@ -930,8 +957,12 @@ fn analyze_anonymous_class_members(
                 analysis_data,
                 &mut method_context,
             );
-            analysis_data.inferred_return_types.truncate(return_types_mark);
-            analysis_data.inferred_yield_types.truncate(yield_types_mark);
+            analysis_data
+                .inferred_return_types
+                .truncate(return_types_mark);
+            analysis_data
+                .inferred_yield_types
+                .truncate(yield_types_mark);
         }
 
         analysis_data
@@ -1042,7 +1073,10 @@ fn php_unescape_double_quoted(content: &str) -> String {
                 // Only special when followed by at least one hex digit.
                 let mut lookahead = chars.clone();
                 lookahead.next();
-                if lookahead.peek().is_some_and(|peeked| peeked.is_ascii_hexdigit()) {
+                if lookahead
+                    .peek()
+                    .is_some_and(|peeked| peeked.is_ascii_hexdigit())
+                {
                     chars.next();
                     let mut hex_value = 0u32;
                     let mut hex_len = 0;

@@ -28,7 +28,14 @@ pub fn analyze(
     let left_type = analysis_data.expr_types.get(&left_pos).cloned();
     let right_type = analysis_data.expr_types.get(&right_pos).cloned();
 
-    analysis_data.expr_types.insert(pos, Rc::new(infer_concat_type(analyzer, left_type.as_deref(), right_type.as_deref())));
+    analysis_data.expr_types.insert(
+        pos,
+        Rc::new(infer_concat_type(
+            analyzer,
+            left_type.as_deref(),
+            right_type.as_deref(),
+        )),
+    );
 }
 
 #[derive(Clone, Copy)]

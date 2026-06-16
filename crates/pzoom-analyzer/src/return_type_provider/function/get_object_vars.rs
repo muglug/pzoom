@@ -91,7 +91,12 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                     if prop_info.is_static {
                         continue;
                     }
-                    if !property_visible_from_context(event.analyzer, class_info, *prop_id, prop_info.visibility) {
+                    if !property_visible_from_context(
+                        event.analyzer,
+                        class_info,
+                        *prop_id,
+                        prop_info.visibility,
+                    ) {
                         continue;
                     }
                     let prop_name = event.analyzer.interner.lookup(*prop_id);

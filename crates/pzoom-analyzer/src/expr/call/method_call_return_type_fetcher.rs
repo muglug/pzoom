@@ -1,7 +1,6 @@
 //! Method-call return-type fetcher: inherited/effective return & param types,
 //! return-type-provider adjustments. Mirrors Psalm `MethodCallReturnTypeFetcher`.
 
-
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind};
 use pzoom_code_info::{
     ArrayDataKind, DataFlowNode, FunctionLikeIdentifier, FunctionLikeInfo, GraphKind, PathKind,
@@ -117,7 +116,9 @@ pub(crate) fn add_method_call_dataflow_with_receiver(
                 specialization,
             );
 
-            analysis_data.data_flow_graph.add_node(declaring_node.clone());
+            analysis_data
+                .data_flow_graph
+                .add_node(declaring_node.clone());
             analysis_data.data_flow_graph.add_path(
                 &declaring_node.id,
                 &method_call_node.id,
@@ -141,7 +142,9 @@ pub(crate) fn add_method_call_dataflow_with_receiver(
     if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody
         && let Some(lhs_expr_pos) = lhs_expr_pos
         && let Some(lhs_parent_nodes) = analysis_data
-            .expr_types.get(&lhs_expr_pos).cloned()
+            .expr_types
+            .get(&lhs_expr_pos)
+            .cloned()
             .map(|expr_type| expr_type.parent_nodes.clone())
     {
         if functionlike_storage.is_some_and(|storage| storage.is_pure) {
@@ -385,10 +388,7 @@ pub(crate) fn method_has_more_specific_return(
     !current_is_contained_by_candidate
 }
 
-pub(crate) fn is_datetime_interface_add(
-    class_name: pzoom_str::StrId,
-    method_name: &str,
-) -> bool {
+pub(crate) fn is_datetime_interface_add(class_name: pzoom_str::StrId, method_name: &str) -> bool {
     if !method_name.eq_ignore_ascii_case("add") {
         return false;
     }
@@ -696,11 +696,15 @@ pub(crate) fn apply_inherited_method_param_types(
     changed.then_some(params)
 }
 
-pub(crate) fn method_has_docblock_return_type(method_info: &pzoom_code_info::FunctionLikeInfo) -> bool {
+pub(crate) fn method_has_docblock_return_type(
+    method_info: &pzoom_code_info::FunctionLikeInfo,
+) -> bool {
     method_info.return_type.is_some()
 }
 
-pub(crate) fn method_has_docblock_param_types(method_info: &pzoom_code_info::FunctionLikeInfo) -> bool {
+pub(crate) fn method_has_docblock_param_types(
+    method_info: &pzoom_code_info::FunctionLikeInfo,
+) -> bool {
     method_info
         .params
         .iter()

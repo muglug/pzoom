@@ -125,9 +125,10 @@ pub fn reconcile(
             analysis_data,
         )),
         Assertion::EmptyCountable => Some(reconcile_empty_countable(existing_var_type)),
-        Assertion::DoesNotHaveAtLeastCount(count) => {
-            Some(reconcile_does_not_have_at_least_count(existing_var_type, *count))
-        }
+        Assertion::DoesNotHaveAtLeastCount(count) => Some(reconcile_does_not_have_at_least_count(
+            existing_var_type,
+            *count,
+        )),
         Assertion::DoesNotHaveArrayKey(key) => Some(reconcile_no_array_key(existing_var_type, key)),
         _ => None,
     }
@@ -206,7 +207,8 @@ fn is_scalar_atomic(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
         TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TString
@@ -315,9 +317,12 @@ fn subtract_callable(existing_var_type: &TUnion, analyzer: &StatementsAnalyzer<'
             // are callable too (Psalm's reconcileCallable).
             TAtomic::TNamedObject { name, .. }
                 if *name == StrId::CLOSURE
-                    || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
-                        class_info.methods.contains_key(&StrId::INVOKE)
-                    }) => {}
+                    || analyzer
+                        .codebase
+                        .get_class(*name)
+                        .is_some_and(|class_info| {
+                            class_info.methods.contains_key(&StrId::INVOKE)
+                        }) => {}
             TAtomic::TLiteralString { value } if literal_string_is_callable(value, analyzer) => {
                 // Psalm removes literal strings found in the callmap (and
                 // `Class::method` strings resolvable to a real method).
@@ -347,7 +352,9 @@ fn subtract_callable(existing_var_type: &TUnion, analyzer: &StatementsAnalyzer<'
 /// `Class::method` (the lookups behind Psalm's `reconcileCallable`).
 fn literal_string_is_callable(value: &str, analyzer: &StatementsAnalyzer<'_>) -> bool {
     if let Some((class_name, method_name)) = value.split_once("::") {
-        let class_id = analyzer.interner.intern(class_name.trim_start_matches('\\'));
+        let class_id = analyzer
+            .interner
+            .intern(class_name.trim_start_matches('\\'));
         let method_id = analyzer.interner.intern(method_name);
         return analyzer
             .codebase
@@ -410,7 +417,8 @@ fn subtract_num(existing_var_type: &TUnion) -> TUnion {
     for atomic in &existing_var_type.types {
         match atomic {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TNumericString
@@ -507,8 +515,7 @@ fn subtract_int(existing_var_type: &TUnion) -> TUnion {
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. } => {
+            TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. } => {
                 // Remove int types
             }
             TAtomic::TScalar => {
@@ -620,7 +627,8 @@ fn subtract_arraykey(existing_var_type: &TUnion) -> TUnion {
     for atomic in &existing_var_type.types {
         match atomic {
             TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TString
             | TAtomic::TLiteralString { .. }
             | TAtomic::TNonEmptyString
@@ -807,7 +815,9 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
                 acceptable_types.push(TAtomic::TNamedObject {
                     name: StrId::TRAVERSABLE,
                     type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
-                is_static: false, remapped_params: false });
+                    is_static: false,
+                    remapped_params: false,
+                });
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
@@ -934,8 +944,7 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
             TAtomic::TIntRange { min, max } => {
                 // The only falsy int is 0; keep it only if the range contains 0
                 // (Psalm reconcileFalsyOrEmpty narrows an int range to literal 0).
-                let contains_zero =
-                    min.is_none_or(|m| m <= 0) && max.is_none_or(|m| m >= 0);
+                let contains_zero = min.is_none_or(|m| m <= 0) && max.is_none_or(|m| m >= 0);
                 if contains_zero {
                     acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
                 }

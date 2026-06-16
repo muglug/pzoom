@@ -340,7 +340,9 @@ fn reconcile_datetime_interface_negation(
         TAtomic::TNamedObject {
             name: alternate,
             type_params: None,
-        is_static: false, remapped_params: false },
+            is_static: false,
+            remapped_params: false,
+        },
     );
 
     let result = if acceptable_types.is_empty() {

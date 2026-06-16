@@ -2,13 +2,13 @@
 //!
 //! Modeled after Psalm's `Storage\ClassLikeStorage`.
 
-use pzoom_str::StrId;
 use indexmap::IndexMap;
+use pzoom_str::StrId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
-use crate::{FunctionLikeInfo, TAtomic, TUnion};
 use crate::ttype::template::GenericParent;
+use crate::{FunctionLikeInfo, TAtomic, TUnion};
 
 // `PropertyInfo`, `ClassConstantInfo`, and `Visibility` live in their own modules
 // (mirroring Hakana's `property_info.rs` / `class_constant_info.rs` /
@@ -67,7 +67,6 @@ pub struct ClassLikeInfo {
     /// public members from PossiblyUnusedMethod/Property.
     #[serde(default)]
     pub is_public_api: bool,
-
 
     /// Whether `@psalm-consistent-templates` is declared: child classes must
     /// keep the parent's template signature, making `new static` on a

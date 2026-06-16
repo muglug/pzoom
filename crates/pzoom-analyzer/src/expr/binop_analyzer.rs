@@ -7,8 +7,8 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_code_info::VarName;
+use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_code_info::{DataFlowNode, Issue, IssueKind, PathKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
@@ -78,7 +78,9 @@ pub fn analyze(
             and_analyzer::analyze(analyzer, binop.lhs, binop.rhs, pos, analysis_data, context);
             // Hakana follows the `&&` analyzer with decision dataflow on the result.
             let cond_type = analysis_data
-                .expr_types.get(&pos).cloned()
+                .expr_types
+                .get(&pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::bool);
             add_decision_dataflow(
@@ -95,7 +97,9 @@ pub fn analyze(
             or_analyzer::analyze(analyzer, binop.lhs, binop.rhs, pos, analysis_data, context);
             // Hakana follows the `||` analyzer with decision dataflow on the result.
             let cond_type = analysis_data
-                .expr_types.get(&pos).cloned()
+                .expr_types
+                .get(&pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::bool);
             add_decision_dataflow(
@@ -194,7 +198,14 @@ pub fn analyze(
         | BinaryOperator::LeftShift(_)
         | BinaryOperator::RightShift(_)
         | BinaryOperator::StringConcat(_) => {
-            assign_arithmetic_type(analyzer, analysis_data, result_type, binop.lhs, binop.rhs, pos);
+            assign_arithmetic_type(
+                analyzer,
+                analysis_data,
+                result_type,
+                binop.lhs,
+                binop.rhs,
+                pos,
+            );
         }
         // PHP `instanceof` maps to Hakana's `Is`, which uses decision dataflow on
         // the inspected operand only.
@@ -202,10 +213,7 @@ pub fn analyze(
             check_instanceof_class_exists(analyzer, binop.rhs, analysis_data, context);
             // A dynamic instanceof class expression (`instanceof $class`)
             // consumes its variable.
-            let rhs_span_pos = (
-                binop.rhs.span().start.offset,
-                binop.rhs.span().end.offset,
-            );
+            let rhs_span_pos = (binop.rhs.span().start.offset, binop.rhs.span().end.offset);
             if analysis_data.data_flow_graph.kind == pzoom_code_info::GraphKind::FunctionBody
                 && let Some(rhs_type) = analysis_data.expr_types.get(&rhs_span_pos).cloned()
                 && !rhs_type.parent_nodes.is_empty()
@@ -251,8 +259,10 @@ fn assign_arithmetic_type(
         .add_node(decision_node.clone());
 
     let lhs_span = lhs_expr.span();
-    if let Some(lhs_type) =
-        analysis_data.expr_types.get(&(lhs_span.start.offset, lhs_span.end.offset)).cloned()
+    if let Some(lhs_type) = analysis_data
+        .expr_types
+        .get(&(lhs_span.start.offset, lhs_span.end.offset))
+        .cloned()
     {
         cond_type.parent_nodes.push(decision_node.clone());
 
@@ -268,8 +278,10 @@ fn assign_arithmetic_type(
     }
 
     let rhs_span = rhs_expr.span();
-    if let Some(rhs_type) =
-        analysis_data.expr_types.get(&(rhs_span.start.offset, rhs_span.end.offset)).cloned()
+    if let Some(rhs_type) = analysis_data
+        .expr_types
+        .get(&(rhs_span.start.offset, rhs_span.end.offset))
+        .cloned()
     {
         cond_type.parent_nodes.push(decision_node.clone());
 
@@ -284,7 +296,9 @@ fn assign_arithmetic_type(
         }
     }
 
-    analysis_data.expr_types.insert(expr_pos, Rc::new(cond_type));
+    analysis_data
+        .expr_types
+        .insert(expr_pos, Rc::new(cond_type));
 }
 
 fn analyze_binary_operand_marked(
@@ -542,11 +556,7 @@ fn analyze_comparison_operation(
             // `__toString` method) and a string-like value is valid in PHP: the
             // object is coerced to its string form. Psalm does not flag it.
             let should_check = should_check
-                && !weak_equality_compares_stringable_to_string(
-                    analyzer,
-                    left_union,
-                    right_union,
-                );
+                && !weak_equality_compares_stringable_to_string(analyzer, left_union, right_union);
 
             if !should_check {
                 // no-op
@@ -666,10 +676,7 @@ fn check_instanceof_class_exists(
     let (line, col) = analyzer.get_line_column(span.start.offset);
     analysis_data.add_issue(Issue::new(
         IssueKind::UndefinedClass,
-        crate::class_casing::undefined_class_message(
-            analyzer,
-            analyzer.interner.lookup(requested),
-        ),
+        crate::class_casing::undefined_class_message(analyzer, analyzer.interner.lookup(requested)),
         analyzer.file_path,
         span.start.offset,
         span.end.offset,
@@ -847,23 +854,31 @@ fn weak_equality_compares_stringable_to_string(
 
 fn union_is_stringable_object(analyzer: &StatementsAnalyzer<'_>, union: &TUnion) -> bool {
     !union.types.is_empty()
-        && union.types.iter().all(|atomic| atomic_is_stringable_object(analyzer, atomic))
+        && union
+            .types
+            .iter()
+            .all(|atomic| atomic_is_stringable_object(analyzer, atomic))
 }
 
 fn atomic_is_stringable_object(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {
     match atomic {
         TAtomic::TNamedObject { name, .. } => {
             *name == pzoom_str::StrId::STRINGABLE
-                || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
-                    class_info.methods.contains_key(&pzoom_str::StrId::TO_STRING)
-                        || class_info
-                            .all_parent_interfaces
-                            .contains(&pzoom_str::StrId::STRINGABLE)
-                })
+                || analyzer
+                    .codebase
+                    .get_class(*name)
+                    .is_some_and(|class_info| {
+                        class_info
+                            .methods
+                            .contains_key(&pzoom_str::StrId::TO_STRING)
+                            || class_info
+                                .all_parent_interfaces
+                                .contains(&pzoom_str::StrId::STRINGABLE)
+                    })
         }
-        TAtomic::TObjectIntersection { types } => {
-            types.iter().any(|t| atomic_is_stringable_object(analyzer, t))
-        }
+        TAtomic::TObjectIntersection { types } => types
+            .iter()
+            .any(|t| atomic_is_stringable_object(analyzer, t)),
         TAtomic::TTemplateParam { as_type, .. } => union_is_stringable_object(analyzer, as_type),
         _ => false,
     }
@@ -891,8 +906,7 @@ fn union_is_int_like(union: &TUnion) -> bool {
         && union.types.iter().all(|atomic| {
             matches!(
                 atomic,
-                TAtomic::TInt
-                    | TAtomic::TLiteralInt { .. }                    | TAtomic::TIntRange { .. }
+                TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
             )
         })
 }
@@ -1049,7 +1063,8 @@ fn is_valid_bitwise_atomic(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
         TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TString
@@ -1086,7 +1101,8 @@ pub(crate) fn union_is_numeric_like_for_bitwise(union: &TUnion) -> bool {
             matches!(
                 atomic,
                 TAtomic::TInt
-                    | TAtomic::TLiteralInt { .. }                    | TAtomic::TIntRange { .. }
+                    | TAtomic::TLiteralInt { .. }
+                    | TAtomic::TIntRange { .. }
                     | TAtomic::TFloat
                     | TAtomic::TLiteralFloat { .. }
             )

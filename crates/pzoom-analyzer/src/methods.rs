@@ -177,12 +177,18 @@ pub(crate) fn get_inherited_method_return_type(
     for (template_name, entries) in
         function_call_analyzer::get_class_template_defaults(candidate_class_info).template_types
     {
-        candidate_result.template_types.entry(template_name).or_insert(entries);
+        candidate_result
+            .template_types
+            .entry(template_name)
+            .or_insert(entries);
     }
     for (template_name, entries) in
         function_call_analyzer::get_template_defaults(candidate_method_info).template_types
     {
-        candidate_result.template_types.entry(template_name).or_insert(entries);
+        candidate_result
+            .template_types
+            .entry(template_name)
+            .or_insert(entries);
     }
 
     if let Some(candidate_template_map) =
@@ -204,9 +210,10 @@ pub(crate) fn get_inherited_method_return_type(
     // from `@param U $value`) from the call arguments, so a `@return U` resolves
     // to the argument type instead of defaulting to `never`.
     for candidate_param in &candidate_method_info.params {
-        if let (Some(param_type), Some(arg_type)) =
-            (candidate_param.get_type(), param_arg_types.get(&candidate_param.name))
-        {
+        if let (Some(param_type), Some(arg_type)) = (
+            candidate_param.get_type(),
+            param_arg_types.get(&candidate_param.name),
+        ) {
             crate::template::standin_type_replacer::infer_template_replacements_from_union(
                 analyzer,
                 param_type,

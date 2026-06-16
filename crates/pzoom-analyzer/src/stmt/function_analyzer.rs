@@ -5,8 +5,8 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::function_like::function::Function;
 
-use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind};
 use pzoom_str::StrId;
 use rustc_hash::FxHashSet;
 
@@ -148,8 +148,7 @@ pub fn analyze(
         let param_name_id = VarName::new(param_name);
 
         // Get parameter info from function info
-        let param_info =
-            function_info.and_then(|info| {
+        let param_info = function_info.and_then(|info| {
             info.params
                 .iter()
                 .find(|p| analyzer.interner.lookup(p.name).as_ref() == param_name_id.as_str())
@@ -194,8 +193,9 @@ pub fn analyze(
         // narrowing it to a single observed call site would be unsound. Psalm
         // analyses such bodies with the abstract template parameter.
         if !crate::type_comparator::generic_type_comparator::union_has_template(&param_type)
-            && let Some(callsite_type) =
-                analysis_data.function_argument_callsite_types.get(&(func_name_id, param_index))
+            && let Some(callsite_type) = analysis_data
+                .function_argument_callsite_types
+                .get(&(func_name_id, param_index))
         {
             param_type =
                 assertion_reconciler::intersect_union_with_union(&param_type, callsite_type)
@@ -285,8 +285,7 @@ pub fn analyze(
     analysis_data.current_function_is_generator = prev_is_generator;
     // Syntactic, like Psalm's storage->has_yield: a value-less `yield;` makes
     // a generator without recording an inferred yield type.
-    let has_yield =
-        body_has_yield || analysis_data.inferred_yield_types.len() > yield_types_start;
+    let has_yield = body_has_yield || analysis_data.inferred_yield_types.len() > yield_types_start;
 
     // Hakana `functionlike_analyzer`: a body that falls through without
     // returning still flows by-ref (inout) param values out of the function.
@@ -366,8 +365,12 @@ pub fn analyze(
     // Drop this function's recorded return/yield types so an enclosing
     // function-like (nested named functions are legal PHP) only sees its own
     // returns in the shared vec.
-    analysis_data.inferred_return_types.truncate(return_types_start);
-    analysis_data.inferred_yield_types.truncate(yield_types_start);
+    analysis_data
+        .inferred_return_types
+        .truncate(return_types_start);
+    analysis_data
+        .inferred_yield_types
+        .truncate(yield_types_start);
 
     // Hakana's end-of-functionlike pass: reconcile the type-variable bounds
     // accumulated during this body (closures included — pzoom's shared
@@ -424,9 +427,7 @@ fn maybe_emit_missing_param_type_issues(
             } => param_names.contains(subject),
             // `properties-of<$a>` parses the `$a` subject as a named object
             // before the resolution pass rewrites it to the template form.
-            TAtomic::TPropertiesOf { classlike_name, .. } => {
-                param_names.contains(classlike_name)
-            }
+            TAtomic::TPropertiesOf { classlike_name, .. } => param_names.contains(classlike_name),
             _ => false,
         })
     }
@@ -596,27 +597,33 @@ pub(crate) fn verify_missing_return_checks(
         analyzer.codebase,
         analyzer.interner,
         &mut declared,
-        &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        &crate::type_expander::TypeExpansionOptions {
+            evaluate_conditional_types: true,
+            ..Default::default()
+        },
     );
     let declared = &declared;
 
     // Psalm drops a docblock type identical to the signature type at scan time
     // ("dontOverrideSameType"), so such a type behaves as native here.
     let treat_as_native = !declared_from_docblock
-        || function_info.signature_return_type.as_ref().is_some_and(|signature_type| {
-            signature_type.get_id(Some(analyzer.interner)) == declared.get_id(Some(analyzer.interner))
-        });
+        || function_info
+            .signature_return_type
+            .as_ref()
+            .is_some_and(|signature_type| {
+                signature_type.get_id(Some(analyzer.interner))
+                    == declared.get_id(Some(analyzer.interner))
+            });
 
     let is_nullable = declared.is_nullable()
-        || declared.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull));
-    let null_from_docblock = if declared.docblock_bits_valid() {
-        declared
+        || declared
             .types
             .iter()
-            .enumerate()
-            .any(|(index, atomic)| {
-                matches!(atomic, TAtomic::TNull) && declared.atomic_from_docblock(index)
-            })
+            .any(|atomic| matches!(atomic, TAtomic::TNull));
+    let null_from_docblock = if declared.docblock_bits_valid() {
+        declared.types.iter().enumerate().any(|(index, atomic)| {
+            matches!(atomic, TAtomic::TNull) && declared.atomic_from_docblock(index)
+        })
     } else {
         declared.from_docblock
     };
@@ -667,16 +674,17 @@ pub(crate) fn verify_missing_return_checks(
         .types
         .iter()
         .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }));
-    let signature_nullable = function_info
-        .signature_return_type
-        .as_ref()
-        .is_some_and(|signature_type| {
-            signature_type.is_nullable()
-                || signature_type
-                    .types
-                    .iter()
-                    .any(|atomic| matches!(atomic, TAtomic::TNull))
-        });
+    let signature_nullable =
+        function_info
+            .signature_return_type
+            .as_ref()
+            .is_some_and(|signature_type| {
+                signature_type.is_nullable()
+                    || signature_type
+                        .types
+                        .iter()
+                        .any(|atomic| matches!(atomic, TAtomic::TNull))
+            });
     let _ = null_from_docblock;
     // Psalm's check fires for native declared types, and for docblock types
     // whose nullability comes from the signature. The third arm proxies
@@ -787,18 +795,12 @@ pub(crate) fn verify_missing_return_checks(
     if inferred_parts.len() > 1 {
         inferred_parts.retain(|part| !part.is_nothing());
     }
-    let mut inferred = inferred_parts
-        .iter()
-        .skip(1)
-        .fold(
-            inferred_parts
-                .first()
-                .cloned()
-                .unwrap_or_else(TUnion::void),
-            |combined, part| {
-                pzoom_code_info::ttype::type_combiner::combine_union_types(&combined, part, false)
-            },
-        );
+    let mut inferred = inferred_parts.iter().skip(1).fold(
+        inferred_parts.first().cloned().unwrap_or_else(TUnion::void),
+        |combined, part| {
+            pzoom_code_info::ttype::type_combiner::combine_union_types(&combined, part, false)
+        },
+    );
     if function_always_exits {
         inferred = TUnion::nothing();
     }
@@ -856,11 +858,12 @@ pub(crate) fn verify_missing_return_checks(
     let declared = if let Some(class_info) = class_info
         && (class_info.is_final || function_info.is_final)
     {
-        localized_declared = crate::stmt::class_analyzer::localize_special_class_names_for_final_class(
-            declared,
-            class_info.name,
-            class_info.parent_class,
-        );
+        localized_declared =
+            crate::stmt::class_analyzer::localize_special_class_names_for_final_class(
+                declared,
+                class_info.name,
+                class_info.parent_class,
+            );
         &localized_declared
     } else {
         declared
@@ -1090,10 +1093,7 @@ fn check_reserved_signature_words(
             let (line, col) = analyzer.get_line_column(offset);
             analysis_data.add_issue(Issue::new(
                 IssueKind::ReservedWord,
-                format!(
-                    "{} is only supported in newer PHP versions",
-                    reserved
-                ),
+                format!("{} is only supported in newer PHP versions", reserved),
                 analyzer.file_path,
                 offset,
                 offset,
@@ -1114,10 +1114,10 @@ fn check_reserved_signature_words(
             .any(|atomic| matches!(atomic, TAtomic::TObjectIntersection { .. }));
         let intersection_has_non_class = signature_type.types.iter().any(|atomic| {
             matches!(atomic, TAtomic::TObjectIntersection { types }
-                if types.iter().any(|member| !matches!(
-                    member,
-                    TAtomic::TNamedObject { .. } | TAtomic::TTemplateParam { .. }
-                )))
+            if types.iter().any(|member| !matches!(
+                member,
+                TAtomic::TNamedObject { .. } | TAtomic::TTemplateParam { .. }
+            )))
         });
 
         let parse_error = if has_intersection && php_version_id < 80100 {
@@ -1244,10 +1244,11 @@ fn check_atomic_template_bounds(
                 continue;
             }
 
-            let effective_bound = crate::expr::call::function_call_analyzer::replace_templates_in_union(
-                &template_type.as_type,
-                &substitutions,
-            );
+            let effective_bound =
+                crate::expr::call::function_call_analyzer::replace_templates_in_union(
+                    &template_type.as_type,
+                    &substitutions,
+                );
             if effective_bound.is_mixed() {
                 continue;
             }
@@ -1268,7 +1269,8 @@ fn check_atomic_template_bounds(
             // InvalidTemplateParam). pzoom keeps the coercion exemption only
             // for non-template args, where its comparator marks benign
             // literal/parent matches as coercions that Psalm accepts.
-            let arg_mentions_template = crate::type_comparator::generic_type_comparator::union_has_template(type_param);
+            let arg_mentions_template =
+                crate::type_comparator::generic_type_comparator::union_has_template(type_param);
             if !is_contained
                 && (arg_mentions_template || !comparison_result.type_coerced.unwrap_or(false))
             {
@@ -1559,9 +1561,8 @@ fn collect_wrong_cased_classes(
     pzoom_code_info::ttype::visit_type_tree(
         &pzoom_code_info::ttype::TypeNode::Atomic(atomic),
         &mut |node| {
-            if let pzoom_code_info::ttype::TypeNode::Atomic(TAtomic::TNamedObject {
-                name, ..
-            }) = node
+            if let pzoom_code_info::ttype::TypeNode::Atomic(TAtomic::TNamedObject { name, .. }) =
+                node
                 && !matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT)
                 && analyzer.codebase.get_class(*name).is_none()
                 && crate::class_casing::class_casing_hint(analyzer, *name).is_some()
@@ -1668,13 +1669,25 @@ pub(crate) fn check_key_value_of_sentinels(
     for param in &function_info.params {
         if let Some(param_type) = param.get_type() {
             for atomic in &param_type.types {
-                report_key_value_of_sentinel(analyzer, function_info, atomic, &mut emitted, analysis_data);
+                report_key_value_of_sentinel(
+                    analyzer,
+                    function_info,
+                    atomic,
+                    &mut emitted,
+                    analysis_data,
+                );
             }
         }
     }
     if let Some(return_type) = function_info.get_return_type() {
         for atomic in &return_type.types {
-            report_key_value_of_sentinel(analyzer, function_info, atomic, &mut emitted, analysis_data);
+            report_key_value_of_sentinel(
+                analyzer,
+                function_info,
+                atomic,
+                &mut emitted,
+                analysis_data,
+            );
         }
     }
 }
@@ -1711,7 +1724,9 @@ fn report_key_value_of_sentinel(
         resolve_docblock_class_id(
             analyzer,
             function_info,
-            analyzer.interner.intern(class_part.trim_start_matches('\\')),
+            analyzer
+                .interner
+                .intern(class_part.trim_start_matches('\\')),
         )
     };
     let unresolvable = match resolved_class {
@@ -1725,7 +1740,10 @@ fn report_key_value_of_sentinel(
             let (line, col) = analyzer.get_line_column(function_info.start_offset);
             analysis_data.add_issue(Issue::new(
                 IssueKind::UnresolvableConstant,
-                format!("Could not resolve constant {}::{}", class_part, constant_part),
+                format!(
+                    "Could not resolve constant {}::{}",
+                    class_part, constant_part
+                ),
                 analyzer.file_path,
                 function_info.start_offset,
                 function_info.start_offset,
@@ -1811,7 +1829,9 @@ fn inspect_atomic_for_docblock_refs(
     analysis_data: &mut FunctionAnalysisData,
 ) {
     match atomic {
-        TAtomic::TNamedObject { name, type_params , .. } => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } => {
             if *name == StrId::PZOOM_INDEXED_ACCESS {
                 if let Some(type_params) = type_params {
                     for type_param in type_params {
@@ -2402,8 +2422,6 @@ fn get_alternate_param_var_id(
         Some(VarName::from(format!("${}", var_name)))
     }
 }
-
-
 
 /// Psalm's UnusedDocblockParam (FunctionLikeAnalyzer): a docblock `@param`
 /// with no counterpart signature parameter, reported under find_unused_code.

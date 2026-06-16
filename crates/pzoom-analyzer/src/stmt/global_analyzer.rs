@@ -3,8 +3,8 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::global::Global;
 use mago_syntax::ast::ast::variable::Variable;
-use pzoom_code_info::{Issue, IssueKind, TUnion};
 use pzoom_code_info::VarName;
+use pzoom_code_info::{Issue, IssueKind, TUnion};
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;

@@ -24,9 +24,7 @@ pub fn analyze(
 
     // A break that leaves a switch carries its context to the post-switch
     // merge (Hakana's case_scope.break_vars).
-    if leaving_switch
-        && let Some(frame) = analysis_data.switch_break_contexts.last_mut()
-    {
+    if leaving_switch && let Some(frame) = analysis_data.switch_break_contexts.last_mut() {
         frame.push(context.clone());
     }
 
@@ -35,7 +33,8 @@ pub fn analyze(
         analysis_data.loop_scopes.len(),
         break_stmt.level.as_ref(),
     );
-    if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index)) {
+    if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index))
+    {
         if leaving_switch {
             loop_scope.final_actions.insert(ControlAction::LeaveSwitch);
             context.control_actions.insert(ControlAction::LeaveSwitch);

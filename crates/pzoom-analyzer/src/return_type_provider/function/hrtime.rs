@@ -3,8 +3,8 @@
 use pzoom_code_info::TUnion;
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
-use crate::function_analysis_data::FunctionAnalysisData;
 use crate::expr::call::function_call_return_type_fetcher as fcrf;
+use crate::function_analysis_data::FunctionAnalysisData;
 pub(super) struct HrtimeReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for HrtimeReturnTypeProvider {

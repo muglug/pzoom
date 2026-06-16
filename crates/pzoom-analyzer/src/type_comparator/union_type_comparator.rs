@@ -62,13 +62,11 @@ pub fn is_contained_by_in_context(
     // `InvalidScalarArgument` rather than `InvalidArgument`.
     union_comparison_result.scalar_type_match_found = Some(true);
 
-
     // A templated container keeps input templates intact for the atomic
     // comparator's shallow template-vs-template rules (Hakana's
     // `container_has_template` gate); only a template-free container lets an
     // input template dissolve into its bound.
-    let container_has_template =
-        super::generic_type_comparator::union_has_template(container_type);
+    let container_has_template = super::generic_type_comparator::union_has_template(container_type);
 
     // Track coercion state across all atomic comparisons
     let mut all_type_coerced: Option<bool> = None;

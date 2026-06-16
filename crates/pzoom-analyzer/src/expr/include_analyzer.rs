@@ -126,7 +126,9 @@ fn analyze_path(
     // include/require returns the return value of the included file,
     // or 1 on success, false on failure (for include)
     // For simplicity, we return mixed since we don't track included file returns
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// Port of Psalm's `IncludeAnalyzer::getPathTo`: statically resolve an
@@ -189,9 +191,10 @@ fn get_path_to(
             Some(apply_dirname(&base, levels as usize))
         }
         // `__DIR__` / `__FILE__` resolve against the including file.
-        Expression::MagicConstant(MagicConstant::Directory(_)) => {
-            Some(apply_dirname(&analyzer.interner.lookup(analyzer.file_path), 1))
-        }
+        Expression::MagicConstant(MagicConstant::Directory(_)) => Some(apply_dirname(
+            &analyzer.interner.lookup(analyzer.file_path),
+            1,
+        )),
         Expression::MagicConstant(MagicConstant::File(_)) => {
             Some(analyzer.interner.lookup(analyzer.file_path).to_string())
         }

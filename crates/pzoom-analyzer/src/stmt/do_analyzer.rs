@@ -13,8 +13,8 @@ use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 use crate::stmt::loop_analyzer;
+use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 use crate::stmt::while_analyzer::get_and_expressions;
 
 /// Analyze a do-while statement.
@@ -68,10 +68,7 @@ pub fn analyze(
     // with the break-path merges applied by the loop analyzer) becomes the
     // post-loop variable state, after reconciling the negated while condition.
     if can_leave_loop {
-        let condition_id = (
-            condition.span().start.offset,
-            condition.span().end.offset,
-        );
+        let condition_id = (condition.span().start.offset, condition.span().end.offset);
         let while_clauses = crate::formula_generator::get_formula(
             condition_id,
             condition_id,

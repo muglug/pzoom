@@ -94,7 +94,9 @@ pub fn analyze_exit(
     }
 
     // exit/die returns never (nothing)
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::nothing()));
 }
 
 /// Analyze a die() expression.
@@ -135,5 +137,7 @@ pub fn analyze_die(
     }
 
     // exit/die returns never (nothing)
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::nothing()));
 }

@@ -31,7 +31,9 @@ impl FunctionReturnTypeProvider for ArrayRandReturnTypeProvider {
         };
 
         let num_literal = analysis_data
-            .expr_types.get(&num_pos).cloned()
+            .expr_types
+            .get(&num_pos)
+            .cloned()
             .and_then(|num_type| match num_type.get_single() {
                 Some(TAtomic::TLiteralInt { value }) => Some(*value),
                 _ => None,

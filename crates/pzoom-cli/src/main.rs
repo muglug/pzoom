@@ -473,7 +473,9 @@ fn print_success_message(use_color: bool) {
 /// PHP `number_format($n, $decimals)`: thousands separated with commas.
 fn format_number(value: f64, decimals: usize) -> String {
     let formatted = format!("{value:.decimals$}");
-    let (int_part, frac_part) = formatted.split_once('.').unwrap_or((formatted.as_str(), ""));
+    let (int_part, frac_part) = formatted
+        .split_once('.')
+        .unwrap_or((formatted.as_str(), ""));
     let mut grouped = String::new();
     let digits: Vec<char> = int_part.chars().collect();
     for (i, c) in digits.iter().enumerate() {
@@ -694,11 +696,13 @@ fn format_snippet(
     let before = snippet.get(..highlight_start)?;
     let selected = snippet.get(highlight_start..highlight_end)?;
     let after = snippet.get(highlight_end..)?;
-    let highlight = if is_error { "\u{1b}[97;41m" } else { "\u{1b}[30;47m" };
+    let highlight = if is_error {
+        "\u{1b}[97;41m"
+    } else {
+        "\u{1b}[30;47m"
+    };
 
-    Some(format!(
-        "{before}{highlight}{selected}\u{1b}[0m{after}\n"
-    ))
+    Some(format!("{before}{highlight}{selected}\u{1b}[0m{after}\n"))
 }
 
 fn load_error_baseline(config: &Config, project_root: &Path) -> Option<PsalmBaseline> {
@@ -756,9 +760,10 @@ fn format_display_path(path: &str, root: &Path) -> String {
     }
 
     if let (Ok(canon_root), Ok(canon_path)) = (root.canonicalize(), path_buf.canonicalize())
-        && let Ok(rel) = canon_path.strip_prefix(&canon_root) {
-            return rel.to_string_lossy().replace('\\', "/");
-        }
+        && let Ok(rel) = canon_path.strip_prefix(&canon_root)
+    {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
 
     if let Ok(cwd) = std::env::current_dir() {
         if let Ok(rel) = path_buf.strip_prefix(&cwd) {
@@ -766,9 +771,10 @@ fn format_display_path(path: &str, root: &Path) -> String {
         }
 
         if let (Ok(canon_cwd), Ok(canon_path)) = (cwd.canonicalize(), path_buf.canonicalize())
-            && let Ok(rel) = canon_path.strip_prefix(&canon_cwd) {
-                return rel.to_string_lossy().replace('\\', "/");
-            }
+            && let Ok(rel) = canon_path.strip_prefix(&canon_cwd)
+        {
+            return rel.to_string_lossy().replace('\\', "/");
+        }
     }
 
     path_buf.to_string_lossy().replace('\\', "/")
@@ -850,9 +856,10 @@ fn is_excluded_from_analysis(path: &Path, root: &Path, exclude_patterns: &[Strin
         }
 
         if let Some(rel) = &rel_string
-            && (rel == &pattern || rel.starts_with(&format!("{}/", pattern))) {
-                return true;
-            }
+            && (rel == &pattern || rel.starts_with(&format!("{}/", pattern)))
+        {
+            return true;
+        }
 
         path_string.ends_with(&format!("/{}", pattern)) || file_name == pattern
     })
@@ -890,14 +897,20 @@ fn print_mem_stats(codebase: &pzoom_code_info::CodebaseInfo, interner: &pzoom_st
     for i in 0..interner.len() {
         interner_bytes += interner.lookup(pzoom_str::StrId(i as u32)).len();
     }
-    eprintln!("[mem] interner: {} strings, {:.1} MB", interner.len(), interner_bytes as f64 / 1e6);
+    eprintln!(
+        "[mem] interner: {} strings, {:.1} MB",
+        interner.len(),
+        interner_bytes as f64 / 1e6
+    );
 
     // Files
     let mut contents_bytes = 0usize;
     let mut annotation_bytes = 0usize;
     for file in codebase.files.values() {
         contents_bytes += file.contents.len();
-        annotation_bytes += serde_json::to_vec(&file.inline_annotations).map(|v| v.len()).unwrap_or(0);
+        annotation_bytes += serde_json::to_vec(&file.inline_annotations)
+            .map(|v| v.len())
+            .unwrap_or(0);
     }
     eprintln!(
         "[mem] files: {} entries, contents {:.1} MB, inline annotations ~{:.1} MB (json)",
@@ -951,11 +964,21 @@ fn print_mem_stats(codebase: &pzoom_code_info::CodebaseInfo, interner: &pzoom_st
                 props_inherited += 1;
             }
         }
-        consts_bytes += serde_json::to_vec(&class_info.constants).map(|v| v.len()).unwrap_or(0);
-        rest_bytes += serde_json::to_vec(&class_info.all_parent_classes).map(|v| v.len()).unwrap_or(0)
-            + serde_json::to_vec(&class_info.all_parent_interfaces).map(|v| v.len()).unwrap_or(0)
-            + serde_json::to_vec(&class_info.declaring_method_ids).map(|v| v.len()).unwrap_or(0)
-            + serde_json::to_vec(&class_info.appearing_method_ids).map(|v| v.len()).unwrap_or(0);
+        consts_bytes += serde_json::to_vec(&class_info.constants)
+            .map(|v| v.len())
+            .unwrap_or(0);
+        rest_bytes += serde_json::to_vec(&class_info.all_parent_classes)
+            .map(|v| v.len())
+            .unwrap_or(0)
+            + serde_json::to_vec(&class_info.all_parent_interfaces)
+                .map(|v| v.len())
+                .unwrap_or(0)
+            + serde_json::to_vec(&class_info.declaring_method_ids)
+                .map(|v| v.len())
+                .unwrap_or(0)
+            + serde_json::to_vec(&class_info.appearing_method_ids)
+                .map(|v| v.len())
+                .unwrap_or(0);
     }
     let _ = inherited_methods_bytes;
     eprintln!(

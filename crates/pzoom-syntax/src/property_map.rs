@@ -12,10 +12,10 @@
 
 use std::sync::OnceLock;
 
+use pzoom_code_info::TUnion;
 use pzoom_code_info::class_like_info::ClassLikeInfo;
 use pzoom_code_info::member_visibility::Visibility;
 use pzoom_code_info::property_info::PropertyInfo;
-use pzoom_code_info::TUnion;
 use pzoom_str::ThreadedInterner;
 use rustc_hash::FxHashMap;
 

@@ -32,8 +32,7 @@ fn attach_property_fetch_dataflow(
     prop_type: TUnion,
 ) -> TUnion {
     let prop_id = analyzer.interner.intern(prop_name);
-    let lookup_types =
-        expand_intersection_lookup_types(&expand_template_object_union(obj_type));
+    let lookup_types = expand_intersection_lookup_types(&expand_template_object_union(obj_type));
 
     for atomic in &lookup_types {
         let TAtomic::TNamedObject { name, .. } = atomic else {
@@ -47,8 +46,7 @@ fn attach_property_fetch_dataflow(
         // undeclared property to a `@mixin` class that declares it, so the
         // dataflow reads the mixin's property node (`B::$userId` with
         // `@mixin A` flows from `A::$userId`).
-        let (fetch_class, prop_info) = if let Some(prop_info) =
-            class_info.properties.get(&prop_id)
+        let (fetch_class, prop_info) = if let Some(prop_info) = class_info.properties.get(&prop_id)
         {
             (*name, prop_info)
         } else if let Some((mixin_class, mixin_prop_info)) =
@@ -143,9 +141,7 @@ pub fn analyze(
     );
 
     if let Some(prop_name) = prop_name {
-        if let Some(keyed_type) =
-            get_reconciled_property_type( context, access.object, prop_name)
-        {
+        if let Some(keyed_type) = get_reconciled_property_type(context, access.object, prop_name) {
             analysis_data.expr_types.insert(pos, Rc::new(keyed_type));
             return;
         }
@@ -202,7 +198,9 @@ pub fn analyze(
         .contains(&obj_pos)
     {
         analysis_data.failed_property_fetch_positions.insert(pos);
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     }
 
@@ -260,7 +258,9 @@ pub fn analyze(
     }
 
     // Fall back to mixed
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// A dynamic property selector resolves to a concrete name when its type is
@@ -323,7 +323,7 @@ pub fn analyze_nullsafe(
 
     if let Some(prop_name) = prop_name {
         if let Some(mut keyed_type) =
-            get_reconciled_property_type( context, access.object, prop_name)
+            get_reconciled_property_type(context, access.object, prop_name)
         {
             if obj_type.is_some_and(|obj_t| obj_t.is_nullable()) {
                 keyed_type.add_type(TAtomic::TNull);

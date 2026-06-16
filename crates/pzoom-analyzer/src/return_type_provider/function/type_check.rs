@@ -12,8 +12,20 @@ pub(super) struct TypeCheckReturnTypeProvider;
 impl FunctionReturnTypeProvider for TypeCheckReturnTypeProvider {
     fn function_ids(&self) -> &'static [&'static str] {
         &[
-            "is_string", "is_int", "is_integer", "is_long", "is_float", "is_double", "is_real",
-            "is_bool", "is_array", "is_object", "is_null", "is_numeric", "is_resource", "is_scalar",
+            "is_string",
+            "is_int",
+            "is_integer",
+            "is_long",
+            "is_float",
+            "is_double",
+            "is_real",
+            "is_bool",
+            "is_array",
+            "is_object",
+            "is_null",
+            "is_numeric",
+            "is_resource",
+            "is_scalar",
             "is_iterable",
         ]
     }
@@ -31,10 +43,9 @@ impl FunctionReturnTypeProvider for TypeCheckReturnTypeProvider {
         // no such key (e.g. `is_int(returns_int())`) is there nothing to reconcile,
         // so — like Psalm's FunctionCallReturnTypeFetcher — we narrow the result
         // itself to `true`/`false` and let `handle_paradoxical_condition` flag it.
-        let arg_has_var_key = event
-            .args
-            .first()
-            .is_some_and(|arg| expression_identifier::get_expression_var_key(arg.value()).is_some());
+        let arg_has_var_key = event.args.first().is_some_and(|arg| {
+            expression_identifier::get_expression_var_key(arg.value()).is_some()
+        });
         fca::infer_builtin_type_check_return_type(
             event.analyzer,
             event.arg_positions,

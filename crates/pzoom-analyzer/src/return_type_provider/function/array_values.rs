@@ -3,9 +3,9 @@
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
+use crate::expr::call::function_call_analyzer as fca;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
-use crate::expr::call::function_call_analyzer as fca;
 pub(super) struct ArrayValuesReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayValuesReturnTypeProvider {
@@ -40,7 +40,9 @@ fn infer_array_values_return_type(
         let (kind, message) = if array_type.from_docblock {
             (
                 IssueKind::RedundantFunctionCallGivenDocblockType,
-                format!("The call to array_values is unnecessary given the list docblock type {type_id}"),
+                format!(
+                    "The call to array_values is unnecessary given the list docblock type {type_id}"
+                ),
             )
         } else {
             (

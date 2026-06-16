@@ -201,21 +201,26 @@ fn atomic_contains_any_literal(atomic: &TAtomic) -> bool {
         | TAtomic::TLiteralString { .. }
         | TAtomic::TTrue
         | TAtomic::TFalse => true,
-        TAtomic::TArray { key_type, value_type } => {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        } => {
             // The empty array (`array<never, never>`) is treated as a literal.
             (key_type.is_nothing() && value_type.is_nothing())
                 || union_contains_any_literal(key_type)
                 || union_contains_any_literal(value_type)
         }
-        TAtomic::TNonEmptyArray { key_type, value_type } => {
-            union_contains_any_literal(key_type) || union_contains_any_literal(value_type)
-        }
+        TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        } => union_contains_any_literal(key_type) || union_contains_any_literal(value_type),
         TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
             union_contains_any_literal(value_type)
         }
-        TAtomic::TIterable { key_type, value_type } => {
-            union_contains_any_literal(key_type) || union_contains_any_literal(value_type)
-        }
+        TAtomic::TIterable {
+            key_type,
+            value_type,
+        } => union_contains_any_literal(key_type) || union_contains_any_literal(value_type),
         TAtomic::TKeyedArray {
             properties,
             fallback_key_type,
@@ -252,11 +257,18 @@ fn atomic_has_template(atomic: &TAtomic) -> bool {
         | TAtomic::TTemplateKeyOf { .. }
         | TAtomic::TTemplateValueOf { .. }
         | TAtomic::TTemplatePropertiesOf { .. } => true,
-        TAtomic::TArray { key_type, value_type }
-        | TAtomic::TNonEmptyArray { key_type, value_type }
-        | TAtomic::TIterable { key_type, value_type } => {
-            union_has_template(key_type) || union_has_template(value_type)
+        TAtomic::TArray {
+            key_type,
+            value_type,
         }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TIterable {
+            key_type,
+            value_type,
+        } => union_has_template(key_type) || union_has_template(value_type),
         TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
             union_has_template(value_type)
         }

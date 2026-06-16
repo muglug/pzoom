@@ -19,8 +19,8 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::statement::Statement;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::combine_union_types;
 
 use crate::context::BlockContext;
@@ -30,8 +30,8 @@ use crate::function_analysis_data::FunctionAnalysisData;
 use crate::reconciler;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::ControlAction;
 use crate::stmt::loop_::{assignment_map_visitor::get_assignment_map, tast_cleaner::clean_nodes};
+use crate::stmt::scope_analyzer::ControlAction;
 use crate::stmt_analyzer;
 
 /// Analyze a loop body to a fixed point.
@@ -59,7 +59,8 @@ pub fn analyze(
     // the same type. Mirrors Hakana invalidating clauses for loop-redefined vars.
     let pre_loop_assigned_counts = loop_parent_context.assigned_var_ids.clone();
 
-    let (assignment_map, first_var_id) = get_assignment_map(&pre_conditions, &post_expressions, stmts);
+    let (assignment_map, first_var_id) =
+        get_assignment_map(&pre_conditions, &post_expressions, stmts);
 
     let assignment_depth = if let Some(first_var_id) = first_var_id {
         get_assignment_map_depth(&first_var_id, &mut assignment_map.clone())
@@ -121,12 +122,28 @@ pub fn analyze(
             );
         }
 
-        analyze_loop_body(analyzer, stmts, analysis_data, &mut continue_context, &mut loop_scope)?;
-        update_loop_scope_contexts(&loop_scope, loop_context, &mut continue_context, loop_parent_context);
+        analyze_loop_body(
+            analyzer,
+            stmts,
+            analysis_data,
+            &mut continue_context,
+            &mut loop_scope,
+        )?;
+        update_loop_scope_contexts(
+            &loop_scope,
+            loop_context,
+            &mut continue_context,
+            loop_parent_context,
+        );
 
         loop_context.inside_loop_exprs = true;
         for post_expression in &post_expressions {
-            let _ = expression_analyzer::analyze(analyzer, post_expression, analysis_data, loop_context);
+            let _ = expression_analyzer::analyze(
+                analyzer,
+                post_expression,
+                analysis_data,
+                loop_context,
+            );
         }
         loop_context.inside_loop_exprs = false;
     } else {
@@ -151,7 +168,13 @@ pub fn analyze(
 
         continue_context = loop_context.clone();
 
-        analyze_loop_body(analyzer, stmts, analysis_data, &mut continue_context, &mut loop_scope)?;
+        analyze_loop_body(
+            analyzer,
+            stmts,
+            analysis_data,
+            &mut continue_context,
+            &mut loop_scope,
+        )?;
         update_loop_scope_contexts(
             &loop_scope,
             loop_context,
@@ -177,8 +200,12 @@ pub fn analyze(
 
         continue_context.inside_loop_exprs = true;
         for post_expression in &post_expressions {
-            let _ =
-                expression_analyzer::analyze(analyzer, post_expression, analysis_data, &mut continue_context);
+            let _ = expression_analyzer::analyze(
+                analyzer,
+                post_expression,
+                analysis_data,
+                &mut continue_context,
+            );
         }
         continue_context.inside_loop_exprs = false;
 
@@ -214,7 +241,9 @@ pub fn analyze(
                     } else {
                         has_changes = true;
                     }
-                } else if let Some(parent_context_type) = original_parent_context.locals.get(&var_id) {
+                } else if let Some(parent_context_type) =
+                    original_parent_context.locals.get(&var_id)
+                {
                     // `has_changes` (whether another pass runs) keeps the
                     // metadata-sensitive comparison — dataflow parents changed
                     // by the body need a re-pass so loop-carried reads connect
@@ -248,8 +277,11 @@ pub fn analyze(
                             has_changes = true;
                         }
                         if !loop_types_equal(&continue_context_type, loop_context_type) {
-                            let widened =
-                                combine_union_types(&continue_context_type, loop_context_type, false);
+                            let widened = combine_union_types(
+                                &continue_context_type,
+                                loop_context_type,
+                                false,
+                            );
                             continue_context.locals.insert(var_id.clone(), widened);
                             pre_loop_context.remove_var_from_conflicting_clauses(var_id.clone());
                         }
@@ -274,7 +306,9 @@ pub fn analyze(
                 continue_context.locals.remove(&var_id);
             }
 
-            continue_context.clauses.clone_from(&pre_loop_context.clauses);
+            continue_context
+                .clauses
+                .clone_from(&pre_loop_context.clauses);
             // Psalm's LoopAnalyzer resets byref constraints to the pre-loop
             // state for each reanalysis pass — a constraint established by a
             // by-ref call inside the body must not flag the loop-top
@@ -321,11 +355,19 @@ pub fn analyze(
                 }
             }
 
-            continue_context.clauses.clone_from(&pre_loop_context.clauses);
+            continue_context
+                .clauses
+                .clone_from(&pre_loop_context.clauses);
 
             clean_nodes(stmts, analysis_data);
 
-            analyze_loop_body(analyzer, stmts, analysis_data, &mut continue_context, &mut loop_scope)?;
+            analyze_loop_body(
+                analyzer,
+                stmts,
+                analysis_data,
+                &mut continue_context,
+                &mut loop_scope,
+            )?;
             update_loop_scope_contexts(
                 &loop_scope,
                 loop_context,
@@ -438,7 +480,9 @@ pub fn analyze(
                             replacement.parent_nodes.push(parent_node.clone());
                         }
                     }
-                    loop_parent_context.locals.insert(var_id.clone(), replacement);
+                    loop_parent_context
+                        .locals
+                        .insert(var_id.clone(), replacement);
                     loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 } else if *continue_context_type != var_type {
                     let combined = combine_union_types(&var_type, continue_context_type, false);
@@ -455,7 +499,8 @@ pub fn analyze(
     // negate that condition and apply it to the post-loop context (mirrors Hakana).
     if !pre_conditions.is_empty() && !pre_condition_clauses.is_empty() && !does_sometimes_break {
         let negated_pre_condition_clauses =
-            negate_formula(pre_condition_clauses.into_iter().flatten().collect()).unwrap_or_default();
+            negate_formula(pre_condition_clauses.into_iter().flatten().collect())
+                .unwrap_or_default();
 
         let (negated_pre_condition_types, _) = get_truths_from_formula(
             negated_pre_condition_clauses.iter().collect(),
@@ -530,7 +575,9 @@ pub fn analyze(
                         .or_insert(1);
                 }
             } else {
-                loop_parent_context.locals.insert(var_id.clone(), var_type.clone());
+                loop_parent_context
+                    .locals
+                    .insert(var_id.clone(), var_type.clone());
             }
         }
     }
@@ -555,9 +602,13 @@ pub fn analyze(
     // possibly-in-scope after the loop (Psalm folds LoopScope::vars_possibly_in_scope
     // back into the surrounding context).
     for var_id in &loop_scope.vars_possibly_in_scope {
-        loop_parent_context.vars_possibly_in_scope.insert(var_id.clone());
+        loop_parent_context
+            .vars_possibly_in_scope
+            .insert(var_id.clone());
         if !loop_parent_context.locals.contains_key(var_id) {
-            loop_parent_context.possibly_assigned_var_ids.insert(var_id.clone());
+            loop_parent_context
+                .possibly_assigned_var_ids
+                .insert(var_id.clone());
         }
     }
 

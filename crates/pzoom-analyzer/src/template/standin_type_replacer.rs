@@ -22,7 +22,10 @@ pub fn replace(union_type: &TUnion, template_result: &TemplateResult) -> TUnion 
     substitute_templates_in_union(union_type, template_result)
 }
 
-pub(crate) fn substitute_templates_in_union(union: &TUnion, template_result: &TemplateResult) -> TUnion {
+pub(crate) fn substitute_templates_in_union(
+    union: &TUnion,
+    template_result: &TemplateResult,
+) -> TUnion {
     let mut replaced_types = Vec::new();
     let mut bound_ignore_nullable = false;
     let mut bound_ignore_falsable = false;
@@ -61,10 +64,9 @@ pub(crate) fn substitute_templates_in_union(union: &TUnion, template_result: &Te
             TAtomic::TClassString {
                 as_type: Some(as_type),
             } => {
-                if let Some(class_replacement) = resolve_class_string_template_replacement(
-                    as_type,
-                    template_result,
-                ) {
+                if let Some(class_replacement) =
+                    resolve_class_string_template_replacement(as_type, template_result)
+                {
                     for replacement_atomic in class_replacement.types {
                         let class_string_atomic = TAtomic::TClassString {
                             as_type: Some(Box::new(replacement_atomic)),
@@ -76,10 +78,7 @@ pub(crate) fn substitute_templates_in_union(union: &TUnion, template_result: &Te
                     continue;
                 }
 
-                let replaced_atomic = substitute_templates_in_atomic(
-                    atomic,
-                    template_result,
-                );
+                let replaced_atomic = substitute_templates_in_atomic(atomic, template_result);
                 if !replaced_types.contains(&replaced_atomic) {
                     replaced_types.push(replaced_atomic);
                 }
@@ -109,10 +108,7 @@ pub(crate) fn substitute_templates_in_union(union: &TUnion, template_result: &Te
                 }
             }
             _ => {
-                let replaced_atomic = substitute_templates_in_atomic(
-                    atomic,
-                    template_result,
-                );
+                let replaced_atomic = substitute_templates_in_atomic(atomic, template_result);
                 if !replaced_types.contains(&replaced_atomic) {
                     replaced_types.push(replaced_atomic);
                 }
@@ -157,7 +153,8 @@ fn resolve_class_string_template_replacement(
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } => lower_bounds_get_by_name(template_result, *name).or_else(|| {
+            ..
+        } => lower_bounds_get_by_name(template_result, *name).or_else(|| {
             template_types_get_by_name(template_result, *name)
                 .map(|mapped_type| (**mapped_type).clone())
         }),
@@ -250,7 +247,8 @@ fn resolve_indexed_access_template_union(
     let TAtomic::TNamedObject {
         name,
         type_params: Some(type_params),
-    .. } = atomic
+        ..
+    } = atomic
     else {
         return None;
     };
@@ -259,8 +257,7 @@ fn resolve_indexed_access_template_union(
         return None;
     }
 
-    let array_type =
-        substitute_templates_in_union(&type_params[0], template_result);
+    let array_type = substitute_templates_in_union(&type_params[0], template_result);
 
     Some(extract_indexed_access_value_type(&array_type))
 }
@@ -308,10 +305,7 @@ fn extract_indexed_access_value_type(array_type: &TUnion) -> TUnion {
     }
 }
 
-fn substitute_templates_in_atomic(
-    atomic: &TAtomic,
-    template_result: &TemplateResult,
-) -> TAtomic {
+fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateResult) -> TAtomic {
     match atomic {
         TAtomic::TTemplateParam {
             name,
@@ -334,57 +328,34 @@ fn substitute_templates_in_atomic(
             key_type,
             value_type,
         } => TAtomic::TArray {
-            key_type: Box::new(substitute_templates_in_union(
-                key_type,
-                template_result,
-            )),
-            value_type: Box::new(substitute_templates_in_union(
-                value_type,
-                template_result,
-            )),
+            key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
+            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         TAtomic::TNonEmptyArray {
             key_type,
             value_type,
         } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(substitute_templates_in_union(
-                key_type,
-                template_result,
-            )),
-            value_type: Box::new(substitute_templates_in_union(
-                value_type,
-                template_result,
-            )),
+            key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
+            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         TAtomic::TIterable {
             key_type,
             value_type,
         } => TAtomic::TIterable {
-            key_type: Box::new(substitute_templates_in_union(
-                key_type,
-                template_result,
-            )),
-            value_type: Box::new(substitute_templates_in_union(
-                value_type,
-                template_result,
-            )),
+            key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
+            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(substitute_templates_in_union(
-                value_type,
-                template_result,
-            )),
+            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(substitute_templates_in_union(
-                value_type,
-                template_result,
-            )),
+            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } if template_result.lower_bounds.contains_key(name)
+            ..
+        } if template_result.lower_bounds.contains_key(name)
             || template_types_contains_name(template_result, *name) =>
         {
             let replacement = lower_bounds_get_by_name(template_result, *name)
@@ -409,12 +380,7 @@ fn substitute_templates_in_atomic(
             type_params: type_params.as_ref().map(|params| {
                 params
                     .iter()
-                    .map(|param| {
-                        substitute_templates_in_union(
-                            param,
-                            template_result,
-                        )
-                    })
+                    .map(|param| substitute_templates_in_union(param, template_result))
                     .collect()
             }),
             is_static: *is_static,
@@ -440,10 +406,7 @@ fn substitute_templates_in_atomic(
         TAtomic::TObjectIntersection { types } => {
             let mut replaced_types = Vec::with_capacity(types.len());
             for nested_type in types {
-                let replaced_type = substitute_templates_in_atomic(
-                    nested_type,
-                    template_result,
-                );
+                let replaced_type = substitute_templates_in_atomic(nested_type, template_result);
                 if !replaced_types.contains(&replaced_type) {
                     replaced_types.push(replaced_type);
                 }
@@ -477,16 +440,10 @@ fn substitute_templates_in_atomic(
                 is_list: *is_list,
                 sealed: *sealed,
                 fallback_key_type: fallback_key_type.as_ref().map(|key_type| {
-                    Box::new(substitute_templates_in_union(
-                        key_type,
-                        template_result,
-                    ))
+                    Box::new(substitute_templates_in_union(key_type, template_result))
                 }),
                 fallback_value_type: fallback_value_type.as_ref().map(|value_type| {
-                    Box::new(substitute_templates_in_union(
-                        value_type,
-                        template_result,
-                    ))
+                    Box::new(substitute_templates_in_union(value_type, template_result))
                 }),
             }
         }
@@ -511,10 +468,7 @@ fn substitute_templates_in_atomic(
                     .collect()
             }),
             return_type: return_type.as_ref().map(|return_type| {
-                Box::new(substitute_templates_in_union(
-                    return_type,
-                    template_result,
-                ))
+                Box::new(substitute_templates_in_union(return_type, template_result))
             }),
             is_pure: *is_pure,
         },
@@ -539,20 +493,14 @@ fn substitute_templates_in_atomic(
                     .collect()
             }),
             return_type: return_type.as_ref().map(|return_type| {
-                Box::new(substitute_templates_in_union(
-                    return_type,
-                    template_result,
-                ))
+                Box::new(substitute_templates_in_union(return_type, template_result))
             }),
             is_pure: *is_pure,
         },
         TAtomic::TClassString { as_type } => TAtomic::TClassString {
-            as_type: as_type.as_ref().map(|as_type| {
-                Box::new(substitute_templates_in_atomic(
-                    as_type,
-                    template_result,
-                ))
-            }),
+            as_type: as_type
+                .as_ref()
+                .map(|as_type| Box::new(substitute_templates_in_atomic(as_type, template_result))),
         },
         TAtomic::TTemplateParamClass {
             name,
@@ -571,10 +519,7 @@ fn substitute_templates_in_atomic(
                 TAtomic::TTemplateParamClass {
                     name: *name,
                     defining_entity: *defining_entity,
-                    as_type: Box::new(substitute_templates_in_atomic(
-                        as_type,
-                        template_result,
-                    )),
+                    as_type: Box::new(substitute_templates_in_atomic(as_type, template_result)),
                 }
             }
         }
@@ -761,12 +706,7 @@ fn infer_template_replacements_from_atomic(
                 &bound,
                 template_result,
             );
-            infer_template_replacements_from_union(
-                analyzer,
-                &bound,
-                arg_as_type,
-                template_result,
-            );
+            infer_template_replacements_from_union(analyzer, &bound, arg_as_type, template_result);
             return;
         }
 
@@ -780,12 +720,7 @@ fn infer_template_replacements_from_atomic(
     }
 
     if let TAtomic::TTemplateParamClass { as_type, .. } = arg_atomic {
-        infer_template_replacements_from_atomic(
-            analyzer,
-            param_atomic,
-            as_type,
-            template_result,
-        );
+        infer_template_replacements_from_atomic(analyzer, param_atomic, as_type, template_result);
         return;
     }
 
@@ -809,12 +744,7 @@ fn infer_template_replacements_from_atomic(
                 template_result,
             );
 
-            infer_template_replacements_from_union(
-                analyzer,
-                &bound,
-                &arg_union,
-                template_result,
-            );
+            infer_template_replacements_from_union(analyzer, &bound, &arg_union, template_result);
         }
         TAtomic::TTemplateParam {
             name,
@@ -844,26 +774,27 @@ fn infer_template_replacements_from_atomic(
             // Structural as-clauses (`TArray as array<T>`) stay authoritative
             // at depth 0 — Psalm's usort tests expect the array's element type
             // to win over the (depth-1) callback parameter bound.
-            let bound_is_nominal = bound
-                .types
-                .iter()
-                .any(|atomic| matches!(atomic, TAtomic::TNamedObject { type_params: Some(_), .. }));
+            let bound_is_nominal = bound.types.iter().any(|atomic| {
+                matches!(
+                    atomic,
+                    TAtomic::TNamedObject {
+                        type_params: Some(_),
+                        ..
+                    }
+                )
+            });
             let previous_depth = template_result.bound_insertion_depth;
             if bound_is_nominal {
                 template_result.bound_insertion_depth = previous_depth + 2;
             }
-            infer_template_replacements_from_union(
-                analyzer,
-                &bound,
-                &arg_union,
-                template_result,
-            );
+            infer_template_replacements_from_union(analyzer, &bound, &arg_union, template_result);
             template_result.bound_insertion_depth = previous_depth;
         }
         TAtomic::TNamedObject {
             name,
             type_params: None,
-        .. } if template_types_contains_name(template_result, *name) => {
+            ..
+        } if template_types_contains_name(template_result, *name) => {
             // A template name that parsed as a plain object reference: the
             // declared template types know which entity declared it.
             if let (Some(bound), Some(defining_entity)) = (
@@ -1075,15 +1006,19 @@ fn infer_template_replacements_from_atomic(
         TAtomic::TNamedObject {
             name,
             type_params: Some(param_type_params),
-        .. } => {
+            ..
+        } => {
             if let TAtomic::TNamedObject {
                 name: arg_name,
                 type_params: arg_type_params,
-            .. } = arg_atomic
+                ..
+            } = arg_atomic
             {
                 if name == arg_name
                     || (is_traversable_template_target(*name)
-                        && crate::expr::call::function_call_analyzer::named_object_is_traversable(analyzer, *arg_name))
+                        && crate::expr::call::function_call_analyzer::named_object_is_traversable(
+                            analyzer, *arg_name,
+                        ))
                 {
                     if let Some(arg_type_params) = arg_type_params {
                         for (param, arg) in param_type_params.iter().zip(arg_type_params.iter()) {
@@ -1362,17 +1297,15 @@ pub(crate) fn get_mapped_generic_type_params(
                 let mut new_input_param: Option<TUnion> = None;
 
                 for extended_template in &extended_input_param_type.types {
-                    let extended_templates: Vec<&TAtomic> = if matches!(
-                        extended_template,
-                        TAtomic::TTemplateParam { .. }
-                    ) {
-                        get_extended_templated_types(extended_template, template_extends)
-                            .into_iter()
-                            .filter(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
+                    let extended_templates: Vec<&TAtomic> =
+                        if matches!(extended_template, TAtomic::TTemplateParam { .. }) {
+                            get_extended_templated_types(extended_template, template_extends)
+                                .into_iter()
+                                .filter(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
 
                     let mut candidate_param_types: Vec<TUnion> = Vec::new();
 
@@ -1463,11 +1396,15 @@ fn extract_class_string_atomic(
         TAtomic::TLiteralClassString { name } => Some(TAtomic::TNamedObject {
             name: analyzer.interner.intern(name),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         TAtomic::TLiteralString { value } => Some(TAtomic::TNamedObject {
             name: analyzer.interner.intern(value),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         _ => None,
     }
 }
@@ -1525,7 +1462,9 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
             // `never` (matching Psalm) rather than widening to `array-key`/`mixed`.
             Some((key_union, value_union))
         }
-        TAtomic::TNamedObject { name, type_params , .. } if *name == StrId::TRAVERSABLE => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } if *name == StrId::TRAVERSABLE => {
             let key_type = type_params
                 .as_ref()
                 .and_then(|params| params.first().cloned())
@@ -1537,7 +1476,9 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
 
             Some((key_type, value_type))
         }
-        TAtomic::TNamedObject { name, type_params , .. } if *name == StrId::ITERATOR => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } if *name == StrId::ITERATOR => {
             let key_type = type_params
                 .as_ref()
                 .and_then(|params| params.first().cloned())
@@ -1549,7 +1490,9 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
 
             Some((key_type, value_type))
         }
-        TAtomic::TNamedObject { name, type_params , .. } if *name == StrId::ITERATOR_AGGREGATE => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } if *name == StrId::ITERATOR_AGGREGATE => {
             let key_type = type_params
                 .as_ref()
                 .and_then(|params| params.first().cloned())
@@ -1561,7 +1504,9 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
 
             Some((key_type, value_type))
         }
-        TAtomic::TNamedObject { name, type_params , .. } if *name == StrId::GENERATOR => {
+        TAtomic::TNamedObject {
+            name, type_params, ..
+        } if *name == StrId::GENERATOR => {
             let key_type = type_params
                 .as_ref()
                 .and_then(|params| params.first().cloned())
@@ -1652,7 +1597,12 @@ fn bind_template_replacement(
         return;
     };
 
-    lower_bounds_insert_combined(template_result, template_name, defining_entity, candidate_arg_type);
+    lower_bounds_insert_combined(
+        template_result,
+        template_name,
+        defining_entity,
+        candidate_arg_type,
+    );
 }
 
 /// Psalm's `handleTemplateParamStandin` bind gate: the input binds when it
@@ -1874,8 +1824,7 @@ fn widen_template_argument_to_bound(arg_type: &TUnion, bound: &TUnion) -> TUnion
             // unconstrained (mixed-bounded) templates: binding `T` from
             // `[1, 2, 3]` yields `int`, not `1|2|3`.
             TAtomic::TLiteralInt { value }
-                if bound_accepts_int_like(bound)
-                    && !bound_contains_literal_int(bound, *value) =>
+                if bound_accepts_int_like(bound) && !bound_contains_literal_int(bound, *value) =>
             {
                 TAtomic::TInt
             }

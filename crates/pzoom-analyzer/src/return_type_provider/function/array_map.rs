@@ -4,10 +4,10 @@ use pzoom_code_info::{TAtomic, TUnion};
 use rustc_hash::FxHashMap;
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
-use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::context::BlockContext;
-use crate::statements_analyzer::StatementsAnalyzer;
 use crate::expr::call::function_call_analyzer as fca;
+use crate::function_analysis_data::{FunctionAnalysisData, Pos};
+use crate::statements_analyzer::StatementsAnalyzer;
 pub(super) struct ArrayMapReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayMapReturnTypeProvider {
@@ -20,7 +20,13 @@ impl FunctionReturnTypeProvider for ArrayMapReturnTypeProvider {
         event: &FunctionReturnTypeProviderEvent<'_, '_>,
         analysis_data: &mut FunctionAnalysisData,
     ) -> Option<TUnion> {
-        infer_array_map_return_type(event.analyzer, event.args, event.arg_positions, analysis_data, event.context)
+        infer_array_map_return_type(
+            event.analyzer,
+            event.args,
+            event.arg_positions,
+            analysis_data,
+            event.context,
+        )
     }
 }
 
@@ -97,9 +103,10 @@ fn infer_array_map_return_type(
 
                 let (new_fallback_key, new_fallback_value) =
                     match (fallback_key_type, fallback_value_type) {
-                        (Some(fk), Some(_)) => {
-                            (Some(fk.clone()), Some(Box::new(callback_return_type.clone())))
-                        }
+                        (Some(fk), Some(_)) => (
+                            Some(fk.clone()),
+                            Some(Box::new(callback_return_type.clone())),
+                        ),
                         _ => (None, None),
                     };
 

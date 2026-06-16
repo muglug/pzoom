@@ -132,9 +132,9 @@ pub(crate) fn infer_with_context(
         }
         // A heredoc/nowdoc with only literal parts is a literal string
         // (Psalm's SimpleTypeInferer resolves these for constants).
-        Expression::CompositeString(
-            mago_syntax::ast::ast::string::CompositeString::Document(document),
-        ) => {
+        Expression::CompositeString(mago_syntax::ast::ast::string::CompositeString::Document(
+            document,
+        )) => {
             let mut value = String::new();
             for part in document.parts.iter() {
                 match part {
@@ -270,12 +270,12 @@ pub(crate) fn infer_with_context(
                         BinaryOperator::BitwiseAnd(_) => Some(lhs & rhs),
                         BinaryOperator::BitwiseOr(_) => Some(lhs | rhs),
                         BinaryOperator::BitwiseXor(_) => Some(lhs ^ rhs),
-                        BinaryOperator::LeftShift(_) => {
-                            u32::try_from(*rhs).ok().and_then(|shift| lhs.checked_shl(shift))
-                        }
-                        BinaryOperator::RightShift(_) => {
-                            u32::try_from(*rhs).ok().and_then(|shift| lhs.checked_shr(shift))
-                        }
+                        BinaryOperator::LeftShift(_) => u32::try_from(*rhs)
+                            .ok()
+                            .and_then(|shift| lhs.checked_shl(shift)),
+                        BinaryOperator::RightShift(_) => u32::try_from(*rhs)
+                            .ok()
+                            .and_then(|shift| lhs.checked_shr(shift)),
                         _ => None,
                     };
                     if let Some(value) = computed {
@@ -403,7 +403,9 @@ pub(crate) fn infer_with_context(
 
             // Psalm types `X::class` as a literal CLASS string, so the
             // constant satisfies `class-string` parameters.
-            Some(TUnion::new(TAtomic::TLiteralClassString { name: class_name }))
+            Some(TUnion::new(TAtomic::TLiteralClassString {
+                name: class_name,
+            }))
         }
         Expression::Array(array) => infer_simple_array_type(array.elements.iter(), infer_context),
         Expression::LegacyArray(array) => {
@@ -441,8 +443,7 @@ fn infer_simple_array_type<'a>(
             ArrayElement::KeyValue(kv) => {
                 // An explicit int key past PHP_INT_MAX is the same fatal as
                 // overflowing the auto-increment (Psalm: InvalidArrayOffset).
-                if let Expression::Literal(Literal::Integer(int_literal)) =
-                    kv.key.unparenthesized()
+                if let Expression::Literal(Literal::Integer(int_literal)) = kv.key.unparenthesized()
                     && int_literal
                         .value
                         .is_none_or(|value| i64::try_from(value).is_err())
@@ -488,11 +489,10 @@ fn infer_simple_array_type<'a>(
             ArrayElement::Variadic(variadic) => {
                 // An unpacked array re-indexes its int keys: past
                 // PHP_INT_MAX that's the same fatal as a plain value.
-                if key_overflowed
-                    && let Some(sink) = infer_context.key_overflow_sink {
-                        let span = mago_span::HasSpan::span(variadic);
-                        sink.borrow_mut().push((span.start.offset, span.end.offset));
-                    }
+                if key_overflowed && let Some(sink) = infer_context.key_overflow_sink {
+                    let span = mago_span::HasSpan::span(variadic);
+                    sink.borrow_mut().push((span.start.offset, span.end.offset));
+                }
                 return None;
             }
         }
@@ -582,17 +582,31 @@ pub(crate) fn build_unresolved_const_expr(
             if matches!(binary.operator, BinaryOperator::StringConcat(_)) =>
         {
             Some(UnresolvedConstExpr::Concat(
-                Box::new(build_unresolved_const_expr(binary.lhs, infer_context, interner)?),
-                Box::new(build_unresolved_const_expr(binary.rhs, infer_context, interner)?),
+                Box::new(build_unresolved_const_expr(
+                    binary.lhs,
+                    infer_context,
+                    interner,
+                )?),
+                Box::new(build_unresolved_const_expr(
+                    binary.rhs,
+                    infer_context,
+                    interner,
+                )?),
             ))
         }
         // `parent::ARR + [...]` — array union with left precedence.
-        Expression::Binary(binary)
-            if matches!(binary.operator, BinaryOperator::Addition(_)) =>
-        {
+        Expression::Binary(binary) if matches!(binary.operator, BinaryOperator::Addition(_)) => {
             Some(UnresolvedConstExpr::Plus(
-                Box::new(build_unresolved_const_expr(binary.lhs, infer_context, interner)?),
-                Box::new(build_unresolved_const_expr(binary.rhs, infer_context, interner)?),
+                Box::new(build_unresolved_const_expr(
+                    binary.lhs,
+                    infer_context,
+                    interner,
+                )?),
+                Box::new(build_unresolved_const_expr(
+                    binary.rhs,
+                    infer_context,
+                    interner,
+                )?),
             ))
         }
         // Int arithmetic over late-resolved operands
@@ -612,8 +626,16 @@ pub(crate) fn build_unresolved_const_expr(
             };
             Some(UnresolvedConstExpr::IntOp {
                 op,
-                lhs: Box::new(build_unresolved_const_expr(binary.lhs, infer_context, interner)?),
-                rhs: Box::new(build_unresolved_const_expr(binary.rhs, infer_context, interner)?),
+                lhs: Box::new(build_unresolved_const_expr(
+                    binary.lhs,
+                    infer_context,
+                    interner,
+                )?),
+                rhs: Box::new(build_unresolved_const_expr(
+                    binary.rhs,
+                    infer_context,
+                    interner,
+                )?),
             })
         }
         // `COND ? IF : ELSE` — Psalm's ExpressionResolver builds an
@@ -703,7 +725,11 @@ fn build_unresolved_array<'a>(
         match element {
             ArrayElement::KeyValue(kv) => {
                 entries.push(pzoom_code_info::class_constant_info::UnresolvedArrayEntry {
-                    key: Some(build_unresolved_const_expr(kv.key, infer_context, interner)?),
+                    key: Some(build_unresolved_const_expr(
+                        kv.key,
+                        infer_context,
+                        interner,
+                    )?),
                     value: build_unresolved_const_expr(kv.value, infer_context, interner)?,
                     is_spread: false,
                 });

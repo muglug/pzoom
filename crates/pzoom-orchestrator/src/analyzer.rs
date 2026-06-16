@@ -107,7 +107,8 @@ impl<'a> Analyzer<'a> {
 
             for (_, file_group) in file_groups {
                 handles.push(scope.spawn(move || {
-                    let file_analyzer = FileAnalyzer::new(self.codebase, self.interner, self.config);
+                    let file_analyzer =
+                        FileAnalyzer::new(self.codebase, self.interner, self.config);
                     let mut group_issues = Vec::new();
                     let mut group_refs = ReferenceAccumulator::default();
 
@@ -166,13 +167,15 @@ struct ReferenceAccumulator {
 impl ReferenceAccumulator {
     fn merge(&mut self, data: FileReferenceData) {
         self.symbol_references.extend(data.symbol_references);
-        self.referenced_properties.extend(data.referenced_properties);
+        self.referenced_properties
+            .extend(data.referenced_properties);
         self.method_returns_used.extend(data.method_returns_used);
     }
 
     fn merge_accumulator(&mut self, other: ReferenceAccumulator) {
         self.symbol_references.extend(other.symbol_references);
-        self.referenced_properties.extend(other.referenced_properties);
+        self.referenced_properties
+            .extend(other.referenced_properties);
         self.method_returns_used.extend(other.method_returns_used);
     }
 }

@@ -7,11 +7,9 @@ use mago_syntax::ast::ast::call::StaticMethodCall;
 use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
 use pzoom_code_info::VarName;
-use pzoom_code_info::{
-    Issue, IssueKind, TAtomic, TUnion,
-};
+use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
 
@@ -23,9 +21,7 @@ use crate::internal_access::{
 };
 use crate::statements_analyzer::StatementsAnalyzer;
 
-use super::{
-    argument_analyzer, callable_validation, function_call_analyzer,
-};
+use super::{argument_analyzer, callable_validation, function_call_analyzer};
 
 use super::atomic_static_call_analyzer::*;
 use super::existing_atomic_static_call_analyzer::*;
@@ -102,7 +98,9 @@ pub fn analyze(
             line,
             col,
         ));
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     }
 
@@ -131,7 +129,9 @@ pub fn analyze(
             line,
             col,
         ));
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     }
 
@@ -182,7 +182,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
 
@@ -267,20 +269,19 @@ pub fn analyze(
                     ));
                 }
 
-                let template_result =
-                    build_static_method_template_context(
-                        analyzer,
-                        resolved_class_info,
-                        resolved_type_params.as_deref(),
-                        analyzer
-                            .get_declaring_class()
-                            .and_then(|class_id| analyzer.codebase.get_class(class_id)),
-                        &method_info,
-                        &args,
-                        &arg_positions,
-                        analysis_data,
-                        context,
-                    );
+                let template_result = build_static_method_template_context(
+                    analyzer,
+                    resolved_class_info,
+                    resolved_type_params.as_deref(),
+                    analyzer
+                        .get_declaring_class()
+                        .and_then(|class_id| analyzer.codebase.get_class(class_id)),
+                    &method_info,
+                    &args,
+                    &arg_positions,
+                    analysis_data,
+                    context,
+                );
                 analyze_pending_closure_args_for_static_method(
                     analyzer,
                     &args,
@@ -594,7 +595,9 @@ pub fn analyze(
                         pos,
                         inferred_return_type,
                     );
-                    analysis_data.expr_types.insert(pos, Rc::new(inferred_return_type));
+                    analysis_data
+                        .expr_types
+                        .insert(pos, Rc::new(inferred_return_type));
                     return;
                 }
 
@@ -633,16 +636,15 @@ pub fn analyze(
                     } else {
                         self_class != Some(static_class_type_name) || class_is_final
                     };
-                    let return_type =
-                        crate::type_expander::localize_special_class_type_union_final(
-                            analyzer.codebase,
-                            analyzer.interner,
-                            resolved_return_type,
-                            resolved_class_id,
-                            static_class_type_name,
-                            parent_class_id,
-                            function_is_final,
-                        );
+                    let return_type = crate::type_expander::localize_special_class_type_union_final(
+                        analyzer.codebase,
+                        analyzer.interner,
+                        resolved_return_type,
+                        resolved_class_id,
+                        static_class_type_name,
+                        parent_class_id,
+                        function_is_final,
+                    );
                     let return_type = add_static_call_dataflow(
                         analyzer,
                         analysis_data,
@@ -695,7 +697,9 @@ pub fn analyze(
                         analysis_data,
                         context,
                     );
-                    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                    analysis_data
+                        .expr_types
+                        .insert(pos, Rc::new(TUnion::mixed()));
                     return;
                 }
 
@@ -731,13 +735,12 @@ pub fn analyze(
 
                         // Resolve the magic handler's declared return type
                         // (`static` localizes to the calling class).
-                        let magic_method_id = if instance_magic_call
-                            && !class_has_magic_callstatic(class_info)
-                        {
-                            StrId::CALL
-                        } else {
-                            StrId::CALL_STATIC
-                        };
+                        let magic_method_id =
+                            if instance_magic_call && !class_has_magic_callstatic(class_info) {
+                                StrId::CALL
+                            } else {
+                                StrId::CALL_STATIC
+                            };
                         let magic_return = class_info
                             .methods
                             .get(&magic_method_id)
@@ -770,7 +773,11 @@ pub fn analyze(
                 } else {
                     analysis_data.add_issue(Issue::new(
                         IssueKind::UndefinedMethod,
-                        crate::class_casing::undefined_method_message(analyzer, &class_name, method_name),
+                        crate::class_casing::undefined_method_message(
+                            analyzer,
+                            &class_name,
+                            method_name,
+                        ),
                         analyzer.file_path,
                         pos.0,
                         pos.1,
@@ -814,7 +821,10 @@ pub fn analyze(
             analysis_data,
             context,
         );
-        analysis_data.expr_types.insert(pos, Rc::new(dynamic_return_type.unwrap_or_else(TUnion::mixed)));
+        analysis_data.expr_types.insert(
+            pos,
+            Rc::new(dynamic_return_type.unwrap_or_else(TUnion::mixed)),
+        );
         return;
     }
 
@@ -826,7 +836,9 @@ pub fn analyze(
         context,
     );
     // Fall back to mixed
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 pub(crate) fn is_closure_like_argument(arg: &Argument<'_>) -> bool {
@@ -891,14 +903,16 @@ pub(crate) fn analyze_pending_closure_args_for_static_method(
         };
 
         let expected_param_type = param.and_then(|param| param.get_type()).map(|param_type| {
-            let replaced_param_type =
-                if crate::template::template_result_is_empty(template_result) {
-                    param_type.clone()
-                } else {
-                    function_call_analyzer::replace_templates_in_union(param_type, template_result)
-                };
+            let replaced_param_type = if crate::template::template_result_is_empty(template_result)
+            {
+                param_type.clone()
+            } else {
+                function_call_analyzer::replace_templates_in_union(param_type, template_result)
+            };
 
-            localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+            localize_special_class_type_union(
+                analyzer.codebase,
+                analyzer.interner,
                 &replaced_param_type,
                 self_class_id,
                 static_class_id,
@@ -971,7 +985,13 @@ pub(crate) fn get_resolved_class_id(
                 // Names inside subtrees the resolver does not visit (e.g.
                 // partial applications) fall back to the literal text, with
                 // any fully-qualified leading backslash stripped.
-                .or_else(|| Some(analyzer.interner.intern(id.value().trim_start_matches('\\'))))
+                .or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .intern(id.value().trim_start_matches('\\')),
+                    )
+                })
         }
         Expression::Self_(_) => analyzer.get_declaring_class(),
         Expression::Static(_) => {
@@ -1059,10 +1079,7 @@ pub(crate) fn is_parse_artifact_class_name(class_name: &str) -> bool {
     class_name.contains(':') && !class_name.contains("::")
 }
 
-pub(crate) fn is_method_guarded_by_exists(
-    context: &BlockContext,
-    method_name: &str,
-) -> bool {
+pub(crate) fn is_method_guarded_by_exists(context: &BlockContext, method_name: &str) -> bool {
     let method_name = method_name.to_ascii_lowercase();
     let suffix = format!(",{})", method_name);
 

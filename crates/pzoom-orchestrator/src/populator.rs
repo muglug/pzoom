@@ -11,12 +11,12 @@
 //! entry point and classes are recursively populated to ensure ancestors
 //! are processed before descendants.
 
+use indexmap::IndexMap;
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
 use pzoom_code_info::codebase_info::ConstantInfo;
 use pzoom_code_info::{CodebaseInfo, GlobalDefineValue, MethodIdentifier, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
-use indexmap::IndexMap;
 
 /// Register every scanned `define()` as a global constant — Psalm's
 /// `addGlobalConstantType` under `allConstantsGlobal`. Runs after populate so
@@ -450,12 +450,7 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
             .constants
             .values()
             .filter_map(|const_info| const_info.enum_case_value.as_ref())
-            .map(|case_value| {
-                case_value
-                    .get_single()
-                    .cloned()
-                    .unwrap_or(TAtomic::TMixed)
-            })
+            .map(|case_value| case_value.get_single().cloned().unwrap_or(TAtomic::TMixed))
             .collect();
         if value_atomics.is_empty() {
             continue;
@@ -517,9 +512,9 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
         use pzoom_code_info::t_atomic::ArrayKey;
         match expr {
             UnresolvedConstExpr::Resolved(resolved) => resolved.clone(),
-            UnresolvedConstExpr::ClassConstant { class, constant } => {
-                lookup_constant_type(codebase, interner, *class, *constant, visiting, hit_cycle, failures)
-            }
+            UnresolvedConstExpr::ClassConstant { class, constant } => lookup_constant_type(
+                codebase, interner, *class, *constant, visiting, hit_cycle, failures,
+            ),
             UnresolvedConstExpr::EnumCasePropertyFetch {
                 class,
                 case,
@@ -542,7 +537,14 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 let mut next_int_key = 0i64;
                 let mut is_list = true;
                 for entry in entries {
-                    let value_type = resolve_const_expr(&entry.value, codebase, interner, visiting, hit_cycle, failures);
+                    let value_type = resolve_const_expr(
+                        &entry.value,
+                        codebase,
+                        interner,
+                        visiting,
+                        hit_cycle,
+                        failures,
+                    );
                     if entry.is_spread {
                         // Spreading an empty array contributes nothing.
                         if matches!(
@@ -581,8 +583,9 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     }
                     match &entry.key {
                         Some(key_expr) => {
-                            let key_type =
-                                resolve_const_expr(key_expr, codebase, interner, visiting, hit_cycle, failures);
+                            let key_type = resolve_const_expr(
+                                key_expr, codebase, interner, visiting, hit_cycle, failures,
+                            );
                             let Some(key) = const_union_to_array_key(&key_type) else {
                                 return TUnion::mixed();
                             };
@@ -617,8 +620,10 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 })
             }
             UnresolvedConstExpr::Concat(lhs, rhs) => {
-                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
-                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                let lhs_type =
+                    resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type =
+                    resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
                 let literal_piece = |union: &TUnion| -> Option<String> {
                     match union.get_single()? {
                         TAtomic::TLiteralString { value } => Some(value.clone()),
@@ -638,21 +643,22 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 }
             }
             UnresolvedConstExpr::ArrayAccess { array, key } => {
-                let array_type = resolve_const_expr(array, codebase, interner, visiting, hit_cycle, failures);
-                let key_type = resolve_const_expr(key, codebase, interner, visiting, hit_cycle, failures);
+                let array_type =
+                    resolve_const_expr(array, codebase, interner, visiting, hit_cycle, failures);
+                let key_type =
+                    resolve_const_expr(key, codebase, interner, visiting, hit_cycle, failures);
                 let (Some(TAtomic::TKeyedArray { properties, .. }), Some(key)) =
                     (array_type.get_single(), const_union_to_array_key(&key_type))
                 else {
                     return TUnion::mixed();
                 };
-                properties
-                    .get(&key)
-                    .cloned()
-                    .unwrap_or_else(TUnion::mixed)
+                properties.get(&key).cloned().unwrap_or_else(TUnion::mixed)
             }
             UnresolvedConstExpr::Plus(lhs, rhs) => {
-                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
-                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                let lhs_type =
+                    resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type =
+                    resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
                 match (lhs_type.get_single(), rhs_type.get_single()) {
                     // PHP's `+` on arrays keeps the left operand's keys.
                     (
@@ -671,7 +677,9 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     ) => {
                         let mut properties = (**lhs_properties).clone();
                         for (key, value) in rhs_properties.iter() {
-                            properties.entry(key.clone()).or_insert_with(|| value.clone());
+                            properties
+                                .entry(key.clone())
+                                .or_insert_with(|| value.clone());
                         }
                         TUnion::new(TAtomic::TKeyedArray {
                             properties: std::sync::Arc::new(properties),
@@ -681,26 +689,25 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                             fallback_value_type: fallback_value_type.clone(),
                         })
                     }
-                    (Some(TAtomic::TLiteralInt { value: lhs_value }),
-                     Some(TAtomic::TLiteralInt { value: rhs_value })) => {
-                        match lhs_value.checked_add(*rhs_value) {
-                            Some(sum) => TUnion::new(TAtomic::TLiteralInt { value: sum }),
-                            None => TUnion::mixed(),
-                        }
-                    }
+                    (
+                        Some(TAtomic::TLiteralInt { value: lhs_value }),
+                        Some(TAtomic::TLiteralInt { value: rhs_value }),
+                    ) => match lhs_value.checked_add(*rhs_value) {
+                        Some(sum) => TUnion::new(TAtomic::TLiteralInt { value: sum }),
+                        None => TUnion::mixed(),
+                    },
                     _ => TUnion::mixed(),
                 }
             }
-            UnresolvedConstExpr::GlobalConstant(constant_id) => match codebase
-                .constants
-                .get(constant_id)
-            {
-                Some(constant) => constant.constant_type.clone(),
-                None => {
-                    failures.push(ConstResolutionFailure::MissingGlobalConstant(*constant_id));
-                    TUnion::mixed()
+            UnresolvedConstExpr::GlobalConstant(constant_id) => {
+                match codebase.constants.get(constant_id) {
+                    Some(constant) => constant.constant_type.clone(),
+                    None => {
+                        failures.push(ConstResolutionFailure::MissingGlobalConstant(*constant_id));
+                        TUnion::mixed()
+                    }
                 }
-            },
+            }
             UnresolvedConstExpr::Ternary {
                 cond,
                 if_branch,
@@ -748,8 +755,10 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
             }
             UnresolvedConstExpr::IntOp { op, lhs, rhs } => {
                 use pzoom_code_info::class_constant_info::UnresolvedIntOp;
-                let lhs_type = resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
-                let rhs_type = resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
+                let lhs_type =
+                    resolve_const_expr(lhs, codebase, interner, visiting, hit_cycle, failures);
+                let rhs_type =
+                    resolve_const_expr(rhs, codebase, interner, visiting, hit_cycle, failures);
                 if let (
                     Some(TAtomic::TLiteralInt { value: lhs_value }),
                     Some(TAtomic::TLiteralInt { value: rhs_value }),
@@ -840,7 +849,14 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 *hit_cycle = true;
                 return TUnion::mixed();
             }
-            return resolve_const_expr(initializer, codebase, interner, visiting, hit_cycle, failures);
+            return resolve_const_expr(
+                initializer,
+                codebase,
+                interner,
+                visiting,
+                hit_cycle,
+                failures,
+            );
         }
 
         const_info.constant_type.clone()
@@ -885,7 +901,14 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 *hit_cycle = true;
                 return TUnion::mixed();
             }
-            return resolve_const_expr(initializer, codebase, interner, visiting, hit_cycle, failures);
+            return resolve_const_expr(
+                initializer,
+                codebase,
+                interner,
+                visiting,
+                hit_cycle,
+                failures,
+            );
         }
 
         const_info
@@ -894,9 +917,7 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
             .unwrap_or_else(TUnion::mixed)
     }
 
-    fn const_union_to_array_key(
-        union: &TUnion,
-    ) -> Option<pzoom_code_info::t_atomic::ArrayKey> {
+    fn const_union_to_array_key(union: &TUnion) -> Option<pzoom_code_info::t_atomic::ArrayKey> {
         use pzoom_code_info::t_atomic::ArrayKey;
         match union.get_single()? {
             TAtomic::TLiteralInt { value } => Some(ArrayKey::Int(*value)),
@@ -1454,9 +1475,7 @@ fn extend_template_params(
             // entries winning per class-name key (array_merge semantics).
             if from_direct_parent {
                 for (key, value) in &parent_storage.template_extended_params {
-                    storage
-                        .template_extended_params
-                        .insert(*key, value.clone());
+                    storage.template_extended_params.insert(*key, value.clone());
                 }
             }
         }
@@ -1464,9 +1483,7 @@ fn extend_template_params(
         // Parent declares no templates: inherit its extended params wholesale,
         // parent entries winning per class-name key (array_merge semantics).
         for (key, value) in &parent_storage.template_extended_params {
-            storage
-                .template_extended_params
-                .insert(*key, value.clone());
+            storage.template_extended_params.insert(*key, value.clone());
         }
     }
 }

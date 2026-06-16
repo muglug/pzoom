@@ -41,8 +41,7 @@ pub fn analyze(
                 // `unset($arr[$k])` mutates `$arr` — the base variable's
                 // dataflow is consumed (Psalm registers the unset as a use).
                 // Capture parents before handle_array_unset rebuilds the type.
-                if analysis_data.data_flow_graph.kind
-                    == pzoom_code_info::GraphKind::FunctionBody
+                if analysis_data.data_flow_graph.kind == pzoom_code_info::GraphKind::FunctionBody
                     && let Expression::Variable(Variable::Direct(base_direct)) =
                         array_access.array.unparenthesized()
                     && let Some(base_type) = context.get_var_type(base_direct.name)
@@ -81,8 +80,10 @@ pub fn analyze(
         };
 
         let object_span = property_access.object.span();
-        let Some(object_type) =
-            analysis_data.expr_types.get(&(object_span.start.offset, object_span.end.offset)).cloned()
+        let Some(object_type) = analysis_data
+            .expr_types
+            .get(&(object_span.start.offset, object_span.end.offset))
+            .cloned()
         else {
             continue;
         };
@@ -125,10 +126,7 @@ pub fn analyze(
     Ok(())
 }
 
-fn handle_array_unset(
-    array_access: &ArrayAccess<'_>,
-    context: &mut BlockContext,
-) {
+fn handle_array_unset(array_access: &ArrayAccess<'_>, context: &mut BlockContext) {
     let Some(base_var_name) = get_root_array_base_var_name(array_access.array) else {
         return;
     };
@@ -151,13 +149,12 @@ fn handle_array_unset(
         // non-empty array becomes possibly empty, shapes lose the key. Keeping
         // the demoted entry (rather than just dropping it) lets loop merging
         // see the change, so a later `empty()` check stays live.
-        let receiver_key =
-            crate::expression_identifier::get_expression_var_key(array_access.array);
+        let receiver_key = crate::expression_identifier::get_expression_var_key(array_access.array);
         let receiver_type = receiver_key
             .as_ref()
             .and_then(|key| context.get_var_type(key).cloned());
 
-        clear_array_path_types_for_base_var( context, base_var_name);
+        clear_array_path_types_for_base_var(context, base_var_name);
         remove_var_clauses_from_context(context, base_var_name);
         // Mark the root variable as changed so branch merging can invalidate
         // stale path-based clauses from sibling branches.
@@ -172,7 +169,7 @@ fn handle_array_unset(
 
     let demoted = demote_array_type_after_unset(&existing_type, unset_key.as_ref());
     context.set_var_type(base_var_id, demoted);
-    clear_array_path_types_for_base_var( context, base_var_name);
+    clear_array_path_types_for_base_var(context, base_var_name);
     remove_var_clauses_from_context(context, base_var_name);
 }
 
@@ -277,10 +274,7 @@ fn demote_array_type_after_unset(existing_type: &TUnion, unset_key: Option<&Arra
     TUnion::from_types(combined)
 }
 
-fn clear_array_path_types_for_base_var(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_array_path_types_for_base_var(context: &mut BlockContext, var_name: &str) {
     let prefix = format!("{var_name}[");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -299,7 +293,6 @@ fn clear_array_path_types_for_base_var(
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
     context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
-
 
 fn get_literal_array_key(expr: &Expression<'_>) -> Option<ArrayKey> {
     match expr.unparenthesized() {

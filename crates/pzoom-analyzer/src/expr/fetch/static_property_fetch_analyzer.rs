@@ -55,7 +55,9 @@ pub fn analyze(
         }
     };
     let Some(prop_name) = prop_name else {
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     };
 
@@ -112,7 +114,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             Expression::Self_(_) | Expression::Static(_) => {
@@ -126,7 +130,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             _ => {}
@@ -430,7 +436,9 @@ fn analyze_variable_static_property_fetch(
     context: &mut BlockContext,
 ) {
     let class_type = analysis_data
-        .expr_types.get(&class_pos).cloned()
+        .expr_types
+        .get(&class_pos)
+        .cloned()
         .map(|rc| (*rc).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -450,9 +458,15 @@ fn analyze_variable_static_property_fetch(
         };
 
         if let Some(target_class_id) = target_class_id {
-            let fetched =
-                fetch_static_property(analyzer, target_class_id, prop_name, pos, analysis_data, context)
-                    .unwrap_or_else(TUnion::mixed);
+            let fetched = fetch_static_property(
+                analyzer,
+                target_class_id,
+                prop_name,
+                pos,
+                analysis_data,
+                context,
+            )
+            .unwrap_or_else(TUnion::mixed);
             result_type = Some(match result_type {
                 Some(existing) => combine_union_types(&existing, &fetched, false),
                 None => fetched,
@@ -486,7 +500,9 @@ fn analyze_variable_static_property_fetch(
         });
     }
 
-    analysis_data.expr_types.insert(pos, Rc::new(result_type.unwrap_or_else(TUnion::mixed)));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(result_type.unwrap_or_else(TUnion::mixed)));
 }
 
 /// Get the resolved class ID from an expression using resolved_names.

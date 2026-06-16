@@ -12,8 +12,8 @@ use crate::expression_analyzer;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::BreakContext;
 use crate::stmt::loop_analyzer;
+use crate::stmt::scope_analyzer::BreakContext;
 
 /// Analyze a for loop statement.
 pub fn analyze(
@@ -44,8 +44,7 @@ pub fn analyze(
         .map_or(true, |condition| is_always_true(condition));
     // Psalm's `doesEnterLoop`: `for ($i = 1; $i < 2; ...)` with literal-int
     // init and bound provably runs the body at least once.
-    let always_enters_loop =
-        while_true || does_enter_loop( for_stmt, &pre_conditions, context);
+    let always_enters_loop = while_true || does_enter_loop(for_stmt, &pre_conditions, context);
 
     let mut for_context = context.clone();
     for_context.inside_loop = true;
@@ -120,8 +119,7 @@ fn does_enter_loop(
     let Expression::Variable(Variable::Direct(direct)) = binary.lhs.unparenthesized() else {
         return false;
     };
-    let Expression::Literal(Literal::Integer(bound_literal)) = binary.rhs.unparenthesized()
-    else {
+    let Expression::Literal(Literal::Integer(bound_literal)) = binary.rhs.unparenthesized() else {
         return false;
     };
     let Some(bound_value) = bound_literal.value else {

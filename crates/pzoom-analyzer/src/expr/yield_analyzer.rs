@@ -31,11 +31,15 @@ pub fn analyze(
                 let value_pos =
                     expression_analyzer::analyze(analyzer, value, analysis_data, context);
                 let value_type = analysis_data
-                    .expr_types.get(&value_pos).cloned()
+                    .expr_types
+                    .get(&value_pos)
+                    .cloned()
                     .map(|t| (*t).clone())
                     .unwrap_or_else(TUnion::mixed);
                 add_yield_value_dataflow(analyzer, analysis_data, &value_type, pos);
-                analysis_data.inferred_yield_types.push((None, value_type.clone()));
+                analysis_data
+                    .inferred_yield_types
+                    .push((None, value_type.clone()));
                 yielded_value_type = Some(value_type);
             }
             // A value-less `yield;` contributes nothing to the inferred yield
@@ -49,16 +53,22 @@ pub fn analyze(
                 expression_analyzer::analyze(analyzer, yield_pair.value, analysis_data, context);
 
             let key_type = analysis_data
-                .expr_types.get(&key_pos).cloned()
+                .expr_types
+                .get(&key_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::array_key);
             let value_type = analysis_data
-                .expr_types.get(&value_pos).cloned()
+                .expr_types
+                .get(&value_pos)
+                .cloned()
                 .map(|t| (*t).clone())
                 .unwrap_or_else(TUnion::mixed);
 
             add_yield_value_dataflow(analyzer, analysis_data, &value_type, pos);
-            analysis_data.inferred_yield_types.push((Some(key_type), value_type.clone()));
+            analysis_data
+                .inferred_yield_types
+                .push((Some(key_type), value_type.clone()));
             yielded_value_type = Some(value_type);
         }
         Yield::From(yield_from) => {
@@ -77,18 +87,27 @@ pub fn analyze(
                 if let Some((key_type, value_type)) =
                     extract_iterable_key_value(analyzer.codebase, &iterator_type)
                 {
-                    analysis_data.inferred_yield_types.push((Some(key_type), value_type));
+                    analysis_data
+                        .inferred_yield_types
+                        .push((Some(key_type), value_type));
                 } else {
-                    analysis_data.inferred_yield_types.push((None, TUnion::mixed()));
+                    analysis_data
+                        .inferred_yield_types
+                        .push((None, TUnion::mixed()));
                 }
 
                 // The type of the `yield from` expression itself is whatever
                 // the delegated generator returns (its 4th template param), or
                 // `null` for arrays — *not* the enclosing function's send type.
                 // Mirrors Psalm's YieldFromAnalyzer.
-                analysis_data.expr_types.insert(pos, Rc::new(yield_from_expression_type(analyzer, &iterator_type)));
+                analysis_data.expr_types.insert(
+                    pos,
+                    Rc::new(yield_from_expression_type(analyzer, &iterator_type)),
+                );
             } else {
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
             }
             return;
         }
@@ -115,7 +134,10 @@ pub fn analyze(
         && let Some(return_type) = function_info.get_return_type()
     {
         for atomic in &return_type.types {
-            if let TAtomic::TNamedObject { name, type_params, .. } = atomic {
+            if let TAtomic::TNamedObject {
+                name, type_params, ..
+            } = atomic
+            {
                 let class_name = analyzer.interner.lookup(*name);
                 if class_name.eq_ignore_ascii_case("Generator") {
                     match type_params {
@@ -134,7 +156,9 @@ pub fn analyze(
         }
     }
 
-    analysis_data.expr_types.insert(pos, Rc::new(expression_type));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(expression_type));
 }
 
 /// Resolve the promised yield type for a yielded value (Psalm's
@@ -371,8 +395,8 @@ fn extract_iterable_key_value(
                 type_params: Some(type_params),
                 ..
             } => {
-                let mapped = crate::type_comparator::object_type_comparator::
-                    get_mapped_generic_type_params(
+                let mapped =
+                    crate::type_comparator::object_type_comparator::get_mapped_generic_type_params(
                         codebase,
                         *name,
                         type_params,

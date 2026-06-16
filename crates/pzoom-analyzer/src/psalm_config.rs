@@ -126,7 +126,13 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             config.add_issue_handler_suppression_pattern(issue_name, name);
                         }
                     }
-                    [.., "issueHandlers", issue_name, "errorLevel", "referencedProperty"] => {
+                    [
+                        ..,
+                        "issueHandlers",
+                        issue_name,
+                        "errorLevel",
+                        "referencedProperty",
+                    ] => {
                         if active_issue_handler_suppression.as_deref() == Some(issue_name)
                             && let Some(name) = get_attribute(e, "name")?
                         {
@@ -140,9 +146,7 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                     }
                     [.., "plugins", "pluginClass"] => {
                         if let Some(class) = get_attribute(e, "class")? {
-                            config
-                                .plugin_stubs
-                                .extend(known_plugin_stub_files(&class));
+                            config.plugin_stubs.extend(known_plugin_stub_files(&class));
                         }
                     }
                     [.., "enableExtensions", "extension"] => {
@@ -219,7 +223,13 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                             config.add_issue_handler_suppression_pattern(issue_name, name);
                         }
                     }
-                    [.., "issueHandlers", issue_name, "errorLevel", "referencedProperty"] => {
+                    [
+                        ..,
+                        "issueHandlers",
+                        issue_name,
+                        "errorLevel",
+                        "referencedProperty",
+                    ] => {
                         if active_issue_handler_suppression.as_deref() == Some(issue_name)
                             && let Some(name) = get_attribute(e, "name")?
                         {
@@ -233,9 +243,7 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                     }
                     [.., "plugins", "pluginClass"] => {
                         if let Some(class) = get_attribute(e, "class")? {
-                            config
-                                .plugin_stubs
-                                .extend(known_plugin_stub_files(&class));
+                            config.plugin_stubs.extend(known_plugin_stub_files(&class));
                         }
                     }
                     [.., "forbiddenFunctions", "function"] => {
@@ -486,10 +494,7 @@ fn constraint_lower_bound(token: &str) -> (u32, u32, u32) {
     let version = version.trim().trim_start_matches('v');
     let mut parts = [0u32; 3];
     for (i, piece) in version.split('.').take(3).enumerate() {
-        let digits: String = piece
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
+        let digits: String = piece.chars().take_while(|c| c.is_ascii_digit()).collect();
         parts[i] = digits.parse().unwrap_or(0);
     }
     (parts[0], parts[1], parts[2])
@@ -566,7 +571,10 @@ mod tests {
             php_version_from_constraint("7.1 - 8.0"),
             Some("7.1".to_string())
         );
-        assert_eq!(php_version_from_constraint("8.2.*"), Some("8.2".to_string()));
+        assert_eq!(
+            php_version_from_constraint("8.2.*"),
+            Some("8.2".to_string())
+        );
         assert_eq!(php_version_from_constraint("*"), Some("5.4".to_string()));
         assert_eq!(
             php_version_from_constraint(">=7.2, <8.0"),

@@ -33,7 +33,8 @@ pub(crate) fn handle_splice_by_ref(
     let Some(existing_type) = context.get_var_type(&var_id).cloned() else {
         return false;
     };
-    let Some(array_info) = function_call_analyzer::extract_array_like_info_from_union(&existing_type)
+    let Some(array_info) =
+        function_call_analyzer::extract_array_like_info_from_union(&existing_type)
     else {
         return false;
     };
@@ -215,7 +216,10 @@ pub(crate) fn handle_by_ref_array_adjustment(
         return;
     }
 
-    let mut new_type = TUnion::from_types(pzoom_code_info::ttype::type_combiner::combine(new_atomics, false));
+    let mut new_type = TUnion::from_types(pzoom_code_info::ttype::type_combiner::combine(
+        new_atomics,
+        false,
+    ));
     new_type.parent_nodes = existing_type.parent_nodes.clone();
     let _ = analyzer;
     context.set_var_type(var_id, new_type);
@@ -333,8 +337,8 @@ pub(crate) fn handle_array_addition(
         }
         _ => array_atomic,
     };
-    let is_generic_array_or_list = is_generic_array_or_list
-        || matches!(&array_atomic, TAtomic::TList { .. });
+    let is_generic_array_or_list =
+        is_generic_array_or_list || matches!(&array_atomic, TAtomic::TList { .. });
 
     if !is_empty_array && !is_definite_list_shape && !is_generic_array_or_list {
         // Non-list optional-entry shapes keep the generic flow.

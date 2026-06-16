@@ -40,8 +40,10 @@ pub trait MethodReturnTypeProvider: Sync {
 
     /// Compute the return type for the call, or `None` to defer to the next provider
     /// / the declared signature.
-    fn get_method_return_type(&self, event: &MethodReturnTypeProviderEvent<'_, '_>)
-    -> Option<TUnion>;
+    fn get_method_return_type(
+        &self,
+        event: &MethodReturnTypeProviderEvent<'_, '_>,
+    ) -> Option<TUnion>;
 }
 
 /// The registered method return-type providers, in priority order.

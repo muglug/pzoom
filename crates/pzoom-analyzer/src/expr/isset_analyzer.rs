@@ -76,7 +76,9 @@ pub fn analyze(
     }
 
     // isset() always returns bool
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::bool()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::bool()));
 }
 
 /// Psalm's `IssetAnalyzer::analyzeIssetVar`: analyze the inner expression

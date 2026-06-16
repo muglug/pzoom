@@ -43,12 +43,8 @@ impl FunctionReturnTypeProvider for ArraySpliceReturnTypeProvider {
                 key_type,
                 value_type,
             } => ((**key_type).clone(), (**value_type).clone(), true),
-            TAtomic::TList { value_type } => {
-                (TUnion::int(), (**value_type).clone(), false)
-            }
-            TAtomic::TNonEmptyList { value_type } => {
-                (TUnion::int(), (**value_type).clone(), true)
-            }
+            TAtomic::TList { value_type } => (TUnion::int(), (**value_type).clone(), false),
+            TAtomic::TNonEmptyList { value_type } => (TUnion::int(), (**value_type).clone(), true),
             TAtomic::TKeyedArray {
                 properties,
                 fallback_key_type,
@@ -118,14 +114,23 @@ impl FunctionReturnTypeProvider for ArraySpliceReturnTypeProvider {
             return Some(TUnion::new(atomic));
         }
 
-        let all_string = value_type
-            .types
-            .iter()
-            .all(|atomic| matches!(atomic, TAtomic::TString | TAtomic::TLiteralString { .. } | TAtomic::TNonEmptyString | TAtomic::TLowercaseString | TAtomic::TNonEmptyLowercaseString | TAtomic::TTruthyString));
-        let all_int = value_type
-            .types
-            .iter()
-            .all(|atomic| matches!(atomic, TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }));
+        let all_string = value_type.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TString
+                    | TAtomic::TLiteralString { .. }
+                    | TAtomic::TNonEmptyString
+                    | TAtomic::TLowercaseString
+                    | TAtomic::TNonEmptyLowercaseString
+                    | TAtomic::TTruthyString
+            )
+        });
+        let all_int = value_type.types.iter().all(|atomic| {
+            matches!(
+                atomic,
+                TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
+            )
+        });
         let list_value = if all_string {
             TUnion::string()
         } else if all_int {

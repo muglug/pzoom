@@ -3,12 +3,12 @@
 use pzoom_code_info::{TAtomic, TUnion, VarName};
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
+use crate::expr::call::function_call_analyzer as fca;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use mago_syntax::ast::ast::argument::Argument;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::statement::Statement;
-use crate::expr::call::function_call_analyzer as fca;
 pub(super) struct ArrayFilterReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayFilterReturnTypeProvider {
@@ -21,7 +21,12 @@ impl FunctionReturnTypeProvider for ArrayFilterReturnTypeProvider {
         event: &FunctionReturnTypeProviderEvent<'_, '_>,
         analysis_data: &mut FunctionAnalysisData,
     ) -> Option<TUnion> {
-        infer_array_filter_return_type(event.analyzer, event.args, event.arg_positions, analysis_data)
+        infer_array_filter_return_type(
+            event.analyzer,
+            event.args,
+            event.arg_positions,
+            analysis_data,
+        )
     }
 }
 
@@ -33,7 +38,8 @@ fn infer_array_filter_return_type(
 ) -> Option<TUnion> {
     let array_pos = arg_positions.first().copied()?;
     let array_type = analysis_data.expr_types.get(&array_pos).cloned()?;
-    let callback_is_default = fca::is_default_array_filter_callback(args, arg_positions, analysis_data);
+    let callback_is_default =
+        fca::is_default_array_filter_callback(args, arg_positions, analysis_data);
 
     let callback_assertions = if callback_is_default {
         None
@@ -44,7 +50,8 @@ fn infer_array_filter_return_type(
     let mut filtered_types = Vec::new();
 
     for atomic in &array_type.types {
-        let Some(mut filtered_atomic) = fca::infer_array_filter_return_atomic(atomic, callback_is_default)
+        let Some(mut filtered_atomic) =
+            fca::infer_array_filter_return_atomic(atomic, callback_is_default)
         else {
             continue;
         };
@@ -144,14 +151,15 @@ fn callback_param_assertions(
             },
             _ => return None,
         };
-        return Some(vec![vec![pzoom_code_info::Assertion::IsType(assertion_type)]]);
+        return Some(vec![vec![pzoom_code_info::Assertion::IsType(
+            assertion_type,
+        )]]);
     }
 
     let (first_param, return_expr) = match callback_expr {
-        Expression::ArrowFunction(arrow) => (
-            arrow.parameter_list.parameters.first()?,
-            arrow.expression,
-        ),
+        Expression::ArrowFunction(arrow) => {
+            (arrow.parameter_list.parameters.first()?, arrow.expression)
+        }
         Expression::Closure(closure) => {
             let [Statement::Return(return_stmt)] = closure.body.statements.as_slice() else {
                 return None;

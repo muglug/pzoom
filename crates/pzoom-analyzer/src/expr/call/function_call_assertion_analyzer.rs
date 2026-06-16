@@ -11,8 +11,8 @@ use mago_span::HasSpan;
 use mago_syntax::ast::ast::call::FunctionCall;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::algebra::{get_truths_from_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{get_truths_from_formula, simplify_cnf};
 use pzoom_code_info::functionlike_info::AssertionType;
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
@@ -59,10 +59,8 @@ pub(crate) fn apply_post_call_assertions(
         else {
             continue;
         };
-        let resolved_assertion_type = replace_assertion_type_templates(
-            &assertion.assertion_type,
-            template_result,
-        );
+        let resolved_assertion_type =
+            replace_assertion_type_templates(&assertion.assertion_type, template_result);
 
         emit_undefined_docblock_class_issues_from_assertion_type(
             analyzer,
@@ -183,10 +181,7 @@ pub(crate) fn apply_post_call_assertions(
         }
 
         if !orred_rules.is_empty() {
-            type_assertions
-                .entry(var_id)
-                .or_default()
-                .push(orred_rules);
+            type_assertions.entry(var_id).or_default().push(orred_rules);
         }
     }
 
@@ -252,7 +247,8 @@ pub(crate) fn apply_post_call_assertions(
         for var_id in &changed_var_ids {
             if pre_mixed_vars.contains(var_id)
                 && context.locals.contains_key(var_id)
-                && let Some(first_appearance) = analysis_data.first_var_appearances.get(var_id).copied()
+                && let Some(first_appearance) =
+                    analysis_data.first_var_appearances.get(var_id).copied()
             {
                 analysis_data.remove_issue(IssueKind::MixedAssignment, first_appearance);
             }
@@ -326,10 +322,9 @@ fn replace_assertion_type_templates(
     template_result: &TemplateResult,
 ) -> AssertionType {
     match assertion_type {
-        AssertionType::IsType(asserted_type) => AssertionType::IsType(function_call_analyzer::replace_templates_in_union(
-            asserted_type,
-            template_result,
-        )),
+        AssertionType::IsType(asserted_type) => AssertionType::IsType(
+            function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
+        ),
         AssertionType::IsEqual(asserted_type) => AssertionType::IsEqual(
             function_call_analyzer::replace_templates_in_union(asserted_type, template_result),
         ),
@@ -630,7 +625,8 @@ pub(crate) fn apply_assert_builtin_assertions(
             }
             if pre_mixed_vars.contains(var_id)
                 && context.locals.contains_key(var_id)
-                && let Some(first_appearance) = analysis_data.first_var_appearances.get(var_id).copied()
+                && let Some(first_appearance) =
+                    analysis_data.first_var_appearances.get(var_id).copied()
             {
                 analysis_data.remove_issue(IssueKind::MixedAssignment, first_appearance);
             }
@@ -642,10 +638,7 @@ pub(crate) fn apply_assert_builtin_assertions(
         .map(std::rc::Rc::new)
         .collect();
     context.clauses = if !changed_var_ids.is_empty() {
-        BlockContext::remove_reconciled_clause_refs(
-            &simplified_clauses,
-            &changed_var_ids)
-        .0
+        BlockContext::remove_reconciled_clause_refs(&simplified_clauses, &changed_var_ids).0
     } else {
         simplified_clauses
     };
@@ -767,4 +760,3 @@ pub(crate) fn narrow_union_to_truthy(existing_type: &TUnion) -> TUnion {
         TUnion::from_types(filtered)
     }
 }
-

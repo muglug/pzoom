@@ -9,15 +9,15 @@ use crate::composer_autoload::ComposerAutoload;
 use bumpalo::Bump;
 use glob::Pattern;
 use pzoom_code_info::CodebaseInfo;
+use pzoom_code_info::class_type_alias::ClassTypeAlias;
 use pzoom_code_info::codebase_info::FileInfo;
 use pzoom_str::{Interner, StrId, ThreadedInterner};
-use std::sync::Arc;
-use pzoom_code_info::class_type_alias::ClassTypeAlias;
 use pzoom_syntax::declaration_collector::CollectedDeclarations;
 use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content, resolve_names};
-use rustc_hash::FxHashMap;
 use rust_embed::Embed;
+use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
+use std::sync::Arc;
 use walkdir::WalkDir;
 
 /// Embedded stub files for PHP built-in types and functions.
@@ -938,7 +938,10 @@ class C {
                 .unwrap_or_else(|| panic!("method {name} not found"))
         };
         assert!(method_pure("pureMethod"), "#[Pure] method should be pure");
-        assert!(!method_pure("plainMethod"), "unmarked method should not be pure");
+        assert!(
+            !method_pure("plainMethod"),
+            "unmarked method should not be pure"
+        );
     }
 
     /// Every class and function must be declared in exactly one stub file.
@@ -959,11 +962,7 @@ class C {
         for (path, file_info) in &result.codebase.files {
             // PHP-version overlays re-declare symbols by design (newest-wins
             // folding) — they are not part of the one-symbol-one-file invariant.
-            if result
-                .interner
-                .lookup(*path)
-                .contains("_php_versions/")
-            {
+            if result.interner.lookup(*path).contains("_php_versions/") {
                 continue;
             }
             for class in &file_info.classes {

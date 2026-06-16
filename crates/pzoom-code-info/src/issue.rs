@@ -540,11 +540,7 @@ impl Issue {
     }
 
     /// Attach a supporting location (builder-style).
-    pub fn with_secondary(
-        mut self,
-        location: CodeLocation,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn with_secondary(mut self, location: CodeLocation, message: impl Into<String>) -> Self {
         self.secondary_locations
             .push(SecondaryLocation::new(location, message));
         self

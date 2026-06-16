@@ -3,9 +3,7 @@
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::class_like_info::ClassLikeInfo;
-use pzoom_code_info::{
-    Issue, IssueKind, TUnion,
-};
+use pzoom_code_info::{Issue, IssueKind, TUnion};
 use pzoom_str::StrId;
 
 use crate::expression_identifier;
@@ -14,11 +12,9 @@ use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
 
-
-
 use super::atomic_method_call_analyzer::*;
-use super::method_call_return_type_fetcher::*;
 use super::method_call_prohibition_analyzer::*;
+use super::method_call_return_type_fetcher::*;
 
 pub(crate) fn class_has_magic_call(class_info: &ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::CALL)
@@ -203,7 +199,6 @@ pub(crate) fn get_pseudo_method_info<'a>(
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
 
-
     class_info.pseudo_methods.get(&method_id)
 }
 
@@ -213,7 +208,6 @@ pub(crate) fn get_method_info<'a>(
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
     let method_id = analyzer.interner.intern(method_name);
-
 
     class_info.methods.get(&method_id).map(|method| &**method)
 }

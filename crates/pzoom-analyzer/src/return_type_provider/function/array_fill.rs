@@ -30,7 +30,9 @@ fn infer_array_fill_return_type(
 
     let count_type = analysis_data.expr_types.get(&count_pos).cloned()?;
     let value_type = analysis_data
-        .expr_types.get(&value_pos).cloned()
+        .expr_types
+        .get(&value_pos)
+        .cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -43,9 +45,14 @@ fn infer_array_fill_return_type(
     // Psalm's ArrayFillReturnTypeProvider: a literal-0 start index yields a
     // (non-empty-)list of the value type.
     let starts_at_zero = analysis_data
-        .expr_types.get(&start_pos).cloned()
+        .expr_types
+        .get(&start_pos)
+        .cloned()
         .is_some_and(|start_type| {
-            matches!(start_type.get_single(), Some(TAtomic::TLiteralInt { value: 0 }))
+            matches!(
+                start_type.get_single(),
+                Some(TAtomic::TLiteralInt { value: 0 })
+            )
         });
     if starts_at_zero {
         return Some(TUnion::new(if is_non_empty {

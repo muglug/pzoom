@@ -82,7 +82,10 @@ pub fn check_for_paradox(
                 }
 
                 for possibility in clause_1_possibilities.values() {
-                    if matches!(possibility, Assertion::InArray(_) | Assertion::NotInArray(_)) {
+                    if matches!(
+                        possibility,
+                        Assertion::InArray(_) | Assertion::NotInArray(_)
+                    ) {
                         negated_clause_2_contains_1_possibilities = false;
                         break 'outer;
                     }

@@ -35,13 +35,13 @@ pub(crate) fn add_output_call_argument_dataflow(
     // reaches the output sink.
     let mut value_type = value_type.clone();
     if value_type.has_object() {
-        value_type.parent_nodes.extend(
-            crate::expr::cast_analyzer::add_to_string_call_dataflow(
+        value_type
+            .parent_nodes
+            .extend(crate::expr::cast_analyzer::add_to_string_call_dataflow(
                 analyzer,
                 analysis_data,
                 &value_type,
-            ),
-        );
+            ));
     }
 
     add_construct_argument_dataflow(
@@ -176,7 +176,14 @@ pub(crate) fn verify_output_argument_type(
         return;
     }
 
-    check_stringable(analyzer, t, pos, analysis_data, construct_name, argument_offset);
+    check_stringable(
+        analyzer,
+        t,
+        pos,
+        analysis_data,
+        construct_name,
+        argument_offset,
+    );
 }
 
 /// Check if a type can be converted to a string for output.

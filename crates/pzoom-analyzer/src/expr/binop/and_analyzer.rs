@@ -3,8 +3,8 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::algebra::{Clause, get_truths_from_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, TUnion};
 use rustc_hash::FxHashSet;
 
@@ -55,9 +55,15 @@ pub fn analyze(
     // and extract the truths. This folds in prior context knowledge that the raw
     // per-expression assertions miss, and feeds a single reconcile pass.
     let left_cond_id = (left.start_offset() as u32, left.end_offset() as u32);
-    let left_clauses =
-        formula_generator::get_formula(left_cond_id, left_cond_id, left, analyzer, analysis_data, false)
-            .unwrap_or_default();
+    let left_clauses = formula_generator::get_formula(
+        left_cond_id,
+        left_cond_id,
+        left,
+        analyzer,
+        analysis_data,
+        false,
+    )
+    .unwrap_or_default();
     let mut context_clauses: Vec<Clause> = context.clauses.iter().map(|c| (**c).clone()).collect();
     context_clauses.extend(left_clauses.iter().cloned());
     let simplified_clauses = simplify_cnf(context_clauses.iter().collect());
@@ -96,8 +102,7 @@ pub fn analyze(
         // reported position is the left operand.
         let left_span = left.span();
         let previous_reconcile_pos = analysis_data.current_reconcile_pos;
-        analysis_data.current_reconcile_pos =
-            Some((left_span.start.offset, left_span.end.offset));
+        analysis_data.current_reconcile_pos = Some((left_span.start.offset, left_span.end.offset));
         reconciler::reconcile_keyed_types(
             &left_assertions,
             &mut right_context,
@@ -110,14 +115,15 @@ pub fn analyze(
             Some(&active_left_assertions),
         );
         analysis_data.current_reconcile_pos = previous_reconcile_pos;
-        promote_asserted_vars_to_assigned( &assertions.if_true, &mut right_context);
+        promote_asserted_vars_to_assigned(&assertions.if_true, &mut right_context);
 
         // Drop clauses invalidated by the left-truthy narrowing before the right
         // operand is analyzed (unchanged pzoom behavior over the existing clauses).
         if !changed_var_ids.is_empty() {
             right_context.clauses = BlockContext::remove_reconciled_clause_refs(
                 &right_context.clauses,
-                &changed_var_ids)
+                &changed_var_ids,
+            )
             .0;
 
             // Separately, record the left-formula clauses the reconcile consumed so
@@ -125,10 +131,9 @@ pub fn analyze(
             // `&&` already evaluated (Hakana's reconciled_expression_clauses).
             let left_clause_rcs: Vec<std::rc::Rc<Clause>> =
                 left_clauses.iter().cloned().map(std::rc::Rc::new).collect();
-            reconciled_clauses = BlockContext::partition_reconciled_clause_refs(
-                &left_clause_rcs,
-                &changed_var_ids)
-            .1;
+            reconciled_clauses =
+                BlockContext::partition_reconciled_clause_refs(&left_clause_rcs, &changed_var_ids)
+                    .1;
         }
         left_changed_var_ids = changed_var_ids;
     }
@@ -138,8 +143,7 @@ pub fn analyze(
     let right_pos =
         expression_analyzer::analyze(analyzer, right, analysis_data, &mut right_context);
 
-    if context.inside_conditional || !matches!(right.unparenthesized(), Expression::Assignment(_))
-    {
+    if context.inside_conditional || !matches!(right.unparenthesized(), Expression::Assignment(_)) {
         if_conditional_analyzer::handle_paradoxical_condition(
             analyzer,
             right,
@@ -203,7 +207,11 @@ pub fn analyze(
         if in_if_condition {
             break;
         }
-        let right_count = right_context.assigned_var_ids.get(var_id).copied().unwrap_or(0);
+        let right_count = right_context
+            .assigned_var_ids
+            .get(var_id)
+            .copied()
+            .unwrap_or(0);
         let pre_count = pre_right_assigned.get(var_id).copied().unwrap_or(0);
         if right_count > pre_count {
             // The right operand is only conditionally evaluated, so a variable it
@@ -243,7 +251,9 @@ pub fn analyze(
     }
 
     // The result type is always bool
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::bool()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::bool()));
 }
 
 fn promote_asserted_vars_to_assigned(
@@ -285,4 +295,3 @@ fn promote_asserted_vars_to_assigned(
         }
     }
 }
-

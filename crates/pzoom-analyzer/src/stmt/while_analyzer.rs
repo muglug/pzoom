@@ -12,8 +12,8 @@ use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::BreakContext;
 use crate::stmt::loop_analyzer;
+use crate::stmt::scope_analyzer::BreakContext;
 
 /// Analyze a while statement.
 pub fn analyze(
@@ -41,7 +41,9 @@ pub fn analyze(
     );
     let always_enters_loop = while_true
         || analysis_data
-            .expr_types.get(&cond_pos).cloned()
+            .expr_types
+            .get(&cond_pos)
+            .cloned()
             .is_some_and(|t| t.is_always_truthy());
 
     let body_stmts = while_stmt.body.statements();

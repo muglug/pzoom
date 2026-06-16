@@ -2,7 +2,9 @@
 
 use mago_syntax::ast::ast::access::{Access, ClassConstantAccess};
 use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::class_like::member::{ClassLikeConstantSelector, ClassLikeMemberSelector};
+use mago_syntax::ast::ast::class_like::member::{
+    ClassLikeConstantSelector, ClassLikeMemberSelector,
+};
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;

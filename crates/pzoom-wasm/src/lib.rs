@@ -188,8 +188,7 @@ impl Default for ScannerAndAnalyzer {
         // Populate the stub codebase once here: per-run populate then only
         // touches the playground file's own symbols.
         {
-            let mut populator =
-                Populator::new(&mut scan_result.codebase, &scan_result.interner);
+            let mut populator = Populator::new(&mut scan_result.codebase, &scan_result.interner);
             populator.populate();
         }
 

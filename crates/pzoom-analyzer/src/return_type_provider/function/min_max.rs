@@ -24,7 +24,10 @@ impl FunctionReturnTypeProvider for MinMaxReturnTypeProvider {
         // Single array argument: the result is one of the array's values
         // (Psalm's MinMaxReturnTypeProvider returns the value type).
         if event.arg_positions.len() == 1 {
-            let arg_type = analysis_data.expr_types.get(&event.arg_positions[0]).cloned()?;
+            let arg_type = analysis_data
+                .expr_types
+                .get(&event.arg_positions[0])
+                .cloned()?;
             let mut value_types: Vec<TAtomic> = Vec::new();
             for atomic in &arg_type.types {
                 let value_union = match atomic {
@@ -41,17 +44,17 @@ impl FunctionReturnTypeProvider for MinMaxReturnTypeProvider {
                         for property in properties.values() {
                             combined = Some(match combined {
                                 None => property.clone(),
-                                Some(existing) => pzoom_code_info::combine_union_types(
-                                    &existing, property, false,
-                                ),
+                                Some(existing) => {
+                                    pzoom_code_info::combine_union_types(&existing, property, false)
+                                }
                             });
                         }
                         if let Some(fallback) = fallback_value_type {
                             combined = Some(match combined {
                                 None => (**fallback).clone(),
-                                Some(existing) => pzoom_code_info::combine_union_types(
-                                    &existing, fallback, false,
-                                ),
+                                Some(existing) => {
+                                    pzoom_code_info::combine_union_types(&existing, fallback, false)
+                                }
                             });
                         }
                         combined?

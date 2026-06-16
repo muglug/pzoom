@@ -46,9 +46,9 @@ fn infer_range_return_type(
     let mut normalized = Vec::new();
     for atomic in &value_type.types {
         let mapped = match atomic {
-            TAtomic::TInt
-            | TAtomic::TIntRange { .. }
-            | TAtomic::TLiteralInt { .. } => TAtomic::TInt,
+            TAtomic::TInt | TAtomic::TIntRange { .. } | TAtomic::TLiteralInt { .. } => {
+                TAtomic::TInt
+            }
             TAtomic::TFloat | TAtomic::TLiteralFloat { .. } => TAtomic::TFloat,
             TAtomic::TString
             | TAtomic::TLiteralString { .. }

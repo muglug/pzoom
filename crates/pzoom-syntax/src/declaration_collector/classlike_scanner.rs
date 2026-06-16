@@ -4,17 +4,14 @@
 //! to [`DeclarationCollector`]; split out of the module root for organization.
 
 use mago_span::HasSpan;
-use pzoom_str::StrId;
 use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
 use mago_syntax::ast::ast::modifier::Modifier;
+use pzoom_str::StrId;
 
-use pzoom_code_info::class_like_info::{
-    ClassLikeInfo, ClassLikeKind, TemplateType,
-};
+use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, TemplateType};
 use pzoom_code_info::class_type_alias::ClassTypeAlias;
 use pzoom_code_info::{GenericParent, TAtomic, TUnion};
 use rustc_hash::FxHashMap;
-
 
 use super::DeclarationCollector;
 
@@ -95,10 +92,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         // Parse extends (class can only extend one class)
         if let Some(extends) = &class.extends
-            && let Some(parent) = extends.types.first() {
-                let parent_name = self.resolve_identifier(parent);
-                info.parent_class = Some(parent_name);
-            }
+            && let Some(parent) = extends.types.first()
+        {
+            let parent_name = self.resolve_identifier(parent);
+            info.parent_class = Some(parent_name);
+        }
 
         // Parse implements
         if let Some(implements) = &class.implements {
@@ -133,8 +131,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            let class_template_map = self.build_template_map_from_class_template_types(
+                &info.template_types,
+                GenericParent::ClassLike(name),
+            );
             // Psalm reads `@psalm-type` aliases from every comment attached
             // to the node (ClassLikeNodeScanner's getComments loop), so
             // collect across the whole preceding docblock run — the closest
@@ -282,9 +282,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         if let Some(extends) = &class.extends
-            && let Some(parent) = extends.types.first() {
-                info.parent_class = Some(self.resolve_identifier(parent));
-            }
+            && let Some(parent) = extends.types.first()
+        {
+            info.parent_class = Some(self.resolve_identifier(parent));
+        }
 
         if let Some(implements) = &class.implements {
             for iface in &implements.types {
@@ -378,8 +379,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            let class_template_map = self.build_template_map_from_class_template_types(
+                &info.template_types,
+                GenericParent::ClassLike(name),
+            );
             // Psalm reads `@psalm-type` aliases from every comment attached
             // to the node (ClassLikeNodeScanner's getComments loop), so
             // collect across the whole preceding docblock run — the closest
@@ -559,8 +562,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         if let Some(parsed) = parsed_docblock.as_ref() {
-            let class_template_map =
-                self.build_template_map_from_class_template_types(&info.template_types, GenericParent::ClassLike(name));
+            let class_template_map = self.build_template_map_from_class_template_types(
+                &info.template_types,
+                GenericParent::ClassLike(name),
+            );
             // Psalm reads `@psalm-type` aliases from every comment attached
             // to the node (ClassLikeNodeScanner's getComments loop), so
             // collect across the whole preceding docblock run — the closest
@@ -647,10 +652,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let name = self.make_fqn(en.name.value);
         let span = en.span();
 
-        let enum_backing_atomic = en
-            .backing_type_hint
-            .as_ref()
-            .and_then(|backing| self.resolve_type(&backing.hint, Some(name), None).get_single().cloned());
+        let enum_backing_atomic = en.backing_type_hint.as_ref().and_then(|backing| {
+            self.resolve_type(&backing.hint, Some(name), None)
+                .get_single()
+                .cloned()
+        });
 
         let mut info = ClassLikeInfo {
             name,

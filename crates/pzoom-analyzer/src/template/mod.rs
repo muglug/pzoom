@@ -88,7 +88,10 @@ pub(crate) fn resolve_type_variables_in_union_deep(
 
     let mut resolved_types = Vec::with_capacity(resolved.types.len());
     for atomic in &resolved.types {
-        resolved_types.push(resolve_type_variables_in_atomic_deep(atomic, type_variable_bounds));
+        resolved_types.push(resolve_type_variables_in_atomic_deep(
+            atomic,
+            type_variable_bounds,
+        ));
     }
 
     let mut deep_resolved = resolved.clone();
@@ -263,7 +266,10 @@ pub(crate) fn template_types_insert(
     union: TUnion,
 ) {
     let entries = template_result.template_types.entry(name).or_default();
-    if let Some(entry) = entries.iter_mut().find(|(entity, _)| *entity == defining_entity) {
+    if let Some(entry) = entries
+        .iter_mut()
+        .find(|(entity, _)| *entity == defining_entity)
+    {
         entry.1 = Arc::new(union);
     } else {
         entries.push((defining_entity, Arc::new(union)));
@@ -351,7 +357,10 @@ pub(crate) fn lower_bounds_insert(
         .lower_bounds
         .entry(name)
         .or_default()
-        .insert(defining_entity, vec![TemplateBound::new(union, 0, None, None)]);
+        .insert(
+            defining_entity,
+            vec![TemplateBound::new(union, 0, None, None)],
+        );
 }
 
 /// Pushes a depth-0 bound for `[name][defining_entity]`; multiple bounds union
@@ -394,11 +403,14 @@ pub(crate) fn lower_bounds_extend_overlay(
 pub(crate) fn lower_bounds_iter(
     template_result: &TemplateResult,
 ) -> impl Iterator<Item = (StrId, GenericParent, TUnion)> + '_ {
-    template_result.lower_bounds.iter().flat_map(|(name, entities)| {
-        entities.iter().map(move |(entity, bounds)| {
-            (*name, *entity, get_most_specific_type_from_bounds(bounds))
+    template_result
+        .lower_bounds
+        .iter()
+        .flat_map(|(name, entities)| {
+            entities.iter().map(move |(entity, bounds)| {
+                (*name, *entity, get_most_specific_type_from_bounds(bounds))
+            })
         })
-    })
 }
 
 /// Whether the result carries neither declared template types nor inferred
@@ -477,11 +489,7 @@ fn collect_template_params_in_atomic(
             defining_entity,
             as_type,
         } => {
-            referenced.push((
-                *name,
-                *defining_entity,
-                TUnion::new((**as_type).clone()),
-            ));
+            referenced.push((*name, *defining_entity, TUnion::new((**as_type).clone())));
         }
         TAtomic::TClassString {
             as_type: Some(as_type),

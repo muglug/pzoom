@@ -21,10 +21,10 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::statement::Statement;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{
     Clause, ClauseKey, combine_ored_clauses, get_truths_from_formula, negate_formula, simplify_cnf,
 };
-use pzoom_code_info::VarName;
 
 use pzoom_code_info::{TAtomic, TUnion};
 
@@ -219,11 +219,14 @@ pub(crate) fn analyze(
             &elseif_assertion_result,
         );
         if let Some(is_truthy) = condition_is_always {
-            analysis_data.expr_types.insert(elseif_cond_id, Rc::new(if is_truthy {
+            analysis_data.expr_types.insert(
+                elseif_cond_id,
+                Rc::new(if is_truthy {
                     TUnion::new(TAtomic::TTrue)
                 } else {
                     TUnion::new(TAtomic::TFalse)
-                }));
+                }),
+            );
         }
     }
     if !condition_has_assignments(elseif_cond) {
@@ -295,12 +298,7 @@ pub(crate) fn analyze(
     let mut negated_cond_referenced = FxHashSet::default();
     let negated_elseif_types = match negate_formula(elseif_clauses.clone()) {
         Ok(negated) => {
-            get_truths_from_formula(
-                negated.iter().collect(),
-                None,
-                &mut negated_cond_referenced,
-            )
-            .0
+            get_truths_from_formula(negated.iter().collect(), None, &mut negated_cond_referenced).0
         }
         Err(_) => BTreeMap::new(),
     };
@@ -340,7 +338,8 @@ pub(crate) fn analyze(
         if !newly_reconciled_var_ids.is_empty() {
             elseif_context.clauses = BlockContext::remove_reconciled_clause_refs(
                 &elseif_context.clauses,
-                &newly_reconciled_var_ids)
+                &newly_reconciled_var_ids,
+            )
             .0;
         }
     }
@@ -362,7 +361,10 @@ pub(crate) fn analyze(
 
     let new_stmts_assigned_var_ids = elseif_context.assigned_var_ids.clone();
     for (var_id, count) in pre_stmts_assigned_var_ids {
-        elseif_context.assigned_var_ids.entry(var_id).or_insert(count);
+        elseif_context
+            .assigned_var_ids
+            .entry(var_id)
+            .or_insert(count);
     }
     let new_stmts_possibly_assigned_var_ids = elseif_context.possibly_assigned_var_ids.clone();
     elseif_context
@@ -415,7 +417,9 @@ pub(crate) fn analyze(
         );
 
         let reasonable_clause_count = if_scope.reasonable_clauses.len();
-        if reasonable_clause_count > 0 && reasonable_clause_count < 20_000 && !elseif_clauses.is_empty()
+        if reasonable_clause_count > 0
+            && reasonable_clause_count < 20_000
+            && !elseif_clauses.is_empty()
         {
             let existing: Vec<Clause> = if_scope
                 .reasonable_clauses

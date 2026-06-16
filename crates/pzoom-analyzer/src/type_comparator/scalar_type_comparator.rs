@@ -23,7 +23,8 @@ pub fn is_contained_by(
         match input_type_part {
             TAtomic::TInt
             | TAtomic::TNonspecificLiteralInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TNonEmptyScalar => return true,
             _ => {}
         }
@@ -49,7 +50,8 @@ pub fn is_contained_by(
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TInt
             | TAtomic::TNonspecificLiteralInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TNonEmptyScalar => return true,
             _ => {}
         }
@@ -113,9 +115,9 @@ pub fn is_contained_by(
     // Truthy string comparisons
     if matches!(container_type_part, TAtomic::TTruthyString) {
         match input_type_part {
-            TAtomic::TTruthyString
-            | TAtomic::TCallableString
-            | TAtomic::TNonEmptyNumericString => return true,
+            TAtomic::TTruthyString | TAtomic::TCallableString | TAtomic::TNonEmptyNumericString => {
+                return true;
+            }
             // A known literal is contained iff its value is truthy: Psalm's
             // ScalarTypeComparator rejects '' (non-empty containers) and '0'
             // (TNonFalsyString) and then accepts any literal string.
@@ -222,7 +224,8 @@ pub fn is_contained_by(
             TAtomic::TNumeric
             | TAtomic::TInt
             | TAtomic::TNonspecificLiteralInt
-            | TAtomic::TLiteralInt { .. }            | TAtomic::TIntRange { .. }
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TNumericString
@@ -340,7 +343,8 @@ pub fn is_contained_by(
         return false;
     }
 
-    if is_class_string_like_scalar(container_type_part) && is_plain_string_like_atomic(input_type_part)
+    if is_class_string_like_scalar(container_type_part)
+        && is_plain_string_like_atomic(input_type_part)
     {
         atomic_comparison_result.type_coerced = Some(true);
         return false;
@@ -461,7 +465,8 @@ pub fn is_contained_by(
             | TAtomic::TNonspecificLiteralInt
             | TAtomic::TFloat
             | TAtomic::TLiteralInt { .. }
-            | TAtomic::TLiteralFloat { .. }            | TAtomic::TIntRange { .. } => return true,
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TIntRange { .. } => return true,
             _ => {}
         }
     }
@@ -481,7 +486,8 @@ pub fn is_contained_by(
             | TAtomic::TLiteralFloat { .. }
             | TAtomic::TLiteralString { .. }
             | TAtomic::TNumeric
-            | TAtomic::TArrayKey            | TAtomic::TNumericString
+            | TAtomic::TArrayKey
+            | TAtomic::TNumericString
             | TAtomic::TNonEmptyString
             | TAtomic::TLowercaseString
             | TAtomic::TTruthyString => return true,
@@ -547,7 +553,9 @@ pub fn is_contained_by(
     // input additionally records `type_coerced_from_scalar`.
     if !matches!(
         container_type_part,
-        TAtomic::TLiteralInt { .. } | TAtomic::TLiteralString { .. } | TAtomic::TLiteralFloat { .. }
+        TAtomic::TLiteralInt { .. }
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TLiteralFloat { .. }
     ) {
         if matches!(input_type_part, TAtomic::TScalar) {
             atomic_comparison_result.type_coerced = Some(true);
@@ -562,7 +570,9 @@ pub fn is_contained_by(
 fn is_class_string_like_scalar(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
-        TAtomic::TClassString { .. } | TAtomic::TLiteralClassString { .. } | TAtomic::TTemplateParamClass { .. }
+        TAtomic::TClassString { .. }
+            | TAtomic::TLiteralClassString { .. }
+            | TAtomic::TTemplateParamClass { .. }
     )
 }
 
@@ -578,4 +588,3 @@ fn is_plain_string_like_atomic(atomic: &TAtomic) -> bool {
             | TAtomic::TTruthyString
     )
 }
-

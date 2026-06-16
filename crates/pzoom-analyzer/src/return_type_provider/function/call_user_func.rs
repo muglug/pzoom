@@ -32,7 +32,9 @@ impl FunctionReturnTypeProvider for CallUserFuncReturnTypeProvider {
             .skip(1)
             .filter_map(|arg_pos| {
                 analysis_data
-                    .expr_types.get(&*arg_pos).cloned()
+                    .expr_types
+                    .get(&*arg_pos)
+                    .cloned()
                     .map(|arg_type| (*arg_type).clone())
             })
             .collect();

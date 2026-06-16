@@ -36,9 +36,12 @@ impl FunctionReturnTypeProvider for ArrayReverseReturnTypeProvider {
         let preserve_keys_is_false = match event.arg_positions.get(1) {
             None => true,
             Some(second_pos) => analysis_data
-                .expr_types.get(&*second_pos).cloned()
+                .expr_types
+                .get(&*second_pos)
+                .cloned()
                 .is_some_and(|second_type| {
-                    second_type.is_single() && matches!(second_type.get_single(), Some(TAtomic::TFalse))
+                    second_type.is_single()
+                        && matches!(second_type.get_single(), Some(TAtomic::TFalse))
                 }),
         };
 

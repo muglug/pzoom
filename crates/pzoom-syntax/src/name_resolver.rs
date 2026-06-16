@@ -415,7 +415,11 @@ impl<'a> NameResolver<'a> {
         // Alias is either explicit or the last part of the name
         let alias = match &item.alias {
             Some(alias) => alias.identifier.value.to_string(),
-            None => name.split('\\').next_back().unwrap_or(name.as_str()).to_string(),
+            None => name
+                .split('\\')
+                .next_back()
+                .unwrap_or(name.as_str())
+                .to_string(),
         };
 
         match kind {
@@ -712,10 +716,7 @@ impl<'a> NameResolver<'a> {
 
     /// Visit the elements of an array/list literal (short `[]`, legacy
     /// `array(...)`, or `list(...)`), resolving any identifiers inside.
-    fn visit_array_elements<'b>(
-        &mut self,
-        elements: impl Iterator<Item = &'b ArrayElement<'b>>,
-    ) {
+    fn visit_array_elements<'b>(&mut self, elements: impl Iterator<Item = &'b ArrayElement<'b>>) {
         for element in elements {
             match element {
                 ArrayElement::KeyValue(kv) => {

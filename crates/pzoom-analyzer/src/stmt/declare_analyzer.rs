@@ -45,9 +45,7 @@ pub fn analyze(
             emit_unrecognized_statement(
                 analyzer,
                 analysis_data,
-                &format!(
-                    "Psalm does not understand the declare statement {declaration_key}"
-                ),
+                &format!("Psalm does not understand the declare statement {declaration_key}"),
                 declaration.span(),
             );
         }

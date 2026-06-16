@@ -52,7 +52,12 @@ fn infer_sprintf_return_type(
     analysis_data: &mut FunctionAnalysisData,
 ) -> Option<TUnion> {
     let first_pos = arg_positions.first().copied()?;
-    let format = match analysis_data.expr_types.get(&first_pos).cloned()?.get_single()? {
+    let format = match analysis_data
+        .expr_types
+        .get(&first_pos)
+        .cloned()?
+        .get_single()?
+    {
         TAtomic::TLiteralString { value } if value != NON_SPECIFIC_LITERAL_STRING_VALUE => {
             value.clone()
         }
@@ -86,10 +91,7 @@ fn infer_sprintf_return_type(
                         ) || matches!(
                             atomic,
                             TAtomic::TLiteralString { value } if !value.is_empty()
-                        ) || matches!(
-                            atomic,
-                            TAtomic::TLiteralClassString { .. }
-                        )
+                        ) || matches!(atomic, TAtomic::TLiteralClassString { .. })
                     })
                 {
                     return Some(TUnion::new(TAtomic::TNonEmptyString));
@@ -256,7 +258,10 @@ fn analyze_sprintf_call(
         emit(
             analysis_data,
             IssueKind::RedundantFunctionCall,
-            format!("Calling {} with an empty first argument does nothing", func_id),
+            format!(
+                "Calling {} with an empty first argument does nothing",
+                func_id
+            ),
         );
         return;
     }

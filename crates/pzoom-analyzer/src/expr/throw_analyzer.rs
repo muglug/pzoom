@@ -71,7 +71,9 @@ pub fn analyze(
     // }
 
     // Throw expression has type `never` (nothing)
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::nothing()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::nothing()));
 }
 
 fn atomic_is_throwable(analyzer: &StatementsAnalyzer<'_>, atomic: &TAtomic) -> bool {

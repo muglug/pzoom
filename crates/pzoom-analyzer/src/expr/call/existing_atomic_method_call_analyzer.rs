@@ -14,10 +14,10 @@ use crate::expr::call::function_call_analyzer;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
-use pzoom_code_info::TemplateResult;
 use crate::type_comparator::{
     atomic_type_comparator, object_type_comparator, union_type_comparator,
 };
+use pzoom_code_info::TemplateResult;
 
 pub(crate) fn maybe_emit_if_this_is_mismatch(
     analyzer: &StatementsAnalyzer<'_>,
@@ -39,7 +39,9 @@ pub(crate) fn maybe_emit_if_this_is_mismatch(
         function_call_analyzer::replace_templates_in_union(if_this_is_type, template_result)
     };
 
-    let expected_receiver_type = crate::type_expander::localize_special_class_type_union(analyzer.codebase, analyzer.interner, 
+    let expected_receiver_type = crate::type_expander::localize_special_class_type_union(
+        analyzer.codebase,
+        analyzer.interner,
         &resolved_if_this_is,
         receiver_class_id,
         receiver_class_id,
@@ -62,7 +64,9 @@ pub(crate) fn maybe_emit_if_this_is_mismatch(
                 })
                 .collect()
         }),
-    is_static: false, remapped_params: false });
+        is_static: false,
+        remapped_params: false,
+    });
 
     if receiver_type_satisfies_if_this_is(analyzer, &actual_receiver_type, &expected_receiver_type)
     {
@@ -140,11 +144,13 @@ fn named_object_with_type_params_matches(
         TAtomic::TNamedObject {
             name: actual_name,
             type_params: actual_params,
-        .. },
+            ..
+        },
         TAtomic::TNamedObject {
             name: expected_name,
             type_params: expected_params,
-        .. },
+            ..
+        },
     ) = (actual_atomic, expected_atomic)
     else {
         return false;
@@ -273,7 +279,9 @@ pub(crate) fn build_method_template_context(
             let actual_receiver_type = TUnion::new(TAtomic::TNamedObject {
                 name: class_info.name,
                 type_params: object_type_params.map(|params| params.to_vec()),
-            is_static: false, remapped_params: false });
+                is_static: false,
+                remapped_params: false,
+            });
 
             let inferred_if_this_is_replacements = infer_if_this_is_template_replacements(
                 analyzer,
@@ -316,7 +324,12 @@ pub(crate) fn build_method_template_context(
             // (e.g. from an empty-array generic) is refined by the argument.
             Some(existing) if !existing.is_nothing() => {}
             _ => {
-                crate::template::lower_bounds_insert(&mut template_result, name, entity, replacement);
+                crate::template::lower_bounds_insert(
+                    &mut template_result,
+                    name,
+                    entity,
+                    replacement,
+                );
             }
         }
     }
@@ -389,11 +402,13 @@ fn infer_if_this_is_atomic_replacements(
         TAtomic::TNamedObject {
             name: expected_name,
             type_params: Some(expected_type_params),
-        .. } => {
+            ..
+        } => {
             let TAtomic::TNamedObject {
                 name: actual_name,
                 type_params: Some(actual_type_params),
-            .. } = actual_atomic
+                ..
+            } = actual_atomic
             else {
                 return;
             };

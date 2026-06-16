@@ -41,7 +41,9 @@ pub(crate) fn analyze(
     // No `else`, nothing to negate and no surviving clauses: there is no else
     // branch to reason about. Seed empty fold state so the merge tail treats the
     // missing else as "fallthrough always possible".
-    if else_stmts.is_none() && if_scope.negated_clauses.is_empty() && else_context.clauses.is_empty()
+    if else_stmts.is_none()
+        && if_scope.negated_clauses.is_empty()
+        && else_context.clauses.is_empty()
     {
         let mut final_actions = FxHashSet::default();
         final_actions.insert(ControlAction::None);
@@ -93,7 +95,8 @@ pub(crate) fn analyze(
         if !changed_var_ids.is_empty() {
             else_context.clauses = BlockContext::remove_reconciled_clause_refs(
                 &else_context.clauses,
-                &changed_var_ids)
+                &changed_var_ids,
+            )
             .0;
             // Psalm additionally drops possible references onto array/property
             // offsets of the changed vars; pzoom's reference model is coarser and
@@ -150,7 +153,9 @@ pub(crate) fn analyze(
     }
 
     let final_actions = match else_stmts {
-        Some(else_stmts) => scope_analyzer::get_control_actions(else_stmts, analysis_data, &[], true),
+        Some(else_stmts) => {
+            scope_analyzer::get_control_actions(else_stmts, analysis_data, &[], true)
+        }
         None => {
             let mut actions = FxHashSet::default();
             actions.insert(ControlAction::None);

@@ -78,7 +78,10 @@ impl Scanner {
     /// Psalm's `AssignmentMapVisitor` counts calls: each argument's root var
     /// may be mutated (by-ref), and a method call may mutate its receiver
     /// (recorded as `receiver -> isset`, like Psalm).
-    fn record_call_args(&mut self, argument_list: &mago_syntax::ast::ast::argument::ArgumentList<'_>) {
+    fn record_call_args(
+        &mut self,
+        argument_list: &mago_syntax::ast::ast::argument::ArgumentList<'_>,
+    ) {
         for argument in argument_list.arguments.iter() {
             if let Some(arg_var_id) = get_root_var_id(argument.value()) {
                 self.insert(arg_var_id.clone(), Some(arg_var_id));

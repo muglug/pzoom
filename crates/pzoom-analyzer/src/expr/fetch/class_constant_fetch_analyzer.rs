@@ -5,8 +5,8 @@ use mago_syntax::ast::ast::access::ClassConstantAccess;
 use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
 use mago_syntax::ast::ast::expression::Expression;
 
-use pzoom_code_info::class_like_info::{ClassConstantInfo, Visibility};
 use pzoom_code_info::VarName;
+use pzoom_code_info::class_like_info::{ClassConstantInfo, Visibility};
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
 
@@ -50,7 +50,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             Expression::Self_(_) | Expression::Static(_) => {
@@ -64,7 +66,9 @@ pub fn analyze(
                     line,
                     col,
                 ));
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(TUnion::mixed()));
                 return;
             }
             _ => {}
@@ -72,10 +76,8 @@ pub fn analyze(
 
         // Psalm's ClassConstAnalyzer: a variable receiver whose single type
         // is a plain string (not a class-string) cannot name a class.
-        if matches!(
-            access.class.unparenthesized(),
-            Expression::Variable(_)
-        ) && let Some(receiver_type) = analysis_data.expr_types.get(&_class_pos).cloned()
+        if matches!(access.class.unparenthesized(), Expression::Variable(_))
+            && let Some(receiver_type) = analysis_data.expr_types.get(&_class_pos).cloned()
             && receiver_type.types.len() == 1
             && matches!(
                 receiver_type.types[0],
@@ -119,8 +121,7 @@ pub fn analyze(
             // consume their inner expression (general use).
             let was_inside_general_use = context.inside_general_use;
             context.inside_general_use = true;
-            let _ =
-                expression_analyzer::analyze(analyzer, expr.expression, analysis_data, context);
+            let _ = expression_analyzer::analyze(analyzer, expr.expression, analysis_data, context);
             context.inside_general_use = was_inside_general_use;
             // Psalm's ClassConstAnalyzer: dynamic class-constant fetch is a
             // PHP 8.3 feature.
@@ -163,18 +164,25 @@ pub fn analyze(
                     })
                     .collect();
                 if !class_strings.is_empty() {
-                    analysis_data.expr_types.insert(pos, Rc::new(TUnion::from_types(class_strings)));
+                    analysis_data
+                        .expr_types
+                        .insert(pos, Rc::new(TUnion::from_types(class_strings)));
                     return;
                 }
             }
 
             if matches!(access.class.unparenthesized(), Expression::Static(_)) {
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TClassString {
+                analysis_data.expr_types.insert(
+                    pos,
+                    Rc::new(TUnion::new(TAtomic::TClassString {
                         as_type: Some(Box::new(TAtomic::TNamedObject {
                             name: StrId::STATIC,
                             type_params: None,
-                        is_static: false, remapped_params: false })),
-                    })));
+                            is_static: false,
+                            remapped_params: false,
+                        })),
+                    })),
+                );
                 return;
             }
 
@@ -234,9 +242,12 @@ pub fn analyze(
                 // Psalm's ClassConstAnalyzer types a resolved `Foo::class` as a
                 // literal class-string (`Type::getLiteralClassString`); only
                 // `static::class` stays a constrained `class-string<...>`.
-                analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TLiteralClassString {
+                analysis_data.expr_types.insert(
+                    pos,
+                    Rc::new(TUnion::new(TAtomic::TLiteralClassString {
                         name: class_name.to_string(),
-                    })));
+                    })),
+                );
                 return;
             }
         }
@@ -353,7 +364,9 @@ pub fn analyze(
                 }
 
                 // Return the constant's type
-                analysis_data.expr_types.insert(pos, Rc::new(const_info.constant_type.clone()));
+                analysis_data
+                    .expr_types
+                    .insert(pos, Rc::new(const_info.constant_type.clone()));
                 return;
             } else {
                 // Constant not found in class hierarchy
@@ -390,7 +403,9 @@ pub fn analyze(
     }
 
     // Fall back to mixed
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+    analysis_data
+        .expr_types
+        .insert(pos, Rc::new(TUnion::mixed()));
 }
 
 /// Get the resolved class ID from an expression using resolved_names.

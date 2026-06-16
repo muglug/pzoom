@@ -42,9 +42,9 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
             if arg.is_unpacked() {
                 let spread_nonempty = arg_type.types.iter().all(|atomic| match atomic {
                     TAtomic::TNonEmptyList { .. } | TAtomic::TNonEmptyArray { .. } => true,
-                    TAtomic::TKeyedArray { properties, .. } => properties
-                        .values()
-                        .any(|value| !value.possibly_undefined),
+                    TAtomic::TKeyedArray { properties, .. } => {
+                        properties.values().any(|value| !value.possibly_undefined)
+                    }
                     _ => false,
                 });
                 if !spread_nonempty {
@@ -147,8 +147,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                     // Lists merge/replace by sequential int keys, so they keep
                     // list-ness in the result (mirrors Psalm treating a list as a
                     // keyed array with int offsets).
-                    TAtomic::TList { value_type }
-                    | TAtomic::TNonEmptyList { value_type } => {
+                    TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
                         let non_empty = matches!(atomic, TAtomic::TNonEmptyList { .. });
                         all_keyed_arrays = false;
                         if non_empty {
@@ -181,11 +180,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                 if all_keyed_arrays || inner_key.is_none() || inner_value.is_none() {
                     (None, None, true)
                 } else {
-                    (
-                        inner_key.map(Box::new),
-                        inner_value.map(Box::new),
-                        false,
-                    )
+                    (inner_key.map(Box::new), inner_value.map(Box::new), false)
                 };
 
             return Some(TUnion::new(TAtomic::TKeyedArray {
@@ -266,9 +261,7 @@ fn union_is_all_int(union: &TUnion) -> bool {
         && union.types.iter().all(|atomic| {
             matches!(
                 atomic,
-                TAtomic::TInt
-                    | TAtomic::TLiteralInt { .. }
-                    | TAtomic::TIntRange { .. }
+                TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
             )
         })
 }

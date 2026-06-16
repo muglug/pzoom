@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::Clause;
 use pzoom_code_info::{Assertion, TUnion};
-use pzoom_code_info::VarName;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::stmt::scope_analyzer::ControlAction;

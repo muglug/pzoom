@@ -84,7 +84,9 @@ fn maybe_emit_is_a_redundant_call(
     // redundant when it is exactly `false`.
     let third_is_false = match arg_positions.get(2).copied() {
         Some(third_pos) => analysis_data
-            .expr_types.get(&third_pos).cloned()
+            .expr_types
+            .get(&third_pos)
+            .cloned()
             .is_some_and(|third| matches!(third.get_single(), Some(TAtomic::TFalse))),
         None => true,
     };

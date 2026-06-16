@@ -82,7 +82,9 @@ pub fn analyze(
     // Psalm's YieldAnalyzer) while the generator plainly resumes after it.
     if !matches!(expr_stmt.expression.unparenthesized(), Expression::Yield(_))
         && analysis_data
-            .expr_types.get(&pos).cloned()
+            .expr_types
+            .get(&pos)
+            .cloned()
             .is_some_and(|t| t.is_nothing())
     {
         context.has_returned = true;

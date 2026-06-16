@@ -132,8 +132,8 @@ pub(crate) fn docblock_suppression_match(docblock: &str, issue_name: &str) -> Op
                     (None, false) => token_start = Some(index),
                     (Some(start), true) => {
                         let token = &content[start..index];
-                        let trimmed = token
-                            .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\');
+                        let trimmed =
+                            token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\');
                         // Psalm's issue hierarchy: every Tainted* issue
                         // extends TaintedInput, so suppressing TaintedInput
                         // covers them all.

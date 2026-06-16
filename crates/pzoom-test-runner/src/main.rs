@@ -132,7 +132,10 @@ fn main() {
         None
     };
     if std::env::var("PZOOM_TEST_TIMING").is_ok() {
-        eprintln!("TIMING prescan={:.0}ms", t_prescan.elapsed().as_secs_f64() * 1000.0);
+        eprintln!(
+            "TIMING prescan={:.0}ms",
+            t_prescan.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     let mut passed = 0;
@@ -338,8 +341,7 @@ fn run_test_with_base(
     let file_id = pzoom_syntax::FileId::new(&input_path);
 
     let arena = bumpalo::Bump::new();
-    let (program, parse_error) =
-        pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
+    let (program, parse_error) = pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
     let parse_errors: Vec<(u32, String)> = parse_error
         .map(|error| {
             use pzoom_syntax::HasSpan;
@@ -431,7 +433,10 @@ fn run_test_with_base(
     let scan_ms = t_scan.elapsed().as_secs_f64() * 1000.0;
 
     if std::env::var("PZOOM_TEST_TIMING").is_ok() {
-        eprintln!("TIMING clone={:.1}ms scan={:.1}ms {}", clone_ms, scan_ms, test_folder);
+        eprintln!(
+            "TIMING clone={:.1}ms scan={:.1}ms {}",
+            clone_ms, scan_ms, test_folder
+        );
     }
 
     drop(threaded_interner);
@@ -572,8 +577,8 @@ fn run_analysis_and_compare(
     // (TestCase::analyzeFile defaults $track_unused_suppressions = true).
     config.find_unused_suppress = true;
     // Psalm's UnusedVariableTest enables reportUnusedVariables() in setUp.
-    config.report_unused = input_path.contains("/UnusedVariable/")
-        || input_path.contains("/UnusedCode/");
+    config.report_unused =
+        input_path.contains("/UnusedVariable/") || input_path.contains("/UnusedCode/");
     // Psalm's UnusedCodeTest calls reportUnusedCode(), enabling declaration
     // usage tracking on top of unused-variable reporting.
     config.find_unused_code = input_path.contains("/UnusedCode/");
@@ -587,12 +592,13 @@ fn run_analysis_and_compare(
     // Psalm tests can pin a PHP version per test case; the pzoom port keeps it
     // in a php_version.txt sidecar next to input.php.
     if let Some(test_dir) = Path::new(input_path).parent()
-        && let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt")) {
-            let version = version.trim();
-            if !version.is_empty() {
-                config.php_version = version.to_string();
-            }
+        && let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt"))
+    {
+        let version = version.trim();
+        if !version.is_empty() {
+            config.php_version = version.to_string();
         }
+    }
     // Psalm enables some config flags per test case (e.g. ArrayAccessTest sets
     // Config::getInstance()->ensure_array_int_offsets_exist = true); the pzoom
     // port keeps each as a marker file next to input.php.
@@ -637,7 +643,10 @@ fn run_analysis_and_compare(
     let result = analyzer.analyze_files(&files_to_analyze);
     let an_ms = t_an.elapsed().as_secs_f64() * 1000.0;
     if std::env::var("PZOOM_TEST_TIMING").is_ok() {
-        eprintln!("TIMING populate={:.1}ms analyze={:.1}ms {}", pop_ms, an_ms, input_path);
+        eprintln!(
+            "TIMING populate={:.1}ms analyze={:.1}ms {}",
+            pop_ms, an_ms, input_path
+        );
     }
 
     // Format output in Psalm style: IssueKind - file:line:column - message
@@ -667,7 +676,11 @@ fn run_analysis_and_compare(
             // entry), so sorting keeps each block together.
             let mut entry = format!(
                 "{:?} - {}:{}:{} - {}",
-                issue.kind, "input.php", issue.location.start_line, issue.location.start_column, message
+                issue.kind,
+                "input.php",
+                issue.location.start_line,
+                issue.location.start_column,
+                message
             );
             for secondary in &issue.secondary_locations {
                 let secondary_file = interner.lookup(secondary.location.file_path);

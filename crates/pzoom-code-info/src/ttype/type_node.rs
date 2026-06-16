@@ -94,9 +94,7 @@ impl TAtomic {
                 type_params: Some(type_params),
                 ..
             } => type_params.iter().map(TypeNode::Union).collect(),
-            TAtomic::TObjectIntersection { types } => {
-                types.iter().map(TypeNode::Atomic).collect()
-            }
+            TAtomic::TObjectIntersection { types } => types.iter().map(TypeNode::Atomic).collect(),
             TAtomic::TClassString {
                 as_type: Some(as_type),
             }
@@ -117,7 +115,11 @@ impl TAtomic {
             } => {
                 let mut nodes = Vec::new();
                 if let Some(params) = params {
-                    nodes.extend(params.iter().map(|param| TypeNode::Union(&param.param_type)));
+                    nodes.extend(
+                        params
+                            .iter()
+                            .map(|param| TypeNode::Union(&param.param_type)),
+                    );
                 }
                 if let Some(return_type) = return_type {
                     nodes.push(TypeNode::Union(return_type));

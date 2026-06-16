@@ -28,7 +28,9 @@ pub fn analyze(
     context: &mut BlockContext,
 ) {
     if !partial_application.is_first_class_callable() {
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     }
 
@@ -63,7 +65,9 @@ pub fn analyze(
                         .iter()
                         .any(|atomic| matches!(atomic, TAtomic::TClosure { .. }))
                     {
-                        analysis_data.expr_types.insert(pos, Rc::new((*callee_type).clone()));
+                        analysis_data
+                            .expr_types
+                            .insert(pos, Rc::new((*callee_type).clone()));
                         return;
                     }
                     let invoke_info = callee_type.types.iter().find_map(|atomic| {
@@ -132,7 +136,11 @@ pub fn analyze(
                 method_pa.object.span().start.offset,
                 method_pa.object.span().end.offset,
             );
-            let object_type = analysis_data.expr_types.get(&object_pos).cloned().map(|t| (*t).clone());
+            let object_type = analysis_data
+                .expr_types
+                .get(&object_pos)
+                .cloned()
+                .map(|t| (*t).clone());
             let method_name = match &method_pa.method {
                 mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
                     id,
@@ -148,12 +156,14 @@ pub fn analyze(
                         analysis_data,
                         context,
                     );
-                    analysis_data.expr_types.get(&var_pos).cloned().and_then(|selector_type| {
-                        match selector_type.get_single() {
+                    analysis_data
+                        .expr_types
+                        .get(&var_pos)
+                        .cloned()
+                        .and_then(|selector_type| match selector_type.get_single() {
                             Some(TAtomic::TLiteralString { value }) => Some(value.clone()),
                             _ => None,
-                        }
-                    })
+                        })
                 }
                 _ => None,
             };
@@ -289,9 +299,7 @@ pub fn analyze(
                 Expression::Identifier(id) => analyzer
                     .get_resolved_name(id.span().start.offset)
                     .or_else(|| Some(analyzer.interner.intern(id.value()))),
-                Expression::Self_(_) | Expression::Static(_) => {
-                    analyzer.get_declaring_class()
-                }
+                Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
                 // `$class::method(...)` — the receiver's class-string type
                 // names the class whose method signature the closure takes
                 // (Psalm resolves these through the expression type).
@@ -302,26 +310,28 @@ pub fn analyze(
                         analysis_data,
                         context,
                     );
-                    analysis_data.expr_types.get(&class_pos).cloned().and_then(|class_type| {
-                        class_type.types.iter().find_map(|atomic| match atomic {
-                            TAtomic::TClassString {
-                                as_type: Some(bound),
-                            } => {
-                                if let TAtomic::TNamedObject { name, .. } = bound.as_ref() {
-                                    Some(*name)
-                                } else {
-                                    None
+                    analysis_data
+                        .expr_types
+                        .get(&class_pos)
+                        .cloned()
+                        .and_then(|class_type| {
+                            class_type.types.iter().find_map(|atomic| match atomic {
+                                TAtomic::TClassString {
+                                    as_type: Some(bound),
+                                } => {
+                                    if let TAtomic::TNamedObject { name, .. } = bound.as_ref() {
+                                        Some(*name)
+                                    } else {
+                                        None
+                                    }
                                 }
-                            }
-                            TAtomic::TLiteralClassString { name } => Some(
-                                analyzer
-                                    .interner
-                                    .intern(name.trim_start_matches('\\')),
-                            ),
-                            TAtomic::TNamedObject { name, .. } => Some(*name),
-                            _ => None,
+                                TAtomic::TLiteralClassString { name } => {
+                                    Some(analyzer.interner.intern(name.trim_start_matches('\\')))
+                                }
+                                TAtomic::TNamedObject { name, .. } => Some(*name),
+                                _ => None,
+                            })
                         })
-                    })
                 }
             };
             let method_name = match &static_pa.method {
@@ -339,12 +349,14 @@ pub fn analyze(
                         analysis_data,
                         context,
                     );
-                    analysis_data.expr_types.get(&var_pos).cloned().and_then(|selector_type| {
-                        match selector_type.get_single() {
+                    analysis_data
+                        .expr_types
+                        .get(&var_pos)
+                        .cloned()
+                        .and_then(|selector_type| match selector_type.get_single() {
                             Some(TAtomic::TLiteralString { value }) => Some(value.clone()),
                             _ => None,
-                        }
-                    })
+                        })
                 }
                 _ => None,
             };
@@ -404,11 +416,14 @@ pub fn analyze(
 
     let Some(function_info) = function_info else {
         // Unknown callee: still a closure, just an unspecified one.
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TClosure {
+        analysis_data.expr_types.insert(
+            pos,
+            Rc::new(TUnion::new(TAtomic::TClosure {
                 params: None,
                 return_type: None,
                 is_pure: None,
-            })));
+            })),
+        );
         return;
     };
 
@@ -445,9 +460,12 @@ pub fn analyze(
         })
         .collect();
 
-    analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TClosure {
+    analysis_data.expr_types.insert(
+        pos,
+        Rc::new(TUnion::new(TAtomic::TClosure {
             params: Some(params),
             return_type: return_type.map(Box::new),
             is_pure: Some(function_info.is_pure),
-        })));
+        })),
+    );
 }

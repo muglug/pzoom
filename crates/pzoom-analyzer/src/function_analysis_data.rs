@@ -267,11 +267,12 @@ impl FunctionAnalysisData {
         function_context: &crate::context::FunctionContextInfo,
         class_member: (StrId, StrId),
     ) {
-        self.symbol_references.add_reference_to_overridden_class_member(
-            function_context.referencing_id().as_ref(),
-            function_context.calling_class,
-            class_member,
-        );
+        self.symbol_references
+            .add_reference_to_overridden_class_member(
+                function_context.referencing_id().as_ref(),
+                function_context.calling_class,
+                class_member,
+            );
     }
 
     /// Record signature references for a function-like: every class named in a
@@ -373,13 +374,10 @@ impl FunctionAnalysisData {
     /// (loop fixpoint) and from the emitted set.
     pub fn remove_issue(&mut self, kind: pzoom_code_info::IssueKind, offset: u32) {
         if let Some(frame) = self.recorded_issues.last_mut() {
-            frame.retain(|issue| {
-                issue.kind != kind || issue.location.start_offset != offset
-            });
+            frame.retain(|issue| issue.kind != kind || issue.location.start_offset != offset);
         }
-        self.issues.retain(|issue| {
-            issue.kind != kind || issue.location.start_offset != offset
-        });
+        self.issues
+            .retain(|issue| issue.kind != kind || issue.location.start_offset != offset);
     }
 
     /// Combine the inferred return types recorded since `start_index` into one
@@ -411,5 +409,4 @@ impl FunctionAnalysisData {
             self.function_argument_callsite_types.insert(key, arg_type);
         }
     }
-
 }

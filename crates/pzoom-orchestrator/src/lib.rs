@@ -15,8 +15,8 @@ pub mod populator;
 pub mod scanner;
 
 pub use analyzer::Analyzer;
-pub use composer_autoload::ComposerAutoload;
 pub use callmap::apply_call_map;
+pub use composer_autoload::ComposerAutoload;
 pub use extensions::resolve_enabled_extensions;
 pub use populator::{Populator, register_global_defined_constants};
 pub use scanner::{ScanResult, Scanner};

@@ -27,22 +27,30 @@ pub fn analyze(
     // ConstFetchAnalyzer::getGlobalConstType) — their stub declarations are
     // self-referential placeholders (`const STDERR = STDERR;`).
     if matches!(const_name, "STDERR" | "STDOUT" | "STDIN") {
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TResource)));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::new(TAtomic::TResource)));
         return;
     }
 
     // Check for built-in constants first (case-insensitive for true/false/null)
     let result_type = match const_name.to_lowercase().as_str() {
         "true" => {
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TTrue)));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::new(TAtomic::TTrue)));
             return;
         }
         "false" => {
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::new(TAtomic::TFalse)));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::new(TAtomic::TFalse)));
             return;
         }
         "null" => {
-            analysis_data.expr_types.insert(pos, Rc::new(TUnion::null()));
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::null()));
             return;
         }
 

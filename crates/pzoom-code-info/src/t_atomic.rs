@@ -688,7 +688,8 @@ impl TAtomic {
 
                 if properties.is_empty() {
                     // No known items: a generic list/array, or the empty array.
-                    if let Some(fallback_value) = fallback_value_type.as_ref().filter(|_| has_fallback)
+                    if let Some(fallback_value) =
+                        fallback_value_type.as_ref().filter(|_| has_fallback)
                     {
                         return if *is_list {
                             format!("list<{}>", fallback_value.get_id(interner))
@@ -697,7 +698,11 @@ impl TAtomic {
                                 .as_ref()
                                 .map(|k| k.get_id(interner))
                                 .unwrap_or_else(|| "array-key".to_string());
-                            format!("array<{}, {}>", fallback_key, fallback_value.get_id(interner))
+                            format!(
+                                "array<{}, {}>",
+                                fallback_key,
+                                fallback_value.get_id(interner)
+                            )
                         };
                     }
                     return "array<never, never>".to_string();
@@ -793,8 +798,7 @@ impl TAtomic {
                 ..
             } => "stringable-object".to_string(),
             TAtomic::TObjectWithProperties {
-                is_invokable: true,
-                ..
+                is_invokable: true, ..
             } => "callable-object".to_string(),
             TAtomic::TObjectWithProperties { properties, .. } => {
                 let mut entries = properties
@@ -804,7 +808,11 @@ impl TAtomic {
                             ArrayKey::Int(i) => i.to_string(),
                             ArrayKey::String(s) => s.clone(),
                         };
-                        let optional = if value_type.possibly_undefined { "?" } else { "" };
+                        let optional = if value_type.possibly_undefined {
+                            "?"
+                        } else {
+                            ""
+                        };
                         format!("{}{}: {}", key_str, optional, value_type.get_id(interner))
                     })
                     .collect::<Vec<_>>();

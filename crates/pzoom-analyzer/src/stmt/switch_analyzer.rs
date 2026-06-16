@@ -19,7 +19,6 @@ pub(crate) enum CaseExitType {
 }
 
 /// Analyze a switch statement.
-
 use super::switch_case_analyzer::*;
 
 /// Analyze a switch statement.
@@ -29,18 +28,18 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    let switch_expr_pos =
-        {
-            // The switch subject is consumed by the dispatch (general use).
-            let was_inside_general_use = context.inside_general_use;
-            context.inside_general_use = true;
-            let pos =
-                expression_analyzer::analyze(analyzer, switch.expression, analysis_data, context);
-            context.inside_general_use = was_inside_general_use;
-            pos
-        };
+    let switch_expr_pos = {
+        // The switch subject is consumed by the dispatch (general use).
+        let was_inside_general_use = context.inside_general_use;
+        context.inside_general_use = true;
+        let pos = expression_analyzer::analyze(analyzer, switch.expression, analysis_data, context);
+        context.inside_general_use = was_inside_general_use;
+        pos
+    };
     let switch_expr_type = analysis_data
-        .expr_types.get(&switch_expr_pos).cloned()
+        .expr_types
+        .get(&switch_expr_pos)
+        .cloned()
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
@@ -48,11 +47,10 @@ pub fn analyze(
     // `gettype($x)` result (e.g. `$t = gettype($x); switch ($t)`) narrows the
     // *original* `$x`. The dependent type carries `$x`'s id; fall back to it when
     // the subject is not the syntactic `get_class(...)`/`gettype(...)` call.
-    let class_string_origin = get_switch_class_string_origin( switch.expression)
+    let class_string_origin = get_switch_class_string_origin(switch.expression)
         .or_else(|| switch_dependent_class_var(&switch_expr_type));
-    let gettype_origin = get_switch_gettype_origin(switch.expression).or_else(|| {
-        switch_dependent_type_var(&switch_expr_type).map(|var_id| (var_id, false))
-    });
+    let gettype_origin = get_switch_gettype_origin(switch.expression)
+        .or_else(|| switch_dependent_type_var(&switch_expr_type).map(|var_id| (var_id, false)));
     let switch_is_get_class = is_get_class_call(switch.expression);
     let switch_is_true = is_true_literal(switch.expression);
 
@@ -104,7 +102,12 @@ pub fn analyze(
     let mut merge_sources = scope.continuing_contexts;
     // Contexts captured at `break`s that left this switch join the merge
     // (Hakana merges case_scope.break_vars into the outgoing vars).
-    merge_sources.extend(analysis_data.switch_break_contexts.pop().unwrap_or_default());
+    merge_sources.extend(
+        analysis_data
+            .switch_break_contexts
+            .pop()
+            .unwrap_or_default(),
+    );
     if !all_options_matched {
         merge_sources.push(original_context);
     }
@@ -115,11 +118,8 @@ pub fn analyze(
         // vars_possibly_in_scope, and reading it reports
         // PossiblyUndefinedVariable from there (a kept one-branch type would
         // both hide that report and leak into later code).
-        let mut defined_in_all: FxHashSet<VarName> = merge_sources[0]
-            .locals
-            .keys()
-            .cloned()
-            .collect();
+        let mut defined_in_all: FxHashSet<VarName> =
+            merge_sources[0].locals.keys().cloned().collect();
         for branch_context in merge_sources.iter().skip(1) {
             defined_in_all.retain(|var_id| branch_context.locals.contains_key(var_id));
         }

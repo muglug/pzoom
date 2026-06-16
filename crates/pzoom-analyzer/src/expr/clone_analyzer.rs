@@ -228,4 +228,3 @@ fn resolve_clone_target_class_id(
                 .eq_ignore_ascii_case(normalized_name)
         })
 }
-

@@ -12,18 +12,15 @@ use mago_syntax::ast::ast::call::StaticMethodCall;
 use mago_syntax::ast::ast::expression::Expression;
 
 use pzoom_code_info::class_like_info::Visibility;
-use pzoom_code_info::{
-    Issue, IssueKind, TAtomic, TUnion, combine_union_types,
-};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 
-
-use super::static_call_analyzer::*;
 use super::existing_atomic_static_call_analyzer::*;
+use super::static_call_analyzer::*;
 
 /// Static calls follow Hakana's `method_call_return_type_fetcher::add_dataflow`
 /// with no receiver expression: the call's return node becomes the returned
@@ -152,7 +149,10 @@ pub(crate) fn handle_dynamic_static_call(
                     let (line, col) = analyzer.get_line_column(pos.0);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::UndefinedClass,
-                        crate::class_casing::undefined_class_message(analyzer, analyzer.interner.lookup(*name)),
+                        crate::class_casing::undefined_class_message(
+                            analyzer,
+                            analyzer.interner.lookup(*name),
+                        ),
                         analyzer.file_path,
                         pos.0,
                         pos.1,
@@ -605,7 +605,9 @@ fn collect_dynamic_static_call_target_atomics(
                 TAtomic::TNamedObject {
                     name: analyzer.interner.intern(name.trim_start_matches('\\')),
                     type_params: None,
-                is_static: false, remapped_params: false },
+                    is_static: false,
+                    remapped_params: false,
+                },
                 static_binding,
             );
         }

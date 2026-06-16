@@ -111,14 +111,28 @@ fn expand_atomic(
                 // return type); expand its parts in place (Psalm expands the
                 // conditional's type too).
                 expand_union(codebase, interner, &mut conditional.as_type, options);
-                expand_union(codebase, interner, &mut conditional.conditional_type, options);
+                expand_union(
+                    codebase,
+                    interner,
+                    &mut conditional.conditional_type,
+                    options,
+                );
                 expand_union(codebase, interner, &mut conditional.if_true_type, options);
                 expand_union(codebase, interner, &mut conditional.if_false_type, options);
             }
         }
-        TAtomic::TArray { key_type, value_type }
-        | TAtomic::TNonEmptyArray { key_type, value_type }
-        | TAtomic::TIterable { key_type, value_type } => {
+        TAtomic::TArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TNonEmptyArray {
+            key_type,
+            value_type,
+        }
+        | TAtomic::TIterable {
+            key_type,
+            value_type,
+        } => {
             expand_union(codebase, interner, key_type, options);
             expand_union(codebase, interner, value_type, options);
         }
@@ -213,7 +227,9 @@ fn expand_atomic(
                     // Resolve `self`/`static` to the call-site class; when `static`
                     // resolves to a concrete object/intersection, splice it in
                     // (flattening nested intersections). Matches Psalm.
-                    if let Some(replacement) = localize_class_name(name, is_static, options, codebase) {
+                    if let Some(replacement) =
+                        localize_class_name(name, is_static, options, codebase)
+                    {
                         match replacement {
                             TAtomic::TObjectIntersection { types: inner } => {
                                 new_types.extend(inner)
@@ -468,14 +484,10 @@ fn localize_class_name(
         if let StaticClassType::Name(static_id) = &options.static_class_type
             && (*name == self_class
                 || crate::type_comparator::object_type_comparator::is_class_subtype_of(
-                    *name,
-                    self_class,
-                    codebase,
+                    *name, self_class, codebase,
                 )
                 || crate::type_comparator::object_type_comparator::is_class_subtype_of(
-                    self_class,
-                    *name,
-                    codebase,
+                    self_class, *name, codebase,
                 ))
         {
             if options.function_is_final {
@@ -514,7 +526,14 @@ fn expand_atomic_in_place(
 ) {
     let mut skip = false;
     let mut replacements = Vec::new();
-    expand_atomic(atomic, codebase, interner, options, &mut skip, &mut replacements);
+    expand_atomic(
+        atomic,
+        codebase,
+        interner,
+        options,
+        &mut skip,
+        &mut replacements,
+    );
     if skip {
         if let Some(first) = replacements.into_iter().next() {
             *atomic = first;
@@ -588,10 +607,11 @@ fn build_properties_of_keyed_array(
     // (TypeExpander::expandPropertiesOf). Missing ancestors are skipped, not
     // treated as non-final.
     let all_sealed = class_info.is_final
-        && class_info
-            .all_parent_classes
-            .iter()
-            .all(|ancestor| codebase.get_class(*ancestor).map_or(true, |info| info.is_final));
+        && class_info.all_parent_classes.iter().all(|ancestor| {
+            codebase
+                .get_class(*ancestor)
+                .map_or(true, |info| info.is_final)
+        });
 
     let (fallback_key_type, fallback_value_type) = if all_sealed {
         (None, None)
@@ -728,9 +748,7 @@ fn atomic_needs_expansion(atomic: &TAtomic, options: &TypeExpansionOptions) -> b
         | TAtomic::TIterable {
             key_type,
             value_type,
-        } => {
-            union_needs_expansion(key_type, options) || union_needs_expansion(value_type, options)
-        }
+        } => union_needs_expansion(key_type, options) || union_needs_expansion(value_type, options),
         TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
             union_needs_expansion(value_type, options)
         }

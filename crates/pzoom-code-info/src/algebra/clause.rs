@@ -17,7 +17,8 @@ use crate::var_name::VarName;
 /// Insertion-ordered set of assertions keyed by `Assertion::to_hash`. The
 /// keys are already FxHasher outputs, so the map uses Fx rather than the
 /// default SipHash.
-pub type AssertionSet = IndexMap<u64, Assertion, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
+pub type AssertionSet =
+    IndexMap<u64, Assertion, std::hash::BuildHasherDefault<rustc_hash::FxHasher>>;
 
 /// A key identifying a variable in a clause.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -175,11 +176,7 @@ impl Clause {
     }
 
     /// Adds a possibility for a variable to this clause.
-    pub fn add_possibility(
-        &self,
-        var_id: ClauseKey,
-        new_possibility: AssertionSet,
-    ) -> Clause {
+    pub fn add_possibility(&self, var_id: ClauseKey, new_possibility: AssertionSet) -> Clause {
         let mut possibilities = (*self.possibilities).clone();
         possibilities.insert(var_id, new_possibility);
 

@@ -3,8 +3,8 @@
 //! an ArgumentTypeCoercion.
 
 use pzoom_code_info::functionlike_info::ParamInfo;
-use pzoom_str::StrId;
 use pzoom_code_info::{TAtomic, TUnion};
+use pzoom_str::StrId;
 
 use crate::function_analysis_data::FunctionAnalysisData;
 

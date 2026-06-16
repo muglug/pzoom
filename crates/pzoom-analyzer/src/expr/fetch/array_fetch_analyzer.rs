@@ -8,8 +8,8 @@ use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::data_flow::path::ArrayDataKind;
 use pzoom_code_info::VarName;
+use pzoom_code_info::data_flow::path::ArrayDataKind;
 use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::ttype::type_combiner;
 use pzoom_code_info::{
@@ -192,14 +192,18 @@ pub fn analyze(
         // Taint (whole-program) mode needs the full fetch dataflow — the
         // memo shortcut only registers a use sink.
         if can_reuse_cached_dim_path(base_key, index_key)
-            && !matches!(analysis_data.data_flow_graph.kind, GraphKind::WholeProgram(_))
+            && !matches!(
+                analysis_data.data_flow_graph.kind,
+                GraphKind::WholeProgram(_)
+            )
         {
             let full_key = format!("{}[{}]", base_key, index_key);
             let full_key_id = VarName::new(&full_key);
             // The narrowed dim-path type is captured BEFORE the base
             // re-analysis below can re-derive (and widen) it.
             if let Some(existing_type) = context.locals.get(&full_key_id).cloned() {
-                let has_asserted_dim = context_asserts_isset_state(context, &full_key) == Some(true);
+                let has_asserted_dim =
+                    context_asserts_isset_state(context, &full_key) == Some(true);
                 let base_has_nullable_or_falsable_access = context
                     .locals
                     .get(base_key.as_str())
@@ -273,7 +277,9 @@ pub fn analyze(
     context.inside_unset = was_inside_unset;
 
     let array_type = analysis_data
-        .expr_types.get(&array_pos).cloned()
+        .expr_types
+        .get(&array_pos)
+        .cloned()
         .map(|rc| (*rc).clone())
         // Reading through a type variable resolves it via its accumulated
         // lower bounds (Hakana's instance-call receiver pattern applied to
@@ -285,7 +291,9 @@ pub fn analyze(
             )
         });
     let index_type = analysis_data
-        .expr_types.get(&index_pos).cloned()
+        .expr_types
+        .get(&index_pos)
+        .cloned()
         .map(|rc| (*rc).clone());
 
     let base_has_nullable_or_falsable_access = array_type
@@ -305,7 +313,8 @@ pub fn analyze(
             let full_key = format!("{}[{}]", base_key, index_key);
             let full_key_id = VarName::new(&full_key);
             if let Some(existing_type) = context.locals.get(&full_key_id) {
-                let has_asserted_dim = context_asserts_isset_state(context, &full_key) == Some(true);
+                let has_asserted_dim =
+                    context_asserts_isset_state(context, &full_key) == Some(true);
                 if has_asserted_dim {
                     set_fetch_type_with_dataflow(
                         analyzer,
@@ -352,7 +361,9 @@ pub fn analyze(
 
     // If we don't know the array type, return mixed
     let Some(array_type) = array_type else {
-        analysis_data.expr_types.insert(pos, Rc::new(TUnion::mixed()));
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::mixed()));
         return;
     };
     // Psalm's fetched-element provenance is the nested value union's own
@@ -430,8 +441,10 @@ pub fn analyze(
             | TAtomic::TList { value_type }
             | TAtomic::TNonEmptyList { value_type } => {
                 has_valid_access = true;
-                let is_list_atomic =
-                    matches!(atomic, TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. });
+                let is_list_atomic = matches!(
+                    atomic,
+                    TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. }
+                );
                 if !literal_index_keys.is_empty() {
                     // List keys are non-negative (Psalm types them
                     // int<0, max>): a provably-negative literal offset is a
@@ -460,13 +473,13 @@ pub fn analyze(
                 // entry is PossiblyUndefined{Int,String}ArrayOffset.
                 if !is_list_atomic && !literal_index_keys.is_empty() {
                     let key_accepts = |is_int: bool| {
-                        (if is_int { key_type.has_int() } else { key_type.has_string() })
-                            || key_type.types.iter().any(|t| {
-                                matches!(
-                                    t,
-                                    TAtomic::TArrayKey | TAtomic::TMixed | TAtomic::TScalar
-                                )
-                            })
+                        (if is_int {
+                            key_type.has_int()
+                        } else {
+                            key_type.has_string()
+                        }) || key_type.types.iter().any(|t| {
+                            matches!(t, TAtomic::TArrayKey | TAtomic::TMixed | TAtomic::TScalar)
+                        })
                     };
                     for key in &literal_index_keys {
                         match key {
@@ -554,9 +567,7 @@ pub fn analyze(
                     let has_plain_mixed = properties
                         .values()
                         .chain(fallback_value_type.as_deref())
-                        .any(|value| {
-                            value.types.iter().any(|t| matches!(t, TAtomic::TMixed))
-                        });
+                        .any(|value| value.types.iter().any(|t| matches!(t, TAtomic::TMixed)));
                     if has_plain_mixed {
                         if !result_types.contains(&TAtomic::TMixed) {
                             result_types.push(TAtomic::TMixed);
@@ -635,13 +646,14 @@ pub fn analyze(
                 // A string-offset read yields a single character (Psalm's
                 // TSingleLetter): `$s[0][1]` only accepts offset 0.
                 if literal_len.is_none()
-                    && let mago_syntax::ast::ast::expression::Expression::ArrayAccess(
-                        inner_access,
-                    ) = access.array.unparenthesized()
+                    && let mago_syntax::ast::ast::expression::Expression::ArrayAccess(inner_access) =
+                        access.array.unparenthesized()
                 {
                     let inner_span = mago_span::HasSpan::span(inner_access.array);
                     let inner_base_is_string = analysis_data
-                        .expr_types.get(&(inner_span.start.offset, inner_span.end.offset)).cloned()
+                        .expr_types
+                        .get(&(inner_span.start.offset, inner_span.end.offset))
+                        .cloned()
                         .is_some_and(|inner_base| {
                             !inner_base.types.is_empty()
                                 && inner_base.types.iter().all(|inner_atomic| {
@@ -668,8 +680,7 @@ pub fn analyze(
                     Some(0) => {
                         if !context.inside_isset && !context.inside_unset {
                             let span = access.index.span();
-                            let start_line =
-                                get_line_number(analyzer.source, span.start.offset);
+                            let start_line = get_line_number(analyzer.source, span.start.offset);
                             analysis_data.add_issue(Issue::new(
                                 IssueKind::InvalidArrayOffset,
                                 "Cannot access value on an empty string",
@@ -781,9 +792,14 @@ pub fn analyze(
                 // Psalm hard-codes SimpleXMLElement dim access to
                 // SimpleXMLElement|null (handleArrayAccessOnNamedObject).
                 if *name == StrId::SIMPLE_XML_ELEMENT
-                    || analyzer.codebase.get_class(*name).is_some_and(|class_info| {
-                        class_info.all_parent_classes.contains(&StrId::SIMPLE_XML_ELEMENT)
-                    })
+                    || analyzer
+                        .codebase
+                        .get_class(*name)
+                        .is_some_and(|class_info| {
+                            class_info
+                                .all_parent_classes
+                                .contains(&StrId::SIMPLE_XML_ELEMENT)
+                        })
                 {
                     has_valid_access = true;
                     if !literal_index_keys.is_empty() {
@@ -960,7 +976,11 @@ pub fn analyze(
     // ignore_falsable_issues (ignoreInternalFunctionFalseReturn).
     let invalid_only_ignored_false =
         invalid_type_name == "false" && array_type.ignore_falsable_issues;
-    if has_invalid_access && has_valid_access && !context.inside_isset && !invalid_only_ignored_false {
+    if has_invalid_access
+        && has_valid_access
+        && !context.inside_isset
+        && !invalid_only_ignored_false
+    {
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyInvalidArrayAccess,
             format!(
@@ -1057,10 +1077,17 @@ pub fn analyze(
                 IssueKind::NullArrayOffset,
                 "Cannot access value using null offset".to_string(),
             ),
-            Some(union) if union.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull)) => (
-                IssueKind::PossiblyNullArrayOffset,
-                format!("Cannot access value using possibly null offset {index_type_id}"),
-            ),
+            Some(union)
+                if union
+                    .types
+                    .iter()
+                    .any(|atomic| matches!(atomic, TAtomic::TNull)) =>
+            {
+                (
+                    IssueKind::PossiblyNullArrayOffset,
+                    format!("Cannot access value using possibly null offset {index_type_id}"),
+                )
+            }
             _ => (
                 IssueKind::InvalidArrayOffset,
                 format!("Invalid array offset type: {index_type_id}"),
@@ -1335,7 +1362,11 @@ pub fn analyze(
         // caching it would leak a definite type into the surrounding scope.
         if !context.inside_isset
             && can_reuse_cached_dim_path(&base_key, &index_key)
-            && let Some(expr_type) = analysis_data.expr_types.get(&pos).cloned().map(|t| (*t).clone())
+            && let Some(expr_type) = analysis_data
+                .expr_types
+                .get(&pos)
+                .cloned()
+                .map(|t| (*t).clone())
         {
             let is_cacheable = !expr_type.is_mixed()
                 && !expr_type.is_nullable()
@@ -1579,38 +1610,51 @@ pub(crate) fn resolve_array_access_method_types(
         "offsetGet"
     };
     let offset_get_id = analyzer.interner.intern(accessor);
-    let method_info = class_info.methods.get(&offset_get_id).map(|m| &**m).or_else(|| {
-        class_info
-            .all_parent_classes
-            .iter()
-            .chain(class_info.all_parent_interfaces.iter())
-            .find_map(|ancestor| {
-                analyzer
-                    .codebase
-                    .get_class(*ancestor)?
-                    .methods
-                    .get(&offset_get_id)
-                    .map(|m| &**m)
-            })
-    })?;
+    let method_info = class_info
+        .methods
+        .get(&offset_get_id)
+        .map(|m| &**m)
+        .or_else(|| {
+            class_info
+                .all_parent_classes
+                .iter()
+                .chain(class_info.all_parent_interfaces.iter())
+                .find_map(|ancestor| {
+                    analyzer
+                        .codebase
+                        .get_class(*ancestor)?
+                        .methods
+                        .get(&offset_get_id)
+                        .map(|m| &**m)
+                })
+        })?;
 
     let key_type = method_info
         .params
         .first()
         .and_then(|param| param.get_type().cloned())
         .unwrap_or_else(TUnion::mixed);
-    let value_type = method_info.get_return_type().cloned().unwrap_or_else(TUnion::mixed);
+    let value_type = method_info
+        .get_return_type()
+        .cloned()
+        .unwrap_or_else(TUnion::mixed);
 
     if value_type.is_mixed() && key_type.is_mixed() {
         return None;
     }
 
-    let mut localized_key = crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
-        class_info, type_params, &key_type,
-    );
-    let mut localized_value = crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
-        class_info, type_params, &value_type,
-    );
+    let mut localized_key =
+        crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
+            class_info,
+            type_params,
+            &key_type,
+        );
+    let mut localized_value =
+        crate::expr::call::method_call_return_type_fetcher::localize_class_union_type(
+            class_info,
+            type_params,
+            &value_type,
+        );
     // `static`/`self` in the offsetGet signature resolve to the receiver
     // (SimpleXMLElement::offsetGet(): static|null reads as the element type).
     for union in [&mut localized_key, &mut localized_value] {
@@ -1654,7 +1698,9 @@ fn class_supports_array_access(analyzer: &StatementsAnalyzer<'_>, class_name: St
     };
 
     class_info.interfaces.contains(&StrId::ARRAY_ACCESS)
-        || class_info.all_parent_interfaces.contains(&StrId::ARRAY_ACCESS)
+        || class_info
+            .all_parent_interfaces
+            .contains(&StrId::ARRAY_ACCESS)
 }
 
 /// Check if the array offset type is valid.
@@ -1668,11 +1714,8 @@ fn check_array_offset(
 ) -> bool {
     if let Some(expected_offset_type) = expected_offset_type {
         let coerce_class_strings = should_coerce_class_string_offsets(expected_offset_type);
-        let normalized_index_type = normalize_array_offset_comparison_union(
-            index_type,
-            analyzer,
-            coerce_class_strings,
-        );
+        let normalized_index_type =
+            normalize_array_offset_comparison_union(index_type, analyzer, coerce_class_strings);
 
         if expected_offset_type
             .types
@@ -1971,11 +2014,8 @@ fn check_array_offset_against_expected_branches(
     let coerce_class_strings = expected_branches
         .iter()
         .all(should_coerce_class_string_offsets);
-    let normalized_index_type = normalize_array_offset_comparison_union(
-        index_type,
-        analyzer,
-        coerce_class_strings,
-    );
+    let normalized_index_type =
+        normalize_array_offset_comparison_union(index_type, analyzer, coerce_class_strings);
 
     if expected_branches.iter().any(|expected| {
         expected
@@ -2185,7 +2225,10 @@ fn merge_expected_offset_type(target: &mut Option<TUnion>, incoming: TUnion) {
 /// `ArrayFetchAnalyzer` (which makes a `TTemplateIndexedAccess`). The result
 /// matches the docblock parser's representation of `@return T[K]` so the body's
 /// inferred type and the declared return type unify.
-fn build_template_indexed_access(array_type: &TUnion, index_type: Option<&TUnion>) -> Option<TAtomic> {
+fn build_template_indexed_access(
+    array_type: &TUnion,
+    index_type: Option<&TUnion>,
+) -> Option<TAtomic> {
     let TAtomic::TTemplateParam {
         name: array_name,
         defining_entity: array_defining_entity,
@@ -2392,7 +2435,9 @@ fn expected_offsets_fit_class_string_bound(
             TAtomic::TLiteralClassString { name } => {
                 resolve_class_id_from_literal_string(analyzer, name)
             }
-            TAtomic::TLiteralString { value } => resolve_class_id_from_literal_string(analyzer, value),
+            TAtomic::TLiteralString { value } => {
+                resolve_class_id_from_literal_string(analyzer, value)
+            }
             _ => None,
         };
 
@@ -2425,9 +2470,7 @@ fn resolve_class_id_from_literal_string(
 ) -> Option<StrId> {
     let mut normalized = class_name.trim().trim_start_matches('\\').to_string();
 
-    if normalized
-        .to_ascii_lowercase()
-        .ends_with("::class")
+    if normalized.to_ascii_lowercase().ends_with("::class")
         && let Some((class_part, _)) = normalized.rsplit_once("::")
     {
         normalized = class_part.trim_start_matches('\\').to_string();

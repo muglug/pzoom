@@ -113,7 +113,10 @@ pub fn analyze(
                 // operand of an array `+` (its own config suppresses the
                 // issue repo-wide).
                 for operand in [left_type, right_type].into_iter().flatten() {
-                    if operand.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull))
+                    if operand
+                        .types
+                        .iter()
+                        .any(|atomic| matches!(atomic, TAtomic::TNull))
                         && !operand.ignore_nullable_issues
                     {
                         let (line, col) = analyzer.get_line_column(pos.0);
@@ -135,9 +138,7 @@ pub fn analyze(
                     (Some(lt), Some(rt)) => {
                         let left_operand = array_union_operand(lt);
                         let right_operand = array_union_operand(rt);
-                        if let Some(merged) =
-                            keyed_array_plus(&left_operand, &right_operand)
-                        {
+                        if let Some(merged) = keyed_array_plus(&left_operand, &right_operand) {
                             merged
                         } else {
                             combine_union_types(&left_operand, &right_operand, true)
@@ -291,15 +292,14 @@ fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
         }
     }
 
-    let combine_fallback = |left_fb: &Option<Box<TUnion>>, right_fb: &Option<Box<TUnion>>| match (
-        left_fb, right_fb,
-    ) {
-        (None, None) => None,
-        (Some(left_fb), Some(right_fb)) => {
-            Some(Box::new(combine_union_types(left_fb, right_fb, false)))
-        }
-        (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
-    };
+    let combine_fallback =
+        |left_fb: &Option<Box<TUnion>>, right_fb: &Option<Box<TUnion>>| match (left_fb, right_fb) {
+            (None, None) => None,
+            (Some(left_fb), Some(right_fb)) => {
+                Some(Box::new(combine_union_types(left_fb, right_fb, false)))
+            }
+            (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
+        };
 
     Some(TUnion::new(TAtomic::TKeyedArray {
         properties: std::sync::Arc::new(properties),
@@ -314,12 +314,7 @@ fn array_union_operand(t: &TUnion) -> TUnion {
     let arrays: Vec<TAtomic> = t
         .types
         .iter()
-        .filter(|atomic| {
-            !matches!(
-                atomic,
-                TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing
-            )
-        })
+        .filter(|atomic| !matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing))
         .cloned()
         .collect();
     if arrays.is_empty() {

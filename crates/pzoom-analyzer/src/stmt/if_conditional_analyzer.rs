@@ -54,12 +54,14 @@ pub fn analyze(
     // externally-applied sub-expression registers (e.g. isset pseudo-vars for
     // magic properties) belong to the fallthrough only, and the if path
     // re-derives the asserted keys through the reconciler.
-    let mut early_if_context =
-        if !std::ptr::eq(internally_applied_if_cond_expr, externally_applied_if_cond_expr) {
-            Some(outer_working.clone())
-        } else {
-            None
-        };
+    let mut early_if_context = if !std::ptr::eq(
+        internally_applied_if_cond_expr,
+        externally_applied_if_cond_expr,
+    ) {
+        Some(outer_working.clone())
+    } else {
+        None
+    };
 
     let was_inside_conditional = outer_working.inside_conditional;
     outer_working.inside_conditional = true;
@@ -232,7 +234,10 @@ fn get_definitely_evaluated_expression_inside_if<'a>(
 }
 
 fn is_true_literal(expr: &Expression<'_>) -> bool {
-    matches!(expr.unparenthesized(), Expression::Literal(Literal::True(_)))
+    matches!(
+        expr.unparenthesized(),
+        Expression::Literal(Literal::True(_))
+    )
 }
 
 /// Hakana `if_conditional_analyzer::add_branch_dataflow`: the condition's parents
@@ -282,7 +287,9 @@ pub fn handle_paradoxical_condition(
     context: Option<&BlockContext>,
 ) {
     let Some(expr_type) = analysis_data
-        .expr_types.get(&expr_pos).cloned()
+        .expr_types
+        .get(&expr_pos)
+        .cloned()
         .map(|union| (*union).clone())
     else {
         return;
@@ -404,10 +411,12 @@ fn get_truthy_falsy_target_union(
     }
 
     analysis_data
-        .expr_types.get(&(
+        .expr_types
+        .get(&(
             unary.operand.start_offset() as u32,
             unary.operand.end_offset() as u32,
-        )).cloned()
+        ))
+        .cloned()
         .map(|union| (*union).clone())
         .or(Some(expr_type))
 }

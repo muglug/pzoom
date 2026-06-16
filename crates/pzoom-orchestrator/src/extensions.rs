@@ -126,7 +126,11 @@ fn composer_required_extensions(project_root: &Path) -> FxHashSet<String> {
             _ => {}
         }
     }
-    for key_match in contents[object_start..object_end].split('"').skip(1).step_by(2) {
+    for key_match in contents[object_start..object_end]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+    {
         if let Some(name) = key_match.strip_prefix("ext-") {
             extensions.insert(normalize_extension_name(name));
         }
@@ -182,18 +186,11 @@ memory_limit=512M
         let dir = std::env::temp_dir().join("pzoom_ext_test_empty");
         std::fs::create_dir_all(&dir).unwrap();
 
-        let enabled = resolve_enabled_extensions(
-            &dir,
-            &["Redis".to_string()],
-            &[],
-        );
+        let enabled = resolve_enabled_extensions(&dir, &["Redis".to_string()], &[]);
         assert!(enabled.contains("redis"));
 
-        let disabled = resolve_enabled_extensions(
-            &dir,
-            &["redis".to_string()],
-            &["redis".to_string()],
-        );
+        let disabled =
+            resolve_enabled_extensions(&dir, &["redis".to_string()], &["redis".to_string()]);
         assert!(!disabled.contains("redis"));
 
         std::fs::remove_dir_all(&dir).ok();

@@ -8,8 +8,8 @@ use rustc_hash::FxHashMap;
 
 use pzoom_code_info::data_flow::node::SinkType;
 use pzoom_code_info::{
-    ArrayDataKind, ArrayKey, DataFlowGraph, DataFlowNode, FunctionLikeIdentifier,
-    FunctionLikeInfo, GraphKind, PathKind, TAtomic, TUnion,
+    ArrayDataKind, ArrayKey, DataFlowGraph, DataFlowNode, FunctionLikeIdentifier, FunctionLikeInfo,
+    GraphKind, PathKind, TAtomic, TUnion,
 };
 use pzoom_str::StrId;
 
@@ -102,7 +102,8 @@ pub(crate) fn fetch(
     let empty_template_result = TemplateResult::default();
     let template_result = template_result.unwrap_or(&empty_template_result);
 
-    let param_arg_types = collect_param_arg_types(&function_info.params, arg_positions, analysis_data);
+    let param_arg_types =
+        collect_param_arg_types(&function_info.params, arg_positions, analysis_data);
 
     let mut resolved_return_type = resolve_functionlike_return_type(
         analyzer,
@@ -239,11 +240,9 @@ pub(crate) fn add_dataflow(
         // simple character-class exclusion (e.g. `/[^_a-z\/\.A-Z0-9]/`, with
         // a literal replacement) strips every html/quote/sql metacharacter
         // from the value, so those taints drop from the argument→return flow.
-        for taint in get_preg_replace_exclusion_removed_taints(
-            functionlike_id,
-            arg_positions,
-            analysis_data,
-        ) {
+        for taint in
+            get_preg_replace_exclusion_removed_taints(functionlike_id, arg_positions, analysis_data)
+        {
             if !removed.contains(&taint) {
                 removed.push(taint);
             }
@@ -424,10 +423,8 @@ pub(crate) fn apply_conditionally_escaped_taints(
         FunctionLikeIdentifier::Closure(..) => "closure-escaped".to_string(),
     };
 
-    let escaped_node = DataFlowNode::get_for_local_string(
-        label,
-        make_data_flow_node_position(analyzer, call_pos),
-    );
+    let escaped_node =
+        DataFlowNode::get_for_local_string(label, make_data_flow_node_position(analyzer, call_pos));
 
     analysis_data.data_flow_graph.add_path(
         &function_call_node.id,
@@ -583,7 +580,10 @@ fn get_html_codec_taints(
     }
 
     let name = analyzer.interner.lookup(*function_name).to_lowercase();
-    let decodes = matches!(name.as_str(), "html_entity_decode" | "htmlspecialchars_decode");
+    let decodes = matches!(
+        name.as_str(),
+        "html_entity_decode" | "htmlspecialchars_decode"
+    );
     let encodes = matches!(name.as_str(), "htmlentities" | "htmlspecialchars");
 
     if !decodes && !encodes {
@@ -600,7 +600,9 @@ fn get_html_codec_taints(
         }
         Some(flags_pos) => {
             let flags_value = analysis_data
-                .expr_types.get(&*flags_pos).cloned()
+                .expr_types
+                .get(&*flags_pos)
+                .cloned()
                 .and_then(|t| get_single_literal_int(&t));
             match flags_value {
                 Some(value) if (value & ENT_QUOTES) == ENT_QUOTES => {
@@ -1322,7 +1324,10 @@ pub(crate) fn resolve_functionlike_return_type(
         analyzer.codebase,
         analyzer.interner,
         &mut resolved,
-        &crate::type_expander::TypeExpansionOptions { evaluate_conditional_types: true, ..Default::default() },
+        &crate::type_expander::TypeExpansionOptions {
+            evaluate_conditional_types: true,
+            ..Default::default()
+        },
     );
     Some(resolved)
 }
@@ -1431,4 +1436,3 @@ fn get_configured_php_version_id(analyzer: &StatementsAnalyzer<'_>) -> i64 {
     let (major, minor, patch) = parse_php_version_tuple(analyzer.config.php_version.as_str());
     (major as i64) * 10_000 + (minor as i64) * 100 + (patch as i64)
 }
-

@@ -513,7 +513,10 @@ pub(crate) fn get_method_return_type(
         // `CallAnalyzer::collectSpecialInformation`, instance branch).
         if context.collect_initializations && is_this_call {
             crate::init_collector::follow_instance_init_call(
-                analyzer, context, class_id, &method_info,
+                analyzer,
+                context,
+                class_id,
+                &method_info,
             );
         }
         let class_name = analyzer.interner.lookup(class_id);

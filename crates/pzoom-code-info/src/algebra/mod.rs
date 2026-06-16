@@ -18,7 +18,13 @@ use rustc_hash::FxHashSet;
 use crate::assertion::Assertion;
 
 /// Checks if two IndexMaps have the same keys.
-fn index_keys_match<T: Eq + std::hash::Hash, U, V, S1: std::hash::BuildHasher, S2: std::hash::BuildHasher>(
+fn index_keys_match<
+    T: Eq + std::hash::Hash,
+    U,
+    V,
+    S1: std::hash::BuildHasher,
+    S2: std::hash::BuildHasher,
+>(
     map1: &IndexMap<T, U, S1>,
     map2: &IndexMap<T, V, S2>,
 ) -> bool {
@@ -72,34 +78,33 @@ pub fn simplify_cnf(clauses: Vec<&Clause>) -> Vec<Clause> {
 
     let (removed_clause_hashes, added_clauses) = unit_propagation_round(&unique_ref_clauses);
 
-    let working_clauses: Vec<Clause> = if removed_clause_hashes.is_empty()
-        && added_clauses.is_empty()
-    {
-        unique_ref_clauses.into_iter().cloned().collect()
-    } else {
-        unique_ref_clauses.retain(|f| !removed_clause_hashes.contains(&f.hash));
-        let mut working: Vec<Clause> = unique_ref_clauses.into_iter().cloned().collect();
-        working.extend(added_clauses);
-        working = working.into_iter().unique().collect();
+    let working_clauses: Vec<Clause> =
+        if removed_clause_hashes.is_empty() && added_clauses.is_empty() {
+            unique_ref_clauses.into_iter().cloned().collect()
+        } else {
+            unique_ref_clauses.retain(|f| !removed_clause_hashes.contains(&f.hash));
+            let mut working: Vec<Clause> = unique_ref_clauses.into_iter().cloned().collect();
+            working.extend(added_clauses);
+            working = working.into_iter().unique().collect();
 
-        // Iterate to fixpoint (bounded, mirroring the prior 10-round cap).
-        let mut max_iterations = 9;
-        while max_iterations > 0 {
-            max_iterations -= 1;
+            // Iterate to fixpoint (bounded, mirroring the prior 10-round cap).
+            let mut max_iterations = 9;
+            while max_iterations > 0 {
+                max_iterations -= 1;
 
-            let refs: Vec<&Clause> = working.iter().collect();
-            let (removed, added) = unit_propagation_round(&refs);
-            if removed.is_empty() && added.is_empty() {
-                break;
+                let refs: Vec<&Clause> = working.iter().collect();
+                let (removed, added) = unit_propagation_round(&refs);
+                if removed.is_empty() && added.is_empty() {
+                    break;
+                }
+
+                working.retain(|f| !removed.contains(&f.hash));
+                working.extend(added);
+                working = working.into_iter().unique().collect();
             }
 
-            working.retain(|f| !removed.contains(&f.hash));
-            working.extend(added);
-            working = working.into_iter().unique().collect();
-        }
-
-        working
-    };
+            working
+        };
 
     // Remove redundant clauses (clauses that subsume others)
     let mut simplified_clauses = vec![];
@@ -295,26 +300,27 @@ fn unit_propagation_round(unique_clauses: &[&Clause]) -> (FxHashSet<u32>, Vec<Cl
                 }
 
                 if let Some(matching_clause_possibilities) = clause_b.possibilities.get(clause_var)
-                    && matching_clause_possibilities.contains_key(&negated_hash) {
-                        let mut clause_var_possibilities = matching_clause_possibilities.clone();
+                    && matching_clause_possibilities.contains_key(&negated_hash)
+                {
+                    let mut clause_var_possibilities = matching_clause_possibilities.clone();
 
-                        clause_var_possibilities.retain(|k, _| k != &negated_hash);
+                    clause_var_possibilities.retain(|k, _| k != &negated_hash);
 
-                        removed_clause_hashes.insert(clause_b.hash);
+                    removed_clause_hashes.insert(clause_b.hash);
 
-                        if clause_var_possibilities.is_empty() {
-                            let maybe_updated_clause = clause_b.remove_possibilities(clause_var);
+                    if clause_var_possibilities.is_empty() {
+                        let maybe_updated_clause = clause_b.remove_possibilities(clause_var);
 
-                            if let Some(x) = maybe_updated_clause {
-                                added_clauses.push(x);
-                            }
-                        } else {
-                            let updated_clause = clause_b
-                                .add_possibility(clause_var.clone(), clause_var_possibilities);
-
-                            added_clauses.push(updated_clause);
+                        if let Some(x) = maybe_updated_clause {
+                            added_clauses.push(x);
                         }
+                    } else {
+                        let updated_clause =
+                            clause_b.add_possibility(clause_var.clone(), clause_var_possibilities);
+
+                        added_clauses.push(updated_clause);
                     }
+                }
             }
         }
     }
@@ -367,12 +373,13 @@ pub fn get_truths_from_formula(
                 }
 
                 if let Some(creating_conditional_id) = creating_conditional_id
-                    && creating_conditional_id == clause.creating_conditional_id {
-                        active_truths
-                            .entry(var_name.clone())
-                            .or_insert_with(FxHashSet::default)
-                            .insert(truths.get(var_name).unwrap().len() - 1);
-                    }
+                    && creating_conditional_id == clause.creating_conditional_id
+                {
+                    active_truths
+                        .entry(var_name.clone())
+                        .or_insert_with(FxHashSet::default)
+                        .insert(truths.get(var_name).unwrap().len() - 1);
+                }
             } else {
                 if clause.generated {
                     cond_referenced_var_ids.remove(var_name);
@@ -389,12 +396,13 @@ pub fn get_truths_from_formula(
                 );
 
                 if let Some(creating_conditional_id) = creating_conditional_id
-                    && creating_conditional_id == clause.creating_conditional_id {
-                        active_truths
-                            .entry(var_name.clone())
-                            .or_insert_with(FxHashSet::default)
-                            .insert(truths.get(var_name).unwrap().len() - 1);
-                    }
+                    && creating_conditional_id == clause.creating_conditional_id
+                {
+                    active_truths
+                        .entry(var_name.clone())
+                        .or_insert_with(FxHashSet::default)
+                        .insert(truths.get(var_name).unwrap().len() - 1);
+                }
             }
         }
     }

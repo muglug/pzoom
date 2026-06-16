@@ -8,8 +8,8 @@ use mago_syntax::ast::ast::r#loop::foreach::{Foreach, ForeachTarget};
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::VarName;
+use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::{CodebaseInfo, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;
 
@@ -19,8 +19,8 @@ use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::scope::LoopScope;
 use crate::statements_analyzer::{AnalysisError, StatementsAnalyzer};
-use crate::stmt::scope_analyzer::BreakContext;
 use crate::stmt::loop_analyzer;
+use crate::stmt::scope_analyzer::BreakContext;
 
 /// Psalm's `ForeachAnalyzer::$always_non_empty_array`: true only when every
 /// atomic of the iterated type is an array that is provably non-empty (a
@@ -55,9 +55,10 @@ fn iterable_always_non_empty(iterable_type: &TUnion) -> bool {
 fn iterable_is_all_empty_arrays(iterable_type: &TUnion) -> bool {
     !iterable_type.types.is_empty()
         && iterable_type.types.iter().all(|atomic| match atomic {
-            TAtomic::TArray { key_type, value_type } => {
-                key_type.is_nothing() && value_type.is_nothing()
-            }
+            TAtomic::TArray {
+                key_type,
+                value_type,
+            } => key_type.is_nothing() && value_type.is_nothing(),
             TAtomic::TKeyedArray {
                 properties,
                 sealed,
@@ -173,7 +174,9 @@ pub fn analyze(
     // possibly-empty form.
     if let Some(iterable_var_key) =
         expression_identifier::get_expression_var_key(foreach.expression)
-        && foreach_context.locals.contains_key(iterable_var_key.as_str())
+        && foreach_context
+            .locals
+            .contains_key(iterable_var_key.as_str())
     {
         let narrowed = crate::reconciler::assertion_reconciler::reconcile(
             &pzoom_code_info::Assertion::NonEmpty,
@@ -383,8 +386,7 @@ pub fn analyze(
                 )
             });
             if let Some(annotation_type) = annotation {
-                value_type_before_annotation =
-                    Some(value_type.get_id(Some(analyzer.interner)));
+                value_type_before_annotation = Some(value_type.get_id(Some(analyzer.interner)));
                 if annotation_type.get_id(Some(analyzer.interner))
                     != value_type.get_id(Some(analyzer.interner))
                 {
@@ -495,8 +497,7 @@ pub fn analyze(
             ForeachTarget::Value(value_target) => value_target.value,
             ForeachTarget::KeyValue(kv_target) => kv_target.value,
         };
-        if let Expression::Variable(Variable::Direct(direct)) =
-            value_target_expr.unparenthesized()
+        if let Expression::Variable(Variable::Direct(direct)) = value_target_expr.unparenthesized()
         {
             let var_id = VarName::new(direct.name);
             let annotation = analysis_data.current_stmt_start.and_then(|stmt_start| {
@@ -534,50 +535,49 @@ pub fn analyze(
     // assignment path; Psalm registers them via `registerVariable`). The
     // value target's span is also recorded so an unused one reports
     // UnusedForeachValue (Psalm's `$foreach_var_locations`).
-    let add_foreach_target_source =
-        |target: &Expression<'_>,
-         target_type: &mut TUnion,
-         analysis_data: &mut FunctionAnalysisData,
-         is_value_target: bool| {
-            if analysis_data.data_flow_graph.kind != pzoom_code_info::GraphKind::FunctionBody {
-                return;
-            }
-            let Expression::Variable(Variable::Direct(direct)) =
-                unwrap_reference_target(target).unparenthesized()
-            else {
-                return;
-            };
-            let span = target.span();
-            if is_value_target {
-                analysis_data
-                    .foreach_var_positions
-                    .push((span.start.offset, span.end.offset));
-            }
-            let source_node = pzoom_code_info::DataFlowNode::get_for_variable_source(
-                pzoom_code_info::VariableSourceKind::Default,
-                pzoom_code_info::VarId(analyzer.interner.intern(direct.name)),
-                crate::data_flow::make_data_flow_node_position(
-                    analyzer,
-                    (span.start.offset, span.end.offset),
-                ),
-                false,
-                !target_type.parent_nodes.is_empty(),
-                false,
-                false,
-                false,
-            );
-            for parent_node in &target_type.parent_nodes {
-                analysis_data.data_flow_graph.add_path(
-                    &parent_node.id,
-                    &source_node.id,
-                    pzoom_code_info::PathKind::Default,
-                    vec![],
-                    vec![],
-                );
-            }
-            analysis_data.data_flow_graph.add_node(source_node.clone());
-            target_type.parent_nodes = vec![source_node];
+    let add_foreach_target_source = |target: &Expression<'_>,
+                                     target_type: &mut TUnion,
+                                     analysis_data: &mut FunctionAnalysisData,
+                                     is_value_target: bool| {
+        if analysis_data.data_flow_graph.kind != pzoom_code_info::GraphKind::FunctionBody {
+            return;
+        }
+        let Expression::Variable(Variable::Direct(direct)) =
+            unwrap_reference_target(target).unparenthesized()
+        else {
+            return;
         };
+        let span = target.span();
+        if is_value_target {
+            analysis_data
+                .foreach_var_positions
+                .push((span.start.offset, span.end.offset));
+        }
+        let source_node = pzoom_code_info::DataFlowNode::get_for_variable_source(
+            pzoom_code_info::VariableSourceKind::Default,
+            pzoom_code_info::VarId(analyzer.interner.intern(direct.name)),
+            crate::data_flow::make_data_flow_node_position(
+                analyzer,
+                (span.start.offset, span.end.offset),
+            ),
+            false,
+            !target_type.parent_nodes.is_empty(),
+            false,
+            false,
+            false,
+        );
+        for parent_node in &target_type.parent_nodes {
+            analysis_data.data_flow_graph.add_path(
+                &parent_node.id,
+                &source_node.id,
+                pzoom_code_info::PathKind::Default,
+                vec![],
+                vec![],
+            );
+        }
+        analysis_data.data_flow_graph.add_node(source_node.clone());
+        target_type.parent_nodes = vec![source_node];
+    };
 
     // Psalm routes the foreach binding through AssignmentAnalyzer, which
     // registers the target's first appearance; an always-exiting guard in the
@@ -587,7 +587,9 @@ pub fn analyze(
         |target: &Expression<'_>, analysis_data: &mut FunctionAnalysisData| {
             if let Expression::Variable(Variable::Direct(direct)) = target.unparenthesized() {
                 analysis_data
-                    .first_var_appearances.entry(VarName::new(direct.name)).or_insert(target.span().start.offset);
+                    .first_var_appearances
+                    .entry(VarName::new(direct.name))
+                    .or_insert(target.span().start.offset);
             }
         };
 
@@ -597,7 +599,12 @@ pub fn analyze(
             register_target_appearance(value_target.value, analysis_data);
             mark_foreach_reference_target(value_target.value, &mut foreach_context);
             add_foreach_target_source(value_target.value, &mut value_type, analysis_data, true);
-            set_expression_var_type(value_target.value, &value_type, analyzer, &mut foreach_context);
+            set_expression_var_type(
+                value_target.value,
+                &value_type,
+                analyzer,
+                &mut foreach_context,
+            );
         }
         ForeachTarget::KeyValue(kv_target) => {
             register_target_appearance(kv_target.key, analysis_data);
@@ -816,13 +823,17 @@ fn check_iterator_type(
                 has_valid_iterator = true;
             }
 
-            TAtomic::TNamedObject { name, type_params, .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 // Psalm: foreach sends null into a generator, so iterating a
                 // Generator whose TSend is non-nullable (and not void/mixed)
                 // is invalid.
-                if analyzer.interner.lookup(*name).eq_ignore_ascii_case("Generator")
-                    && let Some(send_type) =
-                        type_params.as_ref().and_then(|params| params.get(2))
+                if analyzer
+                    .interner
+                    .lookup(*name)
+                    .eq_ignore_ascii_case("Generator")
+                    && let Some(send_type) = type_params.as_ref().and_then(|params| params.get(2))
                     && !send_type.is_nullable()
                     && !send_type.is_void()
                     && !send_type.is_mixed()
@@ -1085,7 +1096,9 @@ fn extract_iterable_value_type(iter_type: &TUnion, _analyzer: &StatementsAnalyze
             TAtomic::TTemplateParam { as_type, .. } => {
                 value_types.push(extract_iterable_value_type(as_type, _analyzer));
             }
-            TAtomic::TNamedObject { name, type_params, .. } if type_params.is_none() => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } if type_params.is_none() => {
                 // IteratorAggregate-style objects iterate via getIterator()'s
                 // declared return type (Psalm's ForeachAnalyzer). When that
                 // yields no information (e.g. an unparameterized Traversable
@@ -1109,7 +1122,9 @@ fn extract_iterable_value_type(iter_type: &TUnion, _analyzer: &StatementsAnalyze
                 }
                 value_types.push(resolved.unwrap_or_else(TUnion::mixed));
             }
-            TAtomic::TNamedObject { name, type_params, .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if let Some(type_params) = type_params {
                     if let Some(value) =
                         traversable_extended_param(_analyzer, *name, Some(type_params), "TValue")
@@ -1186,9 +1201,7 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
                 for key in properties.keys() {
                     match key {
                         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
-                            key_types.push(TUnion::new(TAtomic::TLiteralInt {
-                                value: *value,
-                            }));
+                            key_types.push(TUnion::new(TAtomic::TLiteralInt { value: *value }));
                         }
                         pzoom_code_info::t_atomic::ArrayKey::String(value) => {
                             // Canonical int strings were already normalized to
@@ -1209,7 +1222,9 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
             TAtomic::TTemplateParam { as_type, .. } => {
                 key_types.push(extract_iterable_key_type(as_type, _analyzer));
             }
-            TAtomic::TNamedObject { name, type_params, .. } if type_params.is_none() => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } if type_params.is_none() => {
                 let mut resolved: Option<TUnion> = None;
                 if let Some(iterator_return) = classlike_get_iterator_return(_analyzer, *name) {
                     let extracted = extract_iterable_key_type(&iterator_return, _analyzer);
@@ -1227,7 +1242,9 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
                 }
                 key_types.push(resolved.unwrap_or_else(TUnion::array_key));
             }
-            TAtomic::TNamedObject { name, type_params, .. } => {
+            TAtomic::TNamedObject {
+                name, type_params, ..
+            } => {
                 if let Some(type_params) = type_params {
                     if let Some(key) =
                         traversable_extended_param(_analyzer, *name, Some(type_params), "TKey")
@@ -1451,10 +1468,7 @@ fn unwrap_reference_target<'a>(expr: &'a Expression<'a>) -> &'a Expression<'a> {
     expr
 }
 
-fn mark_foreach_reference_target(
-    expr: &Expression<'_>,
-    context: &mut BlockContext,
-) {
+fn mark_foreach_reference_target(expr: &Expression<'_>, context: &mut BlockContext) {
     let Expression::UnaryPrefix(unary) = expr.unparenthesized() else {
         return;
     };
@@ -1486,8 +1500,7 @@ fn classlike_iterator_method_return(
         .iter()
         .chain(class_info.all_parent_interfaces.iter())
         .any(|interface| {
-            *interface == pzoom_str::StrId::ITERATOR
-                || *interface == pzoom_str::StrId::TRAVERSABLE
+            *interface == pzoom_str::StrId::ITERATOR || *interface == pzoom_str::StrId::TRAVERSABLE
         });
     if !implements_iterator {
         return None;
@@ -1508,8 +1521,8 @@ fn classlike_get_iterator_return(
     let get_iterator_id = analyzer.interner.intern("getIterator");
     let method = class_info.methods.get(&get_iterator_id)?;
     let return_type = method.get_return_type()?.clone();
-    let is_self_cycle = return_type.types.iter().any(|atomic| {
-        matches!(atomic, TAtomic::TNamedObject { name: inner, .. } if *inner == name)
-    });
+    let is_self_cycle = return_type.types.iter().any(
+        |atomic| matches!(atomic, TAtomic::TNamedObject { name: inner, .. } if *inner == name),
+    );
     (!is_self_cycle).then_some(return_type)
 }

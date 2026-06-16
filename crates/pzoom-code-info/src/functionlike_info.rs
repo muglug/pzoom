@@ -270,7 +270,9 @@ impl FunctionLikeInfo {
     /// `return_type ?: signature_return_type` at use sites while keeping the two stored
     /// separately.
     pub fn get_return_type(&self) -> Option<&TUnion> {
-        self.return_type.as_ref().or(self.signature_return_type.as_ref())
+        self.return_type
+            .as_ref()
+            .or(self.signature_return_type.as_ref())
     }
 
     /// Check if this function has an explicit return type (either signature or docblock).

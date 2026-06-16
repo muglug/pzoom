@@ -44,11 +44,15 @@ pub fn resolve_hint(
         Hint::Self_(_) => TUnion::new(TAtomic::TNamedObject {
             name: self_class.unwrap_or(StrId::SELF),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         Hint::Parent(_) => TUnion::new(TAtomic::TNamedObject {
             name: parent_class.unwrap_or(StrId::PARENT),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         Hint::Identifier(ident) => resolve_identifier_hint(
             ident,
             interner,
@@ -193,11 +197,15 @@ fn resolve_identifier_hint(
         "self" | "static" if self_class.is_some() => TUnion::new(TAtomic::TNamedObject {
             name: self_class.unwrap(),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         "parent" if parent_class.is_some() => TUnion::new(TAtomic::TNamedObject {
             name: parent_class.unwrap(),
             type_params: None,
-        is_static: false, remapped_params: false }),
+            is_static: false,
+            remapped_params: false,
+        }),
         // PHP signatures only recognize the canonical scalar keywords;
         // `boolean`/`integer`/`double`/`real` are CLASS references there
         // (Psalm reports UndefinedClass). Docblocks keep the loose aliases.
@@ -245,13 +253,18 @@ fn resolve_identifier_hint(
             // Type::parseString, where `resource` is a reserved word); the
             // analyzer reports ReservedWord for it. Namespaced/aliased
             // Resource names stay class references.
-            if interner.lookup(resolved_name).eq_ignore_ascii_case("resource") {
+            if interner
+                .lookup(resolved_name)
+                .eq_ignore_ascii_case("resource")
+            {
                 return TUnion::new(TAtomic::TResource);
             }
             TUnion::new(TAtomic::TNamedObject {
                 name: resolved_name,
                 type_params: None,
-            is_static: false, remapped_params: false })
+                is_static: false,
+                remapped_params: false,
+            })
         }
     }
 }
@@ -277,14 +290,15 @@ fn resolve_class_name(
     };
 
     if let Some(use_aliases) = use_aliases
-        && let Some(alias_target) = use_aliases.get(&first_segment.to_ascii_lowercase()) {
-            if let Some(remainder) = remainder {
-                let target = interner.lookup(*alias_target);
-                return interner.intern(&format!("{}\\{}", target, remainder));
-            }
-
-            return *alias_target;
+        && let Some(alias_target) = use_aliases.get(&first_segment.to_ascii_lowercase())
+    {
+        if let Some(remainder) = remainder {
+            let target = interner.lookup(*alias_target);
+            return interner.intern(&format!("{}\\{}", target, remainder));
         }
+
+        return *alias_target;
+    }
 
     if let Some(ns) = current_namespace {
         // Unqualified/qualified in a namespace - prepend namespace

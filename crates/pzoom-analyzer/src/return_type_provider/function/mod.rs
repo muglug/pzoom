@@ -4,39 +4,39 @@
 //! and colocates any helpers only it uses. Providers receive `&mut FunctionAnalysisData`
 //! so they may also emit issues (as Psalm providers do via the issue buffer).
 
-mod array_combine;
 mod array_column;
+mod array_combine;
 mod array_fill;
-mod array_merge;
-mod array_reverse;
-mod array_shift_pop;
-mod array_splice;
-mod call_user_func;
-mod parse_url;
-mod trigger_error;
 mod array_filter;
 mod array_key_first_last;
 mod array_keys;
 mod array_map;
+mod array_merge;
 mod array_pointer;
+mod array_rand;
 mod array_reduce;
+mod array_reverse;
+mod array_shift_pop;
+mod array_splice;
 mod array_values;
+mod call_user_func;
 mod count;
+mod filter_var;
+mod get_object_vars;
 mod hrtime;
 mod is_a;
 mod iterator_to_array;
 mod microtime;
+mod min_max;
+mod parse_url;
 mod preg_replace;
 mod preg_split;
-mod array_rand;
-mod filter_var;
-mod get_object_vars;
-mod min_max;
 mod rand;
 mod range;
 mod simple;
 mod sprintf;
 mod str_replace;
+mod trigger_error;
 mod type_check;
 mod var_export;
 

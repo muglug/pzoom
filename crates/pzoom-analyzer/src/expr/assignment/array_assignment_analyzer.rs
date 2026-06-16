@@ -1,7 +1,6 @@
 //! Array assignment analyzer.
 
 use mago_span::HasSpan;
-use pzoom_str::StrId;
 use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::array::{ArrayAccess, ArrayAppend};
 use mago_syntax::ast::ast::call::Call;
@@ -9,6 +8,7 @@ use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::variable::Variable;
+use pzoom_str::StrId;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::data_flow::node::DataFlowNodeKind;
@@ -196,7 +196,9 @@ fn analyze_assignment_chain<'a>(
         })
     } else {
         analysis_data
-            .expr_types.get(&root_pos).cloned()
+            .expr_types
+            .get(&root_pos)
+            .cloned()
             .map(|t| (*t).clone())
             .unwrap_or_else(TUnion::mixed)
     };
@@ -252,7 +254,9 @@ fn analyze_assignment_chain<'a>(
                     expression_analyzer::analyze(analyzer, index_expr, analysis_data, context);
                 context.inside_general_use = was_inside_general_use;
                 let raw_key_type = analysis_data
-                    .expr_types.get(&key_pos).cloned()
+                    .expr_types
+                    .get(&key_pos)
+                    .cloned()
                     .map(|t| (*t).clone())
                     .unwrap_or_else(TUnion::array_key);
                 // A null (or possibly-null) key coerces to "" by PHP, but Psalm
@@ -317,18 +321,21 @@ fn analyze_assignment_chain<'a>(
         context.inside_general_use = was_inside_general_use;
         known_value_type
     } else {
-        let value_pos =
-            expression_analyzer::analyze(analyzer, value_expr, analysis_data, context);
+        let value_pos = expression_analyzer::analyze(analyzer, value_expr, analysis_data, context);
         context.inside_assignment = was_inside_assignment;
         context.inside_general_use = was_inside_general_use;
         analysis_data
-            .expr_types.get(&value_pos).cloned()
+            .expr_types
+            .get(&value_pos)
+            .cloned()
             .map(|t| (*t).clone())
             .unwrap_or_else(TUnion::mixed)
     };
 
     if resolved_dims.is_empty() {
-        analysis_data.expr_types.insert(assignment_pos, Rc::new(value_type));
+        analysis_data
+            .expr_types
+            .insert(assignment_pos, Rc::new(value_type));
         return;
     }
 
@@ -341,7 +348,9 @@ fn analyze_assignment_chain<'a>(
 
         let child_type =
             infer_child_type_for_dim(analyzer, &running_container, dim.key_type.as_ref());
-        analysis_data.expr_types.insert(dim.result_pos, Rc::new(child_type.clone()));
+        analysis_data
+            .expr_types
+            .insert(dim.result_pos, Rc::new(child_type.clone()));
         running_container = child_type;
     }
 
@@ -430,9 +439,13 @@ fn analyze_assignment_chain<'a>(
             });
 
         if is_leaf {
-            analysis_data.expr_types.insert(dim.result_pos, Rc::new(value_type.clone()));
+            analysis_data
+                .expr_types
+                .insert(dim.result_pos, Rc::new(value_type.clone()));
         } else {
-            analysis_data.expr_types.insert(dim.result_pos, Rc::new(updated_child_type.clone()));
+            analysis_data
+                .expr_types
+                .insert(dim.result_pos, Rc::new(updated_child_type.clone()));
         }
 
         let child_type_for_dataflow = updated_child_type.clone();
@@ -485,7 +498,10 @@ fn analyze_assignment_chain<'a>(
             .unwrap_or_default();
 
         let inside_general_use = context.inside_general_use
-            || (is_leaf && root_var_key.as_deref().is_some_and(|key| key.starts_with("$_")));
+            || (is_leaf
+                && root_var_key
+                    .as_deref()
+                    .is_some_and(|key| key.starts_with("$_")));
 
         updated_child_type = add_array_assignment_dataflow(
             analyzer,
@@ -499,7 +515,9 @@ fn analyze_assignment_chain<'a>(
         );
     }
 
-    analysis_data.expr_types.insert(root_pos, Rc::new(updated_child_type.clone()));
+    analysis_data
+        .expr_types
+        .insert(root_pos, Rc::new(updated_child_type.clone()));
 
     if let Expression::Variable(Variable::Direct(direct)) = root_expr.unparenthesized() {
         let var_id = VarName::new(direct.name);
@@ -584,9 +602,9 @@ fn analyze_assignment_chain<'a>(
             updated_child_type.clone()
         };
 
-        clear_dependent_property_types( context, direct.name);
-        clear_array_path_types_for_base_var( context, direct.name);
-        clear_dependent_array_access_types( context, direct.name);
+        clear_dependent_property_types(context, direct.name);
+        clear_array_path_types_for_base_var(context, direct.name);
+        clear_dependent_array_access_types(context, direct.name);
         context.invalidate_dependent_types(&var_id);
         remove_var_clauses_from_context(context, direct.name);
         context.set_var_type(var_id.clone(), stored_type);
@@ -649,7 +667,7 @@ fn analyze_assignment_chain<'a>(
         // property path (mirrors the variable-root invalidation above), then
         // stores the assigned dim types.
         if let Some(base_key) = root_var_key.as_ref() {
-            clear_array_path_types_for_base_var( context, base_key);
+            clear_array_path_types_for_base_var(context, base_key);
 
             let mut running_key = base_key.to_string();
             for dim in &resolved_dims {
@@ -670,7 +688,9 @@ fn analyze_assignment_chain<'a>(
     }
 
     // Assignment expression evaluates to the assigned RHS value.
-    analysis_data.expr_types.insert(assignment_pos, Rc::new(value_type));
+    analysis_data
+        .expr_types
+        .insert(assignment_pos, Rc::new(value_type));
 }
 
 fn collect_assignment_dims<'a>(
@@ -763,10 +783,7 @@ fn assignment_key_repr_is_literal(key_repr: &str) -> bool {
     key_repr.starts_with('\'') || key_repr.parse::<i64>().is_ok()
 }
 
-fn clear_dependent_property_types(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_dependent_property_types(context: &mut BlockContext, var_name: &str) {
     let property_prefix = format!("{var_name}->");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -782,10 +799,7 @@ fn clear_dependent_property_types(
     }
 }
 
-fn clear_dependent_array_access_types(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_dependent_array_access_types(context: &mut BlockContext, var_name: &str) {
     let key_fragment = format!("[{var_name}]");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -801,10 +815,7 @@ fn clear_dependent_array_access_types(
     }
 }
 
-fn clear_array_path_types_for_base_var(
-    context: &mut BlockContext,
-    var_name: &str,
-) {
+fn clear_array_path_types_for_base_var(context: &mut BlockContext, var_name: &str) {
     let prefix = format!("{var_name}[");
     let keys_to_clear: Vec<_> = context
         .locals
@@ -820,11 +831,9 @@ fn clear_array_path_types_for_base_var(
     }
 }
 
-
 fn remove_var_clauses_from_context(context: &mut BlockContext, assigned_var_name: &str) {
     context.remove_var_name_from_conflicting_clauses(assigned_var_name);
 }
-
 
 fn apply_assignment_to_container(
     analyzer: &StatementsAnalyzer<'_>,
@@ -864,9 +873,7 @@ fn apply_assignment_to_container(
                 {
                     let mut bound = pzoom_code_info::TemplateBound::new(
                         TUnion::new(TAtomic::TArray {
-                            key_type: Box::new(
-                                key_type.cloned().unwrap_or_else(TUnion::array_key),
-                            ),
+                            key_type: Box::new(key_type.cloned().unwrap_or_else(TUnion::array_key)),
                             value_type: Box::new(assigned_type.clone()),
                         }),
                         0,
@@ -898,11 +905,7 @@ fn apply_assignment_to_container(
             }
             TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
                 has_writable = true;
-                updated.push(update_list_atomic(
-                    value_type,
-                    key_type,
-                    assigned_type,
-                ));
+                updated.push(update_list_atomic(value_type, key_type, assigned_type));
             }
             TAtomic::TKeyedArray {
                 properties,
@@ -1221,8 +1224,10 @@ fn maybe_emit_offset_set_argument_issue(
         (Some(declaring_class_info), Some(receiver_class_info))
             if !declaring_class_info.template_types.is_empty() =>
         {
-            let mut template_result = crate::expr::call::function_call_analyzer::
-                get_class_template_defaults(declaring_class_info);
+            let mut template_result =
+                crate::expr::call::function_call_analyzer::get_class_template_defaults(
+                    declaring_class_info,
+                );
             if let Some(collected) = crate::expr::call::class_template_param_collector::collect(
                 analyzer.codebase,
                 declaring_class_info,
@@ -1597,11 +1602,9 @@ fn update_list_atomic(
         None => TAtomic::TNonEmptyList {
             value_type: Box::new(merged_value),
         },
-        Some(key_type) if key_union_has_only_literal_ints(key_type) => {
-            TAtomic::TNonEmptyList {
-                value_type: Box::new(merged_value),
-            }
-        }
+        Some(key_type) if key_union_has_only_literal_ints(key_type) => TAtomic::TNonEmptyList {
+            value_type: Box::new(merged_value),
+        },
         Some(key_type) => TAtomic::TNonEmptyArray {
             // The list's own keys are int<0, max>; the union with the written
             // key keeps Psalm's precision (array<int<0, max>, T> for an
@@ -1787,7 +1790,9 @@ fn update_class_string_map_atomic(
             key_entity,
             TUnion::new(TAtomic::TTemplateParam {
                 name: param_name,
-                defining_entity: pzoom_code_info::GenericParent::TypeDefinition(pzoom_str::StrId::CLASS_STRING_MAP),
+                defining_entity: pzoom_code_info::GenericParent::TypeDefinition(
+                    pzoom_str::StrId::CLASS_STRING_MAP,
+                ),
                 as_type: Box::new(TUnion::new(key_bound)),
             }),
         );
@@ -1805,7 +1810,9 @@ fn update_class_string_map_atomic(
     // with the new key/value.
     let standin_key = TUnion::new(TAtomic::TTemplateParamClass {
         name: param_name,
-        defining_entity: pzoom_code_info::GenericParent::TypeDefinition(pzoom_str::StrId::CLASS_STRING_MAP),
+        defining_entity: pzoom_code_info::GenericParent::TypeDefinition(
+            pzoom_str::StrId::CLASS_STRING_MAP,
+        ),
         as_type: Box::new(as_type.cloned().unwrap_or(TAtomic::TObject)),
     });
     update_generic_array_atomic(&standin_key, value_param, key_type, assigned_type)
@@ -2040,9 +2047,7 @@ fn key_union_has_only_literal_ints(key_type: &TUnion) -> bool {
 fn is_int_like_atomic(atomic: &TAtomic) -> bool {
     matches!(
         atomic,
-        TAtomic::TInt
-            | TAtomic::TLiteralInt { .. }
-            | TAtomic::TIntRange { .. }
+        TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
     )
 }
 
@@ -2148,7 +2153,11 @@ fn maybe_emit_null_array_offset_for_assignment(
             IssueKind::NullArrayOffset,
             "Cannot access value using null offset".to_string(),
         )
-    } else if key_type.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull)) {
+    } else if key_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TNull))
+    {
         (
             IssueKind::PossiblyNullArrayOffset,
             format!(
@@ -2304,17 +2313,13 @@ fn add_array_assignment_dataflow(
     // Hakana also skips this work in whole-program taint mode when the child type is
     // not taintable; pzoom does not track `has_taintable_value` yet.
 
-    let parent_node = if let Some(var_var_id) = &var_var_id
-    {
+    let parent_node = if let Some(var_var_id) = &var_var_id {
         DataFlowNode::get_for_lvar(
             VarId(analyzer.interner.intern(var_var_id)),
             make_data_flow_node_position(analyzer, expr_var_pos),
         )
     } else {
-        DataFlowNode::get_for_array_assignment(make_data_flow_node_position(
-            analyzer,
-            expr_var_pos,
-        ))
+        DataFlowNode::get_for_array_assignment(make_data_flow_node_position(analyzer, expr_var_pos))
     };
 
     if inside_general_use && analysis_data.data_flow_graph.kind == GraphKind::FunctionBody {

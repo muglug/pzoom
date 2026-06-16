@@ -140,7 +140,10 @@ impl ParseTreeCreator {
         let mut has_default = false;
         let mut default = String::new();
 
-        let mut current_value = self.type_tokens.get(current_token_idx).map(|t| t.value.clone());
+        let mut current_value = self
+            .type_tokens
+            .get(current_token_idx)
+            .map(|t| t.value.clone());
 
         match current_value.as_deref() {
             Some("&") => {
@@ -164,17 +167,21 @@ impl ParseTreeCreator {
             _ => return Err("Unexpected token after space".to_string()),
         };
 
-        let new_parent_leaf =
-            self.tree
-                .alloc(NodeKind::MethodParam { name, byref, variadic, default: String::new() }, Some(current_parent));
+        let new_parent_leaf = self.tree.alloc(
+            NodeKind::MethodParam {
+                name,
+                byref,
+                variadic,
+                default: String::new(),
+            },
+            Some(current_parent),
+        );
 
         let mut j = self.t + 1;
         while j < self.type_token_count {
             let ahead = self.type_tokens[j].value.clone();
 
-            if ahead == ","
-                || (ahead == ")" && self.type_tokens[j - 1].value != "(")
-            {
+            if ahead == "," || (ahead == ")" && self.type_tokens[j - 1].value != "(") {
                 self.t = j - 1;
                 break;
             }
@@ -196,7 +203,9 @@ impl ParseTreeCreator {
             j += 1;
         }
 
-        if let NodeKind::MethodParam { default: d, .. } = &mut self.tree.get_mut(new_parent_leaf).kind {
+        if let NodeKind::MethodParam { default: d, .. } =
+            &mut self.tree.get_mut(new_parent_leaf).kind
+        {
             *d = default;
         }
 
@@ -221,7 +230,10 @@ impl ParseTreeCreator {
         let mut variadic = false;
         let mut has_default = false;
 
-        let mut current_value = self.type_tokens.get(current_token_idx).map(|t| t.value.clone());
+        let mut current_value = self
+            .type_tokens
+            .get(current_token_idx)
+            .map(|t| t.value.clone());
 
         match current_value.as_deref() {
             Some("&") => {
@@ -286,9 +298,12 @@ impl ParseTreeCreator {
 
         self.tree.pop_child(current_parent);
 
-        let generic_leaf = self
-            .tree
-            .alloc(NodeKind::Generic { value: String::new() }, Some(current_parent));
+        let generic_leaf = self.tree.alloc(
+            NodeKind::Generic {
+                value: String::new(),
+            },
+            Some(current_parent),
+        );
         self.tree.push_child(current_parent, generic_leaf);
         self.current_leaf = generic_leaf;
         Ok(())
@@ -320,14 +335,20 @@ impl ParseTreeCreator {
                 Some(v) => v,
                 None => return Err("Unexpected token [".to_string()),
             };
-            self.tree
-                .alloc(NodeKind::IndexedAccess { value: next_value }, current_parent)
+            self.tree.alloc(
+                NodeKind::IndexedAccess { value: next_value },
+                current_parent,
+            )
         } else {
             if self.tree.is_keyed_array_property(self.current_leaf) {
                 return Err("Unexpected token [".to_string());
             }
-            self.tree
-                .alloc(NodeKind::Generic { value: "array".to_string() }, current_parent)
+            self.tree.alloc(
+                NodeKind::Generic {
+                    value: "array".to_string(),
+                },
+                current_parent,
+            )
         };
 
         let cl = self.current_leaf;
@@ -393,7 +414,8 @@ impl ParseTreeCreator {
             }
         }
 
-        if self.tree.is_encapsulation(self.current_leaf) || self.tree.is_callable(self.current_leaf) {
+        if self.tree.is_encapsulation(self.current_leaf) || self.tree.is_callable(self.current_leaf)
+        {
             self.tree.set_terminated(self.current_leaf, true);
         }
         Ok(())
@@ -411,9 +433,10 @@ impl ParseTreeCreator {
         let mut context_node = Some(self.current_leaf);
 
         if let Some(cn) = context_node
-            && self.is_generic_keyed_callable_method(cn) {
-                context_node = self.tree.parent(cn);
-            }
+            && self.is_generic_keyed_callable_method(cn)
+        {
+            context_node = self.tree.parent(cn);
+        }
 
         while let Some(cn) = context_node {
             if self.is_generic_keyed_callable_method(cn) {
@@ -439,7 +462,11 @@ impl ParseTreeCreator {
     }
 
     fn handle_ellipsis_or_equals(&mut self, type_token: &str) -> Result<(), String> {
-        let prev = if self.t > 0 { self.tok(self.t - 1) } else { None };
+        let prev = if self.t > 0 {
+            self.tok(self.t - 1)
+        } else {
+            None
+        };
         if matches!(prev, Some("...") | Some("=")) {
             return Err("Cannot have duplicate tokens".to_string());
         }
@@ -551,9 +578,10 @@ impl ParseTreeCreator {
         let mut current_parent = current_parent;
 
         if let Some(cp) = current_parent
-            && self.tree.is_keyed_array_property(cp) {
-                return Ok(());
-            }
+            && self.tree.is_keyed_array_property(cp)
+        {
+            return Ok(());
+        }
 
         while matches!(current_parent, Some(cp) if self.tree.is_union(cp) || self.tree.is_callable_with_return_type(cp))
             && self.tree.parent(self.current_leaf).is_some()
@@ -563,13 +591,14 @@ impl ParseTreeCreator {
         }
 
         if let Some(cp) = current_parent
-            && self.tree.is_conditional(cp) {
-                if self.tree.children(cp).len() > 1 {
-                    return Err("Cannot process colon in conditional twice".to_string());
-                }
-                self.current_leaf = cp;
-                return Ok(());
+            && self.tree.is_conditional(cp)
+        {
+            if self.tree.children(cp).len() > 1 {
+                return Err("Cannot process colon in conditional twice".to_string());
             }
+            self.current_leaf = cp;
+            return Ok(());
+        }
 
         let current_parent = match current_parent {
             Some(cp) => cp,
@@ -648,7 +677,8 @@ impl ParseTreeCreator {
             self.current_leaf = self.tree.parent(self.current_leaf).unwrap();
         }
 
-        if self.tree.is_template_is(self.current_leaf) && self.tree.parent(self.current_leaf).is_some()
+        if self.tree.is_template_is(self.current_leaf)
+            && self.tree.parent(self.current_leaf).is_some()
         {
             let condition = self.current_leaf;
             let current_parent = self.tree.parent(self.current_leaf).unwrap();
@@ -804,9 +834,13 @@ impl ParseTreeCreator {
             let as_type = next_value.unwrap();
             let cp = current_parent.unwrap();
 
-            let new_leaf = self
-                .tree
-                .alloc(NodeKind::TemplateAs { param_name, as_type }, Some(cp));
+            let new_leaf = self.tree.alloc(
+                NodeKind::TemplateAs {
+                    param_name,
+                    as_type,
+                },
+                Some(cp),
+            );
             self.tree.push_child(cp, new_leaf);
             self.current_leaf = new_leaf;
             self.t += 1;
@@ -842,9 +876,7 @@ impl ParseTreeCreator {
 
         let new_leaf: NodeId = match next_value.as_deref() {
             Some("<") => {
-                let id = self
-                    .tree
-                    .alloc(NodeKind::Generic { value }, new_parent);
+                let id = self.tree.alloc(NodeKind::Generic { value }, new_parent);
                 self.t += 1;
                 id
             }
@@ -875,9 +907,7 @@ impl ParseTreeCreator {
                         new_parent,
                     )
                 } else {
-                    let id = self
-                        .tree
-                        .alloc(NodeKind::KeyedArray { value }, new_parent);
+                    let id = self.tree.alloc(NodeKind::KeyedArray { value }, new_parent);
 
                     match nexter_value.as_deref() {
                         Some("}") => {
@@ -898,7 +928,8 @@ impl ParseTreeCreator {
                     "callable" | "pure-callable" | "Closure" | "\\Closure" | "pure-Closure"
                 ) {
                     self.tree.alloc(NodeKind::Callable { value }, new_parent)
-                } else if Self::first_char(&value) != Some('\\') && self.tree.is_root(self.current_leaf)
+                } else if Self::first_char(&value) != Some('\\')
+                    && self.tree.is_root(self.current_leaf)
                 {
                     self.tree.alloc(NodeKind::Method { value }, new_parent)
                 } else {
@@ -914,9 +945,7 @@ impl ParseTreeCreator {
                 let nexter_value = self.tok(self.t + 2).map(|s| s.to_string());
 
                 let valid = match &nexter_value {
-                    Some(n) => {
-                        is_class_constant_name(n) || n.to_lowercase() == "class"
-                    }
+                    Some(n) => is_class_constant_name(n) || n.to_lowercase() == "class",
                     None => false,
                 };
                 if !valid {
@@ -991,8 +1020,7 @@ fn is_class_constant_name(s: &str) -> bool {
         _ => (&rest[..], false),
     };
     let _ = last_is_star;
-    body.iter()
-        .all(|c| c.is_ascii_alphanumeric() || *c == '_')
+    body.iter().all(|c| c.is_ascii_alphanumeric() || *c == '_')
 }
 
 #[cfg(test)]
@@ -1099,8 +1127,13 @@ mod tests {
     #[test]
     fn template_as_in_generic() {
         let (tree, root) = build("class-string-map<T as Foo, T>").unwrap();
-        assert!(matches!(tree.kind(root), NodeKind::Generic { value, .. } if value == "class-string-map"));
+        assert!(
+            matches!(tree.kind(root), NodeKind::Generic { value, .. } if value == "class-string-map")
+        );
         let children = tree.children(root);
-        assert!(matches!(tree.kind(children[0]), NodeKind::TemplateAs { .. }));
+        assert!(matches!(
+            tree.kind(children[0]),
+            NodeKind::TemplateAs { .. }
+        ));
     }
 }

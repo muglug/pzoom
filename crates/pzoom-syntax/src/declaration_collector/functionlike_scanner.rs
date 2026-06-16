@@ -6,16 +6,12 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::function_like::function::Function;
 
-use pzoom_code_info::class_like_info::DocblockIssue;
-use pzoom_code_info::functionlike_info::{
-    FunctionLikeInfo,
-    FunctionTemplateType,
-};
 use pzoom_code_info::GenericParent;
 use pzoom_code_info::TUnion;
+use pzoom_code_info::class_like_info::DocblockIssue;
+use pzoom_code_info::functionlike_info::{FunctionLikeInfo, FunctionTemplateType};
 use pzoom_str::StrId;
 use rustc_hash::FxHashMap;
-
 
 use super::{DeclarationCollector, TemplateMap};
 
@@ -38,10 +34,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // The native hint's span is the fallback origin location; a docblock
         // @return (captured below) takes precedence, matching Psalm's
         // return_type_location.
-        let mut return_type_location: Option<(u32, u32)> = func.return_type_hint.as_ref().map(|rth| {
-            let hint_span = rth.hint.span();
-            (hint_span.start.offset, hint_span.end.offset)
-        });
+        let mut return_type_location: Option<(u32, u32)> =
+            func.return_type_hint.as_ref().map(|rth| {
+                let hint_span = rth.hint.span();
+                (hint_span.start.offset, hint_span.end.offset)
+            });
         let mut is_pure = false;
         let mut has_throws = false;
         let mut unused_docblock_params: Vec<(String, u32)> = Vec::new();
@@ -109,8 +106,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 }
             }
 
-            let function_param_names: Vec<StrId> =
-                params.iter().map(|param| param.name).collect();
+            let function_param_names: Vec<StrId> = params.iter().map(|param| param.name).collect();
             self.validate_function_docblock_type_tags(
                 &parsed,
                 span.start.offset,
@@ -123,8 +119,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             );
             inherits_docblock = self.is_docblock_inheritdoc(&parsed);
             is_pure = self.is_docblock_pure(&parsed);
-            has_throws = parsed.tags.contains_key("throws")
-                            || parsed.tags.contains_key("phpstan-throws");
+            has_throws =
+                parsed.tags.contains_key("throws") || parsed.tags.contains_key("phpstan-throws");
             is_mutation_free = self.is_docblock_mutation_free(&parsed);
             no_named_arguments = self.is_docblock_no_named_arguments(&parsed);
             is_deprecated = self.is_docblock_deprecated(&parsed);
@@ -204,23 +200,22 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 )
             {
                 return_type = Some(match docblock_conditional_return {
-                    Some(conditional) => {
-                        super::docblock_conditional_union(conditional)
-                    }
+                    Some(conditional) => super::docblock_conditional_union(conditional),
                     None => docblock_return,
                 });
-                return_type_location = parsed.get_return_with_offset().and_then(
-                    |(offset, content)| {
-                        crate::docblock::extract_type_string_from_content(content).map(
-                            |type_str| {
-                                (
-                                    docblock_start + offset as u32,
-                                    docblock_start + (offset + type_str.len()) as u32,
-                                )
-                            },
-                        )
-                    },
-                );
+                return_type_location =
+                    parsed
+                        .get_return_with_offset()
+                        .and_then(|(offset, content)| {
+                            crate::docblock::extract_type_string_from_content(content).map(
+                                |type_str| {
+                                    (
+                                        docblock_start + offset as u32,
+                                        docblock_start + (offset + type_str.len()) as u32,
+                                    )
+                                },
+                            )
+                        });
             }
             // `@psalm-taint-escape (<conditional>)` parses while the
             // conditional-subject scope is alive (its `$param is …` subject
@@ -317,20 +312,26 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // must not double up with an explicit docblock assertion for the same
         // var: the duplicate would re-assert an already-narrowed type and
         // produce a false RedundantCondition.
-        let explicit_assertion_vars: rustc_hash::FxHashSet<_> =
-            assertions.iter().map(|assertion| assertion.var_id).collect();
+        let explicit_assertion_vars: rustc_hash::FxHashSet<_> = assertions
+            .iter()
+            .map(|assertion| assertion.var_id)
+            .collect();
         assertions.extend(
             self.get_implicit_assertions(func.body.statements.as_slice(), None, None)
                 .into_iter()
                 .filter(|assertion| !explicit_assertion_vars.contains(&assertion.var_id)),
         );
-        let defined_constants = self
-            .collect_defined_constants_from_statements(func.body.statements.as_slice(), None, None);
+        let defined_constants = self.collect_defined_constants_from_statements(
+            func.body.statements.as_slice(),
+            None,
+            None,
+        );
         let has_variadic_param = params.iter().any(|param| param.is_variadic);
 
         let declared_if_not_exists = {
             let short_name = func.name.value.to_ascii_lowercase();
-            self.current_not_exists_function_guards.contains(&short_name)
+            self.current_not_exists_function_guards
+                .contains(&short_name)
         };
         let info = FunctionLikeInfo {
             declared_if_not_exists,

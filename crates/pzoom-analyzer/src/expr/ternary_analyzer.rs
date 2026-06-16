@@ -11,8 +11,8 @@ use mago_syntax::ast::ast::conditional::Conditional;
 use mago_syntax::ast::ast::construct::Construct;
 use rustc_hash::FxHashSet;
 
-use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::VarName;
+use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, Issue, IssueKind, TUnion, combine_union_types};
 
 use crate::assertion_finder;
@@ -75,7 +75,6 @@ pub fn analyze(
     context.inside_conditional = was_inside_conditional;
     context.if_body_context = enclosing_if_body_context;
 
-
     // Get the condition type for later use
     let stmt_cond_type = analysis_data.expr_types.get(&cond_pos).cloned();
 
@@ -127,7 +126,10 @@ pub fn analyze(
         &assertion_result.if_true,
     );
 
-    if_scope.reasonable_clauses = simplified_ternary_clauses.into_iter().map(Rc::new).collect();
+    if_scope.reasonable_clauses = simplified_ternary_clauses
+        .into_iter()
+        .map(Rc::new)
+        .collect();
 
     // Negate the if clauses for the else branch
     if_scope.negated_clauses =
@@ -145,7 +147,10 @@ pub fn analyze(
         None,
         &mut FxHashSet::default(),
     );
-    merge_direct_assertions_into_reconciled_types(&mut new_negated_types, &assertion_result.if_false);
+    merge_direct_assertions_into_reconciled_types(
+        &mut new_negated_types,
+        &assertion_result.if_false,
+    );
 
     if_scope.negated_types = new_negated_types;
 
@@ -181,7 +186,8 @@ pub fn analyze(
     // Create the else-branch context (post-if context with negated types)
     let mut else_context = context.child();
     else_context.inside_conditional = true;
-    let mut else_clauses: Vec<Clause> = else_context.clauses.iter().map(|c| (**c).clone()).collect();
+    let mut else_clauses: Vec<Clause> =
+        else_context.clauses.iter().map(|c| (**c).clone()).collect();
     else_clauses.extend(if_scope.negated_clauses.clone());
     let simplified_else_clauses = simplify_cnf(else_clauses.iter().collect());
     else_context.clauses = simplified_else_clauses.into_iter().map(Rc::new).collect();
@@ -194,7 +200,6 @@ pub fn analyze(
         // Full ternary: $a ? $b : $c
         let if_branch_pos =
             expression_analyzer::analyze(analyzer, if_expr, analysis_data, &mut if_context);
-
 
         // Merge cond_referenced_var_ids
         let mut new_referenced_var_ids = context.cond_referenced_var_ids.clone();
@@ -239,16 +244,14 @@ pub fn analyze(
 
         // Drop clauses invalidated by the narrowing (mirrors Hakana's load-bearing
         // remove_reconciled_clause_refs on the else context).
-        let (new_clauses, _) = BlockContext::remove_reconciled_clause_refs(
-            &else_context.clauses,
-            &changed_var_ids);
+        let (new_clauses, _) =
+            BlockContext::remove_reconciled_clause_refs(&else_context.clauses, &changed_var_ids);
         else_context.clauses = new_clauses;
     }
 
     // Analyze the else branch
     let else_pos =
         expression_analyzer::analyze(analyzer, cond.r#else, analysis_data, &mut else_context);
-
 
     // Get the else type
     let stmt_else_type = analysis_data.expr_types.get(&else_pos).cloned();
@@ -440,7 +443,6 @@ fn formula_contradicts_entry_clauses(
 
     false
 }
-
 
 fn merge_direct_assertions_into_reconciled_types(
     reconciled_types: &mut BTreeMap<VarName, Vec<Vec<Assertion>>>,

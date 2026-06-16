@@ -252,7 +252,7 @@ pub(crate) fn is_php_stream_literal_argument(
     stream_name == "php://input" || stream_name == "php://stdin"
 }
 
-fn apply_class_alias_side_effect(
+pub(crate) fn apply_class_alias_side_effect(
     analyzer: &StatementsAnalyzer<'_>,
     func_call: &FunctionCall<'_>,
     context: &mut BlockContext,

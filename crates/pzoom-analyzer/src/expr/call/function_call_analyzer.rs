@@ -116,19 +116,31 @@ pub fn analyze(
         })
         .collect();
 
-    // `X::class` arguments of the class_exists family (and class_alias, whose
-    // alias name does not exist yet) are exempt from class existence checks —
-    // Psalm's Context::inside_class_exists.
+    // `X::class` arguments of the class_exists family are exempt from class
+    // existence checks — Psalm's Context::inside_class_exists (set only for
+    // class_exists/interface_exists/enum_exists/trait_exists, ArgumentsAnalyzer).
+    // class_alias is NOT in that set: Psalm checks its source-class argument
+    // (UndefinedClass on a missing source) and exempts the alias name only by
+    // registering it at scan time — so we must not blanket-exempt it here.
     let is_class_exists_like_call = func_name.is_some_and(|name| {
         name.eq_ignore_ascii_case("class_exists")
             || name.eq_ignore_ascii_case("interface_exists")
             || name.eq_ignore_ascii_case("enum_exists")
             || name.eq_ignore_ascii_case("trait_exists")
-            || name.eq_ignore_ascii_case("class_alias")
     });
     let was_inside_class_exists = context.inside_class_exists;
     if is_class_exists_like_call {
         context.inside_class_exists = true;
+    }
+
+    // class_alias's alias-name (2nd) argument names a class that does not exist
+    // yet. Register the alias from the AST *before* analyzing arguments, so its
+    // `Alias::class` is recognized (is_known_class_alias) and not reported as
+    // UndefinedClass, while the source (1st) argument is still checked. (Psalm
+    // instead registers the alias at scan time; the late re-registration in
+    // named_function_call_handler::handle is idempotent.)
+    if func_name.is_some_and(|name| name.eq_ignore_ascii_case("class_alias")) {
+        named_function_call_handler::apply_class_alias_side_effect(analyzer, func_call, context);
     }
 
     if let Some(func_info) = pre_resolved_func_info {

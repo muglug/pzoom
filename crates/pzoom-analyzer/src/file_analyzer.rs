@@ -200,6 +200,13 @@ impl<'a> FileAnalyzer<'a> {
             }
         }
 
+        // Psalm's limitMethodComplexity (StatementsAnalyzer::checkUnreferencedVars):
+        // ComplexMethod/ComplexFunction for function-likes whose variable-use
+        // data-flow graph exceeds the size/path-length limits.
+        if self.config.limit_method_complexity {
+            report_complex_functions(program, &mut analysis_data, file_path, &stmt_analyzer);
+        }
+
         // Unused-variable analysis (Psalm's checkUnreferencedVars /
         // checkParamReferences over its VariableUseGraph; pzoom uses Hakana's
         // walk over the function-body data flow graph). Runs before the
@@ -400,6 +407,133 @@ fn body_writes_variable(
 /// (FunctionLikeAnalyzer::isIgnoredForUnusedParam).
 fn is_ignored_for_unused_param(var_name: &str) -> bool {
     var_name.starts_with("$_") || (var_name.starts_with("$unused") && var_name != "$unused")
+}
+
+/// Psalm's limitMethodComplexity (StatementsAnalyzer::checkUnreferencedVars over
+/// its VariableUseGraph): emit ComplexMethod / ComplexFunction for a method /
+/// top-level function whose data-flow graph is too large *and* too spread out.
+///
+/// Psalm flags when `edge_count > max_graph_size` AND
+/// `mean_path_length > max_avg_path_length` AND
+/// `edge_count / unique_destinations > 1.1`, where each edge's length is the
+/// line distance between its endpoints. pzoom's variable-use graph (ported from
+/// Hakana) is materially denser than Psalm's, so matching Psalm's 200 size
+/// limit flags ~4x too many methods; the size limit is calibrated to pzoom's
+/// graph (800) while the path-length (70) and branch ratio (1.1) match Psalm.
+///
+/// Each closure/arrow gets its own graph in Psalm, so an edge is attributed to
+/// the innermost function-like containing both endpoints; closures/arrows never
+/// report themselves.
+fn report_complex_functions(
+    program: &mago_syntax::ast::Program<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    file_path: StrId,
+    stmt_analyzer: &StatementsAnalyzer<'_>,
+) {
+    use mago_span::HasSpan as _;
+    use pzoom_code_info::data_flow::node::DataFlowNodeId;
+    type N<'a, 'b> = mago_syntax::ast::node::Node<'a, 'b>;
+
+    // Calibrated to pzoom's (denser) graph; see the doc comment above.
+    const MAX_GRAPH_SIZE: usize = 800;
+    const MAX_AVG_PATH_LENGTH: f64 = 70.0;
+    const MIN_BRANCH_RATIO: f64 = 1.1;
+
+    // (span_start, span_end, report): report = Some((is_method, name_offset))
+    // for a method/top-level function; None for closures/arrows (they bound
+    // attribution but never report).
+    let func_spans: Vec<(u32, u32, Option<(bool, u32)>)> =
+        N::Program(program).filter_map(|node| {
+            let report = match node {
+                N::Method(m) => Some((true, m.name.span().start.offset)),
+                N::Function(f) => Some((false, f.name.span().start.offset)),
+                N::Closure(_) | N::ArrowFunction(_) => None,
+                _ => return None,
+            };
+            let s = node.span();
+            Some((s.start.offset, s.end.offset, report))
+        });
+    if func_spans.is_empty() {
+        return;
+    }
+    let innermost = |off: u32| -> Option<usize> {
+        func_spans
+            .iter()
+            .enumerate()
+            .filter(|(_, (s, e, _))| off >= *s && off < *e)
+            .min_by_key(|(_, (s, e, _))| e - s)
+            .map(|(i, _)| i)
+    };
+
+    // (is_method, name_offset, count, round(mean)) for each function-like over
+    // the limits. Computed under an immutable borrow of the graph, then emitted.
+    let emits: Vec<(bool, u32, usize, i64)> = {
+        let g = &analysis_data.data_flow_graph;
+        let node_pos = |id: &DataFlowNodeId| {
+            g.vertices
+                .get(id)
+                .or_else(|| g.sources.get(id))
+                .or_else(|| g.sinks.get(id))
+                .and_then(|n| n.get_pos())
+        };
+        let mut owner_len: rustc_hash::FxHashMap<usize, u64> = rustc_hash::FxHashMap::default();
+        let mut owner_dest: rustc_hash::FxHashMap<usize, rustc_hash::FxHashMap<&DataFlowNodeId, usize>> =
+            rustc_hash::FxHashMap::default();
+        for (from, dests) in &g.forward_edges {
+            let Some(fp) = node_pos(from) else { continue };
+            let Some(of) = innermost(fp.start_offset) else { continue };
+            for (to, _) in dests {
+                let Some(tp) = node_pos(to) else { continue };
+                if tp.file_path != fp.file_path || innermost(tp.start_offset) != Some(of) {
+                    continue;
+                }
+                let length = (fp.start_line as i64 - tp.start_line as i64).unsigned_abs();
+                if length == 0 {
+                    continue;
+                }
+                *owner_len.entry(of).or_insert(0) += length;
+                *owner_dest.entry(of).or_default().entry(to).or_insert(0) += 1;
+            }
+        }
+        let mut emits = Vec::new();
+        for (owner, dests) in &owner_dest {
+            let Some((is_method, name_offset)) = func_spans[*owner].2 else {
+                continue;
+            };
+            let count: usize = dests.values().copied().sum();
+            if count == 0 {
+                continue;
+            }
+            let mean = owner_len[owner] as f64 / count as f64;
+            let branch_ratio = count as f64 / dests.len().max(1) as f64;
+            if count > MAX_GRAPH_SIZE && mean > MAX_AVG_PATH_LENGTH && branch_ratio > MIN_BRANCH_RATIO
+            {
+                emits.push((is_method, name_offset, count, mean.round() as i64));
+            }
+        }
+        emits
+    };
+
+    for (is_method, name_offset, count, mean_round) in emits {
+        let (line, col) = stmt_analyzer.get_line_column(name_offset);
+        let (kind, noun) = if is_method {
+            (IssueKind::ComplexMethod, "method")
+        } else {
+            (IssueKind::ComplexFunction, "function")
+        };
+        analysis_data.add_issue(Issue::new(
+            kind,
+            format!(
+                "This {noun}\u{2019}s complexity is greater than the project limit \
+                 (method graph size = {count}, average path length = {mean_round})"
+            ),
+            file_path,
+            name_offset,
+            name_offset + 1,
+            line,
+            col,
+        ));
+    }
 }
 
 /// Report UnusedVariable / UnusedForeachValue / UnusedParam /

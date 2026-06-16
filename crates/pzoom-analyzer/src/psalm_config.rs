@@ -325,6 +325,9 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             "findUnusedPsalmSuppress" => {
                 config.find_unused_suppress = value == "true";
             }
+            "limitMethodComplexity" => {
+                config.limit_method_complexity = value == "true";
+            }
             "allConstantsGlobal" => {
                 config.all_constants_global = value == "true";
             }

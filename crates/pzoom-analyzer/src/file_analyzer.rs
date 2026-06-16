@@ -684,13 +684,18 @@ fn class_docblock_suppression_match_for_issue(
 }
 
 /// Psalm's Config::getParentIssueType: suppressing the base kind also
-/// suppresses its Possibly* variant.
+/// suppresses its derived variant (the Possibly* and *GivenDocblockType
+/// children). The reverse never holds — suppressing the child does not
+/// suppress the parent (see `suppresses_issue`).
 fn parent_issue_name(issue_name: &str) -> Option<&'static str> {
     match issue_name {
         "PossiblyUnusedMethod" => Some("UnusedMethod"),
         "PossiblyUnusedProperty" => Some("UnusedProperty"),
         "PossiblyUnusedParam" => Some("UnusedParam"),
         "PossiblyUnusedReturnValue" => Some("UnusedReturnValue"),
+        "RedundantCastGivenDocblockType" => Some("RedundantCast"),
+        "RedundantConditionGivenDocblockType" => Some("RedundantCondition"),
+        "RedundantFunctionCallGivenDocblockType" => Some("RedundantFunctionCall"),
         _ => None,
     }
 }
@@ -991,10 +996,12 @@ fn suppresses_issue(token: &str, issue_name: &str) -> bool {
         "MixedReturnStatement" | "MixedInferredReturnType" => {
             return issue_name == "MixedReturnStatement";
         }
-        // A `*GivenDocblockType` issue is distinct from its base kind (Psalm
-        // treats them as separate issues): suppressing one must not suppress
-        // the other. pzoom emits these directly where the redundancy follows
-        // from a docblock-provided type, so an exact match is correct.
+        // A `*GivenDocblockType` token suppresses only its own issue, never
+        // the base kind. The parent direction (a `RedundantCast` suppress also
+        // covering `RedundantCastGivenDocblockType`) is Psalm's
+        // getParentIssueType and lives in `parent_issue_name`; without these
+        // arms the generic `strip_suffix` rule below would wrongly let the
+        // child token suppress the parent issue.
         "RedundantCastGivenDocblockType" => {
             return issue_name == "RedundantCastGivenDocblockType";
         }

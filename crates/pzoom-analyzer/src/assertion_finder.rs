@@ -2000,69 +2000,39 @@ fn try_add_int_range_inequality_assertions(
         return false;
     };
 
-    let (true_range, false_range) = match operator {
-        CountCmpOp::Gt => (
-            TAtomic::TIntRange {
-                min: Some(literal.saturating_add(1)),
-                max: None,
-            },
-            TAtomic::TIntRange {
-                min: None,
-                max: Some(literal),
-            },
-        ),
-        CountCmpOp::Ge => (
-            TAtomic::TIntRange {
-                min: Some(literal),
-                max: None,
-            },
-            TAtomic::TIntRange {
-                min: None,
-                max: Some(literal.saturating_sub(1)),
-            },
-        ),
-        CountCmpOp::Lt => (
-            TAtomic::TIntRange {
-                min: None,
-                max: Some(literal.saturating_sub(1)),
-            },
-            TAtomic::TIntRange {
-                min: Some(literal),
-                max: None,
-            },
-        ),
-        CountCmpOp::Le => (
-            TAtomic::TIntRange {
-                min: None,
-                max: Some(literal),
-            },
-            TAtomic::TIntRange {
-                min: Some(literal.saturating_add(1)),
-                max: None,
-            },
-        ),
+    // The true-branch assertion is `$var <op> literal`; the false branch is its
+    // logical negation. Mirrors Psalm's getGreaterAssertions/getSmallerAssertions
+    // (IsGreaterThan / IsLessThanOrEqualTo / IsLessThan / IsGreaterThanOrEqualTo).
+    // The reconciler turns these into int-range narrowings and applies
+    // doesFilterNullOrFalse, so `?int <= 0` keeps null while `?int < 0` drops it.
+    let true_assertion = match operator {
+        CountCmpOp::Gt => Assertion::IsGreaterThan(literal),
+        CountCmpOp::Ge => Assertion::IsGreaterThanOrEqualTo(literal),
+        CountCmpOp::Lt => Assertion::IsLessThan(literal),
+        CountCmpOp::Le => Assertion::IsLessThanOrEqualTo(literal),
     };
+    let false_assertion = true_assertion.get_negation();
 
     result.if_true_clauses.push(create_single_var_clause(
         &var_name,
-        Assertion::IsType(true_range.clone()),
+        true_assertion.clone(),
         cond_id,
     ));
     result.if_false_clauses.push(create_single_var_clause(
         &var_name,
-        Assertion::IsType(false_range.clone()),
+        false_assertion.clone(),
         cond_id,
     ));
     result
         .if_true
         .entry(var_name.clone())
         .or_default()
-        .push(vec![Assertion::IsType(true_range)]);
+        .push(vec![true_assertion]);
     result
         .if_false
         .entry(var_name)
         .or_default()
-        .push(vec![Assertion::IsType(false_range)]);
+        .push(vec![false_assertion]);
 
     true
 }

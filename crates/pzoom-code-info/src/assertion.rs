@@ -101,6 +101,21 @@ pub enum Assertion {
 
     /// Variable does not have at least `n` elements (count($x) < n).
     DoesNotHaveAtLeastCount(usize),
+
+    /// Integer value is strictly less than `n` (`$x < n`). Psalm's `IsLessThan`.
+    IsLessThan(i64),
+
+    /// Integer value is less than or equal to `n` (`$x <= n`). Psalm's
+    /// `IsLessThanOrEqualTo` — the logical negation of `IsGreaterThan(n)`.
+    IsLessThanOrEqualTo(i64),
+
+    /// Integer value is strictly greater than `n` (`$x > n`). Psalm's
+    /// `IsGreaterThan`.
+    IsGreaterThan(i64),
+
+    /// Integer value is greater than or equal to `n` (`$x >= n`). Psalm's
+    /// `IsGreaterThanOrEqualTo` — the logical negation of `IsLessThan(n)`.
+    IsGreaterThanOrEqualTo(i64),
 }
 
 impl Assertion {
@@ -148,6 +163,10 @@ impl Assertion {
             Assertion::DoesNotHaveExactCount(n) => format!("!has-exactly-{}", n),
             Assertion::HasAtLeastCount(n) => format!("has-at-least-{}", n),
             Assertion::DoesNotHaveAtLeastCount(n) => format!("!has-at-least-{}", n),
+            Assertion::IsLessThan(n) => format!("<{}", n),
+            Assertion::IsLessThanOrEqualTo(n) => format!("<={}", n),
+            Assertion::IsGreaterThan(n) => format!(">{}", n),
+            Assertion::IsGreaterThanOrEqualTo(n) => format!(">={}", n),
         }
     }
 
@@ -317,6 +336,19 @@ impl Assertion {
                 Assertion::HasAtLeastCount(other_n) => other_n == n,
                 _ => false,
             },
+            // `< n` and `>= n` are logical negations, as are `<= n` and `> n`.
+            Assertion::IsLessThan(n) => {
+                matches!(other, Assertion::IsGreaterThanOrEqualTo(other_n) if other_n == n)
+            }
+            Assertion::IsGreaterThanOrEqualTo(n) => {
+                matches!(other, Assertion::IsLessThan(other_n) if other_n == n)
+            }
+            Assertion::IsLessThanOrEqualTo(n) => {
+                matches!(other, Assertion::IsGreaterThan(other_n) if other_n == n)
+            }
+            Assertion::IsGreaterThan(n) => {
+                matches!(other, Assertion::IsLessThanOrEqualTo(other_n) if other_n == n)
+            }
         }
     }
 
@@ -365,6 +397,50 @@ impl Assertion {
             Assertion::HasStringArrayAccess => Assertion::Any,
             Assertion::HasIntOrStringArrayAccess => Assertion::Any,
             Assertion::IsEqualIsset => Assertion::Any,
+            // Ordering negations mirror Psalm's `getNegation` on the four
+            // Is{Less,Greater}Than{,OrEqualTo} assertion classes.
+            Assertion::IsLessThan(n) => Assertion::IsGreaterThanOrEqualTo(*n),
+            Assertion::IsGreaterThanOrEqualTo(n) => Assertion::IsLessThan(*n),
+            Assertion::IsLessThanOrEqualTo(n) => Assertion::IsGreaterThan(*n),
+            Assertion::IsGreaterThan(n) => Assertion::IsLessThanOrEqualTo(*n),
+        }
+    }
+
+    /// The integer range a `<`/`<=`/`>`/`>=` ordering assertion narrows to,
+    /// matching the bounds Psalm's `reconcileIs{Less,Greater}Than` apply
+    /// (`< n` ⇒ `int<min, n-1>`, `<= n` ⇒ `int<min, n>`, etc.).
+    pub fn ordering_int_range(&self) -> Option<TAtomic> {
+        match self {
+            Assertion::IsLessThan(n) => Some(TAtomic::TIntRange {
+                min: None,
+                max: Some(n.saturating_sub(1)),
+            }),
+            Assertion::IsLessThanOrEqualTo(n) => Some(TAtomic::TIntRange {
+                min: None,
+                max: Some(*n),
+            }),
+            Assertion::IsGreaterThan(n) => Some(TAtomic::TIntRange {
+                min: Some(n.saturating_add(1)),
+                max: None,
+            }),
+            Assertion::IsGreaterThanOrEqualTo(n) => Some(TAtomic::TIntRange {
+                min: Some(*n),
+                max: None,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Psalm's `doesFilterNullOrFalse` for the ordering assertions: `null` and
+    /// `false` both compare as 0, so the comparison removes them only when 0
+    /// fails it (`< 0`, every `> n`, and `>= n` for n != 0).
+    pub fn ordering_filters_null_or_false(&self) -> bool {
+        match self {
+            Assertion::IsLessThan(n) => *n == 0,
+            Assertion::IsLessThanOrEqualTo(_) => false,
+            Assertion::IsGreaterThan(_) => true,
+            Assertion::IsGreaterThanOrEqualTo(n) => *n != 0,
+            _ => false,
         }
     }
 }

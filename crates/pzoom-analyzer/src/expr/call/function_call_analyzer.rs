@@ -196,6 +196,36 @@ pub fn analyze(
             analysis_data,
             context,
         ) {
+            // Psalm validates a call's arguments before computing its (special)
+            // return type; pzoom's early return here would otherwise skip
+            // argument validation for the dependent-type builtins — e.g. the
+            // NullArgument/MixedArgument on `get_class(null)` / `get_class($mixed)`.
+            // Validate types only (not arity): `get_class()` is legal with zero
+            // args, but pzoom's native stub can't mark the param optional, so a
+            // count check would mis-report TooFewArguments. gettype/get_debug_type
+            // take mixed, so in practice only get_class gains a check.
+            if let Some(func_info) = pre_resolved_func_info {
+                let bare = name.trim_start_matches('\\');
+                if bare.eq_ignore_ascii_case("get_class")
+                    || bare.eq_ignore_ascii_case("gettype")
+                    || bare.eq_ignore_ascii_case("get_debug_type")
+                {
+                    let arg_refs: Vec<_> = func_call.argument_list.arguments.iter().collect();
+                    super::arguments_analyzer::check_arguments_match(
+                        analyzer,
+                        &arg_refs,
+                        &arg_positions,
+                        func_info,
+                        name,
+                        analysis_data,
+                        context,
+                        None,
+                        pos,
+                        false,
+                        true,
+                    );
+                }
+            }
             let functionlike_id = pre_resolved_func_info
                 .map(|info| FunctionLikeIdentifier::Function(info.name))
                 .unwrap_or_else(|| {

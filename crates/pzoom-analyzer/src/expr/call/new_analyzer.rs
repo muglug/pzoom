@@ -324,6 +324,50 @@ pub fn analyze(
                 ));
             }
 
+            // Psalm NewAnalyzer: `new $class(...)` through a class-string /
+            // template bound (not a literal class name, and not `new static`,
+            // handled below) may instantiate a child whose constructor differs,
+            // so it is UnsafeInstantiation unless the bound class preserves its
+            // constructor signature (@psalm-consistent-constructor, a final or
+            // inherited-final constructor, or an annotated ancestor) or is final.
+            // Psalm NewAnalyzer (TClassString case): the bound must be an actual
+            // class (`classExists`, so interfaces are excluded — they have no
+            // constructor to change), and it reports unless that class preserves
+            // its constructor signature (@psalm-consistent-constructor, a final
+            // or inherited-final constructor). Psalm does not exempt a final
+            // *class* here — only a final constructor sets preserve_*.
+            if class_resolved_from_bound
+                && !is_static_class_reference
+                && class_info.kind == ClassLikeKind::Class
+            {
+                let preserve_constructor_signature = class_info.is_consistent_constructor
+                    || class_info
+                        .methods
+                        .get(&pzoom_str::StrId::CONSTRUCT)
+                        .is_some_and(|constructor| constructor.is_final)
+                    || class_info.all_parent_classes.iter().any(|parent| {
+                        analyzer
+                            .codebase
+                            .get_class(*parent)
+                            .is_some_and(|parent_info| parent_info.is_consistent_constructor)
+                    });
+                if !preserve_constructor_signature {
+                    let (line, col) = analyzer.get_line_column(pos.0);
+                    analysis_data.add_issue(Issue::new(
+                        IssueKind::UnsafeInstantiation,
+                        format!(
+                            "Cannot safely instantiate class {} with \"new $class_name\" as its constructor might change in child classes",
+                            class_name
+                        ),
+                        analyzer.file_path,
+                        pos.0,
+                        pos.1,
+                        line,
+                        col,
+                    ));
+                }
+            }
+
             // Psalm NewAnalyzer: `new static` is unsafe when the constructor
             // may change in child classes (no @psalm-consistent-constructor),
             // and unsafe for templated classes whose generic params may be

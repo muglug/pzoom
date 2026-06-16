@@ -88,14 +88,40 @@ pub fn analyze(
                 }
             } else {
                 name.and_then(|name| {
-                    crate::expr::call::function_call_analyzer::resolve_function(
+                    let resolved = crate::expr::call::function_call_analyzer::resolve_function(
                         analyzer,
                         name,
                         is_fully_qualified,
                         name_offset,
                         context,
                     )
-                    .cloned()
+                    .cloned();
+                    // `unknown(...)` is a Closure of an undefined function: Psalm
+                    // reports it like a plain call (FunctionCallAnalyzer's
+                    // function-existence check runs before the first-class
+                    // branch). Mirror the call analyzer's guards.
+                    if resolved.is_none()
+                        && !crate::expr::call::function_call_analyzer::is_language_construct(name)
+                        && !crate::expr::call::function_call_analyzer::is_function_guarded_by_function_exists(
+                            context, name,
+                        )
+                    {
+                        let (line, col) = analyzer.get_line_column(pos.0);
+                        analysis_data.add_issue(pzoom_code_info::Issue::new(
+                            pzoom_code_info::IssueKind::UndefinedFunction,
+                            crate::class_casing::undefined_function_message(
+                                analyzer,
+                                name,
+                                context.namespace,
+                            ),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
+                    resolved
                 })
             }
         }

@@ -2191,7 +2191,7 @@ fn record_named_function_callsite_argument_types(
 ///
 /// These are special syntax that look like function calls but are actually
 /// language constructs handled by the parser/compiler. They won't be in stubs.
-fn is_language_construct(name: &str) -> bool {
+pub(crate) fn is_language_construct(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(
         lower.as_str(),
@@ -2223,7 +2223,7 @@ pub(crate) fn is_array_map_function_name(function_id: StrId) -> bool {
     function_id == StrId::ARRAY_MAP
 }
 
-fn is_function_guarded_by_function_exists(
+pub(crate) fn is_function_guarded_by_function_exists(
     context: &BlockContext,
     function_name: &str,
 ) -> bool {

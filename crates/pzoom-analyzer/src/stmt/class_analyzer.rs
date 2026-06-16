@@ -202,6 +202,7 @@ fn analyze_class(
         check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
+        check_docblock_member_template_params(analyzer, info, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
         check_template_names_shadowing_classes(analyzer, info, analysis_data);
         check_class_templates_in_static_methods(analyzer, info, analysis_data);
@@ -278,6 +279,11 @@ pub fn analyze_anonymous_class(
         check_duplicate_constant_declarations(analyzer, info, analysis_data);
         check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
+        // An anonymous class extending/implementing a templated class-like
+        // without supplying its type params is a MissingTemplateParam (and too
+        // many a TooManyTemplateParams) exactly as for a named class — Psalm
+        // analyzes the `{parent}@anonymous` storage through the same checks.
+        check_missing_template_params(analyzer, info, context, analysis_data);
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
         check_method_override_issues(analyzer, info, analysis_data);
@@ -460,6 +466,7 @@ fn analyze_enum(
         check_duplicate_method_declarations(analyzer, info, analysis_data);
         check_class_constant_overrides(analyzer, info, analysis_data);
         check_missing_template_params(analyzer, info, context, analysis_data);
+        check_docblock_member_template_params(analyzer, info, analysis_data);
         check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
         check_template_variance(analyzer, info, analysis_data);
         check_reserved_class_constant_names(analyzer, info, analysis_data);
@@ -2144,6 +2151,155 @@ pub(crate) fn check_extended_template_param_bounds(
                     col,
                 ));
             }
+        }
+    }
+}
+
+/// A generic class-like type written in a docblock (`@var`/`@param`/`@return`)
+/// must supply the right number of type parameters, exactly like an
+/// `@extends`/`@implements` clause: too few is a `MissingTemplateParam`, too
+/// many a `TooManyTemplateParams` (Psalm validates docblock generic types the
+/// same way it validates class-level template inheritance).
+///
+/// pzoom does not model per-template defaults, so the "too few" report is
+/// limited to user-defined (non-stub) classes — built-in generics such as
+/// `Generator` legitimately omit their defaulted trailing params, and stubs are
+/// where those defaults live. "Too many" is always safe: no default can raise a
+/// class's maximum arity.
+pub(crate) fn check_docblock_generic_param_counts(
+    analyzer: &StatementsAnalyzer<'_>,
+    union: &TUnion,
+    error_offset: u32,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    if !union.from_docblock {
+        return;
+    }
+
+    let mut stack: Vec<&TUnion> = vec![union];
+    while let Some(current) = stack.pop() {
+        for atomic in &current.types {
+            let TAtomic::TNamedObject {
+                name,
+                type_params: Some(type_params),
+                ..
+            } = atomic
+            else {
+                continue;
+            };
+
+            // Recurse into the supplied params so a nested generic
+            // (`Collection<int, Box<int, int>>`) is validated too.
+            for type_param in type_params {
+                stack.push(type_param);
+            }
+
+            let Some(referenced) = analyzer.codebase.get_class(*name) else {
+                continue;
+            };
+            let expected = referenced.template_types.len();
+            // A non-generic class is not validated here (Psalm leaves a phantom
+            // `Foo<int>` on a template-less class to other diagnostics).
+            if expected == 0 {
+                continue;
+            }
+            let given = type_params.len();
+            if given == expected {
+                continue;
+            }
+
+            let (line, col) = analyzer.get_line_column(error_offset);
+            if given > expected {
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::TooManyTemplateParams,
+                    format!(
+                        "{} has too many template params, expecting {}",
+                        analyzer.interner.lookup(*name),
+                        expected
+                    ),
+                    analyzer.file_path,
+                    error_offset,
+                    error_offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            } else {
+                // pzoom cannot see template defaults; only fault user code,
+                // never a stubbed built-in whose trailing params default.
+                let from_stub = analyzer
+                    .codebase
+                    .files
+                    .get(&referenced.file_path)
+                    .is_some_and(|file_info| file_info.is_stub)
+                    || referenced.is_stubbed;
+                if from_stub {
+                    continue;
+                }
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::MissingTemplateParam,
+                    format!(
+                        "{} has missing template params, expecting {}",
+                        analyzer.interner.lookup(*name),
+                        expected
+                    ),
+                    analyzer.file_path,
+                    error_offset,
+                    error_offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+}
+
+/// Validate the generic-param counts of every docblock type written on this
+/// class's own properties and methods (param + return types). The issue is
+/// anchored at the member so a member- or class-level `@psalm-suppress` covers
+/// it, mirroring Psalm's per-declaration docblock checks.
+pub(crate) fn check_docblock_member_template_params(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for property_info in class_info.properties.values() {
+        if property_info.declaring_class != class_info.name {
+            continue;
+        }
+        if let Some(property_type) = property_info.get_type() {
+            check_docblock_generic_param_counts(
+                analyzer,
+                property_type,
+                property_info.start_offset,
+                analysis_data,
+            );
+        }
+    }
+
+    for method_info in class_info.methods.values() {
+        if method_info.declaring_class != Some(class_info.name) {
+            continue;
+        }
+        for param in &method_info.params {
+            if !param.has_docblock_type {
+                continue;
+            }
+            if let Some(param_type) = param.param_type.as_ref() {
+                check_docblock_generic_param_counts(
+                    analyzer,
+                    param_type,
+                    method_info.start_offset,
+                    analysis_data,
+                );
+            }
+        }
+        if let Some(return_type) = method_info.return_type.as_ref() {
+            check_docblock_generic_param_counts(
+                analyzer,
+                return_type,
+                method_info.start_offset,
+                analysis_data,
+            );
         }
     }
 }
@@ -4027,6 +4183,60 @@ fn check_property_initialization(
             })
         {
             return;
+        }
+
+        // A `@psalm-consistent-constructor` class (declared here or inherited)
+        // is validated against a synthetic constructor so `new static()` stays
+        // sound, and that synthetic constructor leaves every uninitialized typed
+        // property unset — Psalm reports PropertyNotSetInConstructor alongside
+        // the MissingConstructor here. pzoom folds the property report into
+        // MissingConstructor, but must still record a covering
+        // `@psalm-suppress PropertyNotSetInConstructor` as used so
+        // findUnusedPsalmSuppress does not wrongly flag it. (Without a
+        // consistent constructor there is no synthetic constructor, hence no
+        // PropertyNotSetInConstructor and no suppression to record — e.g.
+        // MixinAnnotation/inheritTemplatedMixinWithSelf.)
+        let consistent_constructor = class_info.is_consistent_constructor
+            || class_info
+                .parent_class
+                .iter()
+                .chain(class_info.all_parent_classes.iter())
+                .any(|ancestor| {
+                    analyzer
+                        .codebase
+                        .get_class(*ancestor)
+                        .is_some_and(|ancestor_info| ancestor_info.is_consistent_constructor)
+                });
+        if consistent_constructor {
+            let mut recorded_class_level = false;
+            for property_name in &candidates {
+                let Some(property) = class_info.properties.get(property_name) else {
+                    continue;
+                };
+                if !property_is_typed(property.as_ref()) {
+                    continue;
+                }
+                // Own property: the suppression sits on the property docblock.
+                // Inherited property: it can only sit on this class's docblock
+                // (the property's own offset is in another file), so record the
+                // class-level token once.
+                if property.declaring_class == class_info.name {
+                    let _ = crate::issue_suppression::is_issue_suppressed_at(
+                        analyzer,
+                        analysis_data,
+                        property.start_offset,
+                        "PropertyNotSetInConstructor",
+                    );
+                } else if !recorded_class_level {
+                    recorded_class_level = true;
+                    let _ = crate::issue_suppression::is_issue_suppressed_at(
+                        analyzer,
+                        analysis_data,
+                        class.span().start.offset,
+                        "PropertyNotSetInConstructor",
+                    );
+                }
+            }
         }
 
         // No (followable) constructor anywhere in the hierarchy: every typed

@@ -1326,5 +1326,20 @@ fn analyze_composite_string(
         }
     }
 
-    analysis_data.expr_types.insert(pos, Rc::new(result_type));
+    let result_type = Rc::new(result_type);
+    analysis_data.expr_types.insert(pos, result_type.clone());
+
+    // mago's `DocumentString::span()` covers only the opening marker
+    // (`<<<LABEL`), not the body, so the `pos` above misses the heredoc/nowdoc
+    // content. Record the type at the full span too, so features that scan
+    // expression source ranges see the whole string — notably the
+    // string-literal span that lets findUnusedPsalmSuppress ignore
+    // `@psalm-suppress` tokens embedded in PHP-code fixtures (Psalm never
+    // registers comments inside a string literal as real suppressions).
+    if let CompositeString::Document(doc) = string_expr {
+        let full_pos = (doc.open.start.offset, doc.close.end.offset);
+        if full_pos != pos {
+            analysis_data.expr_types.insert(full_pos, result_type);
+        }
+    }
 }

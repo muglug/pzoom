@@ -330,35 +330,17 @@ impl<'a> FileAnalyzer<'a> {
         }
 
         if self.config.find_unused_suppress {
-            // Comment-shaped lines inside STRING LITERALS (PHP code embedded
-            // in test providers) are not suppressions — Psalm only registers
-            // real parser comments. Candidate offsets inside any
-            // string-typed expression span are skipped.
-            let string_literal_spans: Vec<(u32, u32)> = analysis_data
-                .expr_types
-                .iter()
-                .filter(|(_, expr_type)| {
-                    !expr_type.types.is_empty()
-                        && expr_type.types.iter().all(|atomic| {
-                            matches!(
-                                atomic,
-                                pzoom_code_info::TAtomic::TLiteralString { .. }
-                                    | pzoom_code_info::TAtomic::TString
-                                    | pzoom_code_info::TAtomic::TNonEmptyString
-                                    | pzoom_code_info::TAtomic::TTruthyString
-                                    | pzoom_code_info::TAtomic::TNumericString
-                            )
-                        })
-                })
-                .map(|(pos, _)| *pos)
+            // Suppressions are collected from parsed comments, mirroring Psalm
+            // and Hakana. A comment inside a string literal is not a comment, so
+            // `@psalm-suppress` tokens embedded in PHP-code fixtures (heredocs,
+            // quoted code in test providers) are ignored for free — no
+            // string-span filtering required.
+            let comment_spans: Vec<(usize, &str)> = program
+                .trivia
+                .comments()
+                .map(|comment| (comment.span.start.offset as usize, comment.value))
                 .collect();
-            for candidate in collect_suppression_candidates(&file_info.contents) {
-                if string_literal_spans.iter().any(|(start, end)| {
-                    (candidate.offset as u32) >= *start && (candidate.offset as u32) < *end
-                }) {
-                    continue;
-                }
-
+            for candidate in collect_suppression_candidates(&comment_spans) {
                 if used_suppressions.contains(&candidate.offset) {
                     continue;
                 }
@@ -892,66 +874,50 @@ struct SuppressionCandidate {
 /// StatementsAnalyzer): `Tainted*` suppressions are never tracked, and a
 /// suppression group containing `UnusedPsalmSuppress` alongside other entries
 /// registers nothing (the group's unusedness reports would themselves be
-/// suppressed) — `UnusedPsalmSuppress` by itself IS tracked. Groups are
-/// docblock-shaped: consecutive comment lines form one group, matching
-/// Psalm's per-docblock suppression lists. `InaccessibleMethod` is skipped as
-/// in Psalm's statement-level registration.
-fn collect_suppression_candidates(contents: &str) -> Vec<SuppressionCandidate> {
-    let lines: Vec<&str> = contents.lines().collect();
-    let line_offsets = line_start_offsets(contents);
-
+/// suppressed) — `UnusedPsalmSuppress` by itself IS tracked. `InaccessibleMethod`
+/// is skipped as in Psalm's statement-level registration.
+///
+/// Input is the parsed comments as `(base_offset, comment_text)` pairs (Psalm
+/// and Hakana both read suppressions from parser comments, never raw text).
+/// Each comment is one suppression group — a docblock's `@psalm-suppress` list —
+/// and `comment_text` is the exact source slice starting at `base_offset`, so a
+/// token's absolute offset is `base_offset + its byte index within the text`.
+fn collect_suppression_candidates(comments: &[(usize, &str)]) -> Vec<SuppressionCandidate> {
     let mut candidates = Vec::new();
-    let mut group: Vec<SuppressionCandidate> = Vec::new();
-    let mut group_has_unused_suppress = false;
-    let mut in_comment_block = false;
 
-    let flush_group = |group: &mut Vec<SuppressionCandidate>,
-                       group_has_unused_suppress: &mut bool,
-                       candidates: &mut Vec<SuppressionCandidate>| {
-        let keep = group.len() == 1 || !*group_has_unused_suppress;
-        if keep {
-            candidates.append(group);
-        } else {
-            group.clear();
-        }
-        *group_has_unused_suppress = false;
-    };
+    for &(base_offset, text) in comments {
+        let mut group: Vec<SuppressionCandidate> = Vec::new();
+        let mut group_has_unused_suppress = false;
 
-    for (line_index, line) in lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        let line_is_comment = trimmed.starts_with("//")
-            || trimmed.starts_with("/*")
-            || trimmed.starts_with('*')
-            || trimmed.ends_with("*/");
-
-        if !line_is_comment && !in_comment_block {
-            flush_group(&mut group, &mut group_has_unused_suppress, &mut candidates);
-        }
-
-        in_comment_block = (in_comment_block || trimmed.contains("/*")) && !trimmed.contains("*/");
-
-        if let Some(content_start) = crate::issue_suppression::suppression_tag_content_start(line) {
-            for (col, token) in suppression_tokens(line, content_start) {
-                // Tainted* (never tracked) and InaccessibleMethod (skipped in
-                // Psalm's statement-level registration) are not candidates.
-                if token.starts_with("Tainted") || token == "InaccessibleMethod" {
-                    continue;
+        // A comment may carry several `@psalm-suppress` lines; scan each,
+        // tracking the byte offset of the line within the comment text.
+        let mut line_offset = 0usize;
+        for line in text.split('\n') {
+            if let Some(content_start) =
+                crate::issue_suppression::suppression_tag_content_start(line)
+            {
+                for (col, token) in suppression_tokens(line, content_start) {
+                    // Tainted* (never tracked) and InaccessibleMethod (skipped
+                    // in Psalm's statement-level registration) are not candidates.
+                    if token.starts_with("Tainted") || token == "InaccessibleMethod" {
+                        continue;
+                    }
+                    if token == "UnusedPsalmSuppress" {
+                        group_has_unused_suppress = true;
+                    }
+                    group.push(SuppressionCandidate {
+                        offset: base_offset + line_offset + col,
+                        name: token.to_string(),
+                    });
                 }
-                if token == "UnusedPsalmSuppress" {
-                    group_has_unused_suppress = true;
-                }
-                group.push(SuppressionCandidate {
-                    offset: line_offsets[line_index] + col,
-                    name: token.to_string(),
-                });
             }
+            line_offset += line.len() + 1; // +1 for the consumed '\n'
         }
 
-        if !line_is_comment && !in_comment_block {
-            flush_group(&mut group, &mut group_has_unused_suppress, &mut candidates);
+        if group.len() == 1 || !group_has_unused_suppress {
+            candidates.append(&mut group);
         }
     }
-    flush_group(&mut group, &mut group_has_unused_suppress, &mut candidates);
 
     candidates
 }

@@ -362,6 +362,16 @@ impl<'a> FileAnalyzer<'a> {
                 if used_suppressions.contains(&candidate.offset) {
                     continue;
                 }
+                // Issues that Psalm only checks under find_unused_variables
+                // (pzoom's report_unused) are never emitted when that mode is
+                // off, so a `@psalm-suppress` of one is not "unused" — Psalm's
+                // findUnusedPsalmSuppress pass does not flag it. Skip the
+                // candidate to match.
+                if !self.config.report_unused
+                    && issue_gated_on_report_unused(&candidate.name)
+                {
+                    continue;
+                }
                 let (line, col) = stmt_analyzer.get_line_column(candidate.offset as u32);
                 filtered.push(Issue::new(
                     IssueKind::UnusedPsalmSuppress,
@@ -681,6 +691,21 @@ fn class_docblock_suppression_match_for_issue(
     }
 
     None
+}
+
+/// Issues Psalm only checks when `find_unused_variables` is enabled (pzoom's
+/// `report_unused`). With that mode off they are never emitted, so an inline
+/// `@psalm-suppress` of one is exempt from the unused-suppression pass.
+fn issue_gated_on_report_unused(issue_name: &str) -> bool {
+    matches!(
+        issue_name,
+        "UnusedVariable"
+            | "UnusedForeachValue"
+            | "UnnecessaryVarAnnotation"
+            | "UnevaluatedCode"
+            | "UnusedParam"
+            | "UnusedClosureParam"
+    )
 }
 
 /// Psalm's Config::getParentIssueType: suppressing the base kind also

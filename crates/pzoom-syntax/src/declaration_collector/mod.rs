@@ -334,56 +334,43 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
     /// Find the docblock comment that precedes a given position.
     fn find_preceding_docblock(&self, start_offset: u32) -> Option<&'p str> {
-        // Find the docblock that ends closest to (but before) the start_offset
-        let mut best_match: Option<&'p Trivia<'p>> = None;
-
-        for trivia in self.trivia.iter() {
-            if trivia.kind == TriviaKind::DocBlockComment {
-                let end = trivia.span.end.offset;
-                if end < start_offset {
-                    let gap = &self.source[end as usize..start_offset as usize];
-                    if !Self::gap_is_ignorable(gap) {
-                        continue;
-                    }
-
-                    if best_match
-                        .map(|b| trivia.span.end.offset > b.span.end.offset)
-                        .unwrap_or(true)
-                    {
-                        best_match = Some(trivia);
-                    }
-                }
-            }
-        }
-
-        best_match.map(|t| t.value)
+        // Only the docblock ending closest before `start_offset` can attach: if
+        // its gap to the node isn't ignorable, every earlier docblock's gap
+        // necessarily spans this one's `/** */` text (never `//`/`#`/blank), so
+        // it can't be ignorable either. Find that single candidate, then do one
+        // gap check — rather than scanning the gap of every preceding docblock.
+        let best_match = self.closest_preceding_docblock(start_offset)?;
+        let gap = &self.source[best_match.span.end.offset as usize..start_offset as usize];
+        Self::gap_is_ignorable(gap).then_some(best_match.value)
     }
 
     /// Like [`Self::find_preceding_docblock`], also yielding the docblock's
     /// start offset (tag offsets from the parser are docblock-relative).
     fn find_preceding_docblock_with_offset(&self, start_offset: u32) -> Option<(u32, &'p str)> {
+        let best_match = self.closest_preceding_docblock(start_offset)?;
+        let gap = &self.source[best_match.span.end.offset as usize..start_offset as usize];
+        Self::gap_is_ignorable(gap).then_some((best_match.span.start.offset, best_match.value))
+    }
+
+    /// The docblock-comment trivia ending closest before `start_offset` (largest
+    /// `end` offset still below it), ignoring whether the intervening gap is
+    /// permeable — callers decide that with a single [`Self::gap_is_ignorable`]
+    /// check on the returned candidate.
+    fn closest_preceding_docblock(&self, start_offset: u32) -> Option<&'p Trivia<'p>> {
         let mut best_match: Option<&'p Trivia<'p>> = None;
 
         for trivia in self.trivia.iter() {
-            if trivia.kind == TriviaKind::DocBlockComment {
-                let end = trivia.span.end.offset;
-                if end < start_offset {
-                    let gap = &self.source[end as usize..start_offset as usize];
-                    if !Self::gap_is_ignorable(gap) {
-                        continue;
-                    }
-
-                    if best_match
-                        .map(|b| trivia.span.end.offset > b.span.end.offset)
-                        .unwrap_or(true)
-                    {
-                        best_match = Some(trivia);
-                    }
-                }
+            if trivia.kind == TriviaKind::DocBlockComment
+                && trivia.span.end.offset < start_offset
+                && best_match
+                    .map(|b| trivia.span.end.offset > b.span.end.offset)
+                    .unwrap_or(true)
+            {
+                best_match = Some(trivia);
             }
         }
 
-        best_match.map(|t| (t.span.start.offset, t.value))
+        best_match
     }
 
     fn collect_inline_docblock_annotations_in_span(
@@ -5542,7 +5529,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut import_entries: Vec<(usize, String)> = Vec::new();
         for key in ["phpstan-import-type", "psalm-import-type"] {
             if let Some(tags) = parsed.tags.get(key) {
-                for (offset, content) in tags {
+                for (offset, content) in tags.iter() {
                     import_entries.push((*offset, content.clone()));
                 }
             }
@@ -5598,7 +5585,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut type_entries: Vec<(usize, String)> = Vec::new();
         for key in ["phpstan-type", "psalm-type"] {
             if let Some(tags) = parsed.tags.get(key) {
-                for (offset, content) in tags {
+                for (offset, content) in tags.iter() {
                     type_entries.push((*offset, content.clone()));
                 }
             }
@@ -6357,13 +6344,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut template_entries = Vec::new();
 
         if let Some(tags) = parsed.combined_tags.get("template") {
-            for (offset, content) in tags {
+            for (offset, content) in tags.iter() {
                 template_entries.push((*offset, content.as_str(), TemplateVariance::Invariant));
             }
         }
 
         if let Some(tags) = parsed.combined_tags.get("template-covariant") {
-            for (offset, content) in tags {
+            for (offset, content) in tags.iter() {
                 template_entries.push((*offset, content.as_str(), TemplateVariance::Covariant));
             }
         }

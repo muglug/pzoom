@@ -43,6 +43,9 @@ fn get_key_of_atomic(atomic: &TAtomic) -> TUnion {
                     ArrayKey::String(value) => TAtomic::TLiteralString {
                         value: value.clone(),
                     },
+                    ArrayKey::ClassString(value) => TAtomic::TLiteralClassString {
+                        name: value.clone(),
+                    },
                 };
                 if !key_types.contains(&key_atomic) {
                     key_types.push(key_atomic);

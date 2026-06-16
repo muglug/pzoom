@@ -424,7 +424,7 @@ fn analyze_array_element(
                             info.all_list = false;
                         }
                     }
-                    ArrayKey::String(_) => {
+                    ArrayKey::String(_) | ArrayKey::ClassString(_) => {
                         info.all_list = false;
                     }
                 }
@@ -472,7 +472,7 @@ fn record_literal_key(
     info.seen_keys.insert(key.clone());
     info.item_key_atomic_types.push(match &key {
         ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
-        ArrayKey::String(value) => TAtomic::TLiteralString {
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => TAtomic::TLiteralString {
             value: value.clone(),
         },
     });
@@ -528,7 +528,7 @@ fn handle_unpacked_array(
                         info.int_offset += 1;
                         ArrayKey::Int(info.int_offset)
                     }
-                    ArrayKey::String(value) => {
+                    ArrayKey::String(value) | ArrayKey::ClassString(value) => {
                         info.all_list = false;
                         ArrayKey::String(value.clone())
                     }
@@ -825,9 +825,11 @@ pub(crate) fn get_keyed_array_generic_params(
     for (key, property_type) in properties.iter() {
         let literal_key_type = match key {
             ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-            ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-                value: value.clone(),
-            }),
+            ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                TUnion::new(TAtomic::TLiteralString {
+                    value: value.clone(),
+                })
+            }
         };
 
         key_type = if key_type.is_nothing() {
@@ -892,9 +894,11 @@ fn merge_property_types_for_spread(
 fn array_key_to_union(key: &ArrayKey) -> TUnion {
     match key {
         ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-        ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-            value: value.clone(),
-        }),
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+            TUnion::new(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
     }
 }
 
@@ -1070,7 +1074,7 @@ fn literal_array_key_to_int(literal_array_key: &str) -> Option<i64> {
 fn key_to_string(key: &ArrayKey) -> String {
     match key {
         ArrayKey::Int(value) => value.to_string(),
-        ArrayKey::String(value) => value.clone(),
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => value.clone(),
     }
 }
 

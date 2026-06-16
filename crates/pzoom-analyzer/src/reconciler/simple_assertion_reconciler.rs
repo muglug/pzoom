@@ -477,6 +477,7 @@ pub fn reconcile(
             existing_var_type,
             key,
             negated,
+            inside_loop,
             analysis_data,
             analyzer,
         ),
@@ -484,26 +485,87 @@ pub fn reconcile(
     }
 }
 
-/// Reconciles a `<`/`<=`/`>`/`>=` ordering assertion: narrow the int members to
-/// the asserted range (as the `IsType(range)` path does) and keep or drop
-/// `null`/`false` per Psalm's `doesFilterNullOrFalse` — both compare as 0, so a
-/// comparison removes them only when 0 fails it.
+/// Reconciles a `<`/`<=`/`>`/`>=` ordering assertion.
+///
+/// Mirrors Psalm's `reconcileIs{Less,Greater}Than`: only the *int* members
+/// (`int`, literal ints, int-ranges) are narrowed to the asserted range, and
+/// `null`/`false` are dropped per `doesFilterNullOrFalse` (both compare as 0).
+/// Every other atomic (strings, floats, numeric strings, objects, …) is left
+/// untouched — a loose comparison does not refine it. Keeping `string` in place
+/// is what lets a later `$i++`/`$i--` still see a string operand.
 fn reconcile_ordering_comparison(
     assertion: &Assertion,
     existing_var_type: &TUnion,
     key: Option<&str>,
     negated: bool,
+    inside_loop: bool,
     analysis_data: &mut FunctionAnalysisData,
     analyzer: &StatementsAnalyzer<'_>,
 ) -> TUnion {
-    let Some(range) = assertion.ordering_int_range() else {
+    let Some(TAtomic::TIntRange {
+        min: range_min,
+        max: range_max,
+    }) = assertion.ordering_int_range()
+    else {
         return existing_var_type.clone();
     };
 
-    let Some(narrowed) =
-        assertion_reconciler::intersect_union_with_atomic(existing_var_type, &range, analyzer)
-    else {
-        // Empty intersection: the comparison can never hold (mirror IsType).
+    let filters_null_or_false = assertion.ordering_filters_null_or_false();
+
+    let mut result_types: Vec<TAtomic> = Vec::with_capacity(existing_var_type.types.len());
+    // Psalm's `$redundant`: the comparison left the type untouched. It starts
+    // true and is cleared by any removal/narrowing OR by the presence of any
+    // non-int atomic (its `else` branch).
+    let mut redundant = true;
+
+    for atomic in &existing_var_type.types {
+        match atomic {
+            TAtomic::TNull | TAtomic::TFalse if filters_null_or_false => {
+                redundant = false;
+            }
+            TAtomic::TLiteralInt { value } => {
+                if int_in_range(*value, range_min, range_max) {
+                    result_types.push(atomic.clone());
+                } else {
+                    redundant = false;
+                }
+            }
+            TAtomic::TIntRange { min, max } => {
+                match intersect_int_range(*min, *max, range_min, range_max) {
+                    Some((new_min, new_max)) => {
+                        let narrowed = TAtomic::TIntRange {
+                            min: new_min,
+                            max: new_max,
+                        };
+                        if narrowed != *atomic {
+                            redundant = false;
+                        }
+                        result_types.push(narrowed);
+                    }
+                    None => {
+                        redundant = false;
+                    }
+                }
+            }
+            TAtomic::TInt => {
+                redundant = false;
+                result_types.push(TAtomic::TIntRange {
+                    min: range_min,
+                    max: range_max,
+                });
+            }
+            // Psalm's `else`: other types may have been removed (numeric
+            // strings, etc.), but a loose comparison can't prove it, so they
+            // stay. The comparison is no longer redundant once one is present.
+            _ => {
+                redundant = false;
+                result_types.push(atomic.clone());
+            }
+        }
+    }
+
+    // Empty result: the comparison can never hold.
+    if result_types.is_empty() {
         if key.is_some() && !existing_var_type.is_mixed() {
             super::trigger_issue_for_impossible(
                 analysis_data,
@@ -516,32 +578,13 @@ fn reconcile_ordering_comparison(
             );
         }
         return with_docblock_from(TUnion::nothing(), existing_var_type);
-    };
-
-    let mut result_types = narrowed.types.clone();
-    let mut kept_null_or_false = false;
-    if !assertion.ordering_filters_null_or_false() {
-        for atomic in &existing_var_type.types {
-            if matches!(atomic, TAtomic::TNull | TAtomic::TFalse) && !result_types.contains(atomic)
-            {
-                result_types.push(atomic.clone());
-                kept_null_or_false = true;
-            }
-        }
     }
 
-    let result = if kept_null_or_false {
-        with_docblock_from(TUnion::from_types(result_types), existing_var_type)
-    } else {
-        // Same result as the IsType(range) path.
-        with_docblock_from(narrowed, existing_var_type)
-    };
+    let result = with_docblock_from(TUnion::from_types(result_types), existing_var_type);
 
-    // Psalm's reconcileIs{Less,Greater}Than report `redundant` via
-    // triggerIssueForImpossible when the comparison leaves the type untouched
-    // (e.g. `int<min, 5> < 10`). Report it here directly (intersection clears
-    // the data-flow nodes, so the caller's `==` redundancy check can't see it).
-    if key.is_some() && !existing_var_type.is_mixed() && result.types == existing_var_type.types {
+    // Psalm reports the comparison as redundant only outside loops (a
+    // loop-carried counter legitimately revisits the same bound each pass).
+    if !inside_loop && redundant && key.is_some() && !existing_var_type.is_mixed() {
         super::trigger_issue_for_impossible(
             analysis_data,
             analyzer,
@@ -554,6 +597,38 @@ fn reconcile_ordering_comparison(
     }
 
     result
+}
+
+/// Whether `value` falls within the (inclusive) `[min, max]` range, where
+/// `None` bounds are unbounded.
+fn int_in_range(value: i64, min: Option<i64>, max: Option<i64>) -> bool {
+    min.is_none_or(|m| value >= m) && max.is_none_or(|m| value <= m)
+}
+
+/// Intersects two inclusive int ranges (with `None` meaning unbounded).
+/// Returns `None` when the intersection is empty.
+fn intersect_int_range(
+    min1: Option<i64>,
+    max1: Option<i64>,
+    min2: Option<i64>,
+    max2: Option<i64>,
+) -> Option<(Option<i64>, Option<i64>)> {
+    let new_min = match (min1, min2) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    };
+    let new_max = match (max1, max2) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) | (None, Some(a)) => Some(a),
+        (None, None) => None,
+    };
+    if let (Some(lo), Some(hi)) = (new_min, new_max)
+        && lo > hi
+    {
+        return None;
+    }
+    Some((new_min, new_max))
 }
 
 fn push_narrowed_template_type(

@@ -7974,6 +7974,11 @@ fn resolve_key_of_template_atomic(atomic: &TAtomic) -> TUnion {
                     pzoom_code_info::t_atomic::ArrayKey::String(value) => TAtomic::TLiteralString {
                         value: value.clone(),
                     },
+                    pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => {
+                        TAtomic::TLiteralClassString {
+                            name: value.clone(),
+                        }
+                    }
                 };
 
                 key_union = if key_union.is_nothing() {
@@ -9059,6 +9064,7 @@ fn merge_intersected_shapes(members: &[TAtomic]) -> Option<TAtomic> {
             sealed: member_sealed,
             fallback_key_type: member_fallback_key,
             fallback_value_type: member_fallback_value,
+            ..
         } = member
         else {
             return None;

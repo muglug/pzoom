@@ -764,9 +764,10 @@ fn simple_union_to_array_key(union: &TUnion) -> Option<ArrayKey> {
             .ok()
             .map(ArrayKey::Int)
             .or_else(|| Some(ArrayKey::String(value.clone()))),
-        // `X::class` keys become plain string keys (Psalm additionally marks
-        // them in TKeyedArray::$class_strings, which pzoom does not model).
-        TAtomic::TLiteralClassString { name } => Some(ArrayKey::String(name.clone())),
+        // `X::class` keeps its class-string identity in the key (Psalm's
+        // TKeyedArray::$class_strings) so iterating the shape yields a
+        // class-string rather than a plain literal string.
+        TAtomic::TLiteralClassString { name } => Some(ArrayKey::ClassString(name.clone())),
         TAtomic::TNull => Some(ArrayKey::String(String::new())),
         _ => None,
     }

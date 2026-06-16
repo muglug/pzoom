@@ -450,7 +450,7 @@ impl ArrayKey {
     pub fn to_string(&self) -> String {
         match self {
             ArrayKey::Int(i) => i.to_string(),
-            ArrayKey::String(s) => format!("'{}'", s),
+            ArrayKey::String(s) | ArrayKey::ClassString(s) => format!("'{}'", s),
         }
     }
 }

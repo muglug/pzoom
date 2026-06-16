@@ -811,7 +811,7 @@ fn stmt_docblock_suppression_match_for_issue(
     stmt_suppression_ranges: &[(u32, u32, u32, u32)],
     issue: &Issue,
 ) -> Option<usize> {
-    let issue_name = format!("{:?}", issue.kind);
+    let issue_names = suppression_candidate_names(issue);
     let issue_offset = issue.location.start_offset;
 
     for &(docblock_start, docblock_end, stmt_start, stmt_end) in stmt_suppression_ranges {
@@ -824,10 +824,12 @@ fn stmt_docblock_suppression_match_for_issue(
             continue;
         }
         let docblock = contents.get(docblock_start as usize..docblock_end as usize)?;
-        if let Some(token_offset) =
-            crate::issue_suppression::docblock_suppression_match(docblock, &issue_name)
-        {
-            return Some(docblock_start as usize + token_offset);
+        for issue_name in &issue_names {
+            if let Some(token_offset) =
+                crate::issue_suppression::docblock_suppression_match(docblock, issue_name)
+            {
+                return Some(docblock_start as usize + token_offset);
+            }
         }
     }
 
@@ -841,7 +843,7 @@ pub(crate) fn class_docblock_suppression_match_for_issue(
     class_spans: &[(u32, u32)],
     issue: &Issue,
 ) -> Option<usize> {
-    let issue_name = format!("{:?}", issue.kind);
+    let issue_names = suppression_candidate_names(issue);
     let issue_offset = issue.location.start_offset;
 
     for &(class_start, class_end) in class_spans {
@@ -855,10 +857,12 @@ pub(crate) fn class_docblock_suppression_match_for_issue(
         else {
             continue;
         };
-        if let Some(token_offset) =
-            crate::issue_suppression::docblock_suppression_match(docblock, &issue_name)
-        {
-            return Some(docblock_start + token_offset);
+        for issue_name in &issue_names {
+            if let Some(token_offset) =
+                crate::issue_suppression::docblock_suppression_match(docblock, issue_name)
+            {
+                return Some(docblock_start + token_offset);
+            }
         }
     }
 
@@ -880,21 +884,74 @@ fn issue_gated_on_report_unused(issue_name: &str) -> bool {
     )
 }
 
-/// Psalm's Config::getParentIssueType: suppressing the base kind also
-/// suppresses its derived variant (the Possibly* and *GivenDocblockType
-/// children). The reverse never holds — suppressing the child does not
-/// suppress the parent (see `suppresses_issue`).
-fn parent_issue_name(issue_name: &str) -> Option<&'static str> {
+/// Psalm's `Config::getParentIssueType`: suppressing the parent kind also
+/// suppresses its derived variant. The reverse never holds — suppressing the
+/// child does not suppress the parent (see `suppresses_issue`). This is a
+/// single level: an issue has at most one parent.
+fn parent_issue_name(issue_name: &str) -> Option<String> {
     match issue_name {
-        "PossiblyUnusedMethod" => Some("UnusedMethod"),
-        "PossiblyUnusedProperty" => Some("UnusedProperty"),
-        "PossiblyUnusedParam" => Some("UnusedParam"),
-        "PossiblyUnusedReturnValue" => Some("UnusedReturnValue"),
-        "RedundantCastGivenDocblockType" => Some("RedundantCast"),
-        "RedundantConditionGivenDocblockType" => Some("RedundantCondition"),
-        "RedundantFunctionCallGivenDocblockType" => Some("RedundantFunctionCall"),
-        _ => None,
+        "PossiblyUndefinedIntArrayOffset" | "PossiblyUndefinedStringArrayOffset" => {
+            return Some("PossiblyUndefinedArrayOffset".to_string());
+        }
+        "PossiblyNullReference" => return Some("NullReference".to_string()),
+        "PossiblyFalseReference" | "PossiblyUndefinedArrayOffset" => return None,
+        _ => {}
     }
+
+    // `Possibly(False|Null)?Foo` → `Foo`, prefixed with `Invalid` unless it
+    // already names an Invalid*/Un* issue (Psalm's preg_replace branch).
+    if let Some(stripped) = issue_name.strip_prefix("Possibly") {
+        let stripped = stripped
+            .strip_prefix("False")
+            .or_else(|| stripped.strip_prefix("Null"))
+            .unwrap_or(stripped);
+        let parent = if !stripped.contains("Invalid") && !stripped.starts_with("Un") {
+            format!("Invalid{stripped}")
+        } else {
+            stripped.to_string()
+        };
+        return Some(parent);
+    }
+
+    // Every Tainted* issue extends TaintedInput.
+    if issue_name.starts_with("Tainted") && issue_name != "TaintedInput" {
+        return Some("TaintedInput".to_string());
+    }
+
+    let direct = match issue_name {
+        "UndefinedInterfaceMethod" => "UndefinedMethod",
+        "UndefinedMagicPropertyFetch" => "UndefinedPropertyFetch",
+        "UndefinedMagicPropertyAssignment" => "UndefinedPropertyAssignment",
+        "UndefinedMagicMethod" => "UndefinedMethod",
+        "PossibleRawObjectIteration" => "RawObjectIteration",
+        "UninitializedProperty" => "PropertyNotSetInConstructor",
+        "InvalidDocblockParamName" => "InvalidDocblock",
+        "UnusedClosureParam" => "UnusedParam",
+        "UnusedConstructor" => "UnusedMethod",
+        "StringIncrement" => "InvalidOperand",
+        "InvalidLiteralArgument" => "InvalidArgument",
+        "RedundantConditionGivenDocblockType" => "RedundantCondition",
+        "RedundantFunctionCallGivenDocblockType" => "RedundantFunctionCall",
+        "RedundantCastGivenDocblockType" => "RedundantCast",
+        "TraitMethodSignatureMismatch" => "MethodSignatureMismatch",
+        "ImplementedParamTypeMismatch" => "MoreSpecificImplementedParamType",
+        "UndefinedDocblockClass" => "UndefinedClass",
+        "UnusedForeachValue" => "UnusedVariable",
+        _ => return None,
+    };
+    Some(direct.to_string())
+}
+
+/// The `@psalm-suppress` names that suppress `issue`: the issue's own kind plus
+/// its Psalm parent kind (`getParentIssueType`), to be tried in turn.
+fn suppression_candidate_names(issue: &Issue) -> Vec<String> {
+    let issue_name = format!("{:?}", issue.kind);
+    let parent = parent_issue_name(&issue_name);
+    let mut names = vec![issue_name];
+    if let Some(parent) = parent {
+        names.push(parent);
+    }
+    names
 }
 
 pub(crate) fn line_suppression_match_for_issue(
@@ -902,23 +959,9 @@ pub(crate) fn line_suppression_match_for_issue(
     line_offsets: &[usize],
     issue: &Issue,
 ) -> Option<usize> {
-    let issue_name = format!("{:?}", issue.kind);
-    if let Some(parent_name) = parent_issue_name(&issue_name) {
-        if let Some(offset) =
-            line_suppression_match_for_issue_named(lines, line_offsets, issue, parent_name)
-        {
-            return Some(offset);
-        }
-    }
-    // Psalm's issue hierarchy: every Tainted* issue extends TaintedInput.
-    if issue_name.starts_with("Tainted") && issue_name != "TaintedInput" {
-        if let Some(offset) =
-            line_suppression_match_for_issue_named(lines, line_offsets, issue, "TaintedInput")
-        {
-            return Some(offset);
-        }
-    }
-    line_suppression_match_for_issue_named(lines, line_offsets, issue, &issue_name)
+    suppression_candidate_names(issue)
+        .into_iter()
+        .find_map(|name| line_suppression_match_for_issue_named(lines, line_offsets, issue, &name))
 }
 
 fn line_suppression_match_for_issue_named(

@@ -1384,7 +1384,8 @@ fn verify_constructor_arguments(
                         }
                         match key {
                             pzoom_code_info::ArrayKey::Int(_) => positional_count += 1,
-                            pzoom_code_info::ArrayKey::String(name) => {
+                            pzoom_code_info::ArrayKey::String(name)
+                            | pzoom_code_info::ArrayKey::ClassString(name) => {
                                 // An unknown named key reports
                                 // InvalidNamedArgument (in the argument
                                 // matcher); don't also claim too-few args.

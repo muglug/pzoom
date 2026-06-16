@@ -1541,6 +1541,7 @@ fn resolve_keyed_array_value_for_variable_key(
     array_key_var: &str,
     properties: &FxHashMap<ArrayKey, TUnion>,
     fallback_value_type: Option<&TUnion>,
+
     context: &BlockContext,
     analyzer: &StatementsAnalyzer<'_>,
     possibly_undefined: &mut bool,
@@ -1667,7 +1668,7 @@ fn lookup_property_type_by_runtime_key<'a>(
 
     match key {
         ArrayKey::Int(value) => properties.get(&ArrayKey::String(value.to_string())),
-        ArrayKey::String(value) => parse_canonical_int_string(value)
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => parse_canonical_int_string(value)
             .and_then(|int_value| properties.get(&ArrayKey::Int(int_value))),
     }
 }
@@ -1675,7 +1676,10 @@ fn lookup_property_type_by_runtime_key<'a>(
 fn array_keys_are_equivalent(a: &ArrayKey, b: &ArrayKey) -> bool {
     match (a, b) {
         (ArrayKey::Int(a_int), ArrayKey::Int(b_int)) => a_int == b_int,
-        (ArrayKey::String(a_str), ArrayKey::String(b_str)) => {
+        (
+            ArrayKey::String(a_str) | ArrayKey::ClassString(a_str),
+            ArrayKey::String(b_str) | ArrayKey::ClassString(b_str),
+        ) => {
             if a_str == b_str {
                 return true;
             }
@@ -1684,17 +1688,21 @@ fn array_keys_are_equivalent(a: &ArrayKey, b: &ArrayKey) -> bool {
                 .zip(parse_canonical_int_string(b_str))
                 .is_some_and(|(a_int, b_int)| a_int == b_int)
         }
-        (ArrayKey::Int(int_value), ArrayKey::String(str_value))
-        | (ArrayKey::String(str_value), ArrayKey::Int(int_value)) => {
-            parse_canonical_int_string(str_value).is_some_and(|parsed| parsed == *int_value)
-        }
+        (
+            ArrayKey::Int(int_value),
+            ArrayKey::String(str_value) | ArrayKey::ClassString(str_value),
+        )
+        | (
+            ArrayKey::String(str_value) | ArrayKey::ClassString(str_value),
+            ArrayKey::Int(int_value),
+        ) => parse_canonical_int_string(str_value).is_some_and(|parsed| parsed == *int_value),
     }
 }
 
 fn canonicalize_array_key(key: &ArrayKey) -> ArrayKey {
     match key {
         ArrayKey::Int(value) => ArrayKey::Int(*value),
-        ArrayKey::String(value) => parse_canonical_int_string(value)
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => parse_canonical_int_string(value)
             .map(ArrayKey::Int)
             .unwrap_or_else(|| ArrayKey::String(value.clone())),
     }
@@ -2035,6 +2043,7 @@ fn set_keyed_array_offset(
     sealed: bool,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
+
     offset: &ArrayKey,
     result_type: &TUnion,
 ) -> TAtomic {
@@ -2049,7 +2058,7 @@ fn set_keyed_array_offset(
         // reconciliation (e.g. inflating a list's `count`), so pzoom drops to a
         // keyed array instead.
         let breaks_list = match offset {
-            ArrayKey::String(_) => true,
+            ArrayKey::String(_) | ArrayKey::ClassString(_) => true,
             ArrayKey::Int(index) => {
                 *index != 0 && !properties.contains_key(&ArrayKey::Int(index - 1))
             }

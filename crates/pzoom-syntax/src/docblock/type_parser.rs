@@ -676,6 +676,11 @@ fn resolve_key_of_atomic_to_union(atomic: &TAtomic) -> TUnion {
                     pzoom_code_info::t_atomic::ArrayKey::String(value) => TAtomic::TLiteralString {
                         value: value.clone(),
                     },
+                    pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => {
+                        TAtomic::TLiteralClassString {
+                            name: value.clone(),
+                        }
+                    }
                 };
                 if !key_types.contains(&key_atomic) {
                     key_types.push(key_atomic);
@@ -1768,7 +1773,7 @@ fn keyed_array_tree_to_type(
             // on a required key after an optional one, or on any string key.
             let key_int = match &key {
                 ArrayKey::Int(n) => Some(*n),
-                ArrayKey::String(_) => None,
+                ArrayKey::String(_) | ArrayKey::ClassString(_) => None,
             };
             if is_list
                 && (key_int.is_none()

@@ -1444,7 +1444,7 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                 for (key, value_type) in properties.iter() {
                     let key_union = match key {
                         ArrayKey::Int(_) => TUnion::int(),
-                        ArrayKey::String(_) => TUnion::string(),
+                        ArrayKey::String(_) | ArrayKey::ClassString(_) => TUnion::string(),
                     };
                     keyed_key_type = Some(match keyed_key_type {
                         Some(ref existing) => combine_union_types(existing, &key_union, false),
@@ -1628,6 +1628,7 @@ fn update_keyed_array_atomic(
     sealed: bool,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
+
     key_type: Option<&TUnion>,
     assigned_type: &TUnion,
     inside_loop: bool,
@@ -1822,6 +1823,7 @@ fn keyed_array_to_non_empty_array(
     properties: &FxHashMap<ArrayKey, TUnion>,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
+
     assigned_key_type: &TUnion,
     assigned_type: &TUnion,
 ) -> TAtomic {
@@ -2132,9 +2134,11 @@ fn normalize_assignment_key_union(key_type: &TUnion) -> TUnion {
 fn union_for_array_key(key: &ArrayKey) -> TUnion {
     match key {
         ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-        ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-            value: value.clone(),
-        }),
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+            TUnion::new(TAtomic::TLiteralString {
+                value: value.clone(),
+            })
+        }
     }
 }
 

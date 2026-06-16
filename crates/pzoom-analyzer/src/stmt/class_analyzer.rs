@@ -273,11 +273,73 @@ fn analyze_class(
         }
     }
 
+    // Psalm's ClassAnalyzer collects the `ClassConst` statements and runs them
+    // through StatementsAnalyzer, so a constant initializer expression (e.g. an
+    // always-true ternary) is type-checked exactly like ordinary code and gets
+    // the same redundancy/contradiction diagnostics.
+    analyze_constant_initializers(
+        analyzer,
+        class.members.as_slice(),
+        class_name_id,
+        class_info,
+        context.namespace,
+        analysis_data,
+    );
+
     if let Some(info) = class_info {
         analyze_methods_from_used_traits(analyzer, info, class_name_id, analysis_data)?;
     }
 
     Ok(())
+}
+
+/// Analyze class constant initializer expressions, mirroring Psalm's
+/// ClassAnalyzer running the collected `ClassConst` statements through
+/// StatementsAnalyzer. Each initializer is analyzed in a fresh class-scoped
+/// context (`self`/`parent` set) so references resolve and redundancy checks fire.
+fn analyze_constant_initializers(
+    analyzer: &StatementsAnalyzer<'_>,
+    members: &[ClassLikeMember<'_>],
+    class_name_id: pzoom_str::StrId,
+    class_info: Option<&pzoom_code_info::ClassLikeInfo>,
+    namespace: Option<pzoom_str::StrId>,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    if !members
+        .iter()
+        .any(|member| matches!(member, ClassLikeMember::Constant(_)))
+    {
+        return;
+    }
+
+    // A synthetic function-like wrapper whose `declaring_class` is this class, so
+    // visibility checks (`get_declaring_class`) treat private/protected
+    // self-references in initializers as accessible — Psalm analyzes the
+    // ClassConst statements with the class context's `self`.
+    let const_func_info = pzoom_code_info::FunctionLikeInfo {
+        declaring_class: Some(class_name_id),
+        ..Default::default()
+    };
+    let const_analyzer = analyzer.for_nested_function(Some(&const_func_info));
+
+    for member in members {
+        let ClassLikeMember::Constant(class_const) = member else {
+            continue;
+        };
+        for item in &class_const.items {
+            let mut const_context = BlockContext::new();
+            const_context.namespace = namespace;
+            const_context.self_class = Some(class_name_id);
+            const_context.parent_class = class_info.and_then(|ci| ci.parent_class);
+            const_context.function_context.calling_class = Some(class_name_id);
+            let _ = expression_analyzer::analyze(
+                &const_analyzer,
+                &item.value,
+                analysis_data,
+                &mut const_context,
+            );
+        }
+    }
 }
 
 /// Analyze the members of an anonymous class registered in the codebase

@@ -362,12 +362,23 @@ pub fn handle_paradoxical_condition(
 
     // Psalm: otherwise flag a risky truthy/falsy comparison
     // (`ExpressionAnalyzer::checkRiskyTruthyFalsyComparison`), skipped for the
-    // `===` / `!==` / `!` forms that already compare explicitly.
-    if !is_assignment_or_negated_assignment(expr)
-        && should_check_risky_truthy_falsy(expr, analyzer)
-        && get_truthy_falsy_target_union(expr, expr_type.clone(), analysis_data)
-            .is_some_and(|target_union| is_risky_truthy_falsy_union(&target_union))
-    {
+    // `===` / `!==` / `!` forms that already compare explicitly. A `??` condition
+    // is checked directly (Psalm runs checkRiskyTruthyFalsyComparison on the
+    // coalesce result), with the full algorithm rather than the narrower
+    // nullable-array-like heuristic used for the param/call allowlist.
+    let is_coalesce_condition = matches!(
+        expr.unparenthesized(),
+        Expression::Binary(binary) if matches!(binary.operator, BinaryOperator::NullCoalesce(_))
+    );
+    let is_risky = if is_coalesce_condition {
+        is_risky_truthy_falsy_coalesce_union(&expr_type)
+    } else {
+        !is_assignment_or_negated_assignment(expr)
+            && should_check_risky_truthy_falsy(expr, analyzer)
+            && get_truthy_falsy_target_union(expr, expr_type.clone(), analysis_data)
+                .is_some_and(|target_union| is_risky_truthy_falsy_union(&target_union))
+    };
+    if is_risky {
         let (line, col) = analyzer.get_line_column(expr_pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::RiskyTruthyFalsyComparison,
@@ -397,28 +408,28 @@ fn is_risky_truthy_falsy_union(union: &TUnion) -> bool {
     union.types.iter().any(is_ambiguous_array_like_atomic)
 }
 
-fn get_truthy_falsy_target_union(
-    expr: &Expression<'_>,
-    expr_type: TUnion,
-    analysis_data: &FunctionAnalysisData,
-) -> Option<TUnion> {
-    let Expression::UnaryPrefix(unary) = expr.unparenthesized() else {
-        return Some(expr_type);
-    };
-
-    if !matches!(unary.operator, UnaryPrefixOperator::Not(_)) {
-        return Some(expr_type);
+/// Psalm's `checkRiskyTruthyFalsyComparison` algorithm: more than one atomic
+/// where, after dropping every exclusively-truthy/exclusively-falsy/`bool`
+/// atomic, an ambiguous atomic (one that can be both truthy and falsy, e.g.
+/// `mixed`/`string`) remains and at least one exclusive atomic was dropped. Used
+/// for a `??` condition (`$obj->prop ?? default` => `bool|mixed`, etc.), where
+/// the narrower nullable-array-like heuristic above does not apply.
+fn is_risky_truthy_falsy_coalesce_union(union: &TUnion) -> bool {
+    if union.types.len() <= 1 {
+        return false;
     }
 
-    analysis_data
-        .expr_types
-        .get(&(
-            unary.operand.start_offset() as u32,
-            unary.operand.end_offset() as u32,
-        ))
-        .cloned()
-        .map(|union| (*union).clone())
-        .or(Some(expr_type))
+    let mut dropped_exclusive = false;
+    let mut has_ambiguous = false;
+    for atomic in &union.types {
+        if atomic.is_truthy() || atomic.is_falsy() || matches!(atomic, TAtomic::TBool) {
+            dropped_exclusive = true;
+        } else {
+            has_ambiguous = true;
+        }
+    }
+
+    dropped_exclusive && has_ambiguous
 }
 
 fn is_array_like_atomic(atomic: &TAtomic) -> bool {
@@ -449,6 +460,29 @@ fn is_ambiguous_array_like_atomic(atomic: &TAtomic) -> bool {
         _ => true,
     }
 }
+
+fn get_truthy_falsy_target_union(
+    expr: &Expression<'_>,
+    expr_type: TUnion,
+    analysis_data: &FunctionAnalysisData,
+) -> Option<TUnion> {
+    let Expression::UnaryPrefix(unary) = expr.unparenthesized() else {
+        return Some(expr_type);
+    };
+
+    if !matches!(unary.operator, UnaryPrefixOperator::Not(_)) {
+        return Some(expr_type);
+    }
+
+    analysis_data
+        .expr_types.get(&(
+            unary.operand.start_offset() as u32,
+            unary.operand.end_offset() as u32,
+        )).cloned()
+        .map(|union| (*union).clone())
+        .or(Some(expr_type))
+}
+
 
 fn is_assignment_or_negated_assignment(expr: &Expression<'_>) -> bool {
     match expr.unparenthesized() {

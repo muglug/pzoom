@@ -6,6 +6,8 @@ use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
 use crate::expr::call::function_call_analyzer as fca;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
+use crate::type_comparator::{type_comparison_result::TypeComparisonResult, union_type_comparator};
+
 pub(super) struct ArrayValuesReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayValuesReturnTypeProvider {
@@ -31,7 +33,23 @@ fn infer_array_values_return_type(
     let array_type = analysis_data.expr_types.get(&array_pos).cloned()?;
     let array_info = fca::extract_array_like_info_from_union(&array_type)?;
 
-    if array_info.is_list {
+    // Psalm's NamedFunctionCallHandler tests `isContainedBy($arg, Type::getList())`
+    // rather than a structural is-list flag, so an empty array (`array<never,never>`,
+    // the type of `[]`) — which is contained by `list<mixed>` — is redundant too.
+    let list_container = TUnion::new(TAtomic::TList {
+        value_type: Box::new(TUnion::mixed()),
+    });
+    let mut comparison_result = TypeComparisonResult::new();
+    let is_contained_by_list = union_type_comparator::is_contained_by(
+        analyzer.codebase,
+        &array_type,
+        &list_container,
+        false,
+        false,
+        &mut comparison_result,
+    );
+
+    if is_contained_by_list {
         let (line, col) = analyzer.get_line_column(array_pos.0);
         let type_id = array_type.get_id(Some(analyzer.interner));
         // Psalm's NamedFunctionCallHandler: a redundancy that follows from a

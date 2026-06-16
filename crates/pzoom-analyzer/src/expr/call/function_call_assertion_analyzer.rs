@@ -122,6 +122,35 @@ pub(crate) fn apply_post_call_assertions(
                             continue;
                         }
                         let atomic = replaced.types.into_iter().next().unwrap();
+
+                        // A docblock `@psalm-assert A|B $v` whose union has an
+                        // atomic disjoint from the argument's type (e.g. `int` in
+                        // `string|int` asserted on a `?string`) is a partial
+                        // contradiction — Psalm reports TypeDoesNotContainType for
+                        // that member, even though the union as a whole still
+                        // narrows (to `string`). The single-atomic case is left to
+                        // the reconciler (it empties the type and reports there).
+                        if original_union.types.len() > 1
+                            && matches!(assertion.assertion_type, AssertionType::IsType(_))
+                            && let Some(existing_type) = context.locals.get(&var_id)
+                        {
+                            let atomic_union = TUnion::new(atomic.clone());
+                            if !crate::type_comparator::union_type_comparator::can_expression_types_be_identical(
+                                analyzer.codebase,
+                                &atomic_union,
+                                existing_type,
+                            ) {
+                                emit_assertion_type_does_not_contain_type(
+                                    analyzer,
+                                    analysis_data,
+                                    existing_type,
+                                    &atomic_union,
+                                    argument.span().start.offset,
+                                    argument.span().end.offset,
+                                );
+                            }
+                        }
+
                         orred_rules.push(make_assertion_rule(&assertion.assertion_type, atomic));
                         continue;
                     }

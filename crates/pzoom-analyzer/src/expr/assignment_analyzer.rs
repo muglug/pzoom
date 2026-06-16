@@ -1494,12 +1494,27 @@ fn analyze_reference_assignment(
     }
 
     let rhs_is_external = rhs_key.contains('[') || rhs_key.contains("->") || rhs_key.contains("::");
-    context.set_reference(
-        lhs_var_id.clone(),
-        rhs_var_id,
-        rhs_type.clone(),
-        rhs_is_external,
-    );
+
+    // A reference whose target is an offset/property OF the source variable
+    // itself (`$arr = &$arr[$key]`) cannot be soundly aliased: a later narrowing
+    // of `$arr` (e.g. `isset($arr[$key])` proving it a non-empty array) would
+    // propagate back into `$arr[$key]` through the reference cluster and wrongly
+    // contradict a sibling `!is_array($arr[$key])`. Bind `$arr` to the offset's
+    // current value type without a tracked alias, so the two no longer share a
+    // type slot across loop iterations.
+    let rhs_targets_lhs = rhs_key
+        .strip_prefix(lhs_var_id.as_str())
+        .is_some_and(|rest| rest.starts_with('[') || rest.starts_with("->"));
+    if rhs_targets_lhs {
+        context.set_var_type_direct(lhs_var_id.clone(), rhs_type.clone());
+    } else {
+        context.set_reference(
+            lhs_var_id.clone(),
+            rhs_var_id,
+            rhs_type.clone(),
+            rhs_is_external,
+        );
+    }
 
     // Psalm's AssignmentAnalyzer: a reference taken to an object property
     // (`$b = &$a->b;`) or static property (`$b = &A::$b;`) cannot be tracked

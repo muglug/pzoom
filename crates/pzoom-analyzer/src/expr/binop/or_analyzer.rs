@@ -214,7 +214,7 @@ pub fn analyze(
     // right operand's own formula) to surface redundant/paradoxical right operands.
     // The narrowing target is a throwaway clone — only the emitted issues matter.
     let right_cond_id = (right.start_offset() as u32, right.end_offset() as u32);
-    let right_clauses = formula_generator::get_formula(
+    let mut right_clauses = formula_generator::get_formula(
         right_cond_id,
         right_cond_id,
         right,
@@ -223,6 +223,22 @@ pub fn analyze(
         false,
     )
     .unwrap_or_default();
+    // A negated right operand (`A || !is_float($foo)`) has its leaf clauses keyed
+    // to the inner operand's span (`is_float($foo)`), so the negated assertion
+    // never registers as "active" for this conditional and its contradiction goes
+    // unreported — unlike the positive `A || is_float($foo)`, whose redundancy is
+    // flagged. Re-tag the operand's clauses to this conditional's offset id (the
+    // tuple analogue of Psalm's spl_object_id, threaded as $conditional_object_id)
+    // so the second reconcile reports it, as Psalm's FormulaGenerator does.
+    if matches!(
+        right.unparenthesized(),
+        Expression::UnaryPrefix(unary)
+            if matches!(unary.operator, mago_syntax::ast::ast::unary::UnaryPrefixOperator::Not(_))
+    ) {
+        for clause in &mut right_clauses {
+            clause.creating_conditional_id = right_cond_id;
+        }
+    }
     let right_assigned_var_ids: FxHashSet<VarName> = right_context
         .assigned_var_ids
         .iter()

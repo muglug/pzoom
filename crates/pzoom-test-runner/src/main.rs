@@ -55,9 +55,10 @@ struct BaseCodebase {
 }
 
 /// The PHP version the reused base codebase's CallMap was applied for
-/// (the harness default, 7.4). Tests pinning another version via
-/// php_version.txt re-apply the right CallMap onto their clone.
-const BASE_CALLMAP_PHP_VERSION_ID: u32 = 70_400;
+/// (the harness default, 8.0). Tests pinning another version via
+/// php_version.txt are scanned from scratch for it (see
+/// `test_requires_fresh_scan`).
+const BASE_CALLMAP_PHP_VERSION_ID: u32 = 80_000;
 
 fn main() {
     let cli = Cli::parse();
@@ -554,9 +555,10 @@ fn run_analysis_and_compare(
     applied_callmap_php_version_id: u32,
 ) -> TestResult {
     let mut config = Config::default();
-    // Psalm's test harness pins PHP 7.4 (TestCase::setUp); individual tests
-    // opt into newer versions via 'php_version' (ported as php_version.txt).
-    config.php_version = "7.4".to_string();
+    // The harness default is PHP 8.0 (Psalm's own TestCase::setUp pins 7.4, but
+    // pzoom's corpus targets 8.0); individual tests opt into another version via
+    // 'php_version' (ported as php_version.txt).
+    config.php_version = "8.0".to_string();
     config
         .forbidden_functions
         .extend(["var_dump".to_string(), "shell_exec".to_string()]);

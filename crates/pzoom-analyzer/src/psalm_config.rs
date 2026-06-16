@@ -312,14 +312,16 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
                     config.error_level = ErrorLevel::from_int(n);
                 }
             }
-            // Psalm's findUnusedCode also turns on the post-analysis
-            // unused-declaration pass (Codebase::reportUnusedCode). pzoom's
-            // declaration pass only sees per-file references (no whole-program
-            // aggregation yet), so wiring it to `find_unused_code` here would
-            // flag every cross-file-referenced class/method as unused; only
-            // the unused-variable half is honoured until references are
-            // aggregated codebase-wide.
-            "findUnusedCode" | "findUnusedVariablesAndParams" => {
+            // Psalm's findUnusedCode turns on both the unused-variable pass and
+            // the post-analysis unused-declaration pass (Codebase::reportUnusedCode).
+            // pzoom now aggregates references codebase-wide, so both are honoured.
+            // findUnusedVariablesAndParams is the variable half only.
+            "findUnusedCode" => {
+                let on = value == "true" || value == "auto";
+                config.report_unused = on;
+                config.find_unused_code = on;
+            }
+            "findUnusedVariablesAndParams" => {
                 config.report_unused = value == "true" || value == "auto";
             }
             "findUnusedPsalmSuppress" => {
@@ -593,6 +595,7 @@ mod tests {
 
         assert_eq!(config.php_version, "8.1");
         assert!(config.report_unused);
+        assert!(config.find_unused_code);
         assert!(config.taint_analysis);
         assert!(config.project_dirs.contains(&"src".to_string()));
         assert!(config.project_dirs.contains(&"lib".to_string()));

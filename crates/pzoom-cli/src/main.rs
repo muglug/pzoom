@@ -39,11 +39,9 @@ struct Cli {
     errors_only: bool,
 
     /// Enable the unused-declaration pass (UnusedClass/Method/Property, …).
-    /// pzoom aggregates references per file rather than codebase-wide, so this
-    /// is an opt-in: it is sound when the analyzed set is self-contained (e.g.
-    /// a single file), but over-reports a class/method referenced only from
-    /// another file. `findUnusedCode` in psalm.xml stays limited to the
-    /// unused-variable half until references are aggregated codebase-wide.
+    /// References are aggregated codebase-wide (see unused_symbols), so this is
+    /// also enabled automatically by `findUnusedCode` in psalm.xml; the flag
+    /// forces it on for an ad-hoc run.
     #[arg(long)]
     find_unused_code: bool,
 }

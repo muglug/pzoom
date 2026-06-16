@@ -1221,6 +1221,10 @@ pub(crate) fn report_unused_declarations(
             continue;
         }
         let class_name = interner.lookup(*class_id).to_string();
+        // Anonymous classes (`new class {}`) are used where they are defined.
+        if class_name.starts_with("@anonymous") {
+            continue;
+        }
         let class_referenced = referenced.contains(class_id);
 
         let mut emit = |kind: IssueKind, message: String, start: u32, end: u32| {

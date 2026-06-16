@@ -4,6 +4,8 @@
 //! structure of a docblock (description and tags) without parsing types. Type
 //! parsing lives in [`super::type_parser`].
 
+use std::borrow::Cow;
+
 use rustc_hash::FxHashMap;
 
 /// Extracts the `$name` of a `@param`-style tag's content, skipping over any
@@ -79,13 +81,18 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
         docblock
     };
 
-    // Normalize multi-line @specials
-    let docblock = docblock.replace('\t', " ");
-    let mut lines: Vec<(usize, String)> = docblock
-        .lines()
-        .enumerate()
-        .map(|(i, s)| (i, s.to_string()))
-        .collect();
+    // Normalize multi-line @specials. Only allocate when a tab is actually
+    // present — the overwhelming majority of docblocks have none.
+    let docblock: Cow<str> = if docblock.contains('\t') {
+        Cow::Owned(docblock.replace('\t', " "))
+    } else {
+        Cow::Borrowed(docblock)
+    };
+
+    // Borrow each line from `docblock` rather than copying it. Lines only get
+    // promoted to owned `String`s when they're actually mutated (continuation
+    // merges or `\r` stripping), which most aren't.
+    let mut lines: Vec<Cow<str>> = docblock.lines().map(Cow::Borrowed).collect();
 
     let has_r = docblock.contains('\r');
 
@@ -98,7 +105,7 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
     let mut last_tag_line: Option<usize> = None;
     let mut last_tag_can_continue = false;
 
-    for (k, (_, line)) in lines.iter().enumerate() {
+    for (k, line) in lines.iter().enumerate() {
         if line.contains('@') && is_tag_line(line) {
             last_tag_line = Some(k);
             last_tag_can_continue = parse_tag_line(line)
@@ -116,9 +123,10 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
     // Second pass: perform merges in source order so multiline tag content
     // preserves line order.
     for (cont_idx, target_idx) in &merge_info {
-        let cont_line = lines[*cont_idx].1.clone();
-        lines[*target_idx].1.push('\n');
-        lines[*target_idx].1.push_str(&cont_line);
+        let cont_line = lines[*cont_idx].clone();
+        let target = lines[*target_idx].to_mut();
+        target.push('\n');
+        target.push_str(&cont_line);
     }
 
     // Remove continuation lines (in reverse order to preserve indices)
@@ -130,11 +138,11 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
     let mut line_offset = 0usize;
     let mut description_lines = Vec::new();
 
-    for (_, line) in lines.iter_mut() {
+    for line in lines.iter_mut() {
         let original_line_length = line.len();
 
         if has_r {
-            *line = line.replace('\r', "");
+            *line = Cow::Owned(line.replace('\r', ""));
         }
 
         // Detect first line padding
@@ -151,15 +159,15 @@ pub fn parse(docblock: &str, offset_start: usize) -> ParsedDocblock {
         if let Some((tag_type, data, data_offset)) = parse_tag_line(line) {
             // Clean up asterisks in multi-line content
             let data = if data.contains('*') {
-                clean_multiline_data(&data)
+                clean_multiline_data(data)
             } else {
-                data
+                data.to_string()
             };
 
             let absolute_offset = data_offset + line_offset + 3 + offset_start;
 
             special
-                .entry(tag_type)
+                .entry(tag_type.to_string())
                 .or_default()
                 .insert(absolute_offset, data);
         } else {
@@ -198,7 +206,11 @@ fn is_tag_line(line: &str) -> bool {
 }
 
 /// Parse a line as a tag, returning (tag_type, data, data_offset) if successful.
-fn parse_tag_line(line: &str) -> Option<(String, String, usize)> {
+///
+/// `tag_type` and `data` borrow from `line`; callers own them only at the point
+/// they're stored, which keeps the cheap "does this line continue?" probe in the
+/// continuation pass allocation-free.
+fn parse_tag_line(line: &str) -> Option<(&str, &str, usize)> {
     // Pattern: ^ *\*?\s*@([\w\-\\\:]+) *(.*)$
     let mut idx = line.len() - line.trim_start().len();
     let mut rest = &line[idx..];
@@ -225,10 +237,10 @@ fn parse_tag_line(line: &str) -> Option<(String, String, usize)> {
         return None;
     }
 
-    let tag_type = rest[..tag_end].to_string();
+    let tag_type = &rest[..tag_end];
     let after_tag = &rest[tag_end..];
     let leading_ws = after_tag.len() - after_tag.trim_start().len();
-    let data = after_tag.trim().to_string();
+    let data = after_tag.trim();
 
     // Offset of the data within the line (not end-anchored: trailing
     // whitespace must not shift it).
@@ -262,16 +274,11 @@ fn clean_multiline_data(data: &str) -> String {
 
 /// Normalize description lines (remove leading empty lines, normalize indent).
 fn normalize_description(lines: &[String]) -> String {
-    // Remove leading empty lines
-    let lines: Vec<_> = lines
-        .iter()
-        .skip_while(|l| l.trim().is_empty())
-        .cloned()
-        .collect();
-
-    if lines.is_empty() {
+    // Skip leading empty lines without copying the slice.
+    let Some(start) = lines.iter().position(|l| !l.trim().is_empty()) else {
         return String::new();
-    }
+    };
+    let lines = &lines[start..];
 
     // Find minimum indent
     let min_indent = lines
@@ -281,20 +288,21 @@ fn normalize_description(lines: &[String]) -> String {
         .min()
         .unwrap_or(0);
 
-    // Remove common indent and join
-    lines
-        .iter()
-        .map(|l| {
-            if l.len() >= min_indent {
-                &l[min_indent..]
-            } else {
-                l.as_str()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_string()
+    // Remove common indent and join, building the result in a single buffer.
+    let mut result = String::new();
+    for (i, l) in lines.iter().enumerate() {
+        if i > 0 {
+            result.push('\n');
+        }
+        if l.len() >= min_indent {
+            result.push_str(&l[min_indent..]);
+        } else {
+            result.push_str(l);
+        }
+    }
+
+    result.truncate(result.trim_end().len());
+    result
 }
 
 /// Resolve combined tags with precedence (psalm-* > phpstan-* > standard).

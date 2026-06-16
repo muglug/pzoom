@@ -2324,6 +2324,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_with_tabs_normalized() {
+        // Tabs in the docblock are normalized to spaces; the lazy-allocation
+        // path for tab handling must produce the same result.
+        let docblock = "/**\n\t * Description here.\n\t * @param string $name\n\t */";
+
+        let parsed = parse(docblock, 0);
+
+        assert!(parsed.description.contains("Description here."));
+        let params: Vec<_> = parsed.get_params().collect();
+        assert_eq!(params.len(), 1);
+        assert!(params[0].contains("$name"));
+    }
+
+    #[test]
+    fn test_parse_crlf_line_endings() {
+        // Carriage returns must be stripped regardless of the borrow/owned
+        // line representation.
+        let docblock = "/**\r\n * Some description.\r\n * @return int\r\n */";
+
+        let parsed = parse(docblock, 0);
+
+        assert_eq!(parsed.description, "Some description.");
+        assert!(parsed.tags.contains_key("return"));
+        assert_eq!(parsed.get_return(), Some("int"));
+    }
+
+    #[test]
     fn test_parse_callable_signature_type() {
         let interner = Interner::default();
         let ty = parse_ty("callable(int, string=): bool", &interner);

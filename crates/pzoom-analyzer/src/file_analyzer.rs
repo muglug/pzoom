@@ -344,6 +344,27 @@ impl<'a> FileAnalyzer<'a> {
         }
 
         if self.config.find_unused_suppress {
+            // Psalm only registers function/method-level (FunctionLikeAnalyzer)
+            // and statement-level (StatementsAnalyzer) suppressions as
+            // unused-suppression candidates; it never registers a class-level
+            // docblock suppression (ClassLikeStorage::$suppressed_issues). So an
+            // unused `@psalm-suppress` in a classlike docblock is not reported.
+            // Collect each classlike's preceding-docblock span to exclude those
+            // candidates and match Psalm.
+            let class_docblock_spans: Vec<(usize, usize)> = file_info
+                .classes
+                .iter()
+                .filter_map(|class_id| self.codebase.get_class(*class_id))
+                .filter(|class_info| class_info.file_path == file_path)
+                .filter_map(|class_info| {
+                    let class_start = class_info.start_offset as usize;
+                    let prefix = file_info.contents.get(..class_start)?;
+                    let (docblock_start, docblock) =
+                        crate::issue_suppression::preceding_docblock(prefix)?;
+                    Some((docblock_start, docblock_start + docblock.len()))
+                })
+                .collect();
+
             // Suppressions are collected from parsed comments, mirroring Psalm
             // and Hakana. A comment inside a string literal is not a comment, so
             // `@psalm-suppress` tokens embedded in PHP-code fixtures (heredocs,
@@ -356,6 +377,14 @@ impl<'a> FileAnalyzer<'a> {
                 .collect();
             for candidate in collect_suppression_candidates(&comment_spans) {
                 if used_suppressions.contains(&candidate.offset) {
+                    continue;
+                }
+                // Class-level docblock suppression — exempt from the unused
+                // pass, as in Psalm (see class_docblock_spans above).
+                if class_docblock_spans
+                    .iter()
+                    .any(|&(start, end)| candidate.offset >= start && candidate.offset < end)
+                {
                     continue;
                 }
                 // Issues that Psalm only checks under find_unused_variables

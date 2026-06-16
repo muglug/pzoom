@@ -505,13 +505,13 @@ fn maybe_emit_missing_return_type_issue(
         return;
     }
 
-    // Empty inferred set yields `void`, which the guard below treats as "no
-    // missing-return-type issue", matching the previous early return.
+    // Psalm emits MissingReturnType for any function lacking a declared return
+    // type, including one that only ever returns implicitly (inferred `void`).
+    // We still skip the `mixed` cases below: pzoom infers `mixed` where Psalm
+    // would infer a concrete type, so emitting there would over-report.
     let inferred_return_type = analysis_data.combine_inferred_return_types(return_types_start);
 
-    if inferred_return_type.is_void()
-        || inferred_return_type.is_nothing()
-        || inferred_return_type.is_mixed()
+    if inferred_return_type.is_mixed()
         || inferred_return_type
             .types
             .iter()

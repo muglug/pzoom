@@ -13,11 +13,12 @@ use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
 
 // Import statement-specific analyzers
+use crate::stmt::class_analyzer::ClassLikeDeclaration;
 use crate::stmt::{
     break_analyzer, class_analyzer, continue_analyzer, declare_analyzer, do_analyzer, echo_analyzer,
     expression_stmt_analyzer, for_analyzer, foreach_analyzer, function_analyzer, global_analyzer,
-    if_else_analyzer, return_analyzer, static_analyzer, switch_analyzer, try_analyzer,
-    unset_analyzer, while_analyzer,
+    if_else_analyzer, interface_analyzer, return_analyzer, static_analyzer, switch_analyzer,
+    trait_analyzer, try_analyzer, unset_analyzer, while_analyzer,
 };
 
 /// Returns true if any statement in `statements` contains a `yield`/`yield from`,
@@ -162,18 +163,24 @@ pub fn analyze_stmt(
         Statement::Use(_) => Ok(()),
 
         // Class-like declarations - analyze method bodies
-        Statement::Class(class_stmt) => {
-            class_analyzer::analyze(analyzer, class_stmt, analysis_data, context)
-        }
+        Statement::Class(class_stmt) => class_analyzer::analyze(
+            analyzer,
+            ClassLikeDeclaration::Class(class_stmt),
+            analysis_data,
+            context,
+        ),
         Statement::Trait(trait_stmt) => {
-            class_analyzer::analyze_trait(analyzer, trait_stmt, analysis_data, context)
+            trait_analyzer::analyze(analyzer, trait_stmt, analysis_data, context)
         }
         Statement::Interface(interface_stmt) => {
-            class_analyzer::analyze_interface(analyzer, interface_stmt, analysis_data, context)
+            interface_analyzer::analyze(analyzer, interface_stmt, analysis_data, context)
         }
-        Statement::Enum(enum_stmt) => {
-            class_analyzer::analyze_enum(analyzer, enum_stmt, analysis_data, context)
-        }
+        Statement::Enum(enum_stmt) => class_analyzer::analyze(
+            analyzer,
+            ClassLikeDeclaration::Enum(enum_stmt),
+            analysis_data,
+            context,
+        ),
 
         // Function declarations - analyze function body
         Statement::Function(func_stmt) => {
@@ -514,58 +521,11 @@ fn analyze_namespace(
         NamespaceBody::BraceDelimited(block) => block.statements.as_slice(),
     };
 
-    // Create a function/class analyzer context that knows about the namespace
+    // Every per-statement analyzer reads its enclosing namespace from `context`,
+    // so a namespaced statement is dispatched exactly like a top-level one —
+    // just with the namespace-aware `ns_context`.
     for stmt in stmts {
-        match stmt {
-            Statement::Function(func_stmt) => {
-                function_analyzer::analyze_with_namespace(
-                    analyzer,
-                    func_stmt,
-                    ns_name,
-                    analysis_data,
-                    &mut ns_context,
-                )?;
-            }
-            Statement::Class(class_stmt) => {
-                class_analyzer::analyze_with_namespace(
-                    analyzer,
-                    class_stmt,
-                    ns_name,
-                    analysis_data,
-                    &mut ns_context,
-                )?;
-            }
-            Statement::Interface(interface_stmt) => {
-                class_analyzer::analyze_interface_with_namespace(
-                    analyzer,
-                    interface_stmt,
-                    ns_name,
-                    analysis_data,
-                    &mut ns_context,
-                )?;
-            }
-            Statement::Trait(trait_stmt) => {
-                class_analyzer::analyze_trait_with_namespace(
-                    analyzer,
-                    trait_stmt,
-                    ns_name,
-                    analysis_data,
-                    &mut ns_context,
-                )?;
-            }
-            Statement::Enum(enum_stmt) => {
-                class_analyzer::analyze_enum_with_namespace(
-                    analyzer,
-                    enum_stmt,
-                    ns_name,
-                    analysis_data,
-                    &mut ns_context,
-                )?;
-            }
-            _ => {
-                analyze_stmt(analyzer, stmt, analysis_data, &mut ns_context)?;
-            }
-        }
+        analyze_stmt(analyzer, stmt, analysis_data, &mut ns_context)?;
     }
 
     // Namespace blocks share the same file-level runtime variable scope.

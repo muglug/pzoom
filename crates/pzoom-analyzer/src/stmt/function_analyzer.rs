@@ -21,30 +21,25 @@ use crate::stmt_analyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
 
-/// Analyze a function declaration.
+/// Analyze a function declaration. The enclosing namespace (if any) is read from
+/// `context`, so the same entry point serves a top-level or a namespaced function.
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
     func: &Function<'_>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    analyze_with_namespace(analyzer, func, None, analysis_data, context)
-}
+    // The enclosing namespace as a string, recovered from `context` (set by the
+    // namespace analyzer). `namespace_owned` keeps the interned string alive for
+    // the `Option<&str>` borrow used throughout this function.
+    let namespace_owned = context.namespace.map(|id| analyzer.interner.lookup(id));
+    let namespace = namespace_owned.as_deref();
 
-/// Analyze a function declaration with a namespace context.
-pub fn analyze_with_namespace(
-    analyzer: &StatementsAnalyzer<'_>,
-    func: &Function<'_>,
-    namespace: Option<&str>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
     // Get the function name - use FQN if in a namespace
     let func_name = func.name.value;
-    let fqn = if let Some(ns) = namespace {
-        format!("{}\\{}", ns, func_name)
-    } else {
-        func_name.to_string()
+    let fqn = match namespace {
+        Some(ns) => format!("{}\\{}", ns, func_name),
+        None => func_name.to_string(),
     };
 
     // Look up the function info from the codebase
@@ -1434,7 +1429,7 @@ pub(crate) fn check_param_class_casing(
             .unwrap_or((function_info.start_offset, function_info.start_offset + 1));
         let mut wrong_cased: Vec<StrId> = Vec::new();
         for atomic in &return_type.types {
-            collect_wrong_cased_classes(analyzer, atomic, &mut wrong_cased, 0);
+            collect_wrong_cased_classes(analyzer, atomic, &mut wrong_cased);
         }
         for name in wrong_cased {
             if !emitted.insert((start_offset, name)) {
@@ -1453,6 +1448,51 @@ pub(crate) fn check_param_class_casing(
                 line,
                 col,
             ));
+        }
+    }
+
+    // A `@deprecated` class/interface named anywhere in the docblock `@return`
+    // type — nested inside `Foo[]`, generics or shapes included — reports
+    // Deprecated{Class,Interface}, mirroring Psalm's TypeChecker type-visitor
+    // (`checkNamedObject`) which the native-signature walk above (top-level
+    // atomics only) can't reach for a docblock-only `@return Foo[]`. Psalm skips
+    // this for an *inherited* return type (ReturnTypeAnalyzer passes
+    // `$storage->inherited_return_type`), so the notice fires on the declaring
+    // method, not again on every override (the noNoticeOnInheritance case).
+    // A `@deprecated` class/interface named anywhere in the docblock `@return`
+    // type — nested in `Foo[]`, generics or shapes included — reports
+    // Deprecated{Class,Interface}, mirroring Psalm's ReturnTypeAnalyzer running
+    // the TypeChecker visitor on the declared return type (for abstract and
+    // interface methods too). The native-signature walk above only inspects
+    // top-level atomics, so the docblock-only nested case lands here. Skipped
+    // for an inherited return type (Psalm's `inherited_return_type`) so the
+    // notice fires on the declaring method, not again on every override.
+    if let Some(return_type) = function_info.return_type.as_ref() {
+        if !function_info.inherited_return_type {
+            let mut named_classes = Vec::new();
+            pzoom_code_info::ttype::visit_type_tree(
+                &pzoom_code_info::ttype::TypeNode::Union(return_type),
+                &mut |node| {
+                    if let pzoom_code_info::ttype::TypeNode::Atomic(TAtomic::TNamedObject {
+                        name,
+                        ..
+                    }) = node
+                    {
+                        named_classes.push(*name);
+                    }
+                    true
+                },
+            );
+            for name in named_classes {
+                emit_docblock_type_deprecation(
+                    analyzer,
+                    analysis_data,
+                    &mut emitted,
+                    name,
+                    function_info.declaring_class,
+                    function_info.start_offset,
+                );
+            }
         }
     }
 
@@ -1496,83 +1536,74 @@ pub(crate) fn check_param_class_casing(
     }
 }
 
-/// Collects class names referenced by `atomic` (recursing through generic
-/// params, array elements and class-strings) that fail exact lookup but match
-/// a declared classlike case-insensitively.
+/// Collects class names referenced anywhere in `atomic`'s type tree — generic
+/// params, array element/key types, shape fields, callable params/returns,
+/// template bounds, class-strings — that fail exact lookup but match a declared
+/// classlike case-insensitively (Psalm's wrong-casing check). Walks the shared
+/// [`pzoom_code_info::ttype::TypeNode`] recursion.
 fn collect_wrong_cased_classes(
     analyzer: &StatementsAnalyzer<'_>,
     atomic: &TAtomic,
     wrong_cased: &mut Vec<StrId>,
-    depth: usize,
 ) {
-    if depth > 8 {
-        return;
-    }
-
-    let recurse_union = |union: &TUnion, wrong_cased: &mut Vec<StrId>| {
-        for nested in &union.types {
-            collect_wrong_cased_classes(analyzer, nested, wrong_cased, depth + 1);
-        }
-    };
-
-    match atomic {
-        TAtomic::TNamedObject {
-            name, type_params, ..
-        } => {
-            if !matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT)
+    pzoom_code_info::ttype::visit_type_tree(
+        &pzoom_code_info::ttype::TypeNode::Atomic(atomic),
+        &mut |node| {
+            if let pzoom_code_info::ttype::TypeNode::Atomic(TAtomic::TNamedObject {
+                name, ..
+            }) = node
+                && !matches!(*name, StrId::SELF | StrId::STATIC | StrId::PARENT)
                 && analyzer.codebase.get_class(*name).is_none()
                 && crate::class_casing::class_casing_hint(analyzer, *name).is_some()
                 && !wrong_cased.contains(name)
             {
                 wrong_cased.push(*name);
             }
-            if let Some(type_params) = type_params {
-                for type_param in type_params {
-                    recurse_union(type_param, wrong_cased);
-                }
-            }
-        }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
-            key_type,
-            value_type,
-        } => {
-            recurse_union(key_type, wrong_cased);
-            recurse_union(value_type, wrong_cased);
-        }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            recurse_union(value_type, wrong_cased);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            for value_type in properties.values() {
-                recurse_union(value_type, wrong_cased);
-            }
-            if let Some(fallback_key_type) = fallback_key_type {
-                recurse_union(fallback_key_type, wrong_cased);
-            }
-            if let Some(fallback_value_type) = fallback_value_type {
-                recurse_union(fallback_value_type, wrong_cased);
-            }
-        }
-        TAtomic::TClassString {
-            as_type: Some(as_type),
-        } => {
-            collect_wrong_cased_classes(analyzer, as_type, wrong_cased, depth + 1);
-        }
-        _ => {}
+            true
+        },
+    );
+}
+
+/// Reports Deprecated{Class,Interface} for a class named in a docblock type,
+/// mirroring Psalm's `TypeChecker::checkNamedObject`: `self`/`static`/`parent`
+/// and a self-referential name (Psalm's `getFQCLN() !== value`) are skipped,
+/// and only a known, `@deprecated` class fires. Interfaces report
+/// DeprecatedInterface, everything else DeprecatedClass (Psalm draws no trait
+/// distinction in the type visitor). `emitted` dedups against the
+/// native-signature walk so a class named by both hints reports once.
+fn emit_docblock_type_deprecation(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    emitted: &mut FxHashSet<(u32, StrId)>,
+    name: StrId,
+    self_class: Option<StrId>,
+    start_offset: u32,
+) {
+    if matches!(name, StrId::SELF | StrId::STATIC | StrId::PARENT) || self_class == Some(name) {
+        return;
     }
+    let Some(referenced_info) = analyzer.codebase.get_class(name) else {
+        return;
+    };
+    if !referenced_info.is_deprecated || !emitted.insert((start_offset, name)) {
+        return;
+    }
+    let issue_kind =
+        if referenced_info.kind == pzoom_code_info::class_like_info::ClassLikeKind::Interface {
+            IssueKind::DeprecatedInterface
+        } else {
+            IssueKind::DeprecatedClass
+        };
+    let (line, col) = analyzer.get_line_column(start_offset);
+    analysis_data.add_issue(Issue::new(
+        issue_kind,
+        format!("{} is marked deprecated", analyzer.interner.lookup(name)),
+        analyzer.file_path,
+        start_offset,
+        start_offset + 1,
+        line,
+        col,
+    ));
 }
 
 fn emit_docblock_issues(

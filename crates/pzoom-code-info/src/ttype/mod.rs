@@ -4,10 +4,12 @@ pub mod key_value_of;
 pub mod template;
 mod type_combination;
 pub mod type_combiner;
+pub mod type_node;
 
 use crate::data_flow::node::DataFlowNode;
 
 pub use key_value_of::{get_key_of_union, get_value_of_union};
+pub use type_node::{visit_type_tree, TypeNode};
 pub use type_combiner::{
     add_union_type, combine, combine_union_types, combine_union_types_with_codebase,
     combine_with_codebase,

@@ -19,7 +19,6 @@ Whole files missing from a densely-mirrored directory, by reference mass.
 | 291 | `Internal/Analyzer/CommentAnalyzer.php` |
 | 208 | `Internal/Analyzer/MethodAnalyzer.php` |
 | 192 | `Internal/Analyzer/Statements/UnusedAssignmentRemover.php` |
-| 188 | `Internal/Analyzer/InterfaceAnalyzer.php` |
 | 169 | `Internal/Provider/ReturnTypeProvider/FilterInputReturnTypeProvider.php` |
 | 167 | `Internal/Type/TypeVariableTracker.php` |
 | 155 | `Internal/Analyzer/Statements/Expression/MagicConstAnalyzer.php` |
@@ -30,6 +29,7 @@ Whole files missing from a densely-mirrored directory, by reference mass.
 | 133 | `Internal/Analyzer/CanAlias.php` |
 | 123 | `PluginRegistrationSocket.php` |
 | 106 | `Internal/Provider/ReturnTypeProvider/VersionCompareReturnTypeProvider.php` |
+| 99 | `Internal/Analyzer/Statements/Expression/NullsafeAnalyzer.php` |
 
 ## 2. Deepen next — matched files that diverge most
 
@@ -42,22 +42,22 @@ pzoom has these, but mirrors little of Psalm's logic. Listed constructs are Psal
 | 1442 | 5 | `FunctionLikeAnalyzer.php` → `function_analysis_data.rs, function_like_analyzer.rs` | `return_type`, `return_vars_in_scope`, `getCodebase`, `FunctionStorage`, `return_type_location`, `isset`, `is_static`, `getFQCLN` |
 | 1326 | 28 | `SimpleAssertionReconciler.php` → `simple_assertion_reconciler.rs` | `hasMixed`, `removeType`, `getId`, `getAtomicTypes`, `RECONCILIATION_EMPTY`, `getNever`, `addType`, `replaceAs` |
 | 1319 | 10 | `Codebase.php` → `codebase_info.rs` | `function_symbol`, `classlikes`, `MethodIdentifier`, `PHPMarkdownContent`, `CompletionItem`, `NamespaceAnalyzer`, `wrap`, `functions` |
-| 986 | 33 | `AssignmentAnalyzer.php` → `assignment_analyzer.rs` | `getAttributes`, `isset`, `getFQCLN`, `setParentNodes`, `BinaryOp`, `AssignOp`, `hasVariable`, `getMessage` |
+| 989 | 33 | `AssignmentAnalyzer.php` → `assignment_analyzer.rs` | `getAttributes`, `isset`, `getFQCLN`, `setParentNodes`, `BinaryOp`, `AssignOp`, `hasVariable`, `getMessage` |
 | 984 | 17 | `ArithmeticOpAnalyzer.php` → `arithmetic_op_analyzer.rs` | `getType`, `Expr`, `combineUnionTypes`, `BinaryOp`, `getIntRange`, `getInt`, `min_bound`, `max_bound` |
 | 940 | 41 | `ArrayFetchAnalyzer.php` → `array_fetch_analyzer.rs` | `getAtomicTypes`, `hasMixed`, `setType`, `removeType`, `getRootFilePath`, `MutableUnion`, `getGenericKeyType`, `getAttributes` |
 | 888 | 31 | `ArgumentAnalyzer.php` → `argument_analyzer.rs` | `getAtomicTypes`, `hasMixed`, `MethodIdentifier`, `isSingle`, `hasArray`, `FunctionLikeAnalyzer`, `calling_method_id`, `processTaintedness` |
-| 867 | 49 | `ClassAnalyzer.php` → `class_analyzer.rs` | `fq_class_name`, `strtolower`, `getAttribute`, `location`, `classlikes`, `getFQCLN`, `classlike_storage_provider`, `FileManipulation` |
+| 880 | 48 | `ClassAnalyzer.php` → `class_analyzer.rs` | `fq_class_name`, `strtolower`, `getAttribute`, `location`, `classlikes`, `getFQCLN`, `classlike_storage_provider`, `FileManipulation` |
 | 851 | 29 | `SimpleNegatedAssertionReconciler.php` → `simple_negated_assertion_reconciler.rs` | `removeType`, `addType`, `getAtomicTypes`, `getNever`, `getId`, `hasMixed`, `Reconciler`, `RECONCILIATION_EMPTY` |
-| 734 | 24 | `StatementsAnalyzer.php` → `statements_analyzer.rs, stmt_analyzer.rs` | `getParsedDocblock`, `isset`, `data_flow_graph`, `getAliases`, `tags`, `getFileAnalyzer`, `getUnusedVarLocations`, `analyzeStatement` |
 | 734 | 1 | `Type.php` → `mod.rs` | `Union`, `class_type`, `Atomic`, `from_docblock`, `TNamedObject`, `value`, `setPossiblyUndefined`, `getFalse` |
-| 696 | 37 | `ArgumentsAnalyzer.php` → `arguments_analyzer.rs` | `in_array`, `isset`, `inside_call`, `getFQCLN`, `getAtomicTypes`, `TemplateStandinTypeReplacer`, `MethodIdentifier`, `ARRAY_FILTERLIKE` |
+| 732 | 25 | `StatementsAnalyzer.php` → `statements_analyzer.rs, stmt_analyzer.rs` | `getParsedDocblock`, `isset`, `data_flow_graph`, `getAliases`, `tags`, `getFileAnalyzer`, `getUnusedVarLocations`, `analyzeStatement` |
+| 697 | 37 | `ArgumentsAnalyzer.php` → `arguments_analyzer.rs` | `in_array`, `isset`, `inside_call`, `getFQCLN`, `getAtomicTypes`, `TemplateStandinTypeReplacer`, `MethodIdentifier`, `ARRAY_FILTERLIKE` |
 | 688 | 14 | `Methods.php` → `methods.rs` | `fq_class_name`, `MethodIdentifier`, `classlike_storage_provider`, `file_reference_provider`, `strtolower`, `isset`, `getDeclaringMethodId`, `getOverriddenMethodIds` |
-| 668 | 49 | `TypeCombiner.php` → `type_combiner.rs` | `isset`, `unset`, `setPossiblyUndefined`, `TGenericObject`, `Codebase`, `setFromDocblock`, `isNever`, `TNonFalsyString` |
 | 664 | 9 | `CallAnalyzer.php` → `call_analyzer.rs` | `getType`, `value`, `isset`, `getAtomicTypes`, `vars_in_scope`, `name`, `getStorage`, `MethodIdentifier` |
+| 659 | 50 | `TypeCombiner.php` → `type_combiner.rs` | `isset`, `unset`, `setPossiblyUndefined`, `TGenericObject`, `setFromDocblock`, `isNever`, `TNonFalsyString`, `TCallableKeyedArray` |
 | 586 | 37 | `AssertionReconciler.php` → `assertion_reconciler.rs` | `getId`, `getAtomicTypes`, `interfaceExists`, `IsLooselyEqual`, `triggerIssueForImpossible`, `replaceAs`, `maybeAdd`, `addIntersectionType` |
 | 585 | 38 | `FunctionCallAnalyzer.php` → `function_call_analyzer.rs` | `setType`, `isFirstClassCallable`, `function_exists`, `isset`, `function_call_info`, `getParts`, `getAttributes`, `is_stubbed` |
 | 574 | 21 | `ArrayFunctionArgumentsAnalyzer.php` → `array_function_arguments_analyzer.rs` | `value`, `assignByRefParam`, `analyze`, `getArray`, `getListAtomic`, `AssignmentAnalyzer`, `type_params`, `hasArray` |
-| 550 | 45 | `InstancePropertyAssignmentAnalyzer.php` → `instance_property_assignment_analyzer.rs` | `collect_mutations`, `hasMixed`, `accepts`, `StaticPropertyFetch`, `FunctionLikeAnalyzer`, `include_location`, `taintProperty`, `isset` |
+| 553 | 45 | `InstancePropertyAssignmentAnalyzer.php` → `instance_property_assignment_analyzer.rs` | `collect_mutations`, `hasMixed`, `accepts`, `StaticPropertyFetch`, `FunctionLikeAnalyzer`, `include_location`, `taintProperty`, `isset` |
 | 548 | 28 | `AtomicStaticCallAnalyzer.php` → `atomic_static_call_analyzer.rs` | `analyze`, `methodExists`, `setType`, `MethodIdentifier`, `getArgs`, `calling_method_id`, `ArgumentsAnalyzer`, `isFirstClassCallable` |
 | 532 | 33 | `TemplateStandinTypeReplacer.php` → `standin_type_replacer.rs` | `getAtomicTypes`, `defining_class`, `getId`, `isset`, `getMostSpecificTypeFromBounds`, `getSingleAtomic`, `array_values`, `isSingle` |
 | 520 | 40 | `AtomicPropertyFetchAnalyzer.php` → `atomic_property_fetch_analyzer.rs` | `setType`, `TGenericObject`, `isset`, `in_array`, `localizePropertyType`, `interfaceExists`, `processTaints`, `getForAssignment` |

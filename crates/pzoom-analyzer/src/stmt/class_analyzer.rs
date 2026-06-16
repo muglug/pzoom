@@ -8,7 +8,7 @@ use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::class_like::enum_case::EnumCaseItem;
 use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
 use mago_syntax::ast::ast::class_like::method::{Method, MethodBody};
-use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
+use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Trait};
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::namespace::NamespaceBody;
@@ -36,60 +36,45 @@ use crate::type_comparator::union_type_comparator;
 use indexmap::IndexMap;
 use pzoom_code_info::TemplateResult;
 
-/// Analyze a class declaration.
+/// A class or enum declaration. Psalm handles both with a single `ClassAnalyzer`
+/// (PHP-Parser's `Class_` and `Enum_` both extend `ClassLike`); [`analyze`]
+/// dispatches on this to do likewise.
+pub enum ClassLikeDeclaration<'ast, 'arena> {
+    Class(&'ast Class<'arena>),
+    Enum(&'ast Enum<'arena>),
+}
+
+/// Analyze a class or enum declaration — the shared entry point Psalm models with
+/// `ClassAnalyzer`. The enclosing namespace (if any) is read from `context`, so
+/// the same entry serves a top-level or a namespaced declaration.
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
-    class: &Class<'_>,
+    declaration: ClassLikeDeclaration<'_, '_>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    analyze_with_namespace(analyzer, class, None, analysis_data, context)
+    match declaration {
+        ClassLikeDeclaration::Class(class) => {
+            analyze_class(analyzer, class, analysis_data, context)
+        }
+        ClassLikeDeclaration::Enum(enum_stmt) => {
+            analyze_enum(analyzer, enum_stmt, analysis_data, context)
+        }
+    }
 }
 
-/// Analyze a trait declaration.
-pub fn analyze_trait(
-    analyzer: &StatementsAnalyzer<'_>,
-    trait_stmt: &Trait<'_>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
-    analyze_trait_with_namespace(analyzer, trait_stmt, None, analysis_data, context)
-}
-
-/// Analyze an interface declaration.
-pub fn analyze_interface(
-    analyzer: &StatementsAnalyzer<'_>,
-    interface_stmt: &Interface<'_>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
-    analyze_interface_with_namespace(analyzer, interface_stmt, None, analysis_data, context)
-}
-
-/// Analyze an enum declaration.
-pub fn analyze_enum(
-    analyzer: &StatementsAnalyzer<'_>,
-    enum_stmt: &Enum<'_>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
-    analyze_enum_with_namespace(analyzer, enum_stmt, None, analysis_data, context)
-}
-
-/// Analyze a class declaration with a namespace context.
-pub fn analyze_with_namespace(
+/// Analyze a class declaration.
+fn analyze_class(
     analyzer: &StatementsAnalyzer<'_>,
     class: &Class<'_>,
-    namespace: Option<&str>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     // Get the class name - use FQN if in a namespace
     let class_name = class.name.value;
-    let fqn = if let Some(ns) = namespace {
-        format!("{}\\{}", ns, class_name)
-    } else {
-        class_name.to_string()
+    let fqn = match context.namespace {
+        Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), class_name),
+        None => class_name.to_string(),
     };
     let class_name_id = analyzer.interner.intern(&fqn);
 
@@ -318,141 +303,9 @@ pub fn analyze_anonymous_class(
     Ok(())
 }
 
-/// Analyze an interface declaration with a namespace context.
-pub fn analyze_interface_with_namespace(
-    analyzer: &StatementsAnalyzer<'_>,
-    interface_stmt: &Interface<'_>,
-    namespace: Option<&str>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
-    let interface_name = interface_stmt.name.value;
-    let fqn = if let Some(ns) = namespace {
-        format!("{}\\{}", ns, interface_name)
-    } else {
-        interface_name.to_string()
-    };
-    let interface_name_id = analyzer.interner.intern(&fqn);
-
-    let interface_info = analyzer.codebase.get_class(interface_name_id);
-    attribute_analyzer::analyze_interface_or_trait_attributes(
-        analyzer,
-        interface_stmt.attribute_lists.as_slice(),
-        interface_stmt.members.as_slice(),
-        interface_info,
-        interface_name_id,
-        context,
-        analysis_data,
-    );
-
-    check_interface_property_declarations(analyzer, interface_stmt, analysis_data);
-
-    if let Some(info) = interface_info {
-        check_interface_extends_targets(analyzer, info, context, analysis_data);
-        check_inheritor_violations(analyzer, info, analysis_data);
-        check_docblock_issues(analyzer, info, analysis_data);
-        check_undefined_docblock_mixins(analyzer, info, analysis_data);
-        check_pseudo_method_compatibility(analyzer, info, analysis_data);
-        check_pseudo_method_annotations(analyzer, info, analysis_data);
-        check_deprecated_and_internal_relationships(analyzer, info, analysis_data);
-        check_method_docblock_param_type_mismatches(analyzer, info, analysis_data);
-        check_extended_template_param_bounds(analyzer, info, analysis_data);
-        check_missing_template_params(analyzer, info, context, analysis_data);
-        check_undefined_docblock_template_extends_classes(analyzer, info, analysis_data);
-        check_template_variance(analyzer, info, analysis_data);
-        check_missing_interface_method_typehints(analyzer, info, analysis_data);
-        check_invalid_override_attributes(analyzer, info, analysis_data);
-        check_duplicate_constant_declarations(analyzer, info, analysis_data);
-        check_duplicate_method_declarations(analyzer, info, analysis_data);
-        check_class_constant_overrides(analyzer, info, analysis_data);
-    }
-
-    let _ = context;
-
-    Ok(())
-}
-
-/// PHP 8.4 interface property rules: an interface property must be hooked,
-/// explicitly public, and non-static; hooks require PHP >= 8.4. These are
-/// parse errors in PHP (Psalm's parser reports them; mago accepts them, so
-/// re-check here with the configured version).
-fn check_interface_property_declarations(
-    analyzer: &StatementsAnalyzer<'_>,
-    interface_stmt: &Interface<'_>,
-    analysis_data: &mut FunctionAnalysisData,
-) {
-    use mago_span::HasSpan;
-    use mago_syntax::ast::ast::class_like::property::Property;
-    use mago_syntax::ast::ast::modifier::Modifier;
-
-    for member in interface_stmt.members.iter() {
-        let ClassLikeMember::Property(property) = member else {
-            continue;
-        };
-
-        let span = property.span();
-        let emit = |message: &str, analysis_data: &mut FunctionAnalysisData| {
-            let (line, col) = analyzer.get_line_column(span.start.offset);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::ParseError,
-                message.to_string(),
-                analyzer.file_path,
-                span.start.offset,
-                span.end.offset,
-                line,
-                col,
-            ));
-        };
-
-        match property {
-            Property::Plain(_) => {
-                emit(
-                    "Interfaces may only include hooked properties",
-                    analysis_data,
-                );
-            }
-            Property::Hooked(hooked) => {
-                if analyzer.config.php_version_id() < 80400 {
-                    emit(
-                        "Property hooks are not available before PHP 8.4",
-                        analysis_data,
-                    );
-                    continue;
-                }
-
-                let mut has_public = false;
-                let mut bad_modifier = None;
-                for modifier in hooked.modifiers.iter() {
-                    match modifier {
-                        Modifier::Public(_) => has_public = true,
-                        Modifier::Private(_) => {
-                            bad_modifier = Some("Interface properties cannot be private")
-                        }
-                        Modifier::Protected(_) => {
-                            bad_modifier = Some("Interface properties cannot be protected")
-                        }
-                        Modifier::Static(_) => {
-                            bad_modifier = Some("Interface properties cannot be static")
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(message) = bad_modifier {
-                    emit(message, analysis_data);
-                } else if !has_public {
-                    emit(
-                        "Interface properties must be declared public",
-                        analysis_data,
-                    );
-                }
-            }
-        }
-    }
-}
-
 /// Emit InvalidOverride for any method carrying `#[\Override]` that does not actually
 /// override (or implement) an inherited method.
-fn check_invalid_override_attributes(
+pub(crate) fn check_invalid_override_attributes(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -552,19 +405,18 @@ fn check_missing_override_attributes(
     }
 }
 
-/// Analyze an enum declaration with a namespace context.
-pub fn analyze_enum_with_namespace(
+/// Analyze an enum declaration. The enclosing namespace (if any) is read from
+/// `context`, so the same entry point serves a top-level or a namespaced enum.
+fn analyze_enum(
     analyzer: &StatementsAnalyzer<'_>,
     enum_stmt: &Enum<'_>,
-    namespace: Option<&str>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     let enum_name = enum_stmt.name.value;
-    let fqn = if let Some(ns) = namespace {
-        format!("{}\\{}", ns, enum_name)
-    } else {
-        enum_name.to_string()
+    let fqn = match context.namespace {
+        Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), enum_name),
+        None => enum_name.to_string(),
     };
     let enum_name_id = analyzer.interner.intern(&fqn);
 
@@ -1077,7 +929,7 @@ fn get_enum_case_literal_value(expr: &Expression<'_>) -> Option<EnumCaseLiteralV
     }
 }
 
-fn check_missing_interface_method_typehints(
+pub(crate) fn check_missing_interface_method_typehints(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -1281,7 +1133,7 @@ fn union_is_string_return_type(return_type: &TUnion) -> bool {
 /// Resolved (class-id, span) pairs for every name written in `extends`,
 /// `implements` and `use Trait;` clauses — Psalm points MissingDependency /
 /// trait-requirement issues at the specific name node, not the class body.
-fn collect_dependency_name_spans(
+pub(crate) fn collect_dependency_name_spans(
     analyzer: &StatementsAnalyzer<'_>,
     extends: Option<&mago_syntax::ast::ast::class_like::inheritance::Extends<'_>>,
     implements: Option<&mago_syntax::ast::ast::class_like::inheritance::Implements<'_>>,
@@ -1335,7 +1187,7 @@ fn dependency_name_pos(
         .unwrap_or(fallback)
 }
 
-fn resolve_alias_in_context(class_id: StrId, context: &BlockContext) -> StrId {
+pub(crate) fn resolve_alias_in_context(class_id: StrId, context: &BlockContext) -> StrId {
     context
         .class_aliases
         .get(&class_id)
@@ -1370,7 +1222,7 @@ fn has_parent_cycle(
 /// Psalm's `@psalm-inheritors` enforcement (ClassAnalyzer / InterfaceAnalyzer):
 /// a class-like inheriting from a parent that declares a closed inheritor set
 /// must be contained by that set.
-fn check_inheritor_violations(
+pub(crate) fn check_inheritor_violations(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -1486,39 +1338,6 @@ fn check_private_final_methods(
     }
 }
 
-/// Psalm's `InterfaceAnalyzer`: every name in an interface's `extends` list
-/// must resolve to an interface. An existing non-interface (a class) is
-/// UndefinedInterface "X is not an interface". (For a class's `implements`
-/// list the equivalent check lives in `check_class_relationships`.)
-fn check_interface_extends_targets(
-    analyzer: &StatementsAnalyzer<'_>,
-    interface_info: &pzoom_code_info::ClassLikeInfo,
-    context: &BlockContext,
-    analysis_data: &mut FunctionAnalysisData,
-) {
-    for extended_id in &interface_info.interfaces {
-        let resolved = resolve_alias_in_context(*extended_id, context);
-        if let Some(extended_info) = analyzer.codebase.get_class(resolved)
-            && extended_info.kind != ClassLikeKind::Interface
-        {
-            let (issue_start, issue_end) = class_issue_pos(interface_info);
-            let (line, col) = analyzer.get_line_column(issue_start);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::UndefinedInterface,
-                format!(
-                    "{} is not an interface",
-                    analyzer.interner.lookup(*extended_id)
-                ),
-                analyzer.file_path,
-                issue_start,
-                issue_end,
-                line,
-                col,
-            ));
-        }
-    }
-}
-
 fn check_class_relationships(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
@@ -1597,6 +1416,7 @@ fn check_class_relationships(
             } else if parent_info.is_final {
                 if !should_suppress_class_issue(
                     analyzer,
+                    analysis_data,
                     class_info.start_offset,
                     &["InvalidExtends", "InvalidExtendClass"],
                 ) {
@@ -1836,7 +1656,7 @@ fn check_trait_requirements(
     }
 }
 
-fn check_missing_dependencies(
+pub(crate) fn check_missing_dependencies(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     context: &BlockContext,
@@ -1912,7 +1732,7 @@ fn check_missing_dependencies(
     }
 }
 
-fn check_method_docblock_param_type_mismatches(
+pub(crate) fn check_method_docblock_param_type_mismatches(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -2173,7 +1993,7 @@ pub(crate) fn check_functionlike_docblock_param_type_mismatches(
 /// Validate `@template-extends Base<...>` / `@template-implements` args
 /// against the parent templates' bounds (Psalm ClassLikeAnalyzer:
 /// "Extended template param T expects type X, type Y given").
-fn check_extended_template_param_bounds(
+pub(crate) fn check_extended_template_param_bounds(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -2328,7 +2148,7 @@ fn check_extended_template_param_bounds(
     }
 }
 
-fn check_missing_template_params(
+pub(crate) fn check_missing_template_params(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     context: &BlockContext,
@@ -2882,7 +2702,7 @@ fn check_method_signature_must_omit_return_type(
 /// Psalm MethodComparator::comparePseudoMethods: a `@method` annotation that
 /// shadows a real (declared or inherited) method is compared against it, with
 /// the native-signature checks disabled (prevent_method_signature_mismatch).
-fn check_pseudo_method_annotations(
+pub(crate) fn check_pseudo_method_annotations(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -4118,6 +3938,19 @@ fn check_property_initialization(
         // docblock marks it initialized at scan time (Psalm's
         // ClassLikeNodeScanner), for inheritors too.
         if property.marked_initialized {
+            // The property is filtered out before the per-property suppression
+            // check below, so record its `@psalm-suppress` token here (Psalm's
+            // used_suppressions) — otherwise findUnusedPsalmSuppress wrongly
+            // flags it. Only for a property declared in this file; an inherited
+            // suppression is recorded when its own class is analysed.
+            if property.start_offset != 0 {
+                let _ = crate::issue_suppression::is_issue_suppressed_at(
+                    analyzer,
+                    analysis_data,
+                    property.start_offset,
+                    "PropertyNotSetInConstructor",
+                );
+            }
             continue;
         }
         // A promoted property is initialized by its declaring constructor —
@@ -4593,141 +4426,8 @@ fn check_immutable_relationships(
     }
 }
 
-/// Analyze a trait declaration with a namespace context.
-pub fn analyze_trait_with_namespace(
-    analyzer: &StatementsAnalyzer<'_>,
-    trait_stmt: &Trait<'_>,
-    namespace: Option<&str>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &mut BlockContext,
-) -> Result<(), AnalysisError> {
-    // Get the trait name - use FQN if in a namespace
-    let trait_name = trait_stmt.name.value;
-    let fqn = if let Some(ns) = namespace {
-        format!("{}\\{}", ns, trait_name)
-    } else {
-        trait_name.to_string()
-    };
-    let trait_name_id = analyzer.interner.intern(&fqn);
-
-    // Look up the trait info from the codebase
-    let trait_info = analyzer.codebase.get_class(trait_name_id);
-
-    attribute_analyzer::analyze_interface_or_trait_attributes(
-        analyzer,
-        trait_stmt.attribute_lists.as_slice(),
-        trait_stmt.members.as_slice(),
-        trait_info,
-        trait_name_id,
-        context,
-        analysis_data,
-    );
-
-    // PHP < 8.2: traits cannot declare constants (Psalm's
-    // ConstantDeclarationInTrait).
-    if analyzer.config.php_version_id() < 80200
-        && let Some(info) = trait_info
-    {
-        for const_info in info.constants.values() {
-            if const_info.declaring_class != info.name {
-                continue;
-            }
-            let (line, col) = analyzer.get_line_column(const_info.start_offset);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::ConstantDeclarationInTrait,
-                "Traits cannot declare constants until PHP 8.2",
-                analyzer.file_path,
-                const_info.start_offset,
-                const_info.start_offset.saturating_add(1),
-                line,
-                col,
-            ));
-        }
-    }
-
-    // Check for missing property types in trait-declared properties
-    if let Some(info) = trait_info {
-        let name_span = trait_stmt.name.span();
-        let dependency_fallback = (name_span.start.offset, name_span.end.offset);
-        let dependency_spans = collect_dependency_name_spans(
-            analyzer,
-            None,
-            None,
-            trait_stmt.members.as_slice(),
-            context,
-        );
-        check_missing_dependencies(
-            analyzer,
-            info,
-            context,
-            analysis_data,
-            &dependency_spans,
-            dependency_fallback,
-        );
-        check_duplicate_property_declarations(analyzer, info, analysis_data);
-        check_duplicate_constant_declarations(analyzer, info, analysis_data);
-        check_duplicate_method_declarations(analyzer, info, analysis_data);
-        check_class_constant_overrides(analyzer, info, analysis_data);
-        check_docblock_issues(analyzer, info, analysis_data);
-        check_undefined_docblock_mixins(analyzer, info, analysis_data);
-        check_undefined_docblock_property_types(analyzer, info, analysis_data);
-        check_pseudo_method_compatibility(analyzer, info, analysis_data);
-        check_pseudo_method_annotations(analyzer, info, analysis_data);
-        check_deprecated_and_internal_relationships(analyzer, info, analysis_data);
-        check_method_docblock_param_type_mismatches(analyzer, info, analysis_data);
-        check_extended_template_param_bounds(analyzer, info, analysis_data);
-        check_missing_property_types(analyzer, &fqn, info, analysis_data);
-    }
-
-    for member in trait_stmt.members.iter() {
-        if let ClassLikeMember::Method(method) = member {
-            let issue_count_before = analysis_data.issues.len();
-            analyze_method(
-                analyzer,
-                method,
-                trait_name_id,
-                trait_info,
-                context.namespace,
-                analysis_data,
-            )?;
-
-            let method_name_id = analyzer.interner.intern(method.name.value);
-            let should_emit_return_mismatch = trait_info
-                .and_then(|info| info.methods.get(&method_name_id))
-                .and_then(|method_info| method_info.get_return_type())
-                .is_some_and(|return_type| !union_contains_special_class_names(return_type));
-
-            let new_issues = analysis_data.issues.split_off(issue_count_before);
-            let filtered_issues: Vec<_> = new_issues
-                .into_iter()
-                .filter_map(|mut issue| {
-                    if !should_emit_return_mismatch {
-                        return None;
-                    }
-
-                    if !matches!(
-                        issue.kind,
-                        IssueKind::InvalidReturnStatement | IssueKind::InvalidReturnType
-                    ) {
-                        return None;
-                    }
-
-                    issue.kind = IssueKind::InvalidReturnType;
-                    Some(issue)
-                })
-                .collect();
-
-            analysis_data.issues.extend(filtered_issues);
-        }
-    }
-
-    let _ = trait_stmt;
-
-    Ok(())
-}
-
 /// Check for properties without type declarations.
-fn check_missing_property_types(
+pub(crate) fn check_missing_property_types(
     analyzer: &StatementsAnalyzer<'_>,
     class_name: &str,
     class_info: &pzoom_code_info::ClassLikeInfo,
@@ -4819,7 +4519,7 @@ fn check_missing_property_types(
     }
 }
 
-fn check_docblock_issues(
+pub(crate) fn check_docblock_issues(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -4928,7 +4628,7 @@ fn assertion_union_has_invalid_negation(
     })
 }
 
-fn check_deprecated_and_internal_relationships(
+pub(crate) fn check_deprecated_and_internal_relationships(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5121,9 +4821,10 @@ fn check_deprecated_and_internal_relationships(
             ));
         }
     }
+
 }
 
-fn check_undefined_docblock_mixins(
+pub(crate) fn check_undefined_docblock_mixins(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5177,7 +4878,7 @@ fn check_undefined_docblock_mixins(
 /// (OverriddenInterfaceConstant), ambiguous multiple inheritance
 /// (AmbiguousConstantInheritance), and `final const` before PHP 8.1
 /// (ParseError).
-fn check_class_constant_overrides(
+pub(crate) fn check_class_constant_overrides(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5512,7 +5213,7 @@ fn check_class_constant_overrides(
     }
 }
 
-fn check_duplicate_constant_declarations(
+pub(crate) fn check_duplicate_constant_declarations(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5531,7 +5232,7 @@ fn check_duplicate_constant_declarations(
     }
 }
 
-fn check_duplicate_property_declarations(
+pub(crate) fn check_duplicate_property_declarations(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5556,7 +5257,7 @@ fn check_duplicate_property_declarations(
 
 /// Psalm's FunctionLikeNodeScanner DuplicateMethod, surfaced from the scan-time
 /// record (`property_name` carries the method name).
-fn check_duplicate_method_declarations(
+pub(crate) fn check_duplicate_method_declarations(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5579,7 +5280,7 @@ fn check_duplicate_method_declarations(
     }
 }
 
-fn check_undefined_docblock_property_types(
+pub(crate) fn check_undefined_docblock_property_types(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -5946,7 +5647,7 @@ fn collect_class_template_param_names(union: &TUnion, class_id: StrId, found: &m
 /// in a non-covariant position (a method parameter, or an extends/implements
 /// type argument whose parent slot is invariant or contravariant), mirroring
 /// Psalm's template variance validation.
-fn check_template_variance(
+pub(crate) fn check_template_variance(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -6053,7 +5754,7 @@ fn check_template_variance(
 /// Validate that classes referenced in `@template-extends`/`@template-implements`/
 /// `@template-use` type parameters exist, mirroring Psalm's `UndefinedDocblockClass`
 /// reporting for e.g. `@template-extends A<Z>` where `Z` is undefined.
-fn check_undefined_docblock_template_extends_classes(
+pub(crate) fn check_undefined_docblock_template_extends_classes(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -6134,36 +5835,25 @@ fn check_undefined_docblock_template_extends_classes(
     }
 }
 
+/// Every class/interface/trait name referenced anywhere in `atomic`'s type tree
+/// — generic params, array element/key types, shape fields, callable
+/// params/returns, template bounds, class-strings — collected via the shared
+/// [`pzoom_code_info::ttype::TypeNode`] recursion (Hakana's
+/// `get_all_child_nodes`). `self`/`static`/`parent` are kept; callers resolve
+/// them through `normalize_docblock_class_reference`.
 fn collect_named_docblock_classes(atomic: &TAtomic, classes: &mut Vec<StrId>) {
-    match atomic {
-        TAtomic::TNamedObject {
-            name, type_params, ..
-        } => {
-            classes.push(*name);
-
-            if let Some(type_params) = type_params {
-                for type_param in type_params {
-                    for nested_atomic in &type_param.types {
-                        collect_named_docblock_classes(nested_atomic, classes);
-                    }
-                }
+    pzoom_code_info::ttype::visit_type_tree(
+        &pzoom_code_info::ttype::TypeNode::Atomic(atomic),
+        &mut |node| {
+            if let pzoom_code_info::ttype::TypeNode::Atomic(TAtomic::TNamedObject {
+                name, ..
+            }) = node
+            {
+                classes.push(*name);
             }
-        }
-        TAtomic::TTemplateParam { as_type, .. } => {
-            for nested_atomic in &as_type.types {
-                collect_named_docblock_classes(nested_atomic, classes);
-            }
-        }
-        TAtomic::TTemplateParamClass { as_type, .. } => {
-            collect_named_docblock_classes(as_type, classes);
-        }
-        TAtomic::TObjectIntersection { types } => {
-            for nested_atomic in types {
-                collect_named_docblock_classes(nested_atomic, classes);
-            }
-        }
-        _ => {}
-    }
+            true
+        },
+    );
 }
 
 fn normalize_docblock_class_reference(analyzer: &StatementsAnalyzer<'_>, class_id: StrId) -> StrId {
@@ -6190,6 +5880,7 @@ fn normalize_docblock_class_reference(analyzer: &StatementsAnalyzer<'_>, class_i
 
 fn should_suppress_class_issue(
     analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
     issue_offset: u32,
     issue_names: &[&str],
 ) -> bool {
@@ -6221,27 +5912,24 @@ fn should_suppress_class_issue(
         return false;
     };
 
+    // Record the suppressing token's source position (Psalm's
+    // IssueBuffer::$used_suppressions) so the findUnusedPsalmSuppress pass does
+    // not flag this class-level `@psalm-suppress` as unused.
     let docblock = &source[doc_start..doc_end];
-    docblock
-        .split('\n')
-        .filter(|line| line.contains("@psalm-suppress"))
-        .flat_map(|line| {
-            line.split_whitespace()
-                .skip_while(|part| *part != "@psalm-suppress")
-                .skip(1)
-                .flat_map(|part| part.split(','))
-                .map(|part| part.trim().trim_end_matches(','))
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .any(|suppressed| {
-            issue_names
-                .iter()
-                .any(|issue_name| suppressed == *issue_name)
-        })
+    for issue_name in issue_names {
+        if let Some(token_offset) =
+            crate::issue_suppression::docblock_suppression_match(docblock, issue_name)
+        {
+            analysis_data
+                .used_suppression_offsets
+                .push((doc_start + token_offset) as u32);
+            return true;
+        }
+    }
+    false
 }
 
-fn check_pseudo_method_compatibility(
+pub(crate) fn check_pseudo_method_compatibility(
     analyzer: &StatementsAnalyzer<'_>,
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
@@ -6692,7 +6380,7 @@ fn find_trait_statement_by_offset<'a>(
     None
 }
 
-fn analyze_method(
+pub(crate) fn analyze_method(
     analyzer: &StatementsAnalyzer<'_>,
     method: &Method<'_>,
     class_name_id: pzoom_str::StrId,
@@ -7063,7 +6751,16 @@ fn analyze_method(
     }
 
     // Analyze the method body (only if it has a concrete body)
-    if let MethodBody::Concrete(block) = &method.body {
+    // PHP interface methods are implicitly abstract: even where the parser
+    // accepts a stray `{}` body, Psalm treats them as bodyless and never
+    // analyses it (so no return-statement check etc.). Only the signature
+    // checks above apply — the body is skipped, as for any abstract method.
+    let is_interface_method = class_info.is_some_and(|ci| {
+        ci.kind == pzoom_code_info::class_like_info::ClassLikeKind::Interface
+    });
+    if !is_interface_method
+        && let MethodBody::Concrete(block) = &method.body
+    {
         let yield_types_start = analysis_data.inferred_yield_types.len();
         let return_types_start = analysis_data.inferred_return_types.len();
         let prev_is_generator = analysis_data.current_function_is_generator;
@@ -8073,7 +7770,7 @@ fn union_is_class_constant_reference(union: &TUnion, analyzer: &StatementsAnalyz
         })
 }
 
-fn union_contains_special_class_names(union: &TUnion) -> bool {
+pub(crate) fn union_contains_special_class_names(union: &TUnion) -> bool {
     union.types.iter().any(atomic_contains_special_class_names)
 }
 
@@ -8238,7 +7935,7 @@ fn get_alternate_param_var_id(
 
 /// Class-wide issues anchor on the class NAME when it exists (Psalm's
 /// behavior); anonymous classes fall back to the declaration start.
-fn class_issue_pos(class_info: &pzoom_code_info::ClassLikeInfo) -> (u32, u32) {
+pub(crate) fn class_issue_pos(class_info: &pzoom_code_info::ClassLikeInfo) -> (u32, u32) {
     class_info.name_location.unwrap_or((
         class_info.start_offset,
         class_info.start_offset.saturating_add(1),

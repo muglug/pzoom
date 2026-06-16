@@ -780,41 +780,52 @@ fn line_start_offsets(contents: &str) -> Vec<usize> {
 fn line_suppression_match(line: &str, issue_name: &str) -> Option<usize> {
     let content_start = crate::issue_suppression::suppression_tag_content_start(line)?;
 
-    if let Some((col, token)) = suppression_tokens(line, content_start)
-        && (token.eq_ignore_ascii_case("all") || suppresses_issue(token, issue_name))
-    {
-        return Some(col);
-    }
-    None
+    suppression_tokens(line, content_start)
+        .into_iter()
+        .find(|(_, token)| token.eq_ignore_ascii_case("all") || suppresses_issue(token, issue_name))
+        .map(|(col, _)| col)
 }
 
 /// `(byte column, token)` pairs following a `@psalm-suppress` tag at
 /// `content_start` within `line`.
-fn suppression_tokens(line: &str, content_start: usize) -> Option<(usize, &str)> {
+/// Every suppression issue token in `line` after the tag, as `(column, token)`
+/// pairs. Mirrors Psalm's `DocComment::parseSuppressList`: the issue list is a
+/// **comma-separated** run of `[A-Za-z0-9_-]+` names; the first token that is
+/// only whitespace-separated (not comma-separated) ends the list and starts the
+/// free-text description (e.g. `@psalm-suppress Foo Psalm now knows ...`).
+fn suppression_tokens(line: &str, content_start: usize) -> Vec<(usize, &str)> {
     let content = &line[content_start..];
-    let mut tokens = Vec::new();
-    let mut token_start: Option<usize> = None;
+    let bytes = content.as_bytes();
+    let is_issue_char = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
 
-    for (index, ch) in content
-        .char_indices()
-        .chain(std::iter::once((content.len(), ' ')))
-    {
-        let is_separator = ch.is_whitespace() || ch == ',' || ch == '*';
-        match (token_start, is_separator) {
-            (None, false) => token_start = Some(index),
-            (Some(start), true) => {
-                tokens.push((content_start + start, &content[start..index]));
-                token_start = None;
-            }
-            _ => {}
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    loop {
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        let start = index;
+        while index < bytes.len() && is_issue_char(bytes[index]) {
+            index += 1;
+        }
+        if index == start {
+            break;
+        }
+        tokens.push((content_start + start, &content[start..index]));
+
+        // Continue only across a comma — a bare whitespace gap is description.
+        let mut after = index;
+        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        if after < bytes.len() && bytes[after] == b',' {
+            index = after + 1;
+        } else {
+            break;
         }
     }
 
-    if tokens.is_empty() {
-        None
-    } else {
-        Some(tokens[0])
-    }
+    tokens
 }
 
 fn function_docblock_suppression_match(
@@ -919,19 +930,21 @@ fn collect_suppression_candidates(contents: &str) -> Vec<SuppressionCandidate> {
 
         in_comment_block = (in_comment_block || trimmed.contains("/*")) && !trimmed.contains("*/");
 
-        if let Some(content_start) = crate::issue_suppression::suppression_tag_content_start(line)
-            && let Some((col, token)) = suppression_tokens(line, content_start)
-        {
-            if token.starts_with("Tainted") || token == "InaccessibleMethod" {
-                continue;
+        if let Some(content_start) = crate::issue_suppression::suppression_tag_content_start(line) {
+            for (col, token) in suppression_tokens(line, content_start) {
+                // Tainted* (never tracked) and InaccessibleMethod (skipped in
+                // Psalm's statement-level registration) are not candidates.
+                if token.starts_with("Tainted") || token == "InaccessibleMethod" {
+                    continue;
+                }
+                if token == "UnusedPsalmSuppress" {
+                    group_has_unused_suppress = true;
+                }
+                group.push(SuppressionCandidate {
+                    offset: line_offsets[line_index] + col,
+                    name: token.to_string(),
+                });
             }
-            if token == "UnusedPsalmSuppress" {
-                group_has_unused_suppress = true;
-            }
-            group.push(SuppressionCandidate {
-                offset: line_offsets[line_index] + col,
-                name: token.to_string(),
-            });
         }
 
         if !line_is_comment && !in_comment_block {

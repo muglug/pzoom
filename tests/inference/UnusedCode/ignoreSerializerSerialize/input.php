@@ -4,7 +4,7 @@ final class Foo implements Serializable {
         return "";
     }
 
-    public function unserialize($data) : void {}
+    public function unserialize(string $data) : void {}
 }
 
 new Foo();

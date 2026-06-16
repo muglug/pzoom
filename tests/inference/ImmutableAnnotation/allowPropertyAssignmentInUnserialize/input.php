@@ -14,7 +14,7 @@ class Foo implements \Serializable {
         return $this->data;
     }
 
-    public function unserialize($data) {
+    public function unserialize(string $data) {
         $this->data = $data;
     }
 

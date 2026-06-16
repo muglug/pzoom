@@ -593,6 +593,17 @@ fn run_analysis_and_compare(
                 config.php_version = version.to_string();
             }
         }
+    // Psalm enables some config flags per test case (e.g. ArrayAccessTest sets
+    // Config::getInstance()->ensure_array_int_offsets_exist = true); the pzoom
+    // port keeps each as a marker file next to input.php.
+    if let Some(test_dir) = Path::new(input_path).parent() {
+        if test_dir.join("ensure_array_int_offsets_exist").exists() {
+            config.ensure_array_int_offsets_exist = true;
+        }
+        if test_dir.join("ensure_array_string_offsets_exist").exists() {
+            config.ensure_array_string_offsets_exist = true;
+        }
+    }
 
     // Builtin signatures come from Psalm's CallMap for the analysis version;
     // skip when the (reused) base codebase was already applied for it.

@@ -103,6 +103,12 @@ pub enum IssueKind {
     PossiblyNullArrayAccess,
     PossiblyNullFunctionCall,
     PossiblyUndefinedArrayOffset,
+    /// A literal int offset into an array whose presence is not proven, under
+    /// `ensureArrayIntOffsetsExist`.
+    PossiblyUndefinedIntArrayOffset,
+    /// A literal string offset into an array whose presence is not proven, under
+    /// `ensureArrayStringOffsetsExist`.
+    PossiblyUndefinedStringArrayOffset,
     /// A variable assigned on some but not all paths to its use.
     PossiblyUndefinedVariable,
     /// A global-scope variable assigned on some but not all paths to its use.

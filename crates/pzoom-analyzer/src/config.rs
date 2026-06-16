@@ -71,6 +71,14 @@ pub struct Config {
     /// (Psalm's `ensureOverrideAttribute` config flag; default false).
     pub ensure_override_attribute: bool,
 
+    /// Report a literal int offset into an array whose presence is not proven
+    /// (Psalm's `ensureArrayIntOffsetsExist`; default false).
+    pub ensure_array_int_offsets_exist: bool,
+
+    /// Report a literal string offset into an array whose presence is not proven
+    /// (Psalm's `ensureArrayStringOffsetsExist`; default false).
+    pub ensure_array_string_offsets_exist: bool,
+
     /// Whether to use strict types by default.
     pub strict_types: bool,
 
@@ -186,6 +194,8 @@ impl Default for Config {
             php_version: "8.2".to_string(),
             php_version_explicit: false,
             ensure_override_attribute: false,
+            ensure_array_int_offsets_exist: false,
+            ensure_array_string_offsets_exist: false,
             strict_types: false,
             taint_analysis: false,
             taint_max_depth: 20,

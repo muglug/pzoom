@@ -411,6 +411,11 @@ pub fn analyze(
     let mut has_literal_index_miss = false;
     let mut expected_offset_type: Option<TUnion> = None;
     let mut atomic_expected_offset_types: Vec<TUnion> = Vec::new();
+    // Psalm's checkLiteralIntArrayOffset / checkLiteralStringArrayOffset
+    // (ensureArray{Int,String}OffsetsExist): a literal offset into a generic
+    // array<K,V> isn't proven present. Set when such an access is seen.
+    let mut tarray_int_offset_unproven = false;
+    let mut tarray_string_offset_unproven = false;
 
     for atomic in &array_type.types {
         match atomic {
@@ -449,6 +454,32 @@ pub fn analyze(
                     _ => TUnion::int(),
                 };
                 merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
+                // Psalm checks literal int/string offsets only on generic
+                // `array<K,V>` here (TKeyedArray/list go through their own path);
+                // a literal offset contained in the key type but with no proven
+                // entry is PossiblyUndefined{Int,String}ArrayOffset.
+                if !is_list_atomic && !literal_index_keys.is_empty() {
+                    let key_accepts = |is_int: bool| {
+                        (if is_int { key_type.has_int() } else { key_type.has_string() })
+                            || key_type.types.iter().any(|t| {
+                                matches!(
+                                    t,
+                                    TAtomic::TArrayKey | TAtomic::TMixed | TAtomic::TScalar
+                                )
+                            })
+                    };
+                    for key in &literal_index_keys {
+                        match key {
+                            ArrayKey::Int(_) if key_accepts(true) => {
+                                tarray_int_offset_unproven = true;
+                            }
+                            ArrayKey::String(_) if key_accepts(false) => {
+                                tarray_string_offset_unproven = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 atomic_expected_offset_types.push(key_type);
                 result_from_docblock |= value_type.from_docblock;
                 for t in &value_type.types {
@@ -1075,6 +1106,68 @@ pub fn analyze(
         // null plus a warning when the key is absent).
         if !result_types.is_empty() && !result_types.contains(&TAtomic::TNull) {
             result_types.push(TAtomic::TNull);
+        }
+    }
+
+    // Psalm's checkLiteralIntArrayOffset / checkLiteralStringArrayOffset:
+    // under ensureArray{Int,String}OffsetsExist, a literal offset into a generic
+    // array<K,V> whose presence isn't proven is reported. (Psalm's found-match
+    // shortcut via tracked `$var[offset]` scope entries is not modelled here; it
+    // only ever suppresses, so omitting it never over-reports.)
+    if (tarray_int_offset_unproven || tarray_string_offset_unproven)
+        && !context.inside_isset
+        && !context.inside_unset
+    {
+        let offset_id = index_type
+            .as_ref()
+            .map(|t| t.get_id(Some(analyzer.interner)))
+            .unwrap_or_default();
+        let expected_id = expected_offset_type
+            .as_ref()
+            .map(|t| t.get_id(Some(analyzer.interner)))
+            .unwrap_or_default();
+        let message = format!(
+            "Possibly undefined array offset '{offset_id}' \
+             is risky given expected type '{expected_id}'. \
+             Consider using isset beforehand."
+        );
+        if analyzer.config.ensure_array_int_offsets_exist
+            && tarray_int_offset_unproven
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                span.start.offset,
+                "PossiblyUndefinedIntArrayOffset",
+            )
+        {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyUndefinedIntArrayOffset,
+                message.clone(),
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                start_line,
+                0,
+            ));
+        }
+        if analyzer.config.ensure_array_string_offsets_exist
+            && tarray_string_offset_unproven
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                span.start.offset,
+                "PossiblyUndefinedStringArrayOffset",
+            )
+        {
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyUndefinedStringArrayOffset,
+                message,
+                analyzer.file_path,
+                span.start.offset,
+                span.end.offset,
+                start_line,
+                0,
+            ));
         }
     }
 

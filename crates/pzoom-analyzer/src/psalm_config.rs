@@ -333,6 +333,12 @@ fn parse_psalm_attributes(e: &BytesStart<'_>, config: &mut Config) -> Result<(),
             "allConstantsGlobal" => {
                 config.all_constants_global = value == "true";
             }
+            "ensureArrayIntOffsetsExist" => {
+                config.ensure_array_int_offsets_exist = value == "true";
+            }
+            "ensureArrayStringOffsetsExist" => {
+                config.ensure_array_string_offsets_exist = value == "true";
+            }
             "findUnusedBaselineEntry" => {
                 config.find_unused_baseline_entry = value == "true";
             }

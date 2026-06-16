@@ -279,7 +279,6 @@ namespace {
          *
          * @return void
          * @deprecated
-         *
          */
         public function setLogLevel($level)
         {
@@ -345,19 +344,14 @@ namespace RdKafka {
         }
 
         /**
-         * @param TopicConf $topic_conf
-         *
          * @return void
          * @deprecated Set default topic settings normally like global configuration settings.
-         *
          */
         public function setDefaultTopicConf(TopicConf $topic_conf)
         {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setDrMsgCb(callable $callback)
@@ -365,8 +359,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setErrorCb(callable $callback)
@@ -374,8 +366,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setRebalanceCb(callable $callback)
@@ -383,8 +373,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setStatsCb(callable $callback)
@@ -392,8 +380,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setConsumeCb(callable $callback)
@@ -401,8 +387,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setOffsetCommitCb(callable $callback)
@@ -410,8 +394,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param callable $callback
-         *
          * @return void
          */
         public function setLogCb(callable $callback)
@@ -421,16 +403,12 @@ namespace RdKafka {
 
     class Consumer extends \RdKafka
     {
-        /**
-         * @param Conf $conf
-         */
         public function __construct(Conf $conf = null)
         {
         }
 
         /**
          * @param string $topic_name
-         * @param TopicConf $topic_conf
          *
          * @return ConsumerTopic
          */
@@ -465,7 +443,6 @@ namespace RdKafka {
         /**
          * @param int $partition
          * @param int $offset
-         * @param Queue $queue
          *
          * @return void
          */
@@ -518,7 +495,6 @@ namespace RdKafka {
         /**
          * @param int $partition
          * @param int $timeout_ms
-         * @param callable $callback
          *
          * @return void
          */
@@ -533,9 +509,6 @@ namespace RdKafka {
 
     class KafkaConsumer
     {
-        /**
-         * @param Conf $conf
-         */
         public function __construct(Conf $conf)
         {
         }
@@ -610,7 +583,6 @@ namespace RdKafka {
 
         /**
          * @param string $topic_name
-         * @param TopicConf $topic_conf
          *
          * @return KafkaConsumerTopic
          */
@@ -851,16 +823,12 @@ namespace RdKafka {
 
     class Producer extends \RdKafka
     {
-        /**
-         * @param Conf $conf
-         */
         public function __construct(Conf $conf = null)
         {
         }
 
         /**
          * @param string $topic_name
-         * @param TopicConf $topic_conf
          *
          * @return ProducerTopic
          */
@@ -869,8 +837,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param int $timeoutMs
-         *
          * @return void
          * @throws KafkaErrorException
          */
@@ -887,8 +853,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param int $timeoutMs
-         *
          * @return void
          * @throws KafkaErrorException
          */
@@ -897,8 +861,6 @@ namespace RdKafka {
         }
 
         /**
-         * @param int $timeoutMs
-         *
          * @return void
          * @throws KafkaErrorException
          */

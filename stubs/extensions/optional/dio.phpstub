@@ -2,7 +2,6 @@
 
 /**
  * @param resource $fd
- * @return void
  */
 function dio_close($fd): void
 {
@@ -10,7 +9,6 @@ function dio_close($fd): void
 
 /**
  * @param resource $fd
- * @param int $cmd
  * @param mixed $args
  * @return mixed
  */
@@ -19,9 +17,6 @@ function dio_fcntl($fd, int $cmd, ...$args)
 }
 
 /**
- * @param string $filename
- * @param int $flags
- * @param int $mode
  * @return false|resource
  */
 function dio_open(string $filename, int $flags, int $mode = 0)
@@ -30,7 +25,6 @@ function dio_open(string $filename, int $flags, int $mode = 0)
 
 /**
  * @param resource $fd
- * @param int $len
  * @return string
  */
 function dio_read($fd, int $len = 1024)
@@ -39,8 +33,6 @@ function dio_read($fd, int $len = 1024)
 
 /**
  * @param resource $fd
- * @param int $pos
- * @param int $whence
  * @return int
  */
 function dio_seek($fd, int $pos, int $whence = SEEK_SET)
@@ -66,7 +58,6 @@ function dio_tcsetattr($fd, array $options)
 
 /**
  * @param resource $fd
- * @param int $offset
  * @return bool
  */
 function dio_truncate($fd, int $offset)
@@ -75,8 +66,6 @@ function dio_truncate($fd, int $offset)
 
 /**
  * @param resource $fd
- * @param string $data
- * @param int $len
  * @return int
  */
 function dio_write($fd, string $data, int $len = 0)

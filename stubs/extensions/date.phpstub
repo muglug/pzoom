@@ -120,12 +120,6 @@ function gmmktime(
 ): int|false {
 }
 
-/**
- * @param int $month
- * @param int $day
- * @param int $year
- * @return bool
- */
 function checkdate(int $month, int $day, int $year): bool
 {
 }
@@ -233,10 +227,6 @@ function date_sub(DateTime $object, DateInterval $interval): DateTime
 {
 }
 
-/**
- * @param DateTimeInterface $object
- * @return DateTimeZone|false
- */
 function date_timezone_get(DateTimeInterface $object): DateTimeZone|false
 {
 }
@@ -269,26 +259,14 @@ function date_timestamp_set(DateTime $object, int $timestamp): DateTime
 {
 }
 
-/**
- * @param DateTimeInterface $object
- * @return int
- */
 function date_timestamp_get(DateTimeInterface $object): int
 {
 }
 
-/**
- * @param string $timezone
- * @return DateTimeZone|false
- */
 function timezone_open(string $timezone): DateTimeZone|false
 {
 }
 
-/**
- * @param DateTimeZone $object
- * @return string
- */
 function timezone_name_get(DateTimeZone $object): string
 {
 }
@@ -312,7 +290,6 @@ function timezone_transitions_get(
 }
 
 /**
- * @param DateTimeZone $object
  * @return array<array-key, mixed>|false
  */
 function timezone_location_get(DateTimeZone $object): array|false
@@ -333,9 +310,6 @@ function timezone_abbreviations_list(): array
 {
 }
 
-/**
- * @return string
- */
 function timezone_version_get(): string
 {
 }
@@ -344,11 +318,6 @@ function date_interval_create_from_date_string(string $datetime): DateInterval|f
 {
 }
 
-/**
- * @param DateInterval $object
- * @param string $format
- * @return string
- */
 function date_interval_format(DateInterval $object, string $format): string
 {
 }
@@ -628,8 +597,6 @@ class DateTimeImmutable implements DateTimeInterface
     /**
      * @psalm-mutation-free
      *
-     * @param string $format
-     *
      * @return string|false
      * @psalm-ignore-falsable-return
      */
@@ -647,7 +614,6 @@ class DateTimeImmutable implements DateTimeInterface
 
     /**
      * @psalm-mutation-free
-     * @return int
      */
     public function getOffset(): int
     {
@@ -655,7 +621,6 @@ class DateTimeImmutable implements DateTimeInterface
 
     /**
      * @psalm-mutation-free
-     * @return int
      */
     public function getTimestamp(): int
     {
@@ -667,8 +632,6 @@ class DateTimeImmutable implements DateTimeInterface
 
     /**
      * @psalm-mutation-free
-     * @param bool $absolute
-     * @return DateInterval
      */
     public function diff(DateTimeInterface $targetObject, bool $absolute = false): DateInterval
     {
@@ -753,7 +716,6 @@ class DateTimeImmutable implements DateTimeInterface
 
     /**
      * @psalm-mutation-free
-     * @return static
      */
     public static function createFromMutable(DateTime $object): static
     {
@@ -936,7 +898,6 @@ class DateInterval
     /**
      * Formats the interval
      *
-     * @return string
      * @link https://php.net/manual/en/dateinterval.format.php
      * @psalm-pure
      */

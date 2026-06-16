@@ -8,9 +8,6 @@ function config_get_hash(): array
 {
 }
 
-/**
- * @return int
- */
 function xdebug_get_stack_depth(): int
 {
 }
@@ -24,8 +21,6 @@ function xdebug_get_function_stack(array $options = []): array
 }
 
 /**
- * @param string $message
- * @param int $options
  * @return array<array-key, mixed>
  */
 function xdebug_print_function_stack(string $message = 'user triggered', int $options = 0)
@@ -40,7 +35,6 @@ function xdebug_get_declared_vars(): array
 }
 
 /**
- * @param int $depth
  * @return string
  */
 function xdebug_call_file(int $depth = 2)
@@ -48,7 +42,6 @@ function xdebug_call_file(int $depth = 2)
 }
 
 /**
- * @param int $depth
  * @return string
  */
 function xdebug_call_class(int $depth = 2)
@@ -56,7 +49,6 @@ function xdebug_call_class(int $depth = 2)
 }
 
 /**
- * @param int $depth
  * @return string
  */
 function xdebug_call_function(int $depth = 2)
@@ -64,7 +56,6 @@ function xdebug_call_function(int $depth = 2)
 }
 
 /**
- * @param int $depth
  * @return int
  */
 function xdebug_call_line(int $depth = 2)
@@ -94,7 +85,6 @@ function xdebug_get_monitored_functions(): array
 }
 
 /**
- * @param mixed $variable
  * @return void
  */
 function xdebug_var_dump(mixed ...$variable)
@@ -102,7 +92,6 @@ function xdebug_var_dump(mixed ...$variable)
 }
 
 /**
- * @param string $varname
  * @return void
  */
 function xdebug_debug_zval(string ...$varname)
@@ -110,7 +99,6 @@ function xdebug_debug_zval(string ...$varname)
 }
 
 /**
- * @param string $varname
  * @return void
  */
 function xdebug_debug_zval_stdout(string ...$varname)
@@ -153,16 +141,12 @@ function xdebug_stop_error_collection()
 }
 
 /**
- * @param bool $emptyList
  * @return string
  */
 function xdebug_get_collected_errors(bool $emptyList = false): array
 {
 }
 
-/**
- * @return bool
- */
 function xdebug_break(): bool
 {
 }
@@ -211,23 +195,14 @@ function xdebug_clear_aggr_profiling_data()
 {
 }
 
-/**
- * @return int
- */
 function xdebug_memory_usage(): int
 {
 }
 
-/**
- * @return int
- */
 function xdebug_peak_memory_usage(): int
 {
 }
 
-/**
- * @return float
- */
 function xdebug_time_index(): float
 {
 }
@@ -246,23 +221,14 @@ function xdebug_stop_code_coverage(bool $cleanUp = true)
 {
 }
 
-/**
- * @return bool
- */
 function xdebug_code_coverage_started(): bool
 {
 }
 
-/**
- * @return array
- */
 function xdebug_get_code_coverage(): array
 {
 }
 
-/**
- * @return int
- */
 function xdebug_get_function_count(): int
 {
 }
@@ -288,9 +254,6 @@ function xdebug_get_formatted_function_stack()
 {
 }
 
-/**
- * @return bool
- */
 function xdebug_is_debugger_active(): bool
 {
 }

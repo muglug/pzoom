@@ -105,94 +105,42 @@ const CAL_JEWISH_ADD_ALAFIM = UNKNOWN;
  */
 const CAL_JEWISH_ADD_GERESHAYIM = UNKNOWN;
 
-/**
- * @param int $julian_day
- * @return string
- */
 function jdtogregorian(int $julian_day): string
 {
 }
 
-/**
- * @param int $month
- * @param int $day
- * @param int $year
- * @return int
- */
 function gregoriantojd(int $month, int $day, int $year): int
 {
 }
 
-/**
- * @param int $julian_day
- * @return string
- */
 function jdtojulian(int $julian_day): string
 {
 }
 
-/**
- * @param int $month
- * @param int $day
- * @param int $year
- * @return int
- */
 function juliantojd(int $month, int $day, int $year): int
 {
 }
 
-/**
- * @param int $julian_day
- * @param bool $hebrew
- * @param int $flags
- * @return string
- */
 function jdtojewish(int $julian_day, bool $hebrew = false, int $flags = 0): string
 {
 }
 
-/**
- * @param int $month
- * @param int $day
- * @param int $year
- * @return int
- */
 function jewishtojd(int $month, int $day, int $year): int
 {
 }
 
-/**
- * @param int $julian_day
- * @return string
- */
 function jdtofrench(int $julian_day): string
 {
 }
 
-/**
- * @param int $month
- * @param int $day
- * @param int $year
- * @return int
- */
 function frenchtojd(int $month, int $day, int $year): int
 {
 }
 
-/**
- * @param int $julian_day
- * @param int $mode
- * @return int|string
- */
 function jddayofweek(int $julian_day, int $mode = CAL_DOW_DAYNO): string|int
 {
 }
 
-/**
- * @param int $julian_day
- * @param int $mode
- * @return string
- */
 function jdmonthname(int $julian_day, int $mode): string
 {
 }
@@ -216,38 +164,22 @@ function jdtounix(int $julian_day): int
 {
 }
 
-/**
- * @param int $calendar
- * @param int $month
- * @param int $day
- * @param int $year
- * @return int
- */
 function cal_to_jd(int $calendar, int $month, int $day, int $year): int
 {
 }
 
 /**
- * @param int $julian_day
- * @param int $calendar
  * @return array{abbrevdayname: string, abbrevmonth: string, date: string, day: int, dayname: string, dow: int, month: int, monthname: string, year: int}
  */
 function cal_from_jd(int $julian_day, int $calendar): array
 {
 }
 
-/**
- * @param int $calendar
- * @param int $month
- * @param int $year
- * @return int
- */
 function cal_days_in_month(int $calendar, int $month, int $year): int
 {
 }
 
 /**
- * @param int $calendar
  * @return array<array-key, mixed>
  */
 function cal_info(int $calendar = -1): array

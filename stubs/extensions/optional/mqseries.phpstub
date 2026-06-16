@@ -24,7 +24,6 @@ function mqseries_begin($hconn, array $beginOptions, &$compCode, &$reason)
 /**
  * @param resource $hconn
  * @param resource $hobj
- * @param int $options
  * @param resource $compCode
  * @param resource $reason
  * @return void
@@ -44,7 +43,6 @@ function mqseries_cmit($hconn, &$compCode, &$reason)
 }
 
 /**
- * @param string $qManagerName
  * @param resource $hconn
  * @param resource $compCode
  * @param resource $reason
@@ -55,7 +53,6 @@ function mqseries_conn(string $qManagerName, &$hconn, &$compCode, &$reason)
 }
 
 /**
- * @param string $qManagerName
  * @param array<array-key, mixed> $connOptions
  * @param resource $hconn
  * @param resource $compCode
@@ -81,9 +78,6 @@ function mqseries_disc($hconn, &$compCode, &$reason)
  * @param resource $hObj
  * @param array<array-key, mixed> $md
  * @param array<array-key, mixed> $gmo
- * @param int $bufferLength
- * @param string $msg
- * @param int $data_length
  * @param resource $compCode
  * @param resource $reason
  * @return void
@@ -104,11 +98,8 @@ function mqseries_get(
 /**
  * @param resource $hconn
  * @param resource $hobj
- * @param int $selectorCount
  * @param array<array-key, mixed> $selectors
- * @param int $intAttrCount
  * @param resource $intAttr
- * @param int $charAttrLength
  * @param resource $charAttr
  * @param resource $compCode
  * @param resource $reason
@@ -131,7 +122,6 @@ function mqseries_inq(
 /**
  * @param resource $hconn
  * @param array<array-key, mixed> $objDesc
- * @param int $option
  * @param resource $hobj
  * @param resource $compCode
  * @param resource $reason
@@ -146,7 +136,6 @@ function mqseries_open($hconn, array &$objDesc, int $option, &$hobj, &$compCode,
  * @param resource $objDesc
  * @param resource $msgDesc
  * @param resource $pmo
- * @param string $buffer
  * @param resource $compCode
  * @param resource $reason
  * @return void
@@ -160,7 +149,6 @@ function mqseries_put1($hconn, &$objDesc, &$msgDesc, &$pmo, string $buffer, &$co
  * @param resource $hObj
  * @param array<array-key, mixed> $md
  * @param array<array-key, mixed> $pmo
- * @param string $message
  * @param resource $compCode
  * @param resource $reason
  * @return void
@@ -172,11 +160,8 @@ function mqseries_put($hConn, $hObj, array &$md, array &$pmo, string $message, &
 /**
  * @param resource $hconn
  * @param resource $hobj
- * @param int $selectorcount
  * @param array<array-key, mixed> $selectors
- * @param int $intattrcount
  * @param array<array-key, mixed> $intattrs
- * @param int $charattrlength
  * @param array<array-key, mixed> $charattrs
  * @param resource $compCode
  * @param resource $reason
@@ -196,10 +181,6 @@ function mqseries_set(
 ) {
 }
 
-/**
- * @param int $reason
- * @return string
- */
 function mqseries_strerror(int $reason): string
 {
 }

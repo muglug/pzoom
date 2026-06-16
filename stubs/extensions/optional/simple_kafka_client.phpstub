@@ -9,52 +9,31 @@ namespace {
     abstract class SimpleKafkaClient
     {
         /**
-         * @param bool $allTopics
-         * @param int $timeoutMs
-         * @param Topic $topic
-         * @return Metadata
          * @throws Exception
          */
         public function getMetadata(bool $allTopics, int $timeoutMs, Topic $topic): Metadata {}
 
-        /**
-         * @return int
-         */
         public function getOutQLen(): int {}
 
-        /**
-         * @param int $timeoutMs
-         * @return int
-         */
         public function poll(int $timeoutMs): int {}
 
         /**
-         * @param string $topic
-         * @param int $partition
          * @param int $low is passed as reference, contains result after call
          * @param int $high is passed as reference, contains result after call
-         * @param int $timeoutMs
          * @throws Exception
          */
         public function queryWatermarkOffsets(string $topic, int $partition, int &$low, int &$high, int $timeoutMs): void {}
 
         /**
          * @param TopicPartition[] $topicPartitions
-         * @param int $timeoutMs
          * @return TopicPartition[]
          * @throws Exception
          */
         public function offsetsForTimes(array $topicPartitions, int $timeoutMs): array {}
 
-        /**
-         * @param string $errorString
-         */
         public function setOAuthBearerTokenFailure(string $errorString): void {}
 
         /**
-         * @param string $token
-         * @param int $lifetimeMs
-         * @param string $principalName
          * @param string[]|null $extensions
          */
         public function setOAuthBearerToken(string $token, int $lifetimeMs, string $principalName, ?array $extensions = null): void {}
@@ -66,50 +45,22 @@ namespace SimpleKafkaClient {
     {
         public function __construct() {}
 
-        /**
-         * @return array
-         */
         public function dump(): array {}
 
-        /**
-         * @param string $name
-         * @param string $value
-         */
         public function set(string $name, string $value): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setErrorCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setDrMsgCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setStatsCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setRebalanceCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setOffsetCommitCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setLogCb(callable $callback): void {}
 
-        /**
-         * @param callable $callback
-         */
         public function setOAuthBearerTokenRefreshCb(callable $callback): void {}
     }
 }
@@ -120,7 +71,6 @@ namespace SimpleKafkaClient {
     class Consumer extends SimpleKafkaClient
     {
         /**
-         * @param Configuration $configuration
          * @throws Exception
          */
         public function __construct(Configuration $configuration) {}
@@ -150,15 +100,10 @@ namespace SimpleKafkaClient {
         public function getSubscription(): array {}
 
         /**
-         * @return void
          * @throws Exception
          */
         public function unsubscribe(): void {}
 
-        /**
-         * @param int $timeoutMs
-         * @return Message
-         */
         public function consume(int $timeoutMs): Message {}
 
         /**
@@ -173,14 +118,10 @@ namespace SimpleKafkaClient {
          */
         public function commitAsync($messageOrOffsets): void {}
 
-        /**
-         * @return void
-         */
         public function close(): void {}
 
         /**
          * @param TopicPartition[] $topicPartitions
-         * @param int $timeoutMs
          * @return TopicPartition[]
          * @throws Exception
          */
@@ -202,14 +143,6 @@ namespace SimpleKafkaClient {
 namespace SimpleKafkaClient {
     class KafkaErrorException extends Exception
     {
-        /**
-         * @param string $message
-         * @param int $code
-         * @param string $error_string
-         * @param bool $isFatal
-         * @param bool $isRetriable
-         * @param bool $transactionRequiresAbort
-         */
         public function __construct(
             string $message,
             int $code,
@@ -246,9 +179,6 @@ namespace SimpleKafkaClient {
          */
         public array $headers;
 
-        /**
-         * @return string
-         */
         public function getErrorString(): string {}
     }
 }
@@ -257,25 +187,21 @@ namespace SimpleKafkaClient {
     class Metadata
     {
         /**
-         * @return int
          * @throws Exception
          */
         public function getOrigBrokerId(): int {}
 
         /**
-         * @return string
          * @throws Exception
          */
         public function getOrigBrokerName(): string {}
 
         /**
-         * @return Metadata\Collection
          * @throws Exception
          */
         public function getBrokers(): Metadata\Collection {}
 
         /**
-         * @return Metadata\Collection
          * @throws Exception
          */
         public function getTopics(): Metadata\Collection {}
@@ -285,19 +211,10 @@ namespace SimpleKafkaClient {
 namespace SimpleKafkaClient\Metadata {
     class Broker
     {
-        /**
-         * @return int
-         */
         public function getId(): int {}
 
-        /**
-         * @return string
-         */
         public function getHost(): string {}
 
-        /**
-         * @return int
-         */
         public function getPort(): int {}
     }
 }
@@ -305,14 +222,8 @@ namespace SimpleKafkaClient\Metadata {
 namespace SimpleKafkaClient\Metadata {
     class Collection
     {
-        /**
-         * @return int
-         */
         public function count(): int {}
 
-        /**
-         * @return void
-         */
         public function rewind(): void {}
 
         /**
@@ -320,9 +231,6 @@ namespace SimpleKafkaClient\Metadata {
          */
         public function current() {}
 
-        /**
-         * @return int
-         */
         public function key(): int {}
 
         /**
@@ -330,9 +238,6 @@ namespace SimpleKafkaClient\Metadata {
          */
         public function next() {}
 
-        /**
-         * @return bool
-         */
         public function valid(): bool {}
     }
 }
@@ -340,29 +245,14 @@ namespace SimpleKafkaClient\Metadata {
 namespace SimpleKafkaClient\Metadata {
     class Partition
     {
-        /**
-         * @return int
-         */
         public function getId(): int {}
 
-        /**
-         * @return int
-         */
         public function getErrorCode(): int {}
 
-        /**
-         * @return int
-         */
         public function getLeader(): int {}
 
-        /**
-         * @return Collection
-         */
         public function getReplicas(): Collection {}
 
-        /**
-         * @return Collection
-         */
         public function getIsrs(): Collection {}
     }
 }
@@ -370,19 +260,10 @@ namespace SimpleKafkaClient\Metadata {
 namespace SimpleKafkaClient\Metadata {
     class Topic
     {
-        /**
-         * @return string
-         */
         public function getName(): string {}
 
-        /**
-         * @return int
-         */
         public function getErrorCode(): int {}
 
-        /**
-         * @return Collection
-         */
         public function getPartitions(): Collection {}
     }
 }
@@ -393,51 +274,34 @@ namespace SimpleKafkaClient {
     class Producer extends SimpleKafkaClient
     {
         /**
-         * @param Configuration $configuration
          * @throws Exception
          */
         public function __construct(Configuration $configuration) {}
 
         /**
-         * @param int $timeoutMs
          * @throws Exception
          */
         public function initTransactions(int $timeoutMs): void {}
 
         /**
-         * @return void
          * @throws Exception
          */
         public function beginTransaction(): void {}
 
         /**
-         * @param int $timeoutMs
          * @throws Exception
          */
         public function commitTransaction(int $timeoutMs): void {}
 
         /**
-         * @param int $timeoutMs
          * @throws Exception
          */
         public function abortTransaction(int $timeoutMs): void {}
 
-        /**
-         * @param int $timeoutMs
-         * @return int
-         */
         public function flush(int $timeoutMs): int {}
 
-        /**
-         * @param int $purgeFlags
-         * @return int
-         */
         public function purge(int $purgeFlags): int {}
 
-        /**
-         * @param string $topic
-         * @return ProducerTopic
-         */
         public function getTopicHandle(string $topic): ProducerTopic {}
     }
 }
@@ -445,9 +309,6 @@ namespace SimpleKafkaClient {
 namespace SimpleKafkaClient {
     abstract class Topic
     {
-        /**
-         * @return string
-         */
         public function getName(): string {}
     }
 
@@ -461,21 +322,11 @@ namespace SimpleKafkaClient {
         private function __construct() {}
 
         /**
-         * @param int $partition
-         * @param int $msgFlags
-         * @param string|null $payload
-         * @param string|null $key
          * @throws Exception
          */
         public function produce(int $partition, int $msgFlags, ?string $payload = null, ?string $key = null): void {}
 
         /**
-         * @param int $partition
-         * @param int $msgFlags
-         * @param string|null $payload
-         * @param string|null $key
-         * @param array|null $headers
-         * @param int|null $timestampMs
          * @throws Exception
          */
         public function producev(int $partition, int $msgFlags, ?string $payload = null, ?string $key = null, ?array $headers = null, ?int $timestampMs = null): void {}
@@ -485,47 +336,27 @@ namespace SimpleKafkaClient {
 namespace SimpleKafkaClient {
     class TopicPartition
     {
-        /**
-         * @param string $topicName
-         * @param int $partition
-         * @param int $offset
-         */
         public function __construct(string $topicName, int $partition, int $offset = 0) {}
 
         /**
-         * @return string|null
          * @throws Exception
          */
         public function getTopicName(): ?string {}
 
         /**
-         * @param string $topicName
-         * @return TopicPartition
          * @throws Exception
          */
         public function setTopicName(string $topicName): TopicPartition {}
 
         /**
-         * @return int
          * @throws Exception
          */
         public function getPartition(): int {}
 
-        /**
-         * @param int $partition
-         * @return TopicPartition
-         */
         public function setPartition(int $partition): TopicPartition {}
 
-        /**
-         * @return int
-         */
         public function getOffset(): int {}
 
-        /**
-         * @param int $offset
-         * @return TopicPartition
-         */
         public function setOffset(int $offset): TopicPartition {}
     }
 }
@@ -533,29 +364,17 @@ namespace SimpleKafkaClient {
 namespace {
     /**
      * @param int $errorCode Error code
-     * @return string
      */
     function kafka_err2name(int $errorCode): string {}
 
     /**
      * @param int $errorCode Error code
-     * @return string
      */
     function kafka_err2str(int $errorCode): string {}
 
-    /**
-     * @return array
-     */
     function kafka_get_err_descs(): array {}
 
-    /**
-     * @param int $offset
-     * @return int
-     */
     function kafka_offset_tail(int $offset): int {}
 
-    /**
-     * @return int
-     */
     function kafka_thread_cnt(): int {}
 }

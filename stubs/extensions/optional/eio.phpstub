@@ -55,251 +55,150 @@ const EIO_SYNC_FILE_RANGE_WRITE = 0;
 const EIO_SYNC_FILE_RANGE_WAIT_AFTER = 0;
 const EIO_FALLOC_FL_KEEP_SIZE = 0;
 
-/**
- * @return bool
- */
 function eio_event_loop(): bool {}
 
-/**
- * @return int
- */
 function eio_poll(): int {}
 
 /**
- * @param string $path
- * @param int $flags
- * @param int $mode
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_open(string $path, int $flags, int $mode, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $offset
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_truncate(string $path, int $offset = 0, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $mode
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_mkdir(string $path, int $mode, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_rmdir(string $path, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_unlink(string $path, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param float $atime
- * @param float $mtime
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_utime(string $path, float $atime, float $mtime, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $mode
- * @param int $dev
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_mknod(string $path, int $mode, int $dev, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param string $new_path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_link(string $path, string $new_path, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param string $new_path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_symlink(string $path, string $new_path, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param string $new_path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_rename(string $path, string $new_path, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_close(mixed $fd, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_sync(int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fsync(mixed $fd, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fdatasync(mixed $fd, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param float $atime
- * @param float $mtime
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_futime(mixed $fd, float $atime, float $mtime, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $offset
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_ftruncate(mixed $fd, int $offset = 0, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $mode
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_chmod(string $path, int $mode, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $mode
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fchmod(mixed $fd, int $mode, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $uid
- * @param int $gid
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_chown(string $path, int $uid, int $gid = -1, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $uid
- * @param int $gid
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fchown(mixed $fd, int $uid, int $gid = -1, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param mixed $fd2
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_dup2(mixed $fd, mixed $fd2, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $length
- * @param int $offset
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_read(mixed $fd, int $length, int $offset, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param mixed $fd
  * @param string $str
- * @param int $length
- * @param int $offset
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_write(mixed $fd, mixed $str, int $length = 0, int $offset = 0, int $pri = 0, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
  * @param string $data
  * @return resource
@@ -307,8 +206,6 @@ function eio_write(mixed $fd, mixed $str, int $length = 0, int $offset = 0, int 
 function eio_readlink(string $path, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
  * @param string $data
  * @return resource
@@ -316,54 +213,36 @@ function eio_readlink(string $path, int $pri, mixed $callback, mixed $data = nul
 function eio_realpath(string $path, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_stat(string $path, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_lstat(string $path, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fstat(mixed $fd, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_statvfs(string $path, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fstatvfs(mixed $fd, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param string $path
- * @param int $flags
- * @param int $pri
  * @param callable $callback
  * @param string $data
  * @return resource
@@ -371,11 +250,6 @@ function eio_fstatvfs(mixed $fd, int $pri, mixed $callback, mixed $data = null) 
 function eio_readdir(string $path, int $flags, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param mixed $out_fd
- * @param mixed $in_fd
- * @param int $offset
- * @param int $length
- * @param int $pri
  * @param callable $callback
  * @param string $data
  * @return resource
@@ -383,89 +257,56 @@ function eio_readdir(string $path, int $flags, int $pri, mixed $callback, mixed 
 function eio_sendfile(mixed $out_fd, mixed $in_fd, int $offset, int $length, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $offset
- * @param int $length
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_readahead(mixed $fd, int $offset, int $length, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $offset
- * @param int $length
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_seek(mixed $fd, int $offset, int $length, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_syncfs(mixed $fd, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $offset
- * @param int $nbytes
- * @param int $flags
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_sync_file_range(mixed $fd, int $offset, int $nbytes, int $flags, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param mixed $fd
- * @param int $mode
- * @param int $offset
- * @param int $length
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_fallocate(mixed $fd, int $mode, int $offset, int $length, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
  * @param callable $execute
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_custom(mixed $execute, int $pri, mixed $callback, mixed $data = null) {}
 
 /**
- * @param int $delay
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_busy(int $delay, int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
- * @param int $pri
  * @param callable $callback
- * @param mixed $data
  * @return resource
  */
 function eio_nop(int $pri = EIO_PRI_DEFAULT, mixed $callback = null, mixed $data = null) {}
 
 /**
  * @param resource $req
- * @return void
  */
 function eio_cancel($req): void {}
 
@@ -479,71 +320,38 @@ function eio_grp(mixed $callback, mixed $data = null) {}
 /**
  * @param resource $grp
  * @param resource $req
- * @return void
  */
 function eio_grp_add($grp, $req): void {}
 
 /**
  * @param resource $grp
- * @param int $limit
- * @return void
  */
 function eio_grp_limit($grp, int $limit): void {}
 
 /**
  * @param resource $grp
- * @return void
  */
 function eio_grp_cancel($grp): void {}
 
-/**
- * @param float $nseconds
- * @return void
- */
 function eio_set_max_poll_time(float $nseconds): void {}
 
-/**
- * @param int $value
- * @return void
- */
 function eio_set_max_poll_reqs(int $value): void {}
 
 /**
  * @param string $value
- * @return void
  */
 function eio_set_min_parallel(int $value): void {}
 
-/**
- * @param int $value
- * @return void
- */
 function eio_set_max_parallel(int $value): void {}
 
-/**
- * @param int $value
- * @return void
- */
 function eio_set_max_idle(int $value): void {}
 
-/**
- * @return int
- */
 function eio_nthreads(): int {}
 
-/**
- * @return int
- */
 function eio_nreqs(): int {}
 
-/**
- * @return int
- */
 function eio_nready(): int {}
 
-/**
- * @return int
- */
 function eio_npending(): int {}
 
 /**
@@ -553,6 +361,5 @@ function eio_get_event_stream() {}
 
 /**
  * @param resource $req
- * @return string
  */
 function eio_get_last_error($req): string {}

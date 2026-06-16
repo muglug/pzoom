@@ -195,8 +195,6 @@ class AMQPChannel
     }
 
     /**
-     * @param AMQPConnection $amqp_connection
-     *
      * @throws AMQPConnectionException
      */
     public function __construct(AMQPConnection $amqp_connection) {}
@@ -404,9 +402,6 @@ class AMQPChannelException extends AMQPException
 
 class AMQPConnection
 {
-    /**
-     * @param array $credentials
-     */
     public function __construct(array $credentials = []) {}
 
     /**
@@ -620,8 +615,6 @@ class AMQPConnection
     {
     }
 
-    /**
-     */
     public function getConnectTimeout(): float
     {
     }
@@ -875,8 +868,6 @@ class AMQPException extends Exception
 class AMQPExchange
 {
     /**
-     * @param AMQPChannel $channel
-     *
      * @throws AMQPExchangeException
      * @throws AMQPConnectionException
      */
@@ -885,7 +876,6 @@ class AMQPExchange
     /**
      * @param string $exchangeName
      * @param string $routingKey
-     * @param array  $arguments
      *
      * @throws AMQPExchangeException
      * @throws AMQPChannelException
@@ -900,7 +890,6 @@ class AMQPExchange
     /**
      * @param string $exchangeName
      * @param string $routingKey
-     * @param array  $arguments
      *
      * @throws AMQPExchangeException
      * @throws AMQPChannelException
@@ -927,8 +916,6 @@ class AMQPExchange
      * @throws AMQPExchangeException
      * @throws AMQPChannelException
      * @throws AMQPConnectionException
-     *
-     * @return void
      */
     public function declare(): void
     {
@@ -1000,7 +987,6 @@ class AMQPExchange
      * @param string $message
      * @param string|null $routingKey
      * @param int|null $flags
-     * @param array $headers
      *
      * @throws AMQPExchangeException
      * @throws AMQPChannelException
@@ -1022,9 +1008,6 @@ class AMQPExchange
     {
     }
 
-    /**
-     * @param string $argumentName
-     */
     public function removeArgument(string $argumentName): void
     {
     }
@@ -1106,7 +1089,6 @@ class AMQPQueue
     /**
      * @param string $exchangeName
      * @param string|null $routingKey
-     * @param array  $arguments
      *
      * @throws AMQPChannelException
      * @throws AMQPConnectionException
@@ -1159,8 +1141,6 @@ class AMQPQueue
      * @throws AMQPChannelException
      * @throws AMQPConnectionException
      * @throws AMQPQueueException
-     *
-     * @return int
      */
     public function declare(): int
     {

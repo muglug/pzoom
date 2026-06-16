@@ -49,18 +49,10 @@ namespace {
     ): bool {
     }
 
-    /**
-     * @param string $value
-     * @return string
-     */
     function ldap_8859_to_t61(string $value): string
     {
     }
 
-    /**
-     * @param string $value
-     * @return string
-     */
     function ldap_t61_to_8859(string $value): string
     {
     }
@@ -189,26 +181,17 @@ namespace {
     {
     }
 
-    /**
-     * @return string|false
-     */
     function ldap_get_dn(LDAP\Connection $ldap, LDAP\ResultEntry $entry): string|false
     {
     }
 
     /**
-     * @param string $dn
-     * @param int $with_attrib
      * @return array<array-key, mixed>|false
      */
     function ldap_explode_dn(string $dn, int $with_attrib): array|false
     {
     }
 
-    /**
-     * @param string $dn
-     * @return false|string
-     */
     function ldap_dn2ufn(string $dn): string|false
     {
     }
@@ -277,10 +260,6 @@ namespace {
     {
     }
 
-    /**
-     * @param int $errno
-     * @return string
-     */
     function ldap_err2str(int $errno): string
     {
     }

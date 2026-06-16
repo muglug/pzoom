@@ -269,21 +269,14 @@ final class classObj
      */
     public $type;
 
-    /**
-     * @param layerObj $layer
-     * @param classObj $class
-     */
     final public function __construct(layerObj $layer, classObj $class) {}
 
     /**
-     * @param layerObj $layer
-     * @param classObj $class
      * @return classObj
      */
     final public function ms_newClassObj(layerObj $layer, classObj $class) {}
 
     /**
-     * @param labelObj $label
      * @return int
      */
     final public function addLabel(labelObj $label) {}
@@ -309,7 +302,6 @@ final class classObj
     /**
      * @param int $width
      * @param int $height
-     * @param imageObj $im
      * @param int $dstX
      * @param int $dstY
      * @return int
@@ -614,7 +606,6 @@ final class imageObj
     public $imageurl;
 
     /**
-     * @param imageObj $srcImg
      * @param int $transparentColorHex
      * @param int $dstX
      * @param int $dstY
@@ -625,7 +616,6 @@ final class imageObj
 
     /**
      * @param string $filename
-     * @param mapObj $oMap
      * @return int
      */
     final public function saveImage($filename, mapObj $oMap) {}
@@ -1188,14 +1178,11 @@ final class layerObj
     public $type;
 
     /**
-     * @param mapObj $map
-     * @param layerObj $layer
      * @return layerObj
      */
     final public function ms_newLayerObj(mapObj $map, layerObj $layer) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function addFeature(shapeObj $shape) {}
@@ -1230,13 +1217,11 @@ final class layerObj
     final public function convertToString() {}
 
     /**
-     * @param imageObj $image
      * @return int
      */
     final public function draw(imageObj $image) {}
 
     /**
-     * @param imageObj $image
      * @return int
      */
     final public function drawQuery(imageObj $image) {}
@@ -1318,7 +1303,6 @@ final class layerObj
     final public function getResultsBounds() {}
 
     /**
-     * @param resultObj $result
      * @return shapeObj
      */
     final public function getShape(resultObj $result) {}
@@ -1374,7 +1358,6 @@ final class layerObj
     final public function queryByFeatures($slayer) {}
 
     /**
-     * @param pointObj $point
      * @param int $mode
      * @param float $buffer
      * @return int
@@ -1382,13 +1365,11 @@ final class layerObj
     final public function queryByPoint(pointObj $point, $mode, $buffer) {}
 
     /**
-     * @param rectObj $rect
      * @return int
      */
     final public function queryByRect(rectObj $rect) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function queryByShape(shapeObj $shape) {}
@@ -1557,7 +1538,6 @@ final class lineObj
     final public function ms_newLineObj() {}
 
     /**
-     * @param pointObj $point
      * @return int
      */
     final public function add(pointObj $point) {}
@@ -1586,8 +1566,6 @@ final class lineObj
     final public function point($i) {}
 
     /**
-     * @param projectionObj $in
-     * @param projectionObj $out
      * @return int
      */
     final public function project(projectionObj $in, projectionObj $out) {}
@@ -1796,7 +1774,6 @@ final class mapObj
     final public function draw() {}
 
     /**
-     * @param imageObj $image
      * @return int
      */
     final public function drawLabelCache(imageObj $image) {}
@@ -1822,13 +1799,11 @@ final class mapObj
     final public function drawScaleBar() {}
 
     /**
-     * @param imageObj $image
      * @return int
      */
     final public function embedLegend(imageObj $image) {}
 
     /**
-     * @param imageObj $image
      * @return int
      */
     final public function embedScalebar(imageObj $image) {}
@@ -1930,7 +1905,6 @@ final class mapObj
     final public function loadMapContext($filename, $unique_layer_name) {}
 
     /**
-     * @param OwsrequestObj $request
      * @param string $version
      * @return int
      */
@@ -1956,7 +1930,6 @@ final class mapObj
     final public function offsetExtent($x, $y) {}
 
     /**
-     * @param OwsrequestObj $request
      * @return int
      */
     final public function owsDispatch(OwsrequestObj $request) {}
@@ -1972,20 +1945,17 @@ final class mapObj
     final public function prepareQuery() {}
 
     /**
-     * @param array $params
      * @return string
      */
     final public function processLegendTemplate(array $params) {}
 
     /**
-     * @param array $params
      * @param bool $generateimages
      * @return string
      */
     final public function processQueryTemplate(array $params, $generateimages) {}
 
     /**
-     * @param array $params
      * @param bool $generateimages
      * @return string
      */
@@ -2007,7 +1977,6 @@ final class mapObj
     final public function queryByIndex($layerindex, $tileindex, $shapeindex, $addtoquery) {}
 
     /**
-     * @param pointObj $point
      * @param int $mode
      * @param float $buffer
      * @return int
@@ -2015,13 +1984,11 @@ final class mapObj
     final public function queryByPoint(pointObj $point, $mode, $buffer) {}
 
     /**
-     * @param rectObj $rect
      * @return int
      */
     final public function queryByRect(rectObj $rect) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function queryByShape(shapeObj $shape) {}
@@ -2072,7 +2039,6 @@ final class mapObj
     final public function selectOutputFormat($type) {}
 
     /**
-     * @param outputFormatObj $outputFormat
      * @return int
      */
     final public function appendOutputFormat(outputFormatObj $outputFormat) {}
@@ -2097,7 +2063,6 @@ final class mapObj
     final public function set($property_name, $new_value) {}
 
     /**
-     * @param pointObj $center
      * @return int
      */
     final public function setCenter(pointObj $center) {}
@@ -2166,30 +2131,23 @@ final class mapObj
 
     /**
      * @param int $nZoomFactor
-     * @param pointObj $oPixelPos
      * @param int $nImageWidth
      * @param int $nImageHeight
-     * @param rectObj $oGeorefExt
      * @return int
      */
     final public function zoomPoint($nZoomFactor, pointObj $oPixelPos, $nImageWidth, $nImageHeight, rectObj $oGeorefExt) {}
 
     /**
-     * @param rectObj $oPixelExt
      * @param int $nImageWidth
      * @param int $nImageHeight
-     * @param rectObj $oGeorefExt
      * @return int
      */
     final public function zoomRectangle(rectObj $oPixelExt, $nImageWidth, $nImageHeight, rectObj $oGeorefExt) {}
 
     /**
      * @param float $nScaleDenom
-     * @param pointObj $oPixelPos
      * @param int $nImageWidth
      * @param int $nImageHeight
-     * @param rectObj $oGeorefExt
-     * @param rectObj $oMaxGeorefExt
      * @return int
      */
     final public function zoomScale($nScaleDenom, pointObj $oPixelPos, $nImageWidth, $nImageHeight, rectObj $oGeorefExt, rectObj $oMaxGeorefExt) {}
@@ -2340,28 +2298,21 @@ final class pointObj
     final public function ms_newPointObj() {}
 
     /**
-     * @param pointObj $p1
-     * @param pointObj $p2
      * @return float
      */
     final public function distanceToLine(pointObj $p1, pointObj $p2) {}
 
     /**
-     * @param pointObj $poPoint
      * @return float
      */
     final public function distanceToPoint(pointObj $poPoint) {}
 
     /**
-     * @param shapeObj $shape
      * @return float
      */
     final public function distanceToShape(shapeObj $shape) {}
 
     /**
-     * @param mapObj $map
-     * @param layerObj $layer
-     * @param imageObj $img
      * @param int $class_index
      * @param string $text
      * @return int
@@ -2369,8 +2320,6 @@ final class pointObj
     final public function draw(mapObj $map, layerObj $layer, imageObj $img, $class_index, $text) {}
 
     /**
-     * @param projectionObj $in
-     * @param projectionObj $out
      * @return int
      */
     final public function project(projectionObj $in, projectionObj $out) {}
@@ -2488,9 +2437,6 @@ final class rectObj
     final public function ms_newRectObj() {}
 
     /**
-     * @param mapObj $map
-     * @param layerObj $layer
-     * @param imageObj $img
      * @param int $class_index
      * @param string $text
      * @return int
@@ -2505,8 +2451,6 @@ final class rectObj
     final public function fit($width, $height) {}
 
     /**
-     * @param projectionObj $in
-     * @param projectionObj $out
      * @return int
      */
     final public function project(projectionObj $in, projectionObj $out) {}
@@ -2782,13 +2726,11 @@ final class shapefileObj
     final public function ms_newShapefileObj($filename, $type) {}
 
     /**
-     * @param pointObj $point
      * @return int
      */
     final public function addPoint(pointObj $point) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function addShape(shapeObj $shape) {}
@@ -2817,7 +2759,6 @@ final class shapefileObj
     final public function getShape($i) {}
 
     /**
-     * @param mapObj $map
      * @param int $i
      * @return shapeObj
      */
@@ -2883,7 +2824,6 @@ final class shapeObj
     final public function ms_shapeObjFromWkt($wkt) {}
 
     /**
-     * @param lineObj $line
      * @return int
      */
     final public function add(lineObj $line) {}
@@ -2894,7 +2834,6 @@ final class shapeObj
     final public function boundary() {}
 
     /**
-     * @param shapeObj $shape2
      * @return int
      */
     final public function containsShape(shapeObj $shape2) {}
@@ -2905,39 +2844,31 @@ final class shapeObj
     final public function convexhull() {}
 
     /**
-     * @param pointObj $point
      * @return bool
      */
     final public function contains(pointObj $point) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function crosses(shapeObj $shape) {}
 
     /**
-     * @param shapeObj $shape
      * @return shapeObj
      */
     final public function difference(shapeObj $shape) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function disjoint(shapeObj $shape) {}
 
     /**
-     * @param mapObj $map
-     * @param layerObj $layer
-     * @param imageObj $img
      * @return int
      */
     final public function draw(mapObj $map, layerObj $layer, imageObj $img) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function equals(shapeObj $shape) {}
@@ -2974,20 +2905,17 @@ final class shapeObj
     final public function getPointUsingMeasure($m) {}
 
     /**
-     * @param layerObj $layer
      * @param string $filedname
      * @return string
      */
     final public function getValue(layerObj $layer, $filedname) {}
 
     /**
-     * @param shapeObj $shape
      * @return shapeObj
      */
     final public function intersection(shapeObj $shape) {}
 
     /**
-     * @param shapeObj $shape
      * @return bool
      */
     final public function intersects(shapeObj $shape) {}
@@ -2999,14 +2927,11 @@ final class shapeObj
     final public function line($i) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function overlaps(shapeObj $shape) {}
 
     /**
-     * @param projectionObj $in
-     * @param projectionObj $out
      * @return int
      */
     final public function project(projectionObj $in, projectionObj $out) {}
@@ -3030,7 +2955,6 @@ final class shapeObj
     final public function simplify($tolerance) {}
 
     /**
-     * @param shapeObj $shape
      * @return shapeObj
      */
     final public function symdifference(shapeObj $shape) {}
@@ -3042,7 +2966,6 @@ final class shapeObj
     final public function topologyPreservingSimplify($tolerance) {}
 
     /**
-     * @param shapeObj $shape
      * @return int
      */
     final public function touches(shapeObj $shape) {}
@@ -3053,13 +2976,11 @@ final class shapeObj
     final public function toWkt() {}
 
     /**
-     * @param shapeObj $shape
      * @return shapeObj
      */
     final public function union(shapeObj $shape) {}
 
     /**
-     * @param shapeObj $shape2
      * @return int
      */
     final public function within(shapeObj $shape2) {}
@@ -3162,15 +3083,9 @@ final class styleObj
      */
     public $width;
 
-    /**
-     * @param labelObj $label
-     * @param styleObj $style
-     */
     final public function __construct(labelObj $label, styleObj $style) {}
 
     /**
-     * @param classObj $class
-     * @param styleObj $style
      * @return styleObj
      */
     final public function ms_newStyleObj(classObj $class, styleObj $style) {}
@@ -3302,13 +3217,11 @@ final class symbolObj
     public $transparentcolor;
 
     /**
-     * @param mapObj $map
      * @param string $symbolname
      */
     final public function __construct(mapObj $map, $symbolname) {}
 
     /**
-     * @param mapObj $map
      * @param string $symbolname
      * @return int
      */
@@ -3343,13 +3256,11 @@ final class symbolObj
     final public function setImagePath($filename) {}
 
     /**
-     * @param array $int
      * @return int
      */
     final public function setPattern(array $int) {}
 
     /**
-     * @param array $double
      * @return int
      */
     final public function setPoints(array $double) {}

@@ -50,38 +50,18 @@ namespace Relay {
          */
         protected function __construct() {}
 
-        /**
-         * @return float|false
-         */
         #[Attributes\Local]
         public function loadFactor(int $depth = 1): float|false {}
 
-        /**
-         * @param  bool  $async
-         * @return bool
-         */
         #[Attributes\Local]
         public function flush(bool $async = true): bool {}
 
-        /**
-         * @param  string  $key
-         * @return array|false
-         */
         #[Attributes\Local]
         public function stats(string $key): array|false {}
 
-        /**
-         * @param  string  $key
-         * @param  bool  $write
-         * @param  int  $count
-         * @return bool
-         */
         #[Attributes\Local]
         public function incrBy(string $key, bool $write, int $count): bool {}
 
-        /**
-         * @return float
-         */
         #[Attributes\Local]
         public function lastFlush(): float {}
     }
@@ -127,13 +107,7 @@ namespace Relay {
         public AdaptiveCache $adaptiveCache;
 
         /**
-         * @param  string|null  $name
-         * @param  array|null  $seeds
-         * @param  int|float  $connect_timeout
-         * @param  int|float  $command_timeout
-         * @param  bool  $persistent
          * @param  mixed  $auth
-         * @param  array|null  $context
          */
         #[Attributes\Server]
         public function __construct(
@@ -146,273 +120,150 @@ namespace Relay {
             array|null $context = null
         ) {}
 
-        /**
-         * @param  string  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _compress(string $value): string {}
 
-        /**
-         * @return int
-         */
         #[Attributes\Local]
         public function idleTime(): int {}
 
         /**
          * @internal Temporary debug helper. Do not use.
-         * @return array|false
          */
         public function _getKeys(): array|false {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public function _masters(): array {}
 
-        /**
-         * @param  mixed  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _pack(mixed $value): string {}
 
-        /**
-         * @param  mixed  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _prefix(mixed $value): string {}
 
-        /**
-         * @param  mixed  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _serialize(mixed $value): string {}
 
-        /**
-         * @param  string  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _uncompress(string $value): string {}
 
-        /**
-         * @param  string  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function _unpack(string $value): mixed {}
 
-        /**
-         * @param  string  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function _unserialize(string $value): mixed {}
 
         /**
-         * @param  string  $operation
          * @param  string  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function acl(array|string $key_or_address, string $operation, string ...$args): mixed {}
 
         /**
          * @param  string  $pattern,...
-         * @return int
          */
         #[Attributes\Local]
         public function addAllowPatterns(string ...$pattern): int {}
 
         /**
          * @param  string  $pattern,...
-         * @return int
          */
         #[Attributes\Local]
         public function addIgnorePatterns(string ...$pattern): int {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function append(mixed $key, mixed $value): Cluster|int|false {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bgrewriteaof(array|string $key_or_address): Cluster|bool {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  int  $numlocal
-         * @param  int  $numremote
          * @return Cluster|array
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function waitaof(array|string $key_or_address, int $numlocal, int $numremote, int $timeout): Cluster|array|false {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @param  bool  $schedule
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bgsave(array|string $key_or_address, bool $schedule = false): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @param  bool  $by_bit
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function bitcount(mixed $key, int $start = 0, int $end = -1, bool $by_bit = false): Cluster|int|false {}
 
         /**
-         * @param  string  $operation
-         * @param  string  $dstkey
-         * @param  string  $srckey
          * @param  string  $other_keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bitop(string $operation, string $dstkey, string $srckey, string ...$other_keys): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $bit
          * @param  int  $start
          * @param  int  $end
-         * @param  bool  $by_bit
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bitpos(mixed $key, int $bit, ?int $start = null, ?int $end = null, bool $by_bit = false): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  string  $srcpos
-         * @param  string  $dstpos
-         * @param  float  $timeout
-         * @return Cluster|string|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blmove(mixed $srckey, mixed $dstkey, string $srcpos, string $dstpos, float $timeout): Cluster|string|null|false {}
 
         /**
-         * @param  float  $timeout
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
          * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blmpop(float $timeout, array $keys, string $from, int $count = 1): mixed {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blpop(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Cluster|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function brpop(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Cluster|array|null|false {}
 
         /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  float  $timeout
-         * @return mixed
              * @deprecated
          */
             public function brpoplpush(mixed $srckey, mixed $dstkey, float $timeout): mixed {}
 
-        /**
-         * @param  float  $timeout
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Cluster|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzmpop(float $timeout, array $keys, string $from, int $count = 1): Cluster|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzpopmax(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Cluster|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzpopmin(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Cluster|array|null|false {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function clearLastError(): bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function clearTransferredBytes(): bool {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function client(array|string $key_or_address, string $operation, mixed ...$args): mixed {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function close(): bool {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function cluster(array|string $key_or_address, string $operation, mixed ...$args): mixed {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  mixed  $args,...
          * @return Cluster|array|bool
          */
@@ -421,1364 +272,652 @@ namespace Relay {
 
         /**
          * @param  array  $args,...
-         * @return Cluster|array|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function command(mixed ...$args): Cluster|array|int|false {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  array|null  $options
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function copy(mixed $srckey, mixed $dstkey, array|null $options = null): Cluster|bool {}
 
-        /**
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function dbsize(array|string $key_or_address): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $by
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function decr(mixed $key, int $by = 1): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function decrby(mixed $key, int $value): Cluster|int|false {}
 
         /**
          * @param  mixed  $keys,...
-         * @return Cluster|int|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function del(mixed ...$keys): Cluster|int|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\ValkeyCommand]
         public function delifeq(mixed $key, mixed $value): Cluster|int|false {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function discard(): bool {}
 
-        /**
-         * @return int|false
-         */
         #[Attributes\Local]
         public function dispatchEvents(): int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|string|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function dump(mixed $key): Cluster|string|false {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @param  string  $message
-         * @return Cluster|string|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function echo(array|string $key_or_address, string $message): Cluster|string|false {}
 
-        /**
-         * @return array|false
-         */
         #[Attributes\Local]
         public function endpointId(): array|false {}
 
-        /**
-         * @param  mixed  $script
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function eval(mixed $script, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  mixed  $script
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function eval_ro(mixed $script, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  string  $sha
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function evalsha(string $sha, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  string  $sha
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function evalsha_ro(string $sha, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function exec(): array|false {}
 
         /**
          * @param  mixed  $keys,...
-         * @return Cluster|int|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function exists(mixed ...$keys): Cluster|int|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $seconds
-         * @param  string|null  $mode
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expire(mixed $key, int $seconds, string|null $mode = null): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $timestamp
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expireat(mixed $key, int $timestamp): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expiretime(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  string|null  $endpointId
-         * @param  int|null  $db
-         * @return bool
-         */
         #[Attributes\Local]
         public static function flushMemory(?string $endpointId = null, ?int $db = null): bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @param  bool|null  $sync
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function flushall(array|string $key_or_address, bool|null $sync = null): Cluster|bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @param  bool|null  $sync
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function flushdb(array|string $key_or_address, bool|null $sync = null): Cluster|bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function flushSlotCache(): bool {}
 
         /**
-         * @param  mixed  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  string  $member
          * @param  mixed  $other_triples_and_options,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geoadd(mixed $key, float $lng, float $lat, string $member, mixed ...$other_triples_and_options): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $src
-         * @param  string  $dst
-         * @param  string|null  $unit
-         * @return Cluster|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geodist(mixed $key, string $src, string $dst, string|null $unit = null): Cluster|float|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $member
          * @param  string  $other_members,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geohash(mixed $key, string $member, string ...$other_members): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $members,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geopos(mixed $key, mixed ...$members): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadius(mixed $key, float $lng, float $lat, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadius_ro(mixed $key, float $lng, float $lat, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $member
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadiusbymember(mixed $key, string $member, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $member
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadiusbymember_ro(mixed $key, string $member, float $radius, string $unit, array $options = []): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array|string  $position
-         * @param  array|int|float  $shape
-         * @param  string  $unit
-         * @param  array  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geosearch(mixed $key, array|string $position, array|int|float $shape, string $unit, array $options = []): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $dstkey
-         * @param  mixed  $srckey
-         * @param  array|string  $position
-         * @param  array|int|float  $shape
-         * @param  string  $unit
-         * @param  array  $options
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geosearchstore(mixed $dstkey, mixed $srckey, array|string $position, array|int|float $shape, string $unit, array $options = []): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function get(mixed $key): mixed {}
 
         /**
-         * @param  mixed  $key
          * @return Cluster|array{0: mixed, 1: array{cached: bool, length: int}}|false
          */
         #[Attributes\Server, Attributes\Cached]
         public function getWithMeta(mixed $key): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $pos
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function getbit(mixed $key, int $pos): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  array  $options
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function getex(mixed $key, ?array $options = null): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function getdel(mixed $key): mixed {}
 
-        /**
-         * @return string|null
-         */
         #[Attributes\Local]
         public function getLastError(): string|null {}
 
-        /**
-         * @param  bool  $masked
-         * @return int
-         */
         #[Attributes\Local]
         public function getMode(bool $masked = false): int {}
 
-        /**
-         * @param  int  $option
-         * @return mixed
-         */
         #[Attributes\Local]
         public function getOption(int $option): mixed {}
 
-        /**
-         * @return array|false
-         */
         #[Attributes\Local]
         public function getTransferredBytes(): array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return Cluster|string|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function getrange(mixed $key, int $start, int $end): Cluster|string|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return mixed
              * @deprecated
          */
             public function getset(mixed $key, mixed $value): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  string  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hdel(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hexists(mixed $key, mixed $member): Cluster|bool {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand]
         public function hexpire(mixed $hash, int $ttl, array $fields, ?string $mode = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand]
         public function hpexpire(mixed $hash, int $ttl, array $fields, ?string $mode = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand]
         public function hexpireat(mixed $hash, int $ttl, array $fields, ?string $mode = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand]
         public function hpexpireat(mixed $hash, int $ttl, array $fields, ?string $mode = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function httl(mixed $hash, array $fields): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function hpttl(mixed $hash, array $fields): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function hexpiretime(mixed $hash, array $fields): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function hpexpiretime(mixed $hash, array $fields): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         public function hpersist(mixed $hash, array $fields): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hget(mixed $key, mixed $member): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hgetall(mixed $key): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  int  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hincrby(mixed $key, mixed $member, int $value): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  float  $value
-         * @return Cluster|float|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hincrbyfloat(mixed $key, mixed $member, float $value): Cluster|float|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hkeys(mixed $key): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hlen(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $members
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hmget(mixed $key, array $members): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $fields
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function hgetdel(mixed $key, array $fields): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  array  $members
-         * @return Cluster|bool
              * @deprecated
          */
             public function hmset(mixed $key, array $members): Cluster|bool {}
 
         /**
-         * @param  mixed  $key
          * @param  array  $options
-         * @return Cluster|array|string|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hrandfield(mixed $key, array|null $options = null): Cluster|array|string|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $keys_and_vals...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hset(mixed $key, mixed ...$keys_and_vals): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  array  $fields
          * @param  null|int|float|array  $expiry = null
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hsetex(mixed $key, array $fields, null|int|float|array $expiry = null): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  mixed  $value
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hsetnx(mixed $key, mixed $member, mixed $value): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hstrlen(mixed $key, mixed $member): Cluster|int|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  array  $fields
          * @param  mixed  $expiry = null
-         * @return Cluster|array|false
          */
         public function hgetex(mixed $hash, array $fields, mixed $expiry = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hvals(mixed $key): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $by
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incr(mixed $key, int $by = 1): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incrby(mixed $key, int $value): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  float  $value
-         * @return Cluster|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incrbyfloat(mixed $key, float $value): Cluster|float|false {}
 
         /**
-         * @param  array|string  $key_or_address
          * @param  string  $sections,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function info(array|string $key_or_address, string ...$sections): Cluster|array|false {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public static function invalidateSlotCaches(): bool {}
 
-        /**
-         * @param  mixed  $pattern
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function keys(mixed $pattern): Cluster|array|false {}
 
-        /**
-         * @param  string|null  $endpointId
-         * @param  int|null  $db
-         * @return float|false
-         */
         #[Attributes\Local]
         public static function lastMemoryFlush(?string $endpointId = null, ?int $db = null): float|false {}
 
-        /**
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lastsave(array|string $key_or_address): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key1
-         * @param  mixed  $key2
-         * @param  array|null  $options
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lcs(mixed $key1, mixed $key2, array|null $options = null): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $index
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lindex(mixed $key, int $index): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $op
-         * @param  mixed  $pivot
-         * @param  mixed  $element
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function linsert(mixed $key, string $op, mixed $pivot, mixed $element): Cluster|int|false {}
 
         /**
          * @param  callable  $callback
-         * @return bool
          */
         #[Attributes\Local]
         public function listen(?callable $callback): bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function llen(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  string  $srcpos
-         * @param  string  $dstpos
-         * @return Cluster|string|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lmove(mixed $srckey, mixed $dstkey, string $srcpos, string $dstpos): Cluster|string|null|false {}
 
         /**
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
          * @return Cluster|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lmpop(array $keys, string $from, int $count = 1): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpop(mixed $key, int $count = 1): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
          * @param  array  $options
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lpos(mixed $key, mixed $value, array|null $options = null): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpush(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpushx(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $stop
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lrange(mixed $key, int $start, int $stop): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  int  $count
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lrem(mixed $key, mixed $member, int $count = 0): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $index
-         * @param  mixed  $member
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lset(mixed $key, int $index, mixed $member): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ltrim(mixed $key, int $start, int $end): Cluster|bool {}
 
-        /**
-         * @return int
-         */
         #[Attributes\Local]
         public static function maxMemory(): int {}
 
-        /**
-         * @param  array  $keys
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function mget(array $keys): Cluster|array|false {}
 
-        /**
-         * @param  array  $kvals
-         * @return Cluster|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function mset(array $kvals): Cluster|array|bool {}
 
-        /**
-         * @param  array  $kvals
-         * @return Cluster|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function msetnx(array $kvals): Cluster|array|bool {}
 
-        /**
-         * @param  int  $mode
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function multi(int $mode = Relay::MULTI): Cluster|bool {}
 
-        /**
-         * @param  string  $op
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function object(string $op, mixed $key): mixed {}
 
         /**
          * @param  callable  $callback
-         * @return bool
          */
         #[Attributes\Local]
         public function onFlushed(?callable $callback): bool {}
 
         /**
          * @param  callable  $callback
-         * @param  string|null  $pattern
-         * @return bool
          */
         #[Attributes\Local]
         public function onInvalidated(?callable $callback, ?string $pattern = null): bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function persist(mixed $key): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $milliseconds
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpire(mixed $key, int $milliseconds): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $timestamp_ms
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpireat(mixed $key, int $timestamp_ms): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpiretime(mixed $key): Cluster|int|false {}
 
         /**
          * @param  string  $key
-         * @param  array  $elements
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pfadd(mixed $key, array $elements): Cluster|int|false {}
 
         /**
          * @param  string  $key
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pfcount(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  string  $dstkey
-         * @param  array  $srckeys
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pfmerge(string $dstkey, array $srckeys): Cluster|bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @param  string|null  $message
-         * @return Cluster|bool|string
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ping(array|string $key_or_address, string|null $message = null): Cluster|bool|string {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $milliseconds
-         * @param  mixed  $value
-         * @return Cluster|bool
              * @deprecated
          */
             public function psetex(mixed $key, int $milliseconds, mixed $value): Cluster|bool {}
 
-        /**
-         * @param  array  $patterns
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function psubscribe(array $patterns, callable $callback): bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pttl(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  string  $channel
-         * @param  string  $message
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function publish(string $channel, string $message): Cluster|int|false {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pubsub(array|string $key_or_address, string $operation, mixed ...$args): mixed {}
 
-        /**
-         * @param  array  $patterns
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function punsubscribe(array $patterns = []): bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @return Cluster|bool|string
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function randomkey(array|string $key_or_address): Cluster|bool|string {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $cmd
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function rawCommand(array|string $key_or_address, string $cmd, mixed ...$args): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $newkey
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rename(mixed $key, mixed $newkey): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $newkey
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function renamenx(mixed $key, mixed $newkey): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $ttl
-         * @param  string  $value
-         * @param  array|null  $options
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function restore(mixed $key, int $ttl, string $value, array|null $options = null): Cluster|bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function role(array|string $key_or_address): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpop(mixed $key, int $count = 1): mixed {}
 
         /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @return mixed
              * @deprecated
          */
             public function rpoplpush(mixed $srckey, mixed $dstkey): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpush(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpushx(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sadd(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function save(array|string $key_or_address): Cluster|bool {}
 
-        /**
-         * @param  mixed  $iterator
-         * @param  array|string  $key_or_address
-         * @param  mixed  $match
-         * @param  int  $count
-         * @param  string|null  $type
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function scan(mixed &$iterator, array|string $key_or_address, mixed $match = null, int $count = 0, string|null $type = null): array|false {}
 
-        /**
-         * @param  mixed  $match
-         * @param  int  $count
-         * @param  string|null  $type
-         * @return \Generator|false
-         */
         public function fullscan(mixed $match = null, int $count = 0, string|null $type = null): \Generator|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function scard(mixed $key): Cluster|int|false {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  string  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function script(array|string $key_or_address, string $operation, string ...$args): mixed {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sdiff(mixed $key, mixed ...$other_keys): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sdiffstore(mixed $key, mixed ...$other_keys): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @param  mixed  $options
-         * @return Cluster|string|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function set(mixed $key, mixed $value, mixed $options = null): Cluster|string|bool {}
 
-        /**
-         * @param  int  $option
-         * @param  mixed  $value
-         * @return bool
-         */
         #[Attributes\Local]
         public function setOption(int $option, mixed $value): bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $pos
-         * @param  int  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function setbit(mixed $key, int $pos, int $value): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $seconds
-         * @param  mixed  $value
-         * @return Cluster|bool
              * @deprecated
          */
             public function setex(mixed $key, int $seconds, mixed $value): Cluster|bool {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Cluster|bool
              * @deprecated
          */
             public function setnx(mixed $key, mixed $value): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  mixed  $value
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function setrange(mixed $key, int $start, mixed $value): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sinter(mixed $key, mixed ...$other_keys): Cluster|array|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  int  $limit
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sintercard(array $keys, int $limit = -1): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sinterstore(mixed $key, mixed ...$other_keys): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sismember(mixed $key, mixed $member): Cluster|bool {}
 
         /**
-         * @param  array|string  $key_or_address
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return Cluster|array|int|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function slowlog(array|string $key_or_address, string $operation, mixed ...$args): Cluster|array|int|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function smembers(mixed $key): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $members,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function smismember(mixed $key, mixed ...$members): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  mixed  $member
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function smove(mixed $srckey, mixed $dstkey, mixed $member): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $options
-         * @return Cluster|array|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sort(mixed $key, array $options = []): Cluster|array|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $options
-         * @return Cluster|array|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sort_ro(mixed $key, array $options = []): Cluster|array|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function spop(mixed $key, int $count = 1): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function srandmember(mixed $key, int $count = 1): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function srem(mixed $key, mixed $member, mixed ...$members): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
-        /**
-         * @param  array  $channels
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ssubscribe(array $channels, callable $callback): bool {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public static function stats(): array {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function strlen(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  array  $channels
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function subscribe(array $channels, callable $callback): bool {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sunion(mixed $key, mixed ...$other_keys): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sunionstore(mixed $key, mixed ...$other_keys): Cluster|int|false {}
 
-        /**
-         * @param  array  $channels
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sunsubscribe(array $channels = []): bool {}
 
-        /**
-         * @param  array|string  $key_or_address
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function time(array|string $key_or_address): Cluster|array|false {}
 
         /**
-         * @param  array|string  $key_or_array
          * @param  mixed  $more_keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function touch(array|string $key_or_array, mixed ...$more_keys): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ttl(mixed $key): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
          * @return Cluster|int|string|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
@@ -1786,593 +925,243 @@ namespace Relay {
 
         /**
          * @param  mixed  $keys,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unlink(mixed ...$keys): Cluster|int|false {}
 
-        /**
-         * @param  array  $channels
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unsubscribe(array $channels = []): bool {}
 
-        /**
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unwatch(): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $values
-         * @param  mixed  $element
-         * @param  array|null  $options
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand]
         public function vadd(mixed $key, array $values, mixed $element, ?array $options = null): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand]
         public function vcard(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand]
         public function vdim(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $raw
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function vemb(mixed $key, mixed $element, bool $raw = false): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $raw
-         * @return Cluster|array|string|false
-         */
         #[Attributes\RedisCommand]
         public function vgetattr(mixed $key, mixed $element, bool $raw = false): Cluster|array|string|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function vinfo(mixed $key): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @return Cluster|bool
-         */
         #[Attributes\RedisCommand]
         public function vismember(mixed $key, mixed $element): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $withscores
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function vlinks(mixed $key, mixed $element, bool $withscores): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Cluster|array|string|false
-         */
         #[Attributes\RedisCommand]
         public function vrandmember(mixed $key, int $count = 0): Cluster|array|string|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $end
-         * @param  string  $start
-         * @param  int  $count
-         * @return Cluster|array|bool
-         */
         #[Attributes\RedisCommand]
         public function vrange(string $key, string $end, string $start, int $count = -1): Cluster|array|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand]
         public function vrem(mixed $key, mixed $element): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  array|string  $attributes
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand]
         public function vsetattr(mixed $key, mixed $element, array|string $attributes): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  array|null  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function vsim(mixed $key, mixed $member, array|null $options = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Cluster|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function watch(mixed $key, mixed ...$other_keys): Cluster|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $group
-         * @param  array  $ids
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xack(mixed $key, string $group, array $ids): Cluster|int|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $group
-         * @param  array  $ids
-         * @param  string|null  $mode
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function xackdel(string $key, string $group, array $ids, ?string $mode = null): Cluster|array|false {}
 
         /**
          * @param  string  $key
-         * @param  string  $id
-         * @param  int  $maxlen
-         * @param  bool  $approx
-         * @param  bool  $nomkstream
-         * @return Cluster|string|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xadd(mixed $key, string $id, array $values, int $maxlen = 0, bool $approx = false, bool $nomkstream = false): Cluster|string|false {}
 
         /**
          * @param  string  $key
-         * @param  string  $group
-         * @param  string  $consumer
-         * @param  int  $min_idle
-         * @param  string  $start
-         * @param  int  $count
-         * @param  bool  $justid
-         * @return Cluster|array|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xautoclaim(mixed $key, string $group, string $consumer, int $min_idle, string $start, int $count = -1, bool $justid = false): Cluster|bool|array {}
 
         /**
          * @param  string  $key
-         * @param  string  $group
-         * @param  string  $consumer
-         * @param  int  $min_idle
-         * @param  array  $ids
-         * @param  array  $options
-         * @return Cluster|array|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xclaim(mixed $key, string $group, string $consumer, int $min_idle, array $ids, array $options): Cluster|array|bool {}
 
         /**
          * @param  string  $key
-         * @param  array  $ids
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xdel(mixed $key, array $ids): Cluster|int|false {}
 
-        /**
-         * @param  string  $key
-         * @param  array  $ids
-         * @param  string|null  $mode
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand]
         public function xdelex(string $key, array $ids, ?string $mode = null): Cluster|array|false {}
 
         /**
-         * @param  string  $operation
-         * @param  mixed  $key
          * @param  string  $group
          * @param  string  $id_or_consumer
-         * @param  bool  $mkstream
-         * @param  int  $entries_read
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xgroup(string $operation, mixed $key = null, ?string $group = null, ?string $id_or_consumer = null, bool $mkstream = false, int $entries_read = -2): mixed {}
 
-        /**
-         * @param  string  $operation
-         * @param  string|null  $arg1
-         * @param  string|null  $arg2
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xinfo(string $operation, string|null $arg1 = null, string|null $arg2 = null, int $count = -1): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xlen(mixed $key): Cluster|int|false {}
 
         /**
          * @param  string  $key
-         * @param  string  $group
-         * @param  string|null  $start
-         * @param  string|null  $end
-         * @param  int  $count
-         * @param  string|null  $consumer
-         * @param  int  $idle
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xpending(mixed $key, string $group, string|null $start = null, string|null $end = null, int $count = -1, string|null $consumer = null, int $idle = 0): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $start
-         * @param  string  $end
          * @param  int  $count = -1
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xrange(mixed $key, string $start, string $end, int $count = -1): Cluster|array|false {}
 
-        /**
-         * @param  array  $streams
-         * @param  int  $count
-         * @param  int  $block
-         * @return Cluster|array|bool|null
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xread(array $streams, int $count = -1, int $block = -1): Cluster|array|bool|null {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $consumer
-         * @param  array  $streams
-         * @param  int  $count
-         * @param  int  $block
-         * @return Cluster|array|bool|null
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xreadgroup(mixed $key, string $consumer, array $streams, int $count = 1, int $block = 1): Cluster|array|bool|null {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $end
-         * @param  string  $start
-         * @param  int  $count
-         * @return Cluster|array|bool
-         */
         #[Attributes\RedisCommand]
         public function xrevrange(mixed $key, string $end, string $start, int $count = -1): Cluster|array|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $threshold
-         * @param  bool  $approx
-         * @param  bool  $minid
-         * @param  int  $limit
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xtrim(mixed $key, string $threshold, bool $approx = false, bool $minid = false, int $limit = -1): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zadd(mixed $key, mixed ...$args): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zcard(mixed $key): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zcount(mixed $key, mixed $min, mixed $max): Cluster|int|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  array|null  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zdiff(array $keys, array|null $options = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $dstkey
-         * @param  array  $keys
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zdiffstore(mixed $dstkey, array $keys): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  float  $score
-         * @param  mixed  $member
-         * @return Cluster|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zincrby(mixed $key, float $score, mixed $member): Cluster|float|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  array|null  $weights
-         * @param  mixed  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zinter(array $keys, array|null $weights = null, mixed $options = null): Cluster|array|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  int  $limit
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zintercard(array $keys, int $limit = -1): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $dstkey
-         * @param  array  $keys
-         * @param  array|null  $weights
-         * @param  mixed  $options
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zinterstore(mixed $dstkey, array $keys, array|null $weights = null, mixed $options = null): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zlexcount(mixed $key, mixed $min, mixed $max): Cluster|int|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Cluster|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zmpop(array $keys, string $from, int $count = 1): Cluster|array|null|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $members,...
-         * @return Cluster|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zmscore(mixed $key, mixed ...$members): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zpopmax(mixed $key, int $count = 1): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zpopmin(mixed $key, int $count = 1): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array|null  $options
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrandmember(mixed $key, array|null $options = null): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $start
-         * @param  string  $end
-         * @param  mixed  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function zrange(mixed $key, string $start, string $end, mixed $options = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @param  int  $offset
-         * @param  int  $count
-         * @return Cluster|array|false
              * @deprecated
          */
             public function zrangebylex(mixed $key, mixed $min, mixed $max, int $offset = -1, int $count = -1): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Cluster|array|false
              * @deprecated
          */
             public function zrangebyscore(mixed $key, mixed $start, mixed $end, mixed $options = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $dstkey
-         * @param  mixed  $srckey
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrangestore(mixed $dstkey, mixed $srckey, mixed $start, mixed $end, mixed $options = null): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $rank
-         * @param  bool  $withscore
-         * @return Cluster|array|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrank(mixed $key, mixed $rank, bool $withscore = false): Cluster|array|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $args,...
-         * @return Cluster|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrem(mixed $key, mixed ...$args): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebylex(mixed $key, mixed $min, mixed $max): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebyrank(mixed $key, int $start, int $end): Cluster|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebyscore(mixed $key, mixed $min, mixed $max): Cluster|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @param  mixed  $options
-         * @return Cluster|array|false
              * @deprecated
          */
             public function zrevrange(mixed $key, int $start, int $end, mixed $options = null): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $max
-         * @param  mixed  $min
-         * @param  int  $offset
-         * @param  int  $count
-         * @return Cluster|array|false
              * @deprecated
          */
             public function zrevrangebylex(mixed $key, mixed $max, mixed $min, int $offset = -1, int $count = -1): Cluster|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Cluster|array|false
              * @deprecated
          */
             public function zrevrangebyscore(mixed $key, mixed $start, mixed $end, mixed $options = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $rank
-         * @param  bool  $withscore
-         * @return Cluster|array|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrevrank(mixed $key, mixed $rank, bool $withscore = false): Cluster|array|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return Cluster|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zscore(mixed $key, mixed $member): Cluster|float|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  array|null  $weights
-         * @param  mixed  $options
-         * @return Cluster|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zunion(array $keys, array|null $weights = null, mixed $options = null): Cluster|array|false {}
 
-        /**
-         * @param  mixed  $dstkey
-         * @param  array  $keys
-         * @param  array|null  $weights
-         * @param  mixed  $options
-         * @return Cluster|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zunionstore(mixed $dstkey, array $keys, array|null $weights = null, mixed $options = null): Cluster|int|false {}
     }
@@ -2769,12 +1558,7 @@ namespace Relay {
 
         /**
          * @example $context array{
-         * @param  string|array|null  $host
-         * @param  int  $port
-         * @param  float  $connect_timeout
-         * @param  float  $command_timeout
          * @param  array  $context
-         * @param  int  $database
          */
         #[Attributes\Server]
         public function __construct(
@@ -2787,15 +1571,7 @@ namespace Relay {
         ) {}
 
         /**
-         * @param  string  $host
-         * @param  int  $port
-         * @param  float  $timeout
-         * @param  string|null  $persistent_id
-         * @param  int  $retry_interval
-         * @param  float  $read_timeout
          * @param  array  $context
-         * @param  int  $database
-         * @return bool
          */
         #[Attributes\Server]
         public function connect(
@@ -2810,15 +1586,7 @@ namespace Relay {
         ): bool {}
 
         /**
-         * @param  string  $host
-         * @param  int  $port
-         * @param  float  $timeout
-         * @param  string|null  $persistent_id
-         * @param  int  $retry_interval
-         * @param  float  $read_timeout
          * @param  array  $context
-         * @param  int  $database
-         * @return bool
          */
         #[Attributes\Server]
         public function pconnect(
@@ -2832,140 +1600,81 @@ namespace Relay {
             int $database = 0
         ): bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function close(): bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function pclose(): bool {}
 
         /**
          * @param  callable  $callback
-         * @return bool
          */
         #[Attributes\Local]
         public function listen(?callable $callback): bool {}
 
         /**
          * @param  callable  $callback
-         * @return bool
          */
         #[Attributes\Local]
         public function onFlushed(?callable $callback): bool {}
 
         /**
          * @param  callable  $callback
-         * @param  string|null  $pattern
-         * @return bool
          */
         #[Attributes\Local]
         public function onInvalidated(?callable $callback, ?string $pattern = null): bool {}
 
-        /**
-         * @return int|false
-         */
         #[Attributes\Local]
         public function dispatchEvents(): int|false {}
 
-        /**
-         * @param  int  $option
-         * @return mixed
-         */
         #[Attributes\Local]
         public function getOption(int $option): mixed {}
 
-        /**
-         * @param  int  $option
-         * @param  mixed  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function option(int $option, mixed $value = null): mixed {}
 
-        /**
-         * @param  int  $option
-         * @param  mixed  $value
-         * @return bool
-         */
         #[Attributes\Local]
         public function setOption(int $option, mixed $value): bool {}
 
         /**
          * @param  string  $pattern,...
-         * @return int
          */
         #[Attributes\Local]
         public function addIgnorePatterns(string ...$pattern): int {}
 
         /**
          * @param  string  $pattern,...
-         * @return int
          */
         #[Attributes\Local]
         public function addAllowPatterns(string ...$pattern): int {}
 
-        /**
-         * @return float|false
-         */
         #[Attributes\Local]
         public function getTimeout(): float|false {}
 
-        /**
-         * @return float|false
-         */
         #[Attributes\Local]
         public function timeout(): float|false {}
 
-        /**
-         * @return float|false
-         */
         #[Attributes\Local]
         public function getReadTimeout(): float|false {}
 
-        /**
-         * @return float|false
-         */
         #[Attributes\Local]
         public function readTimeout(): float|false {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public function getBytes(): array {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public function bytes(): array {}
 
-        /**
-         * @return string|false
-         */
         #[Attributes\Local]
         public function getHost(): string|false {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function isConnected(): bool {}
 
-        /**
-         * @return int|false
-         */
         #[Attributes\Local]
         public function getPort(): int|false {}
 
-        /**
-         * @return mixed
-         */
         #[Attributes\Local]
         public function getAuth(): mixed {}
 
@@ -2975,367 +1684,164 @@ namespace Relay {
         #[Attributes\Local]
         public function getDbNum(): mixed {}
 
-        /**
-         * @param  mixed  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function _serialize(mixed $value): mixed {}
 
-        /**
-         * @param  mixed  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function _unserialize(mixed $value): mixed {}
 
-        /**
-         * @param  string  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _compress(string $value): string {}
 
-        /**
-         * @param  string  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _uncompress(string $value): string {}
 
-        /**
-         * @param  mixed  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _pack(mixed $value): string {}
 
-        /**
-         * @param  mixed  $value
-         * @return mixed
-         */
         #[Attributes\Local]
         public function _unpack(mixed $value): mixed {}
 
-        /**
-         * @param  mixed  $value
-         * @return string
-         */
         #[Attributes\Local]
         public function _prefix(mixed $value): string {}
 
-        /**
-         * @return string|null
-         */
         #[Attributes\Local]
         public function getLastError(): string|null {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\Local]
         public function clearLastError(): bool {}
 
-        /**
-         * @return string|false
-         */
         #[Attributes\Local]
         public function endpointId(): string|false {}
 
-        /**
-         * @return string|false
-         */
         public function getPersistentID(): string|false {}
 
-        /**
-         * @return string|false
-         */
         #[Attributes\Local]
         public function socketId(): string|false {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public static function stats(): array {}
 
-        /**
-         * @return int
-         */
         #[Attributes\Local]
         public static function maxMemory(): int {}
 
         /**
          * @deprecated 0.5.0 Use `Relay:maxMemory()`
-         * @return int
          */
         #[Attributes\Local]
         public static function memory(): int {}
 
         /**
-         * @param  string  $cmd
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function rawCommand(string $cmd, mixed ...$args): mixed {}
 
-        /**
-         * @param  int  $db
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function select(int $db): Relay|bool {}
 
         /**
          * @param  mixed  $auth
-         * @return bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function auth(#[\SensitiveParameter] mixed $auth): bool {}
 
         /**
          * @param  string  $sections,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function info(string ...$sections): Relay|array|false {}
 
-        /**
-         * @param  bool|null  $sync
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function flushdb(?bool $sync = null): Relay|bool {}
 
-        /**
-         * @param  bool|null  $sync
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function flushall(?bool $sync = null): Relay|bool {}
 
-        /**
-         * @param  string  $name
-         * @param  array  $keys
-         * @param  array  $argv
-         * @param  callable|null  $handler
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function fcall(string $name, array $keys = [], array $argv = [], ?callable $handler = null): mixed {}
 
-        /**
-         * @param  string  $name
-         * @param  array  $keys
-         * @param  array  $argv
-         * @param  callable|null  $handler
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function fcall_ro(string $name, array $keys = [], array $argv = [], ?callable $handler = null): mixed {}
 
         /**
-         * @param  string  $op
          * @param  string  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function function(string $op, string ...$args): mixed {}
 
-        /**
-         * @param  string|null  $endpointId
-         * @param  int|null  $db
-         * @return bool
-         */
         #[Attributes\Local]
         public static function flushMemory(?string $endpointId = null, ?int $db = null): bool {}
 
-        /**
-         * @param  string|null  $endpointId
-         * @param  int|null  $db
-         * @return float|false
-         */
         #[Attributes\Local]
         public static function lastMemoryFlush(?string $endpointId = null, ?int $db = null): float|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $query
-         * @param  array|null  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftAggregate(mixed $index, string $query, ?array $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $alias
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftAliasAdd(mixed $index, string $alias): Relay|bool {}
 
-        /**
-         * @param  string  $alias
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftAliasDel(string $alias): Relay|bool {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $alias
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftAliasUpdate(mixed $index, string $alias): Relay|bool {}
 
-        /**
-         * @param  mixed  $index
-         * @param  array  $schema
-         * @param  bool  $skipinitialscan
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftAlter(mixed $index, array $schema, bool $skipinitialscan = false): Relay|bool {}
 
-        /**
-         * @param  string  $operation
-         * @param  string  $option
-         * @param  mixed  $value
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftConfig(string $operation, string $option, mixed $value = null): Relay|array|bool {}
 
-        /**
-         * @param  mixed  $index
-         * @param  array  $schema
-         * @param  array|null  $options
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftCreate(mixed $index, array $schema, ?array $options = null): Relay|bool {}
 
-        /**
-         * @param  string  $operation
-         * @param  mixed  $index
-         * @param  mixed  $cursor
-         * @param  array|null  $options
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftCursor(string $operation, mixed $index, mixed $cursor, ?array $options = null): Relay|array|bool {}
 
         /**
-         * @param  mixed  $dict
-         * @param  mixed  $term
          * @param  mixed  $other_terms,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftDictAdd(mixed $dict, mixed $term, mixed ...$other_terms): Relay|int|false {}
 
         /**
-         * @param  mixed  $dict
-         * @param  mixed  $term
          * @param  mixed  $other_terms,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftDictDel(mixed $dict, mixed $term, mixed ...$other_terms): Relay|int|false {}
 
-        /**
-         * @param  mixed  $dict
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftDictDump(mixed $dict): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  bool  $dd
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftDropIndex(mixed $index, bool $dd = false): Relay|bool {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $query
-         * @param  int  $dialect
-         * @return Relay|string|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftExplain(mixed $index, string $query, int $dialect = 0): Relay|string|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $query
-         * @param  int  $dialect
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftExplainCli(mixed $index, string $query, int $dialect = 0): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftInfo(mixed $index): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $command
-         * @param  string  $query
-         * @param  bool  $limited
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftProfile(mixed $index, string $command, string $query, bool $limited = false): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $query
-         * @param  array|null  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftSearch(mixed $index, string $query, ?array $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $query
-         * @param  array|null  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftSpellCheck(mixed $index, string $query, ?array $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftSynDump(mixed $index): Relay|array|false {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $synonym
-         * @param  mixed  $term_or_terms
-         * @param  bool  $skipinitialscan
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftSynUpdate(mixed $index, string $synonym, mixed $term_or_terms, bool $skipinitialscan = false): Relay|bool {}
 
-        /**
-         * @param  mixed  $index
-         * @param  string  $tag
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ftTagVals(mixed $index, string $tag): Relay|array|false {}
 
@@ -3345,49 +1851,29 @@ namespace Relay {
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function dbsize(): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|string|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function dump(mixed $key): Relay|string|null|false {}
 
         /**
-         * @param  string|null  $host
          * @param  int  $port
-         * @return Relay|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function replicaof(?string $host = null, $port = 0): Relay|bool {}
 
         /**
-         * @param  int  $numlocal
-         * @param  int  $numremote
          * @return Relay|array
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function waitaof(int $numlocal, int $numremote, int $timeout): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $ttl
-         * @param  string  $value
          * @param  array  $options
-         * @return Relay|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function restore(mixed $key, int $ttl, string $value, ?array $options = null): Relay|bool {}
 
         /**
-         * @param  string  $host
-         * @param  int  $port
-         * @param  string|array  $key
-         * @param  int  $dstdb
-         * @param  int  $timeout
-         * @param  bool  $copy
-         * @param  bool  $replace
          * @param  mixed  $credentials
-         * @return Relay|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function migrate(
@@ -3402,95 +1888,54 @@ namespace Relay {
         ): Relay|bool {}
 
         /**
-         * @param  mixed  $src
-         * @param  mixed  $dst
          * @param  array  $options
-         * @return Relay|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function copy(mixed $src, mixed $dst, ?array $options = null): Relay|bool {}
 
-        /**
-         * @param  string  $arg
-         * @return Relay|bool|string
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function echo(string $arg): Relay|bool|string {}
 
         /**
          * @param  string  $arg
-         * @return Relay|bool|string
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ping(?string $arg = null): Relay|bool|string {}
 
-        /**
-         * @return Relay|int|false
-         */
         #[Attributes\Local]
         public function idleTime(): Relay|int|false {}
 
-        /**
-         * @return Relay|string|null|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function randomkey(): Relay|string|null|bool {}
 
-        /**
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function time(): Relay|array|false {}
 
-        /**
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bgrewriteaof(): Relay|bool {}
 
-        /**
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lastsave(): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key1
-         * @param  mixed  $key2
-         * @param  array|null  $options
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lcs(mixed $key1, mixed $key2, ?array $options = null): mixed {}
 
-        /**
-         * @param  null|string  $arg
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bgsave(null|string $arg = null): Relay|bool {}
 
-        /**
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function save(): Relay|bool {}
 
-        /**
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function role(): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
          * @return Relay|int
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ttl(mixed $key): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @return Relay|int
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
@@ -3498,62 +1943,30 @@ namespace Relay {
 
         /**
          * @param  mixed  $keys,...
-         * @return Relay|bool|int
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function exists(mixed ...$keys): Relay|bool|int {}
 
-        /**
-         * @param  mixed  $script
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function eval(mixed $script, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  mixed  $script
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function eval_ro(mixed $script, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  string  $sha
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function evalsha(string $sha, array $args = [], int $num_keys = 0): mixed {}
 
-        /**
-         * @param  string  $sha
-         * @param  array  $args
-         * @param  int  $num_keys
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function evalsha_ro(string $sha, array $args = [], int $num_keys = 0): mixed {}
 
         /**
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function client(string $operation, mixed ...$args): mixed {}
 
         /**
-         * @param  string  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  string  $member
          * @param  mixed  $other_triples_and_options,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geoadd(
@@ -3564,79 +1977,35 @@ namespace Relay {
             mixed ...$other_triples_and_options
         ): Relay|int|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $src
-         * @param  string  $dst
-         * @param  string|null  $unit
-         * @return Relay|float|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geodist(string $key, string $src, string $dst, ?string $unit = null): Relay|float|null|false {}
 
         /**
-         * @param  string  $key
-         * @param  string  $member
          * @param  string  $other_members,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geohash(string $key, string $member, string ...$other_members): Relay|array|false {}
 
         /**
-         * @param  string  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadius(string $key, float $lng, float $lat, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  string  $key
-         * @param  string  $member
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadiusbymember(string $key, string $member, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  string  $key
-         * @param  string  $member
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadiusbymember_ro(string $key, string $member, float $radius, string $unit, array $options = []): mixed {}
 
         /**
-         * @param  string  $key
-         * @param  float  $lng
-         * @param  float  $lat
-         * @param  float  $radius
-         * @param  string  $unit
-         * @param  array  $options
-         * @return mixed
              * @deprecated
          */
             public function georadius_ro(string $key, float $lng, float $lat, float $radius, string $unit, array $options = []): mixed {}
 
-        /**
-         * @param  string  $key
-         * @param  array|string  $position
-         * @param  array|int|float  $shape
-         * @param  string  $unit
-         * @param  array  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geosearch(
             string $key,
@@ -3646,15 +2015,6 @@ namespace Relay {
             array $options = []
         ): Relay|array|false {}
 
-        /**
-         * @param  string  $dst
-         * @param  string  $src
-         * @param  array|string  $position
-         * @param  array|int|float  $shape
-         * @param  string  $unit
-         * @param  array  $options
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geosearchstore(
             string $dst,
@@ -3665,287 +2025,143 @@ namespace Relay {
             array $options = []
         ): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function get(mixed $key): mixed {}
 
         /**
-         * @param  mixed  $key
          * @return Relay|array{0: mixed, 1: array{cached: bool, length: int}}|false
          */
         #[Attributes\Server, Attributes\Cached]
         public function getWithMeta(mixed $key): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return mixed
              * @deprecated
          */
             public function getset(mixed $key, mixed $value): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function getrange(mixed $key, int $start, int $end): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  mixed  $value
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function setrange(mixed $key, int $start, mixed $value): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $pos
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function getbit(mixed $key, int $pos): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @param  bool  $by_bit
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function bitcount(mixed $key, int $start = 0, int $end = -1, bool $by_bit = false): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $args,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bitfield(mixed $key, mixed ...$args): Relay|array|false {}
 
-        /**
-         * @param  string  $operation
-         * @param  mixed  $key
-         * @param  string|null  $value
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function config(string $operation, mixed $key = null, ?string $value = null): Relay|array|bool {}
 
         /**
          * @param  array  $args,...
-         * @return Relay|array|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function command(mixed ...$args): Relay|array|int|false {}
 
         /**
-         * @param  string  $operation
-         * @param  string  $dstkey
-         * @param  string  $srckey
          * @param  string  $other_keys,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bitop(string $operation, string $dstkey, string $srckey, string ...$other_keys): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $bit
          * @param  int  $start
          * @param  int  $end
-         * @param  bool  $bybit
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bitpos(mixed $key, int $bit, ?int $start = null, ?int $end = null, bool $bybit = false): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $pos
-         * @param  int  $val
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function setbit(mixed $key, int $pos, int $val): Relay|int|false {}
 
         /**
-         * @param  string  $cmd
          * @param  string  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function acl(string $cmd, string ...$args): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function append(mixed $key, mixed $value): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @param  mixed  $options
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function set(mixed $key, mixed $value, mixed $options = null): mixed {}
 
         /**
-         * @param  mixed  $key
          * @param  array  $options
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function getex(mixed $key, ?array $options = null): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function getdel(mixed $key): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $seconds
-         * @param  mixed  $value
-         * @return Relay|bool
              * @deprecated
          */
             public function setex(mixed $key, int $seconds, mixed $value): Relay|bool {}
 
-        /**
-         * @param  string  $key
-         * @param  array  $elements
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pfadd(string $key, array $elements): Relay|int|false {}
 
-        /**
-         * @param  string|array  $key_or_keys
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pfcount(string|array $key_or_keys): Relay|int|false {}
 
-        /**
-         * @param  string  $dst
-         * @param  array  $srckeys
-         * @return Relay|bool
-         */
         public function pfmerge(string $dst, array $srckeys): Relay|bool {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $milliseconds
-         * @param  mixed  $value
-         * @return Relay|bool
              * @deprecated
          */
             public function psetex(mixed $key, int $milliseconds, mixed $value): Relay|bool {}
 
-        /**
-         * @param  string  $channel
-         * @param  string  $message
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function publish(string $channel, string $message): Relay|int|false {}
 
         /**
-         * @param  string  $operation
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pubsub(string $operation, mixed ...$args): mixed {}
 
-        /**
-         * @param  string  $channel
-         * @param  string  $message
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function spublish(string $channel, string $message): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Relay|bool
              * @deprecated
          */
             public function setnx(mixed $key, mixed $value): Relay|bool {}
 
-        /**
-         * @param  array  $keys
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function mget(array $keys): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $db
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function move(mixed $key, int $db): Relay|int|false {}
 
-        /**
-         * @param  array  $kvals
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function mset(array $kvals): Relay|bool {}
 
-        /**
-         * @param  array  $kvals
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function msetnx(array $kvals): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $newkey
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rename(mixed $key, mixed $newkey): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $newkey
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function renamenx(mixed $key, mixed $newkey): Relay|bool {}
 
         /**
          * @param  mixed  $keys,...
-         * @return Relay|int|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function del(mixed ...$keys): Relay|int|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @return Relay|int|false
-         */
         #[Attributes\ValkeyCommand]
         public function delifeq(mixed $key, mixed $value): Relay|int|false {}
 
@@ -3956,646 +2172,295 @@ namespace Relay {
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unlink(mixed ...$keys): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $seconds
-         * @param  string|null  $mode
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expire(mixed $key, int $seconds, ?string $mode = null): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $milliseconds
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpire(mixed $key, int $milliseconds): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $timestamp
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expireat(mixed $key, int $timestamp): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function expiretime(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $timestamp_ms
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpireat(mixed $key, int $timestamp_ms): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function pexpiretime(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function persist(mixed $key): Relay|bool {}
 
         /**
-         * @param  mixed  $key
          * @return Relay|int|string|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function type(mixed $key): Relay|int|string|bool {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  string  $srcpos
-         * @param  string  $dstpos
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lmove(mixed $srckey, mixed $dstkey, string $srcpos, string $dstpos): mixed {}
 
-        /**
-         * @param  mixed  $srckey
-         * @param  mixed  $dstkey
-         * @param  string  $srcpos
-         * @param  string  $dstpos
-         * @param  float  $timeout
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blmove(mixed $srckey, mixed $dstkey, string $srcpos, string $dstpos, float $timeout): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $stop
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lrange(mixed $key, int $start, int $stop): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
          * @param  mixed  $mems,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpush(mixed $key, mixed $mem, mixed ...$mems): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
          * @param  mixed  $mems,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpush(mixed $key, mixed $mem, mixed ...$mems): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
          * @param  mixed  $mems,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpushx(mixed $key, mixed $mem, mixed ...$mems): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
          * @param  mixed  $mems,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpushx(mixed $key, mixed $mem, mixed ...$mems): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $index
-         * @param  mixed  $mem
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lset(mixed $key, int $index, mixed $mem): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lpop(mixed $key, int $count = 1): mixed {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $value
          * @param  array  $options
-         * @return Relay|int|array|false|null
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lpos(mixed $key, mixed $value, ?array $options = null): Relay|int|array|false|null {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function rpop(mixed $key, int $count = 1): mixed {}
 
         /**
-         * @param  mixed  $source
-         * @param  mixed  $dest
-         * @return mixed
              * @deprecated
          */
             public function rpoplpush(mixed $source, mixed $dest): mixed {}
 
         /**
-         * @param  mixed  $source
-         * @param  mixed  $dest
-         * @param  float  $timeout
-         * @return mixed
              * @deprecated
          */
             public function brpoplpush(mixed $source, mixed $dest, float $timeout): mixed {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Relay|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blpop(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Relay|array|null|false {}
 
-        /**
-         * @param  float  $timeout
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Relay|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function blmpop(float $timeout, array $keys, string $from, int $count = 1): Relay|array|null|false {}
 
-        /**
-         * @param  float  $timeout
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Relay|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzmpop(float $timeout, array $keys, string $from, int $count = 1): Relay|array|null|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Relay|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lmpop(array $keys, string $from, int $count = 1): Relay|array|null|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  string  $from
-         * @param  int  $count
-         * @return Relay|array|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zmpop(array $keys, string $from, int $count = 1): Relay|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Relay|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function brpop(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Relay|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Relay|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzpopmax(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Relay|array|null|false {}
 
         /**
-         * @param  string|array  $key
-         * @param  string|float  $timeout_or_key
          * @param  array  $extra_args,...
-         * @return Relay|array|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function bzpopmin(string|array $key, string|float $timeout_or_key, mixed ...$extra_args): Relay|array|null|false {}
 
-        /**
-         * @param  string  $op
-         * @param  mixed  $key
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function object(string $op, mixed $key): mixed {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $members,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function geopos(mixed $key, mixed ...$members): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
-         * @param  int  $count
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function lrem(mixed $key, mixed $mem, int $count = 0): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $index
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function lindex(mixed $key, int $index): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $op
-         * @param  mixed  $pivot
-         * @param  mixed  $element
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function linsert(mixed $key, string $op, mixed $pivot, mixed $element): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ltrim(mixed $key, int $start, int $end): Relay|bool {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  mixed  $member
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hget(mixed $hash, mixed $member): mixed {}
 
         /**
-         * @param  mixed  $hash
-         * @param  array  $fields
          * @param  mixed  $expiry = null
-         * @return Relay|array|false
          */
         public function hgetex(mixed $hash, array $fields, mixed $expiry = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  mixed  $member
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hstrlen(mixed $hash, mixed $member): Relay|int|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hgetall(mixed $hash): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hkeys(mixed $hash): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hvals(mixed $hash): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $members
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hmget(mixed $hash, array $members): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function hgetdel(mixed $key, array $fields): Relay|array|false {}
 
         /**
-         * @param  mixed  $hash
          * @param  array  $options
-         * @return Relay|array|string|null|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hrandfield(mixed $hash, ?array $options = null): Relay|array|string|null|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  array  $members
-         * @return Relay|bool
              * @deprecated
          */
             public function hmset(mixed $hash, array $members): Relay|bool {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  mixed  $member
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hexists(mixed $hash, mixed $member): Relay|bool {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand]
         public function hexpire(mixed $hash, int $ttl, array $fields, ?string $mode = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand]
         public function hpexpire(mixed $hash, int $ttl, array $fields, ?string $mode = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand]
         public function hexpireat(mixed $hash, int $ttl, array $fields, ?string $mode = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $hash
-         * @param  int  $ttl
-         * @param  array  $fields
          * @param  string  $mode
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand]
         public function hpexpireat(mixed $hash, int $ttl, array $fields, ?string $mode = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function httl(mixed $hash, array $fields): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function hpttl(mixed $hash, array $fields): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function hexpiretime(mixed $hash, array $fields): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function hpexpiretime(mixed $hash, array $fields): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  array  $fields
-         * @return Relay|array|false
-         */
         public function hpersist(mixed $hash, array $fields): Relay|array|false {}
 
-        /**
-         * @param  mixed  $hash
-         * @param  mixed  $member
-         * @param  mixed  $value
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hsetnx(mixed $hash, mixed $member, mixed $value): Relay|bool {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $keys_and_vals...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hset(mixed $key, mixed ...$keys_and_vals): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  array  $fields
          * @param  null|int|float|array  $expiry = null
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand]
         public function hsetex(mixed $key, array $fields, null|int|float|array $expiry = null): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
          * @param  string  $mems,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hdel(mixed $key, mixed $mem, string ...$mems): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
-         * @param  int  $value
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hincrby(mixed $key, mixed $mem, int $value): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $mem
-         * @param  float  $value
-         * @return Relay|float|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hincrbyfloat(mixed $key, mixed $mem, float $value): Relay|float|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $by
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incr(mixed $key, int $by = 1): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $by
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function decr(mixed $key, int $by = 1): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $value
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incrby(mixed $key, int $value): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $value
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function decrby(mixed $key, int $value): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  float  $value
-         * @return Relay|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function incrbyfloat(mixed $key, float $value): Relay|float|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value_or_array
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrAppend(mixed $key, mixed $value_or_array, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  mixed  $value
-         * @param  int|null  $start
-         * @param  int|null  $stop
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrIndex(mixed $key, string $path, mixed $value, ?int $start = 0, ?int $stop = -1): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  int  $index
-         * @param  mixed  $value
          * @param  mixed  $other_values,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrInsert(mixed $key, string $path, int $index, mixed $value, mixed ...$other_values): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrLen(mixed $key, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @param  int  $index
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrPop(mixed $key, ?string $path = null, int $index = -1): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  int  $start
-         * @param  int  $stop
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonArrTrim(mixed $key, string $path, int $start, int $stop): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonClear(mixed $key, ?string $path = null): Relay|int|false {}
 
-        /**
-         * @param  string  $command
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonDebug(string $command, mixed $key, ?string $path = null): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonDel(mixed $key, ?string $path = null): Relay|int|false {}
 
@@ -4603,632 +2468,287 @@ namespace Relay {
         public function jsonForget(mixed $key, ?string $path = null): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  array  $options
          * @param  string  $paths,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonGet(mixed $key, array $options = [], string ...$paths): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  mixed  $value
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonMerge(mixed $key, string $path, mixed $value): Relay|bool {}
 
-        /**
-         * @param  mixed  $key_or_array
-         * @param  string  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonMget(mixed $key_or_array, string $path): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  mixed  $value
-         * @param  mixed  $other_triples
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonMset(mixed $key, string $path, mixed $value, mixed ...$other_triples): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  int  $value
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonNumIncrBy(mixed $key, string $path, int $value): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  int  $value
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonNumMultBy(mixed $key, string $path, int $value): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonObjKeys(mixed $key, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonObjLen(mixed $key, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|string|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonResp(mixed $key, ?string $path = null): Relay|array|string|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @param  mixed  $value
-         * @param  string|null  $condition
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonSet(mixed $key, string $path, mixed $value, ?string $condition = null): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $value
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonStrAppend(mixed $key, mixed $value, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonStrLen(mixed $key, ?string $path = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonToggle(mixed $key, string $path): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|null  $path
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function jsonType(mixed $key, ?string $path = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sdiff(mixed $key, mixed ...$other_keys): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sdiffstore(mixed $key, mixed ...$other_keys): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sinter(mixed $key, mixed ...$other_keys): Relay|array|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  int  $limit
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sintercard(array $keys, int $limit = -1): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sinterstore(mixed $key, mixed ...$other_keys): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sunion(mixed $key, mixed ...$other_keys): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sunionstore(mixed $key, mixed ...$other_keys): Relay|int|false {}
 
-        /**
-         * @param  array  $channels
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function subscribe(array $channels, callable $callback): bool {}
 
-        /**
-         * @param  array  $channels
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unsubscribe(array $channels = []): bool {}
 
-        /**
-         * @param  array  $patterns
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function psubscribe(array $patterns, callable $callback): bool {}
 
-        /**
-         * @param  array  $patterns
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function punsubscribe(array $patterns = []): bool {}
 
-        /**
-         * @param  array  $channels
-         * @param  callable  $callback
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ssubscribe(array $channels, callable $callback): bool {}
 
-        /**
-         * @param  array  $channels
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sunsubscribe(array $channels = []): bool {}
 
         /**
-         * @param  array|string  $key_or_array
          * @param  mixed  $more_keys,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function touch(array|string $key_or_array, mixed ...$more_keys): Relay|int|false {}
 
-        /**
-         * @return Relay|bool
-         */
         #[Attributes\Local]
         public function pipeline(): Relay|bool {}
 
-        /**
-         * @param  int  $mode
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function multi(int $mode = 0): Relay|bool {}
 
-        /**
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function exec(): Relay|array|bool {}
 
         /**
-         * @param  int  $replicas
          * @param  int  $timeout
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function wait(int $replicas, $timeout): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $other_keys,...
-         * @return Relay|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function watch(mixed $key, mixed ...$other_keys): Relay|bool {}
 
-        /**
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function unwatch(): Relay|bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function discard(): bool {}
 
-        /**
-         * @return string|false
-         */
         #[Attributes\Local]
         public function serverName(): string|false {}
 
-        /**
-         * @return string|false
-         */
         #[Attributes\Local]
         public function serverVersion(): string|false {}
 
-        /**
-         * @param  bool  $masked
-         * @return int
-         */
         #[Attributes\Local]
         public function getMode(bool $masked = false): int {}
 
-        /**
-         * @return void
-         */
         #[Attributes\Local]
         public function clearBytes(): void {}
 
-        /**
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @param  string|null  $type
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function scan(mixed &$iterator, mixed $match = null, int $count = 0, ?string $type = null): array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function hscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $iterator
-         * @param  mixed  $match
-         * @param  int  $count
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zscan(mixed $key, mixed &$iterator, mixed $match = null, int $count = 0): array|false {}
 
-        /**
-         * @param  mixed  $pattern
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function keys(mixed $pattern): Relay|array|false {}
 
         /**
-         * @param  string  $subcmd
          * @param  mixed  $args...
-         * @return Relay|array|int|bool
          */
         #[Attributes\ValkeyCommand]
         public function commandlog(string $subcmd, mixed ...$args): Relay|array|int|bool {}
 
         /**
-         * @param  string  $operation
          * @param  string  $extra_args,...
-         * @return Relay|array|int|bool
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function slowlog(string $operation, string ...$extra_args): Relay|array|int|bool {}
 
-        /**
-         * @param  mixed  $set
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function smembers(mixed $set): Relay|array|false {}
 
-        /**
-         * @param  mixed  $set
-         * @param  mixed  $member
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function sismember(mixed $set, mixed $member): Relay|bool {}
 
         /**
-         * @param  mixed  $set
          * @param  mixed  $members,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function smismember(mixed $set, mixed ...$members): Relay|array|false {}
 
         /**
-         * @param  mixed  $set
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function srem(mixed $set, mixed $member, mixed ...$members): Relay|int|false {}
 
         /**
-         * @param  mixed  $set
-         * @param  mixed  $member
          * @param  mixed  $members,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sadd(mixed $set, mixed $member, mixed ...$members): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $options
-         * @return Relay|array|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sort(mixed $key, array $options = []): Relay|array|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sort_ro(mixed $key, array $options = []): Relay|array|false {}
 
-        /**
-         * @param  mixed  $srcset
-         * @param  mixed  $dstset
-         * @param  mixed  $member
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function smove(mixed $srcset, mixed $dstset, mixed $member): Relay|bool {}
 
-        /**
-         * @param  mixed  $set
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function spop(mixed $set, int $count = 1): mixed {}
 
-        /**
-         * @param  mixed  $set
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function srandmember(mixed $set, int $count = 1): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function scard(mixed $key): Relay|int|false {}
 
         /**
-         * @param  string  $command
          * @param  string  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function script(string $command, string ...$args): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function strlen(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  int  $index1
-         * @param  int  $index2
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function swapdb(int $index1, int $index2): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function hlen(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function llen(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array  $values
-         * @param  mixed  $element
-         * @param  array|null  $options
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand]
         public function vadd(mixed $key, array $values, mixed $element, ?array $options = null): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand]
         public function vcard(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand]
         public function vdim(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $raw
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function vemb(mixed $key, mixed $element, bool $raw = false): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $raw
-         * @return Relay|array|string|false
-         */
         #[Attributes\RedisCommand]
         public function vgetattr(mixed $key, mixed $element, bool $raw = false): Relay|array|string|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function vinfo(mixed $key): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand]
         public function vismember(mixed $key, mixed $element): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  bool  $withscores
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function vlinks(mixed $key, mixed $element, bool $withscores): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Relay|array|string|false
-         */
         #[Attributes\RedisCommand]
         public function vrandmember(mixed $key, int $count = 0): Relay|array|string|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $min
-         * @param  string  $max
          * @param  int  $count = 0
          */
         #[Attributes\RedisCommand]
         public function vrange(mixed $key, string $min, string $max, int $count = -1): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand]
         public function vrem(mixed $key, mixed $element): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $element
-         * @param  array|string  $attributes
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand]
         public function vsetattr(mixed $key, mixed $element, array|string $attributes): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @param  array|null  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function vsim(mixed $key, mixed $member, array|null $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string  $group
-         * @param  array  $ids
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xack(mixed $key, string $group, array $ids): Relay|int|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $group
-         * @param  array  $ids
-         * @param  string|null  $mode
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function xackdel(string $key, string $group, array $ids, ?string $mode = null): Relay|array|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $id
-         * @param  int  $maxlen
-         * @param  bool  $approx
-         * @param  bool  $nomkstream
-         * @return Relay|string|null|false
-         */
         public function xadd(
             string $key,
             string $id,
@@ -5238,15 +2758,6 @@ namespace Relay {
             bool $nomkstream = false
         ): Relay|string|null|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $group
-         * @param  string  $consumer
-         * @param  int  $min_idle
-         * @param  array  $ids
-         * @param  array  $options
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xclaim(
             string $key,
@@ -5257,16 +2768,6 @@ namespace Relay {
             array $options
         ): Relay|array|bool {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $group
-         * @param  string  $consumer
-         * @param  int  $min_idle
-         * @param  string  $start
-         * @param  int  $count
-         * @param  bool  $justid
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xautoclaim(
             string $key,
@@ -5278,21 +2779,12 @@ namespace Relay {
             bool $justid = false
         ): Relay|bool|array {}
 
-        /**
-         * @param  string  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xlen(string $key): Relay|int|false {}
 
         /**
-         * @param  string  $operation
-         * @param  mixed  $key
          * @param  string  $group
          * @param  string  $id_or_consumer
-         * @param  bool  $mkstream
-         * @param  int  $entries_read
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xgroup(
@@ -5304,43 +2796,15 @@ namespace Relay {
             int $entries_read = -2
         ): mixed {}
 
-        /**
-         * @param  string  $key
-         * @param  array  $ids
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xdel(string $key, array $ids): Relay|int|false {}
 
-        /**
-         * @param  string  $key
-         * @param  array  $ids
-         * @param  string|null  $mode
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand]
         public function xdelex(string $key, array $ids, ?string $mode = null): Relay|array|false {}
 
-        /**
-         * @param  string  $operation
-         * @param  string|null  $arg1
-         * @param  string|null  $arg2
-         * @param  int  $count
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xinfo(string $operation, ?string $arg1 = null, ?string $arg2 = null, int $count = -1): mixed {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $group
-         * @param  string|null  $start
-         * @param  string|null  $end
-         * @param  int  $count
-         * @param  string|null  $consumer
-         * @param  int  $idle
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xpending(
             string $key,
@@ -5353,42 +2817,17 @@ namespace Relay {
         ): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  string  $start
-         * @param  string  $end
          * @param  int  $count = -1
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xrange(mixed $key, string $start, string $end, int $count = -1): Relay|array|false {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $end
-         * @param  string  $start
-         * @param  int  $count
-         * @return Relay|array|bool
-         */
         #[Attributes\RedisCommand]
         public function xrevrange(string $key, string $end, string $start, int $count = -1): Relay|array|bool {}
 
-        /**
-         * @param  array  $streams
-         * @param  int  $count
-         * @param  int  $block
-         * @return Relay|array|bool|null
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xread(array $streams, int $count = -1, int $block = -1): Relay|array|bool|null {}
 
-        /**
-         * @param  string  $group
-         * @param  string  $consumer
-         * @param  array  $streams
-         * @param  int  $count
-         * @param  int  $block
-         * @return Relay|array|bool|null
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xreadgroup(
             string $group,
@@ -5398,14 +2837,6 @@ namespace Relay {
             int $block = 1
         ): Relay|array|bool|null {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $threshold
-         * @param  bool  $approx
-         * @param  bool  $minid
-         * @param  int  $limit
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function xtrim(
             string $key,
@@ -5416,304 +2847,142 @@ namespace Relay {
         ): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $args,...
-         * @return mixed
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zadd(mixed $key, mixed ...$args): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  array|null  $options
-         * @return mixed
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrandmember(mixed $key, ?array $options = null): mixed {}
 
-        /**
-         * @param  mixed  $key
-         * @param  string|int  $start
-         * @param  string|int  $end
-         * @param  mixed  $options
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function zrange(mixed $key, string|int $start, string|int $end, mixed $options = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @param  mixed  $options
-         * @return Relay|array|false
              * @deprecated
          */
             public function zrevrange(mixed $key, int $start, int $end, mixed $options = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Relay|array|false
              * @deprecated
          */
             public function zrangebyscore(mixed $key, mixed $start, mixed $end, mixed $options = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Relay|array|false
              * @deprecated
          */
             public function zrevrangebyscore(mixed $key, mixed $start, mixed $end, mixed $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $dst
-         * @param  mixed  $src
-         * @param  mixed  $start
-         * @param  mixed  $end
-         * @param  mixed  $options
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrangestore(mixed $dst, mixed $src, mixed $start, mixed $end, mixed $options = null): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @param  int  $offset
-         * @param  int  $count
-         * @return Relay|array|false
              * @deprecated
          */
             public function zrangebylex(mixed $key, mixed $min, mixed $max, int $offset = -1, int $count = -1): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $max
-         * @param  mixed  $min
-         * @param  int  $offset
-         * @param  int  $count
-         * @return Relay|array|false
              * @deprecated
          */
             public function zrevrangebylex(mixed $key, mixed $max, mixed $min, int $offset = -1, int $count = -1): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $rank
-         * @param  bool  $withscore
-         * @return Relay|array|int|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrank(mixed $key, mixed $rank, bool $withscore = false): Relay|array|int|null|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $rank
-         * @param  bool  $withscore
-         * @return Relay|array|int|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrevrank(mixed $key, mixed $rank, bool $withscore = false): Relay|array|int|null|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $args,...
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zrem(mixed $key, mixed ...$args): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebylex(mixed $key, mixed $min, mixed $max): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $start
-         * @param  int  $end
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebyrank(mixed $key, int $start, int $end): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zremrangebyscore(mixed $key, mixed $min, mixed $max): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand, Attributes\Cached]
         public function zcard(mixed $key): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zcount(mixed $key, mixed $min, mixed $max): Relay|int|false {}
 
         /**
-         * @param  array  $keys
          * @param  array  $options
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zdiff(array $keys, ?array $options = null): Relay|array|false {}
 
-        /**
-         * @param  mixed  $dst
-         * @param  array  $keys
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zdiffstore(mixed $dst, array $keys): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  float  $score
-         * @param  mixed  $mem
-         * @return Relay|float|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zincrby(mixed $key, float $score, mixed $mem): Relay|float|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $min
-         * @param  mixed  $max
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zlexcount(mixed $key, mixed $min, mixed $max): Relay|int|false {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $mems,...
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zmscore(mixed $key, mixed ...$mems): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  mixed  $member
-         * @return Relay|float|null|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zscore(mixed $key, mixed $member): Relay|float|null|false {}
 
         /**
-         * @param  array  $keys
          * @param  array  $weights
-         * @param  mixed  $options
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zinter(array $keys, ?array $weights = null, mixed $options = null): Relay|array|false {}
 
-        /**
-         * @param  array  $keys
-         * @param  int  $limit
-         * @return Relay|int|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zintercard(array $keys, int $limit = -1): Relay|int|false {}
 
         /**
-         * @param  mixed  $dst
-         * @param  array  $keys
          * @param  array  $weights
-         * @param  mixed  $options
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zinterstore(mixed $dst, array $keys, ?array $weights = null, mixed $options = null): Relay|int|false {}
 
         /**
-         * @param  array  $keys
          * @param  array  $weights
-         * @param  mixed  $options
-         * @return Relay|array|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zunion(array $keys, ?array $weights = null, mixed $options = null): Relay|array|false {}
 
         /**
-         * @param  mixed  $dst
-         * @param  array  $keys
          * @param  array  $weights
-         * @param  mixed  $options
-         * @return Relay|int|false
          */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zunionstore(mixed $dst, array $keys, ?array $weights = null, mixed $options = null): Relay|int|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zpopmin(mixed $key, int $count = 1): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $count
-         * @return Relay|array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function zpopmax(mixed $key, int $count = 1): Relay|array|false {}
 
-        /**
-         * @param  mixed  $key
-         * @param  int  $width
-         * @param  int  $depth
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand]
         public function cmsInitByDim(mixed $key, int $width, int $depth): Relay|bool {}
 
-        /**
-         * @param  mixed  $key
-         * @param  float  $error
-         * @param  float  $probability
-         * @return Relay|bool
-         */
         #[Attributes\RedisCommand]
         public function cmsInitByProb(mixed $key, float $error, float $probability): Relay|bool {}
 
         /**
-         * @param  mixed  $key
          * @return Relay|array
          */
         #[Attributes\RedisCommand]
         public function cmsInfo(mixed $key): Relay|array|false {}
 
         /**
-         * @param  mixed  $key
-         * @param  mixed  $field
-         * @param  int  $value
          * @param  mixed  $fields_and_falues,...
          * @return Relay|array
          */
@@ -5721,14 +2990,11 @@ namespace Relay {
         public function cmsIncrBy(mixed $key, mixed $field, int $value, ...$fields_and_falues): Relay|array|false {}
 
         /**
-         * @param  mixed  $dstkey
-         * @param  array  $keys
          * @param  array  $weights = []
          */
         public function cmsMerge(mixed $dstkey, array $keys, array $weights = []): Relay|bool {}
 
         /**
-         * @param  mixed  $key
          * @param  mixed  $fields,...
          * @return Relay|array
          */
@@ -5742,16 +3008,9 @@ namespace Relay {
         #[Attributes\Local]
         public function _getKeys() {}
 
-        /**
-         * @param  string  $key
-         * @return bool
-         */
         #[Attributes\Local]
         public function isTracked(string $key): bool {}
 
-        /**
-         * @return array
-         */
         #[Attributes\Local]
         public static function license(): array {}
     }
@@ -5771,14 +3030,7 @@ namespace Relay {
         public const OPT_AUTO_DISCOVER = 2;
 
         /**
-         * @param  array|string|null  $host
-         * @param  int  $port
-         * @param  float  $timeout
-         * @param  mixed  $persistent
-         * @param  int  $retry_interval
-         * @param  float  $read_timeout
          * @param  mixed  $auth
-         * @param  array|null  $context
          */
         #[Attributes\Server]
         public function __construct(
@@ -5792,118 +3044,54 @@ namespace Relay {
             array|null $context = null
         ) {}
 
-        /**
-         * @param  string  $master
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ckquorum(string $master): bool {}
 
-        /**
-         * @param  string  $master
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function failover(string $master): bool {}
 
-        /**
-         * @return bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function flushconfig(): bool {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function getMasterAddrByName(string $master): array|false {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\ValkeyCommand]
         public function getPrimaryAddrByName(string $master): array|false {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function master(string $master): array|false {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\ValkeyCommand]
         public function primary(string $master): array|false {}
 
-        /**
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function masters(): array|false {}
 
-        /**
-         * @return array|false
-         */
         #[Attributes\ValkeyCommand]
         public function primaries(): array|false {}
 
-        /**
-         * @return string
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function myid(): string {}
 
-        /**
-         * @param  string|null  $message
-         * @return string|bool
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function ping(?string $message = null): string|bool {}
 
-        /**
-         * @param  string  $pattern
-         * @return int
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function reset(string $pattern): int {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function sentinels(string $master): array|false {}
 
-        /**
-         * @param  string  $master
-         * @return array|false
-         */
         #[Attributes\RedisCommand, Attributes\ValkeyCommand]
         public function slaves(string $master): array|false {}
 
-        /**
-         * @return string|null
-         */
         #[Attributes\Local]
         public function getLastError(): string|null {}
 
-        /**
-         * @param  int  $option
-         * @param  mixed  $value
-         * @return bool
-         */
         #[Attributes\Local]
         public function setOption(int $option, mixed $value): bool {}
 
-        /**
-         * @param  int  $option
-         * @return mixed
-         */
         #[Attributes\Local]
         public function getOption(int $option): mixed {}
     }
@@ -5912,67 +3100,26 @@ namespace Relay {
 namespace Relay {
     class Table
     {
-        /**
-         * @param  string|null  $namespace
-         * @param  int  $serializer
-         */
         public function __construct(?string $namespace = null, int $serializer = Relay::SERIALIZER_PHP) {}
 
-        /**
-         * @param  string  $key
-         * @return mixed
-         */
         public function get(string $key): mixed {}
 
-        /**
-         * @param  string  $key
-         * @param  string  $field
-         * @return mixed
-         */
         public function pluck(string $key, string $field): mixed {}
 
-        /**
-         * @param  string  $key
-         * @param  mixed  $value
-         * @return bool
-         */
         public function set(string $key, mixed $value): bool {}
 
-        /**
-         * @param  string  $key
-         * @return bool
-         */
         public function exists(string $key): bool {}
 
-        /**
-         * @param  string  $key
-         * @return bool
-         */
         public function delete(string $key): bool {}
 
-        /**
-         * @return int
-         */
         public function count(): int {}
 
-        /**
-         * @return string|null
-         */
         public function namespace(): string|null {}
 
-        /**
-         * @return array
-         */
         public static function namespaces(): array {}
 
-        /**
-         * @return bool
-         */
         public function clear(): bool {}
 
-        /**
-         * @return int
-         */
         public static function clearAll(): int {}
     }
 }

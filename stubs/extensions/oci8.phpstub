@@ -468,8 +468,6 @@ function oci_error($resource = null) {}
 function oci_free_descriptor($descriptor) {}
 
 /**
- * @param OCILob $lob1
- * @param OCILob $lob2
  * @return bool
  */
 function oci_lob_is_equal(
@@ -478,8 +476,6 @@ function oci_lob_is_equal(
 ) {}
 
 /**
- * @param OCILob $lob_to
- * @param OCILob $lob_from
  * @param int $length
  * @return bool
  */
@@ -1185,7 +1181,6 @@ class OCILob
     public function write($data, $length = null) {}
 
     /**
-     * @param OCILob $lob_from
      * @return bool TRUE on success or FALSE on failure.
      */
     public function append(OCILob $lob_from) {}
@@ -1273,7 +1268,6 @@ class OCICollection
     public function assignelem($index, $value) {}
 
     /**
-     * @param OCICollection $from
      * @return bool TRUE on success or FALSE on failure.
      */
     public function assign(OCICollection $from) {}
@@ -1302,14 +1296,12 @@ class OCICollection
 
 /**
  * @param resource $connection
- * @param int $time_out
  * @return bool
  */
 function oci_set_call_timeout($connection, int $time_out) {}
 
 /**
  * @param resource $connection
- * @param string $dbop
  * @return bool
  */
 function oci_set_db_operation($connection, string $dbop) {}

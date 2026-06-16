@@ -231,9 +231,6 @@ namespace {
     /**
      * Checks if a SOAP call has failed
      * @link https://php.net/manual/en/function.is-soap-fault.php
-     *
-     * @param mixed $object
-     * @return bool
      */
     function is_soap_fault(mixed $object): bool
     {

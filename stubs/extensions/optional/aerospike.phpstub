@@ -519,7 +519,6 @@ namespace {
         /**
          * @param array $config
          * @param bool $persistent_connection
-         * @param array $options
          *
          * @no-named-arguments
          */
@@ -602,10 +601,7 @@ namespace {
         }
 
         /**
-         * @param array $key
-         * @param array $bins
          * @param int $ttl
-         * @param array $options
          *
          * @return int
          *
@@ -616,10 +612,8 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param array $record
          * @param null|array $select
-         * @param array $options
          *
          * @return int
          *
@@ -630,9 +624,7 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param array $metadata
-         * @param array $options
          *
          * @return int
          *
@@ -643,9 +635,7 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param int $ttl
-         * @param array $options
          *
          * @return int
          *
@@ -656,9 +646,6 @@ namespace {
         }
 
         /**
-         * @param array $key
-         * @param array $options
-         *
          * @return int
          *
          * @no-named-arguments
@@ -668,10 +655,6 @@ namespace {
         }
 
         /**
-         * @param array $key
-         * @param array $bins
-         * @param array $options
-         *
          * @return int
          *
          * @no-named-arguments
@@ -684,7 +667,6 @@ namespace {
          * @param string $ns
          * @param string $set
          * @param int    $nanos
-         * @param array $options
          *
          * @return int
          *
@@ -695,10 +677,8 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param string $bin
          * @param int|float $offset
-         * @param array $options
          *
          * @return int
          *
@@ -709,10 +689,8 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param string $bin
          * @param string $value
-         * @param array $options
          *
          * @return int
          *
@@ -723,10 +701,8 @@ namespace {
         }
 
         /**
-         * @param array $key
          * @param string $bin
          * @param string $value
-         * @param array $options
          *
          * @return int
          *
@@ -737,10 +713,7 @@ namespace {
         }
 
         /**
-         * @param array $key
-         * @param array $operations
          * @param array $returned
-         * @param array $options
          *
          * @return int
          *
@@ -751,10 +724,7 @@ namespace {
         }
 
         /**
-         * @param array $key
-         * @param array $operations
          * @param array $returned
-         * @param array $options
          *
          * @return int
          *
@@ -765,10 +735,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $count
-         * @param array  $options
          *
          * @return int
          *
@@ -779,10 +747,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param mixed  $value
-         * @param array  $options
          *
          * @return int
          *
@@ -793,10 +759,7 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
-         * @param array  $items
-         * @param array  $options
          *
          * @return int
          *
@@ -807,11 +770,9 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param mixed  $value
-         * @param array  $options
          *
          * @return int
          *
@@ -822,11 +783,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
-         * @param array  $elements
-         * @param array  $options
          *
          * @return int
          *
@@ -837,11 +795,9 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param mixed  $element
-         * @param array  $options
          *
          * @return int
          *
@@ -852,12 +808,10 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param int    $count
          * @param array  $elements
-         * @param array  $options
          *
          * @return int
          *
@@ -868,10 +822,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
-         * @param array  $options
          *
          * @return int
          *
@@ -882,11 +834,9 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param int    $count
-         * @param array  $options
          *
          * @return int
          *
@@ -897,11 +847,9 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param int    $count
-         * @param array  $options
          *
          * @return int
          *
@@ -912,9 +860,7 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
-         * @param array  $options
          *
          * @return int
          *
@@ -925,11 +871,9 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param mixed  $value
-         * @param array  $options
          *
          * @return int
          *
@@ -940,11 +884,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
-         * @param array  $element
-         * @param array  $options
          *
          * @return int
          *
@@ -955,12 +896,10 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $bin
          * @param int    $index
          * @param int    $count
          * @param array  $elements
-         * @param array  $options
          *
          * @return int
          *
@@ -971,10 +910,7 @@ namespace {
         }
 
         /**
-         * @param array $keys
          * @param array $records
-         * @param array $select
-         * @param array $options
          *
          * @return int
          */
@@ -983,10 +919,6 @@ namespace {
         }
 
         /**
-         * @param array $keys
-         * @param array $metadata
-         * @param array $options
-         *
          * @return int
          *
          * @no-named-arguments
@@ -998,9 +930,6 @@ namespace {
         /**
          * @param string   $ns
          * @param string   $set
-         * @param callable $record_cb
-         * @param array    $select
-         * @param array    $options
          *
          * @return int
          *
@@ -1013,10 +942,6 @@ namespace {
         /**
          * @param string    $ns
          * @param string    $set
-         * @param array     $where
-         * @param callable  $record_cb
-         * @param array     $select
-         * @param array     $options
          *
          * @return int
          *
@@ -1130,8 +1055,6 @@ namespace {
         }
 
         /**
-         * @param array $options
-         *
          * @return int
          *
          * @no-named-arguments
@@ -1194,10 +1117,8 @@ namespace {
         }
 
         /**
-         * @param array  $key
          * @param string $module
          * @param string $function
-         * @param array  $args
          * @param mixed  $returned
          * @param array  $options
          *
@@ -1214,9 +1135,7 @@ namespace {
          * @param string $set
          * @param string $module
          * @param string $function
-         * @param array  $args
          * @param int    $job_id
-         * @param array  $options
          *
          * @return int
          *
@@ -1229,9 +1148,7 @@ namespace {
         /**
          * @param string $module
          * @param string $function
-         * @param array  $args
          * @param int    $job_id
-         * @param array  $options
          *
          * @return int
          *
@@ -1252,9 +1169,7 @@ namespace {
         /**
          * @param string $module
          * @param string $function
-         * @param array  $args
          * @param mixed  $returned
-         * @param array  $options
          *
          * @return int
          *
@@ -1279,7 +1194,6 @@ namespace {
          * @param string $name
          * @param int    $indexType
          * @param int    $dataType
-         * @param array  $options
          *
          * @return int
          *
@@ -1292,7 +1206,6 @@ namespace {
         /**
          * @param string $ns
          * @param string $name
-         * @param array  $options
          *
          * @return int
          *
@@ -1306,7 +1219,6 @@ namespace {
          * @param string        $request
          * @param string        $response
          * @param null|array    $host
-         * @param array         $options
          *
          * @return int
          *
@@ -1319,7 +1231,6 @@ namespace {
         /**
          * @param string     $request
          * @param null|array $host
-         * @param array      $options
          *
          * @return array
          *

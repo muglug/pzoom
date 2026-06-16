@@ -815,7 +815,6 @@ const PASSWORD_ARGON2_PROVIDER = 'standard';
  * @no-named-arguments
  * @pure
  *
- * @param string $hash
  * @return array<array-key, mixed>
  */
 function password_get_info(string $hash): array
@@ -847,10 +846,6 @@ function password_needs_rehash(string $hash, string|int|null $algo, array $optio
 /**
  * @no-named-arguments
  * @pure
- *
- * @param string $password
- * @param string $hash
- * @return bool
  */
 function password_verify(string $password, string $hash): bool
 {
@@ -866,26 +861,16 @@ function password_algos(): array
 {
 }
 
-/**
- * @param string $extension_filename
- * @return bool
- */
 function dl(string $extension_filename): bool
 {
 }
 
-/**
- * @param string $title
- * @return bool
- */
 function cli_set_process_title(string $title): bool
 {
 }
 
 /**
  * @pure
- *
- * @return null|string
  */
 function cli_get_process_title(): null|string
 {
@@ -907,9 +892,6 @@ function utf8_decode(string $string): string
 {
 }
 
-/**
- * @return void
- */
 function error_clear_last(): void
 {
 }
@@ -925,8 +907,6 @@ function sapi_windows_cp_set(int $codepage): bool
 /**
  * @psalm-pure
  *
- * @param string|int $in_codepage
- * @param string|int $out_codepage
  * @psalm-flow ($subject) -> return
  */
 function sapi_windows_cp_conv(int|string $in_codepage, int|string $out_codepage, string $subject): null|string
@@ -1027,10 +1007,6 @@ function hex2bin(string $string): string|false
 {
 }
 
-/**
- * @param int $response_code
- * @return bool|int
- */
 function http_response_code(int $response_code = 0): int|bool
 {
 }
@@ -1157,24 +1133,18 @@ function time_sleep_until(float $timestamp): bool
 }
 
 /**
- * @param string $timestamp
- * @param string $format
  * @return array<array-key, mixed>|false
  */
 function strptime(string $timestamp, string $format): array|false
 {
 }
 
-/**
- * @return void
- */
 function flush(): void
 {
 }
 
 /**
  * @psalm-pure
- * @return string
  *
  * @psalm-flow ($string) -> return
  */
@@ -1341,9 +1311,6 @@ function php_sapi_name(): string|false
 
 /**
  * @pure
- *
- * @param string $mode
- * @return string
  */
 function php_uname(string $mode = 'a'): string
 {
@@ -1351,8 +1318,6 @@ function php_uname(string $mode = 'a'): string
 
 /**
  * @pure
- *
- * @return false|string
  */
 function php_ini_scanned_files(): string|false
 {
@@ -1360,8 +1325,6 @@ function php_ini_scanned_files(): string|false
 
 /**
  * @pure
- *
- * @return false|string
  */
 function php_ini_loaded_file(): string|false
 {
@@ -1441,9 +1404,6 @@ function strtolower(string $string): string
 
 /**
  * @psalm-pure
- * @param string $haystack
- * @param string $needle
- * @param int $offset
  * @psalm-assert-if-true =non-empty-string $haystack
  * @psalm-return int<0, max>|false
  */
@@ -1453,9 +1413,6 @@ function strpos(string $haystack, string $needle, int $offset = 0): int|false
 
 /**
  * @psalm-pure
- * @param string $haystack
- * @param string $needle
- * @param int $offset
  * @psalm-assert-if-true =non-empty-string $haystack
  * @psalm-return int<0, max>|false
  */
@@ -1561,7 +1518,6 @@ function stripcslashes(string $string): string
 
 /**
  * @psalm-pure
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($haystack) -> return
@@ -1572,7 +1528,6 @@ function strstr(string $haystack, string $needle, bool $before_needle = false): 
 
 /**
  * @psalm-pure
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($haystack) -> return
@@ -1583,7 +1538,6 @@ function stristr(string $haystack, string $needle, bool $before_needle = false):
 
 /**
  * @psalm-pure
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($haystack) -> return
@@ -1640,7 +1594,6 @@ function str_split(string $string, int $length = 1): array
 
 /**
  * @psalm-pure
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($string) -> return
@@ -1959,7 +1912,6 @@ function explode(string $separator, string $string, int $limit = -1): array
 /**
  * @psalm-pure
  *
- * @param string|array $separator
  * @param array<string|float|int|stringable-object|null|bool> $array
  *
  * @return (
@@ -1988,7 +1940,6 @@ function implode(array|string $separator = '', null|array $array = null): string
 /**
  * @psalm-pure
  *
- * @param string|array $separator
  * @param array<string|float|int|stringable-object|null|bool> $array
  *
  * @return (
@@ -2105,7 +2056,6 @@ function http_clear_last_response_headers(): void
 
 /**
  * @since 8.4
- * @param array|null $options
  * @return array<int, array>
  */
 function request_parse_body(null|array $options = null): array
@@ -2130,9 +2080,6 @@ enum RoundingMode implements UnitEnum
 
 /**
  * @pure
- *
- * @param int $item
- * @return false|string
  */
 function nl_langinfo(int $item): string|false
 {
@@ -2157,7 +2104,6 @@ function levenshtein(
 /**
  * @pure
  *
- * @param int $codepoint
  * @return non-empty-string
  */
 function chr(int $codepoint): string
@@ -2167,7 +2113,6 @@ function chr(int $codepoint): string
 /**
  * @pure
  *
- * @param string $character
  * @return int<0, 255>
  */
 function ord(string $character): int
@@ -2176,8 +2121,6 @@ function ord(string $character): int
 
 /**
  * @param-out array<string, string> $result
- *
- * @return void
  */
 function parse_str(string $string, &$result): void
 {
@@ -2215,7 +2158,6 @@ function chop(string $string, string $characters = " \n\r\t\v\0"): string
 
 /**
  * @psalm-pure
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($haystack) -> return
@@ -2376,28 +2318,16 @@ function linkinfo(string $path): int|false
 {
 }
 
-/**
- * @param string $target
- * @param string $link
- * @return bool
- */
 function symlink(string $target, string $link): bool
 {
 }
 
-/**
- * @param string $target
- * @param string $link
- * @return bool
- */
 function link(string $target, string $link): bool
 {
 }
 
 /**
- * @param string $filename
  * @param resource $context
- * @return bool
  */
 function unlink(string $filename, mixed $context = null): bool
 {
@@ -2426,9 +2356,6 @@ function system(string $command, null|int &$result_code = null): string|false
 
 /**
  * @pure
- *
- * @param string $command
- * @return string
  */
 function escapeshellcmd(string $command): string
 {
@@ -2436,9 +2363,6 @@ function escapeshellcmd(string $command): string
 
 /**
  * @pure
- *
- * @param string $arg
- * @return string
  */
 function escapeshellarg(string $arg): string
 {
@@ -2492,7 +2416,6 @@ function proc_open(
 
 /**
  * @param resource $process
- * @return int
  */
 function proc_close($process): int
 {
@@ -2500,8 +2423,6 @@ function proc_close($process): int
 
 /**
  * @param resource $process
- * @param int $signal
- * @return bool
  */
 function proc_terminate($process, int $signal = 15): bool
 {
@@ -2525,29 +2446,16 @@ function proc_get_status($process): array
 {
 }
 
-/**
- * @param int $priority
- * @return bool
- */
 function proc_nice(int $priority): bool
 {
 }
 
-/**
- * @param string $service
- * @param string $protocol
- * @return false|int
- */
 function getservbyname(string $service, string $protocol): int|false
 {
 }
 
 /**
  * @pure
- *
- * @param int $port
- * @param string $protocol
- * @return false|string
  */
 function getservbyport(int $port, string $protocol): string|false
 {
@@ -2569,8 +2477,6 @@ function getprotobynumber(int $protocol): string|false
 
 /**
  * @pure
- *
- * @return false|int
  */
 function getmyuid(): int|false
 {
@@ -2578,8 +2484,6 @@ function getmyuid(): int|false
 
 /**
  * @pure
- *
- * @return false|int
  */
 function getmygid(): int|false
 {
@@ -2587,8 +2491,6 @@ function getmygid(): int|false
 
 /**
  * @pure
- *
- * @return false|int
  */
 function getmypid(): int|false
 {
@@ -2596,16 +2498,11 @@ function getmypid(): int|false
 
 /**
  * @pure
- *
- * @return false|int
  */
 function getmyinode(): int|false
 {
 }
 
-/**
- * @return false|int
- */
 function getlastmod(): int|false
 {
 }
@@ -2615,7 +2512,6 @@ function getlastmod(): int|false
  *
  * @template T of bool
  * @param T $strict
- * @return string|false
  * @psalm-return (T is false ? string : string|false)
  *
  * @psalm-flow ($string) -> return
@@ -2737,10 +2633,6 @@ function atanh(float $num): float
 
 /**
  * @pure
- *
- * @param float $y
- * @param float $x
- * @return float
  */
 function atan2(float $y, float $x): float
 {
@@ -2797,8 +2689,6 @@ function log1p(float $num): float
 
 /**
  * @pure
- *
- * @return float
  */
 function pi(): float
 {
@@ -3007,7 +2897,6 @@ function putenv(string $assignment): bool
 }
 
 /**
- * @param string $short_options
  * @param list<string> $long_options
  *
  * @return array<string, false|list<false|string>|string>|false
@@ -3077,17 +2966,10 @@ function quoted_printable_encode(string $string): string
 {
 }
 
-/**
- * @return string
- */
 function get_current_user(): string
 {
 }
 
-/**
- * @param int $seconds
- * @return bool
- */
 function set_time_limit(int $seconds): bool
 {
 }
@@ -3163,11 +3045,6 @@ function gettype(mixed $value): string
 {
 }
 
-/**
- * @param mixed $var
- * @param string $type
- * @return bool
- */
 function settype(mixed &$var, string $type): bool
 {
 }
@@ -3276,9 +3153,6 @@ function is_real(mixed $var): bool
  * @assert-if-true numeric $value
  *
  * @pure
- *
- * @param mixed $value
- * @return bool
  */
 function is_numeric(mixed $value): bool
 {
@@ -3347,18 +3221,12 @@ function is_object(mixed $value): bool
  * @assert-if-true scalar $value
  *
  * @pure
- *
- * @param mixed $value
- * @return bool
  */
 function is_scalar(mixed $value): bool
 {
 }
 
 /**
- * @param mixed $value
- * @param bool $syntax_only
- *
  * @param-out string $callable_name
  *
  * @assert-if-true callable $value
@@ -3391,8 +3259,6 @@ function pclose($handle): int
 }
 
 /**
- * @param string $command
- * @param string $mode
  * @return false|resource
  */
 function popen(string $command, string $mode)
@@ -3463,9 +3329,6 @@ function fread($stream, int $length): string|false
 /**
  * @ignore-falsable-return
  *
- * @param string $filename
- * @param string $mode
- * @param bool $use_include_path
  * @param null|resource $context
  * @return false|resource
  */
@@ -3598,8 +3461,6 @@ function tmpfile()
 }
 
 /**
- * @param string $filename
- * @param int $flags
  * @param resource $context
  * @return false|list<string>
  */
@@ -3620,9 +3481,7 @@ function file_get_contents(
 }
 
 /**
- * @param string $filename
  * @param array<array-key, string>|resource|string $data
- * @param int $flags
  * @param resource $context
  * @return false|int<0, max>
  */
@@ -3642,8 +3501,6 @@ function error_get_last(): null|array
 /**
  * Psalm types this through the callmap (mixed) and gets precision by
  * rewriting `call_user_func($f, ...)` into a virtual `$f(...)` call.
- *
- * @param callable|string $callback
  */
 function call_user_func(callable|string $callback, mixed ...$args): mixed
 {
@@ -3704,7 +3561,6 @@ function unserialize(string $data, array $options = []): mixed
 }
 
 /**
- * @param mixed $value
  * @param list<mixed> $values
  * @return string
  *
@@ -3718,8 +3574,6 @@ function var_dump(mixed $value, mixed ...$values): void
 }
 
 /**
- * @param mixed $value
- * @param bool $return
  * @return ($return is true ? string : void)
  *
  * @psalm-taint-specialize
@@ -3730,18 +3584,11 @@ function var_export(mixed $value, bool $return = false): null|string
 {
 }
 
-/**
- * @param mixed $value
- * @param mixed $values
- * @return void
- */
 function debug_zval_dump(mixed $value, mixed ...$values): void
 {
 }
 
 /**
- * @param mixed $value
- * @param bool $return
  * @return ($return is true ? string : true)
  *
  * @psalm-taint-specialize
@@ -3752,18 +3599,10 @@ function print_r(mixed $value, bool $return = false): string|bool
 {
 }
 
-/**
- * @param bool $real_usage
- * @return int
- */
 function memory_get_usage(bool $real_usage = false): int
 {
 }
 
-/**
- * @param bool $real_usage
- * @return int
- */
 function memory_get_peak_usage(bool $real_usage = false): int
 {
 }
@@ -3859,8 +3698,6 @@ function ini_get(string $option): string|false
 }
 
 /**
- * @param null|string $extension
- * @param bool $details
  * @return array<array-key, mixed>|false
  */
 function ini_get_all(null|string $extension, bool $details = true): array|false
@@ -3972,16 +3809,10 @@ function getallheaders(): false|array
 {
 }
 
-/**
- * @return int
- */
 function connection_aborted(): int
 {
 }
 
-/**
- * @return int
- */
 function connection_status(): int
 {
 }
@@ -3991,9 +3822,6 @@ function ignore_user_abort(null|bool $enable = null): int
 }
 
 /**
- * @param string $filename
- * @param bool $process_sections
- * @param int $scanner_mode
  * @return array<array-key, mixed>|false
  */
 function parse_ini_file(
@@ -4004,9 +3832,6 @@ function parse_ini_file(
 }
 
 /**
- * @param string $ini_string
- * @param bool $process_sections
- * @param int $scanner_mode
  * @return array<array-key, mixed>|false
  */
 function parse_ini_string(
@@ -4041,25 +3866,17 @@ function gethostbyaddr(string $ip): string|false
 {
 }
 
-/**
- * @param string $hostname
- * @return string
- */
 function gethostbyname(string $hostname): string
 {
 }
 
 /**
- * @param string $hostname
  * @return false|list<string>
  */
 function gethostbynamel(string $hostname): array|false
 {
 }
 
-/**
- * @return false|string
- */
 function gethostname(): string|false
 {
 }
@@ -4210,7 +4027,6 @@ function stream_filter_append($stream, string $filter_name, int $mode = 0, mixed
 
 /**
  * @param resource $stream_filter
- * @return bool
  */
 function stream_filter_remove($stream_filter): bool
 {
@@ -4305,9 +4121,6 @@ function stream_socket_shutdown($stream, int $mode): bool
 }
 
 /**
- * @param int $domain
- * @param int $type
- * @param int $protocol
  * @return array<array-key, resource>|false
  */
 function stream_socket_pair(int $domain, int $type, int $protocol): array|false
@@ -4331,7 +4144,6 @@ function stream_get_contents($stream, null|int $length = null, int $offset = -1)
 
 /**
  * @param resource $stream
- * @return bool
  */
 function stream_supports_lock($stream): bool
 {
@@ -4372,8 +4184,6 @@ function fputcsv(
 /**
  * @param resource $stream
  * @param-out int $would_block
- *
- * @return bool
  */
 function flock($stream, int $operation, &$would_block = null): bool
 {
@@ -4462,26 +4272,14 @@ function stream_register_wrapper(string $protocol, string $class, int $flags = 0
 {
 }
 
-/**
- * @param string $filename
- * @return false|string
- */
 function stream_resolve_include_path(string $filename): string|false
 {
 }
 
-/**
- * @param string $protocol
- * @return bool
- */
 function stream_wrapper_unregister(string $protocol): bool
 {
 }
 
-/**
- * @param string $protocol
- * @return bool
- */
 function stream_wrapper_restore(string $protocol): bool
 {
 }
@@ -4502,7 +4300,6 @@ function stream_get_transports(): array
 
 /**
  * @param resource|string $stream
- * @return bool
  */
 function stream_is_local($stream): bool
 {
@@ -4523,9 +4320,6 @@ function get_headers(string $url, int|bool $associative = false, $context = null
 
 /**
  * @param resource $stream
- * @param int $seconds
- * @param int $microseconds
- * @return bool
  */
 function stream_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 {
@@ -4533,9 +4327,6 @@ function stream_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 
 /**
  * @param resource $stream
- * @param int $seconds
- * @param int $microseconds
- * @return bool
  */
 function socket_set_timeout($stream, int $seconds, int $microseconds = 0): bool
 {
@@ -4551,7 +4342,6 @@ function socket_get_status($stream): array
 /**
  * @psalm-pure
  *
- * @return string|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($path) -> return
@@ -4560,21 +4350,12 @@ function realpath(string $path): string|false
 {
 }
 
-/**
- * @param string $pattern
- * @param string $filename
- * @param int $flags
- * @return bool
- */
 function fnmatch(string $pattern, string $filename, int $flags = 0): bool
 {
 }
 
 /**
  * @param string $hostname <p>
- * @param int $port
- *
- * @param float|null $timeout
  *
  * @param-out int $error_code
  * @param-out string $error_message
@@ -4591,10 +4372,6 @@ function fsockopen(
 }
 
 /**
- * @param string $hostname
- * @param int $port
- * @param float|null $timeout
- *
  * @param-out int $error_code
  * @param-out string $error_message
  *
@@ -4625,7 +4402,6 @@ function pack(string $format, mixed ...$values): string
 /**
  * @psalm-pure
  *
- * @return array|false
  * @psalm-ignore-falsable-return
  *
  * @psalm-flow ($string) -> return
@@ -4660,16 +4436,11 @@ function opendir(string $directory, $context = null)
 
 /**
  * @param resource $dir_handle
- * @return void
  */
 function closedir($dir_handle = null): void
 {
 }
 
-/**
- * @param string $directory
- * @return bool
- */
 function chdir(string $directory): bool
 {
 }
@@ -4687,7 +4458,6 @@ function getcwd(): string|false
 
 /**
  * @param resource $dir_handle
- * @return void
  */
 function rewinddir($dir_handle): void
 {
@@ -4695,16 +4465,13 @@ function rewinddir($dir_handle): void
 
 /**
  * @param resource $dir_handle
- * @return false|string
  */
 function readdir($dir_handle): string|false
 {
 }
 
 /**
- * @param string $directory
  * @param resource $context
- * @return Directory|false
  */
 function dir(string $directory, $context): Directory|false
 {
@@ -4729,7 +4496,6 @@ function scandir(string $directory, int $sorting_order = 0, $context = null): ar
 /**
  * @psalm-ignore-falsable-return
  *
- * @param string $pattern
  * @param int<0, max> $flags
  * @return false|list<non-empty-string>
  */
@@ -4737,144 +4503,75 @@ function glob(string $pattern, int $flags = 0): array|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function fileatime(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function filectime(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function filegroup(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function fileinode(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function filemtime(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function fileowner(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function fileperms(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|int
- */
 function filesize(string $filename): int|false
 {
 }
 
-/**
- * @param string $filename
- * @return false|string
- */
 function filetype(string $filename): string|false
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function file_exists(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_writable(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_writeable(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_readable(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_executable(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_file(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_dir(string $filename): bool
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function is_link(string $filename): bool
 {
 }
 
 /**
- * @param string $filename
  * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
  */
 function stat(string $filename): array|false
@@ -4882,45 +4579,24 @@ function stat(string $filename): array|false
 }
 
 /**
- * @param string $filename
  * @return array{0: int, 10: int, 11: int, 12: int, 1: int, 2: int, 3: int, 4: int, 5: int, 6: int, 7: int, 8: int, 9: int, atime: int, blksize: int, blocks: int, ctime: int, dev: int, gid: int, ino: int, mode: int, mtime: int, nlink: int, rdev: int, size: int, uid: int}|false
  */
 function lstat(string $filename): array|false
 {
 }
 
-/**
- * @param string $filename
- * @param int|string $user
- * @return bool
- */
 function chown(string $filename, string|int $user): bool
 {
 }
 
-/**
- * @param string $filename
- * @param int|string $group
- * @return bool
- */
 function chgrp(string $filename, string|int $group): bool
 {
 }
 
-/**
- * @param string $filename
- * @param int|string $user
- * @return bool
- */
 function lchown(string $filename, string|int $user): bool
 {
 }
 
-/**
- * @param string $filename
- * @param int|string $group
- * @return bool
- */
 function lchgrp(string $filename, string|int $group): bool
 {
 }
@@ -4933,11 +4609,6 @@ function touch(string $filename, null|int $mtime = null, null|int $atime = null)
 {
 }
 
-/**
- * @param bool $clear_realpath_cache
- * @param string $filename
- * @return void
- */
 function clearstatcache(bool $clear_realpath_cache = false, string $filename = ''): void
 {
 }
@@ -5020,8 +4691,6 @@ function array_replace_recursive(array $array, array ...$replacements): array
  * @psalm-template TArray as array
  *
  * @param TArray $array
- * @param mixed $filter_value
- * @param bool  $strict
  *
  * @return (TArray is non-empty-array ? non-empty-list<key-of<TArray>> : list<key-of<TArray>>)
  * @psalm-pure
@@ -5081,7 +4750,6 @@ function array_column(array $array, string|int|null $column_key, string|int|null
  * @template V
  *
  * @param array<K, V> $array
- * @param bool $preserve_keys
  *
  * @return ($preserve_keys is true ? array<K, V> : list<V>)
  *
@@ -5098,7 +4766,6 @@ function array_reverse(array $array, bool $preserve_keys = false): array
  * @template I
  *
  * @param array<K, V> $array
- * @param callable $callback
  * @param null|I $initial
  *
  * @return I
@@ -5145,8 +4812,6 @@ function array_flip(array $array): array
  * @param array<K,T> $array
  *
  * @return array<K,T>
- *
- * @param int $case
  */
 function array_change_key_case(array $array, int $case = CASE_LOWER): array
 {
@@ -5187,7 +4852,6 @@ function array_unique(array $array, int $flags = SORT_STRING): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5201,7 +4865,6 @@ function array_intersect(array $array, array ...$arrays): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5215,7 +4878,6 @@ function array_intersect_key(array $array, array ...$arrays): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5229,7 +4891,6 @@ function array_intersect_assoc(array $array, array ...$arrays): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5243,7 +4904,6 @@ function array_diff(array $array, array ...$arrays): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5257,7 +4917,6 @@ function array_diff_key(array $array, array ...$arrays): array
  * @psalm-template TValue
  *
  * @param array<TKey, TValue> $array
- * @param array ...$arrays
  *
  * @return array<TKey, TValue>
  * @psalm-pure
@@ -5267,8 +4926,6 @@ function array_diff_assoc(array $array, array ...$arrays): array
 }
 
 /**
- * @param array $array
- *
  * @return (
  *     $array is array<int>
  *     ? int
@@ -5285,8 +4942,6 @@ function array_sum(array $array): int|float
 }
 
 /**
- * @param array $array
- *
  * @return (
  *     $array is array<int>
  *     ? int
@@ -5373,8 +5028,6 @@ function array_combine(array $keys, array $values): array
  *
  * @param TKey $key
  * @param array<TKey, mixed> $array
- *
- * @return bool
  */
 function array_key_exists(string|int|float|bool|null $key, array $array): bool
 {
@@ -5462,8 +5115,6 @@ function key_exists($key, array $array): bool
  * @assert truthy $assertion
  *
  * @param bool|int|string $assertion
- * @param Throwable|null|string $description
- * @return bool
  */
 function assert(mixed $assertion, Throwable|string|null $description = null): bool
 {
@@ -5553,25 +5204,14 @@ function stream_bucket_new($stream, string $buffer): StreamBucket
 {
 }
 
-/**
- * @param string $name
- * @param string $value
- * @return bool
- */
 function output_add_rewrite_var(string $name, string $value): bool
 {
 }
 
-/**
- * @return bool
- */
 function output_reset_rewrite_vars(): bool
 {
 }
 
-/**
- * @return string
- */
 function sys_get_temp_dir(): string
 {
 }
@@ -5583,9 +5223,6 @@ function realpath_cache_get(): array
 {
 }
 
-/**
- * @return int
- */
 function realpath_cache_size(): int
 {
 }
@@ -5948,9 +5585,7 @@ function in_array(mixed $needle, array $haystack, bool $strict = false): bool
 /**
  * @psalm-template T
  *
- * @param mixed           $needle
  * @param array<T, mixed> $haystack
- * @param bool            $strict
  *
  * @return T|false
  * @psalm-pure
@@ -6074,73 +5709,45 @@ function ob_start(callable|null $callback = null, int $chunk_size = 0, int $flag
 {
 }
 
-/**
- * @return bool
- */
 function ob_flush(): bool
 {
 }
 
-/**
- * @return bool
- */
 function ob_clean(): bool
 {
 }
 
-/**
- * @return bool
- */
 function ob_end_flush(): bool
 {
 }
 
-/**
- * @return bool
- */
 function ob_end_clean(): bool
 {
 }
 
-/**
- * @return false|string
- */
 function ob_get_flush(): string|false
 {
 }
 
-/**
- * @return false|string
- */
 function ob_get_clean(): string|false
 {
 }
 
-/**
- * @return false|int
- */
 function ob_get_length(): int|false
 {
 }
 
-/**
- * @return int
- */
 function ob_get_level(): int
 {
 }
 
 /**
- * @param bool $full_status
  * @return array<array-key, mixed>
  */
 function ob_get_status(bool $full_status = false): array
 {
 }
 
-/**
- * @return false|string
- */
 function ob_get_contents(): string|false
 {
 }
@@ -6156,25 +5763,16 @@ function ob_list_handlers(): array
 {
 }
 
-/**
- * @param int $priority
- * @param string $message
- * @return true
- */
 function syslog(int $priority, string $message): true
 {
 }
 
-/**
- * @return true
- */
 function closelog(): true
 {
 }
 
 /**
  * @param callable():void $callback
- * @return bool
  */
 function header_register_callback(callable $callback): bool
 {

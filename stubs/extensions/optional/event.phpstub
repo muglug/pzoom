@@ -21,10 +21,7 @@ final class Event
     public const TIMEOUT = 1;
 
     /**
-     * @param EventBase $base
      * @param mixed     $fd
-     * @param int       $what
-     * @param callable  $cb
      * @param mixed     $arg  = null
      */
     #[Pure]
@@ -32,88 +29,53 @@ final class Event
 
     /**
      * @param float $timeout (optional)
-     * @return bool
      */
     public function add(float $timeout = -1): bool {}
 
     /**
      * @param float $timeout (optional)
-     * @return bool
      */
     public function addSignal(float $timeout = -1): bool {}
 
     /**
      * @param float $timeout (optional)
-     * @return bool
      */
     public function addTimer(float $timeout = -1): bool {}
 
-    /**
-     * @return bool
-     */
     public function del(): bool {}
 
-    /**
-     * @return bool
-     */
     public function delSignal(): bool {}
 
-    /**
-     * @return bool
-     */
     public function delTimer(): bool {}
 
         public function free(): void {}
 
-    /**
-     * @return array
-     */
     public static function getSupportedMethods(): array {}
 
-    /**
-     * @param int $flags
-     * @return bool
-     */
     public function pending(int $flags): bool {}
 
     /**
-     * @param EventBase $base
      * @param mixed     $fd
      * @param int       $what (optional)
      * @param callable  $cb   (optional)
      * @param mixed     $arg  (optional)
-     * @return bool
      */
     public function set(EventBase $base, $fd, int $what, callable $cb, $arg): bool {}
 
-    /**
-     * @param int $priority
-     * @return bool
-     */
     public function setPriority(int $priority): bool {}
 
     /**
-     * @param EventBase $base
-     * @param callable  $cb
      * @param mixed     $arg  (optional)
-     * @return bool
      */
     public function setTimer(EventBase $base, callable $cb, $arg): bool {}
 
     /**
-     * @param EventBase $base
-     * @param int       $signum
-     * @param callable  $cb
      * @param mixed     $arg    (optional)
-     * @return Event
      */
     public static function signal(EventBase $base, int $signum, callable $cb, $arg): Event {}
 
     /**
-     * @param EventBase $base
-     * @param callable  $cb
      * @param mixed     $arg  (optional)
-     * @return Event
      */
     public static function timer(EventBase $base, callable $cb, $arg): Event {}
 }
@@ -134,81 +96,43 @@ final class EventBase
     public const IGNORE_ENV = 2;
     public const PRECISE_TIMER = 32;
 
-    /**
-     * @param null|EventConfig $cfg
-     */
     public function __construct(?EventConfig $cfg = null) {}
 
         public function dispatch(): void {}
 
-    /**
-     * @param float $timeout
-     * @return bool
-     */
     public function exit(float $timeout = 0.0): bool {}
 
         public function free(): void {}
 
-    /**
-     * @return int
-     */
     #[Pure]
     public function getFeatures(): int {}
 
-    /**
-     * @return string
-     */
     #[Pure]
     public function getMethod(): string {}
 
-    /**
-     * @return float
-     */
     #[Pure]
     public function getTimeOfDayCached(): float {}
 
-    /**
-     * @return bool
-     */
     #[Pure]
     public function gotExit(): bool {}
 
-    /**
-     * @return bool
-     */
     #[Pure]
     public function gotStop(): bool {}
 
-    /**
-     * @param int $flags
-     * @return bool
-     */
     public function loop(int $flags = -1): bool {}
 
-    /**
-     * @param int $n_priorities
-     * @return bool
-     */
     public function priorityInit(int $n_priorities): bool {}
 
-    /**
-     * @return bool
-     */
     public function reInit(): bool {}
 
     /**
-     * @return bool
      * @since libevent version 2.1.2-alpha
      */
     public function resume(): bool {}
 
-    /**
-     * @return bool
-     */
     public function stop(): bool {}
 
     /**
-     * @return bool
      * @since libevent 2.1.1-alpha
      */
     public function updateCacheTime(): bool {}
@@ -243,128 +167,62 @@ class EventBuffer
         #[Pure]
     public function __construct() {}
 
-    /**
-     * @param string $data
-     * @return bool
-     */
     public function add(string $data): bool {}
 
-    /**
-     * @param EventBuffer $buf
-     * @return bool
-     */
     public function addBuffer(EventBuffer $buf): bool {}
 
-    /**
-     * @param EventBuffer $buf
-     * @param int         $len
-     * @return int
-     */
     public function appendFrom(EventBuffer $buf, int $len): int {}
 
-    /**
-     * @param string &$data
-     * @param int    $max_bytes
-     * @return int
-     */
     public function copyout(string &$data, int $max_bytes): int {}
 
-    /**
-     * @param int $len
-     * @return bool
-     */
     public function drain(int $len): bool {}
 
         public function enableLocking(): void {}
 
-    /**
-     * @param int $len
-     * @return bool
-     */
     public function expand(int $len): bool {}
 
-    /**
-     * @param bool $at_front
-     * @return bool
-     */
     public function freeze(bool $at_front): bool {}
 
         public function lock(): void {}
 
-    /**
-     * @param string $data
-     * @return bool
-     */
     public function prepend(string $data): bool {}
 
-    /**
-     * @param EventBuffer $buf
-     * @return bool
-     */
     public function prependBuffer(EventBuffer $buf): bool {}
 
-    /**
-     * @param int $size
-     * @return null|string
-     */
     public function pullup(int $size): ?string {}
 
-    /**
-     * @param int $max_bytes
-     * @return null | string
-     */
     public function read(int $max_bytes): ?string {}
 
     /**
      * @param mixed $fd
-     * @param int   $howmuch
-     * @return int
      */
     public function readFrom($fd, int $howmuch): int {}
 
-    /**
-     * @param int $eol_style
-     * @return null | string
-     */
     public function readLine(int $eol_style): ?string {}
 
     /**
-     * @param string $what
      * @param int    $start = 1
      * @param int    $end   = 1
-     * @return int|false
      */
     public function search(string $what, int $start = 1, int $end = 1): int|false {}
 
     /**
      * @param int $start     = 1
      * @param int $eol_style = EOL_ANY
-     * @return int|false
      */
     public function searchEol(int $start = 1, int $eol_style = EventBuffer::EOL_ANY): int|false {}
 
     /**
-     * @param int $start
      * @param int $length (optional)
-     * @return string
      */
     public function substr(int $start, int $length): string {}
 
-    /**
-     * @param bool $at_front
-     * @return bool
-     */
     public function unfreeze(bool $at_front): bool {}
 
-    /**
-     * @return void
-     */
     public function unlock(): void {}
 
     /**
-     * @param mixed $fd
      * @param int $howmuch (optional)
-     * @return int|false
      */
     public function write(mixed $fd, int $howmuch): int|false {}
 }
@@ -412,7 +270,6 @@ final class EventBufferEvent
     public const SSL_ACCEPTING = 2;
 
     /**
-     * @param EventBase $base
      * @param mixed     $socket  = null
      * @param int       $options = 0
      * @param null|callable $readcb  = null
@@ -422,177 +279,79 @@ final class EventBufferEvent
     #[Pure]
     public function __construct(EventBase $base, $socket = null, int $options = 0, ?callable $readcb = null, ?callable $writecb = null, ?callable $eventcb = null) {}
 
-    /**
-     * @return bool
-     */
     public function close(): bool {}
 
-    /**
-     * @param string $addr
-     * @return bool
-     */
     public function connect(string $addr): bool {}
 
     /**
-     * @param null|EventDnsBase $dns_base
-     * @param string       $hostname
-     * @param int          $port
      * @param int          $family   = EventUtil::AF_UNSPEC
-     * @return bool
      */
     public function connectHost(?EventDnsBase $dns_base, string $hostname, int $port, int $family = EventUtil::AF_UNSPEC): bool {}
 
-    /**
-     * @param EventBufferEvent $underlying
-     * @param EventSslContext $ctx
-     * @param int $state
-     * @param int $options
-     * @return EventBufferEvent
-     */
     public function createSslFilter(EventBufferEvent $underlying, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
 
     /**
-     * @param EventBase $base
      * @param int       $options = 0
-     * @return array
      */
     public static function createPair(EventBase $base, int $options = 0): array {}
 
-    /**
-     * @param int $events
-     * @return bool
-     */
     public function disable(int $events): bool {}
 
-    /**
-     * @param int $events
-     * @return bool
-     */
     public function enable(int $events): bool {}
 
         public function free(): void {}
 
-    /**
-     * @return string
-     */
     #[Pure]
     public function getDnsErrorString(): string {}
 
-    /**
-     * @return int
-     */
     #[Pure]
     public function getEnabled(): int {}
 
-    /**
-     * @return EventBuffer
-     */
     #[Pure]
     public function getInput(): EventBuffer {}
 
-    /**
-     * @return EventBuffer
-     */
     #[Pure]
     public function getOutput(): EventBuffer {}
 
-    /**
-     * @param int $size
-     * @return null|string
-     */
     public function read(int $size): ?string {}
 
-    /**
-     * @param EventBuffer $buf
-     * @return bool
-     */
     public function readBuffer(EventBuffer $buf): bool {}
 
     /**
-     * @param callable $readcb
-     * @param callable $writecb
-     * @param callable $eventcb
      * @param string   $arg     (optional)
      */
     public function setCallbacks(callable $readcb, callable $writecb, callable $eventcb, mixed $arg = null): void {}
 
-    /**
-     * @param int $priority
-     * @return bool
-     */
     public function setPriority(int $priority): bool {}
 
-    /**
-     * @param float $timeout_read
-     * @param float $timeout_write
-     * @return bool
-     */
     public function setTimeouts(float $timeout_read, float $timeout_write): bool {}
 
-    /**
-     * @param int $events
-     * @param int $lowmark
-     * @param int $highmark
-     */
     public function setWatermark(int $events, int $lowmark, int $highmark): void {}
 
-    /**
-     * @return false|string
-     */
     public function sslError(): false|string {}
 
     /**
-     * @param EventBase        $base
-     * @param EventBufferEvent $underlying
-     * @param EventSslContext  $ctx
-     * @param int              $state
      * @param int              $options    = 0
-     * @return EventBufferEvent
      */
     public static function sslFilter(EventBase $base, EventBufferEvent $underlying, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
 
-    /**
-     * @return string|false
-     */
     public function sslGetCipherInfo(): string|false {}
 
-    /**
-     * @return string|false
-     */
     public function sslGetCipherName(): string|false {}
 
-    /**
-     * @return string|false
-     */
     public function sslGetCipherVersion(): string|false {}
 
-    /**
-     * @return string
-     */
     public function sslGetProtocol(): string {}
 
         public function sslRenegotiate(): void {}
 
     /**
-     * @param EventBase $base
-     * @param mixed $socket
-     * @param EventSslContext $ctx
-     * @param int $state
      * @param int $options (optional)
-     * @return EventBufferEvent
      */
     public static function sslSocket(EventBase $base, mixed $socket, EventSslContext $ctx, int $state, int $options = 0): EventBufferEvent {}
 
-    /**
-     * @param string $data
-     * @return bool
-     */
     public function write(string $data): bool {}
 
-    /**
-     * @param EventBuffer $buf
-     * @return bool
-     */
     public function writeBuffer(EventBuffer $buf): bool {}
 }
 
@@ -610,30 +369,15 @@ final class EventConfig
         #[Pure]
     public function __construct() {}
 
-    /**
-     * @param string $method
-     * @return bool
-     */
     public function avoidMethod(string $method): bool {}
 
-    /**
-     * @param int $feature
-     * @return bool
-     */
     public function requireFeatures(int $feature): bool {}
 
     /**
-     * @param int $flags
-     * @return bool
      * @since libevent version 2.0.2-alpha
      */
     public function setFlags(int $flags): bool {}
 
-    /**
-     * @param int $max_interval
-     * @param int $max_callbacks
-     * @param int $min_priority
-     */
     public function setMaxDispatchInterval(int $max_interval, int $max_callbacks, int $min_priority): void {}
 }
 
@@ -650,55 +394,23 @@ final class EventDnsBase
     public const OPTION_HOSTSFILE = 8;
     public const OPTIONS_ALL = 15;
 
-    /**
-     * @param EventBase $base
-     * @param bool      $initialize
-     */
     #[Pure]
     public function __construct(EventBase $base, bool $initialize) {}
 
-    /**
-     * @param string $ip
-     * @return bool
-     */
     public function addNameserverIp(string $ip): bool {}
 
-    /**
-     * @param string $domain
-     */
     public function addSearch(string $domain): void {}
 
         public function clearSearch(): void {}
 
-    /**
-     * @return int
-     */
     public function countNameservers(): int {}
 
-    /**
-     * @param string $hosts
-     * @return bool
-     */
     public function loadHosts(string $hosts): bool {}
 
-    /**
-     * @param int    $flags
-     * @param string $filename
-     * @return bool
-     */
     public function parseResolvConf(int $flags, string $filename): bool {}
 
-    /**
-     * @param string $option
-     * @param string $value
-     * @return bool
-     */
     public function setOption(string $option, string $value): bool {}
 
-    /**
-     * @param int $ndots
-     * @return void
-     */
     public function setSearchNdots(int $ndots): void {}
 }
 
@@ -709,69 +421,32 @@ final class EventDnsBase
  */
 final class EventHttp
 {
-    /**
-     * @param EventBase       $base
-     * @param null|EventSslContext $ctx
-     */
     public function __construct(EventBase $base, ?EventSslContext $ctx = null) {}
 
-    /**
-     * @param mixed $socket
-     * @return bool
-     */
     public function accept(mixed $socket): bool {}
 
-    /**
-     * @param string $alias
-     * @return bool
-     */
     public function addServerAlias(string $alias): bool {}
 
-    /**
-     * @param string $address
-     * @param int    $port
-     * @return bool
-     */
     public function bind(string $address, int $port): bool {}
 
-    /**
-     * @param string $alias
-     * @return bool
-     */
     public function removeServerAlias(string $alias): bool {}
 
-    /**
-     * @param int $methods
-     */
     public function setAllowedMethods(int $methods): void {}
 
     /**
-     * @param string $path
-     * @param string $cb
      * @param null|string $arg (optional)
-     * @return bool
      */
     public function setCallback(string $path, string $cb, ?string $arg = null): bool {}
 
     /**
-     * @param string $cb
      * @param null|string $arg (optional)
      */
     public function setDefaultCallback(string $cb, ?string $arg = null): void {}
 
-    /**
-     * @param int $value
-     */
     public function setMaxBodySize(int $value): void {}
 
-    /**
-     * @param int $value
-     */
     public function setMaxHeadersSize(int $value): void {}
 
-    /**
-     * @param int $value
-     */
     public function setTimeout(int $value): void {}
 }
 
@@ -782,69 +457,30 @@ final class EventHttp
  */
 class EventHttpConnection
 {
-    /**
-     * @param EventBase       $base
-     * @param EventDnsBase    $dns_base
-     * @param string          $address
-     * @param int             $port
-     * @param null|EventSslContext $ctx
-     */
     #[Pure]
     public function __construct(EventBase $base, EventDnsBase $dns_base, string $address, int $port, ?EventSslContext $ctx = null) {}
 
-    /**
-     * @return false|EventBase
-     */
     public function getBase(): false|EventBase {}
 
-    /**
-     * @param string &$address
-     * @param int    &$port
-     */
     public function getPeer(string &$address, int &$port): void {}
 
-    /**
-     * @param EventHttpRequest $req
-     * @param int              $type
-     * @param string           $uri
-     * @return bool
-     */
     public function makeRequest(EventHttpRequest $req, int $type, string $uri): bool {}
 
     /**
-     * @param callable $callback
      * @param mixed    $data     (optional)
      */
     public function setCloseCallback(callable $callback, mixed $data = null): void {}
 
-    /**
-     * @param string $address
-     */
     public function setLocalAddress(string $address): void {}
 
-    /**
-     * @param int $port
-     */
     public function setLocalPort(int $port): void {}
 
-    /**
-     * @param string $max_size
-     */
     public function setMaxBodySize(string $max_size): void {}
 
-    /**
-     * @param string $max_size
-     */
     public function setMaxHeadersSize(string $max_size): void {}
 
-    /**
-     * @param int $retries
-     */
     public function setRetries(int $retries): void {}
 
-    /**
-     * @param int $timeout
-     */
     public function setTimeout(int $timeout): void {}
 }
 
@@ -864,7 +500,6 @@ class EventHttpRequest
     public const OUTPUT_HEADER = 2;
 
     /**
-     * @param callable $callback
      * @param mixed $data
      */
     #[Pure]
@@ -945,24 +580,10 @@ final class EventListener
     public const OPT_DISABLED = 32;
     public const OPT_DEFERRED_ACCEPT = 64;
 
-    /**
-     * @param EventBase $base
-     * @param callable  $cb
-     * @param mixed     $data
-     * @param int       $flags
-     * @param int       $backlog
-     * @param mixed     $target
-     */
     public function __construct(EventBase $base, callable $cb, mixed $data, int $flags, int $backlog, mixed $target) {}
 
-    /**
-     * @return bool
-     */
     public function disable(): bool {}
 
-    /**
-     * @return bool
-     */
     public function enable(): bool {}
 
     public function free(): void {}
@@ -970,21 +591,15 @@ final class EventListener
         public function getBase(): void {}
 
     /**
-     * @param string &$address
      * @param mixed  &$port
-     * @return bool
      */
     public static function getSocketName(string &$address, int &$port): bool {}
 
     /**
-     * @param callable $cb
      * @param mixed    $arg = null
      */
     public function setCallback(callable $cb, mixed $arg = null): void {}
 
-    /**
-     * @param string $cb
-     */
     public function setErrorCallback(string $cb): void {}
 }
 
@@ -1035,23 +650,11 @@ final class EventSslContext
      */
     public $local_pk;
 
-    /**
-     * @param int $method
-     * @param array $options
-     */
     #[Pure]
     public function __construct(int $method, array $options) {}
 
-    /**
-     * @param int $proto
-     * @return bool
-     */
     public function setMinProtoVersion(int $proto): bool {}
 
-    /**
-     * @param int $proto
-     * @return bool
-     */
     public function setMaxProtoVersion(int $proto): bool {}
 }
 
@@ -1093,44 +696,24 @@ final class EventUtil
         abstract public function __construct();
 
     /**
-     * @param mixed $socket
      * @return resource
      */
     public function createSocket(mixed $socket) {}
 
     /**
      * @param mixed $socket = null
-     * @return int|false
      */
     public static function getLastSocketErrno($socket = null): int|false {}
 
-    /**
-     * @param mixed $socket
-     * @return string|false
-     */
     public static function getLastSocketError(mixed $socket): string|false {}
 
-    /**
-     * @param mixed $socket
-     * @return int
-     */
     public static function getSocketFd(mixed $socket): int {}
 
     /**
-     * @param mixed $socket
-     * @param string &$address
      * @param mixed  &$port
-     * @return bool
      */
     public static function getSocketName(mixed $socket, string &$address, int &$port): bool {}
 
-    /**
-     * @param mixed $socket
-     * @param int   $level
-     * @param int   $optname
-     * @param int|array $optval
-     * @return bool
-     */
     public static function setSocketOption(mixed $socket, int $level, int $optname, int|array $optval): bool {}
 
         public static function sslRandPoll(): bool {}

@@ -39,7 +39,6 @@ namespace {
 
     /**
      * @param resource $dba
-     * @return void
      */
     function dba_close(Dba\Connection $dba): void
     {
@@ -48,7 +47,6 @@ namespace {
     /**
      * @param array<array-key, mixed>|string $key
      * @param resource $dba
-     * @return bool
      */
     function dba_exists(string|array $key, Dba\Connection $dba): bool
     {
@@ -63,7 +61,6 @@ namespace {
     }
 
     /**
-     * @param false|null|string $key
      * @return array<array-key, mixed>|false
      */
     function dba_key_split(string|false|null $key): array|false
@@ -89,7 +86,6 @@ namespace {
     /**
      * @param array<array-key, mixed>|string $key
      * @param resource $dba
-     * @return bool
      */
     function dba_delete(string|array $key, Dba\Connection $dba): bool
     {
@@ -97,9 +93,7 @@ namespace {
 
     /**
      * @param array<array-key, mixed>|string $key
-     * @param string $value
      * @param resource $dba
-     * @return bool
      */
     function dba_insert(string|array $key, string $value, Dba\Connection $dba): bool
     {
@@ -107,9 +101,7 @@ namespace {
 
     /**
      * @param array<array-key, mixed>|string $key
-     * @param string $value
      * @param resource $dba
-     * @return bool
      */
     function dba_replace(string|array $key, string $value, Dba\Connection $dba): bool
     {
@@ -117,7 +109,6 @@ namespace {
 
     /**
      * @param resource $dba
-     * @return bool
      */
     function dba_optimize(Dba\Connection $dba): bool
     {
@@ -125,14 +116,12 @@ namespace {
 
     /**
      * @param resource $dba
-     * @return bool
      */
     function dba_sync(Dba\Connection $dba): bool
     {
     }
 
     /**
-     * @param bool $full_info
      * @return array<array-key, mixed>
      */
     function dba_handlers(bool $full_info = false): array

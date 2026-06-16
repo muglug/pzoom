@@ -61,10 +61,6 @@ class SyncSemaphore
 class SyncEvent
 {
     /**
-     * @param string $name
-     * @param bool   $manual
-     * @param bool   $prefire
-     *
      * @throws Exception
      */
     public function __construct(string $name, bool $manual = false, bool $prefire = false) {}

@@ -599,7 +599,6 @@ function sodium_memcmp(string $string1, string $string2): int
 }
 
 /**
- * @param string $string
  * @param-out null $string
  *
  * @throws SodiumException

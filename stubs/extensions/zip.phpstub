@@ -464,7 +464,6 @@ class ZipArchive implements Countable
 }
 
 /**
- * @param string $filename
  * @return false|int|resource
  */
 function zip_open(string $filename)
@@ -473,7 +472,6 @@ function zip_open(string $filename)
 
 /**
  * @param resource $zip
- * @return void
  */
 function zip_close($zip): void
 {
@@ -494,8 +492,6 @@ function zip_read($zip)
  *
  * @param resource $zip_dp
  * @param resource $zip_entry
- * @param string $mode
- * @return bool
  */
 function zip_entry_open($zip_dp, $zip_entry, string $mode = 'rb'): bool
 {
@@ -510,8 +506,6 @@ function zip_entry_close($zip_entry): bool
 
 /**
  * @param resource $zip_entry
- * @param int $len
- * @return false|string
  */
 function zip_entry_read($zip_entry, int $len = 1024): string|false
 {
@@ -527,7 +521,6 @@ function zip_entry_filesize($zip_entry): int|false
 
 /**
  * @param resource $zip_entry
- * @return false|string
  */
 function zip_entry_name($zip_entry): string|false
 {

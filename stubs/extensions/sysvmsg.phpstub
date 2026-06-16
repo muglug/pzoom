@@ -52,10 +52,6 @@ function msg_set_queue(SysvMessageQueue $queue, array $data): bool
 {
 }
 
-/**
- * @param int $key
- * @return bool
- */
 function msg_queue_exists(int $key): bool
 {
 }

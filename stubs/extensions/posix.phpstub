@@ -4,23 +4,14 @@ function posix_kill(int $process_id, int $signal): bool
 {
 }
 
-/**
- * @return int
- */
 function posix_getpid(): int
 {
 }
 
-/**
- * @return int
- */
 function posix_getppid(): int
 {
 }
 
-/**
- * @return int
- */
 function posix_getuid(): int
 {
 }
@@ -29,9 +20,6 @@ function posix_setuid(int $user_id): bool
 {
 }
 
-/**
- * @return int
- */
 function posix_geteuid(): int
 {
 }
@@ -44,9 +32,6 @@ function posix_setrlimit(int $resource, int $soft_limit, int $hard_limit): bool
 {
 }
 
-/**
- * @return int
- */
 function posix_getgid(): int
 {
 }
@@ -55,9 +40,6 @@ function posix_setgid(int $group_id): bool
 {
 }
 
-/**
- * @return int
- */
 function posix_getegid(): int
 {
 }
@@ -73,23 +55,14 @@ function posix_getgroups(): array|false
 {
 }
 
-/**
- * @return false|string
- */
 function posix_getlogin(): string|false
 {
 }
 
-/**
- * @return int
- */
 function posix_getpgrp(): int
 {
 }
 
-/**
- * @return int
- */
 function posix_setsid(): int
 {
 }
@@ -120,9 +93,6 @@ function posix_times(): array|false
 {
 }
 
-/**
- * @return false|string
- */
 function posix_ctermid(): string|false
 {
 }
@@ -141,9 +111,6 @@ function posix_isatty($file_descriptor): bool
 {
 }
 
-/**
- * @return false|string
- */
 function posix_getcwd(): string|false
 {
 }
@@ -161,7 +128,6 @@ function posix_access(string $filename, int $flags = POSIX_F_OK): bool
 }
 
 /**
- * @param string $name
  * @return array{gid: int, members: list<string>, name: string, passwd: string}|false
  */
 function posix_getgrnam(string $name): array|false
@@ -173,7 +139,6 @@ function posix_getgrgid(int $group_id): array|false
 }
 
 /**
- * @param string $username
  * @return array{dir: string, gecos: string, gid: int, name: string, passwd: string, shell: string, uid: int}|false
  */
 function posix_getpwnam(string $username): array|false
@@ -199,16 +164,10 @@ function posix_getrlimit(null|int $resource = null): array|false
 {
 }
 
-/**
- * @return int
- */
 function posix_get_last_error(): int
 {
 }
 
-/**
- * @return int
- */
 function posix_errno(): int
 {
 }

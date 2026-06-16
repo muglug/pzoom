@@ -1,14 +1,10 @@
 <?php
 
-/**
- * @return bool
- */
 function apcu_clear_cache(): bool
 {
 }
 
 /**
- * @param bool $limited
  * @return array<string, mixed>|false
  */
 function apcu_cache_info(bool $limited = false): array|false
@@ -16,7 +12,6 @@ function apcu_cache_info(bool $limited = false): array|false
 }
 
 /**
- * @param string $key
  * @return array<array-key, mixed>|null
  */
 function apcu_key_info(string $key): null|array
@@ -24,16 +19,12 @@ function apcu_key_info(string $key): null|array
 }
 
 /**
- * @param bool $limited
  * @return array<array-key, mixed>|false
  */
 function apcu_sma_info(bool $limited = false): array|false
 {
 }
 
-/**
- * @return bool
- */
 function apcu_enabled(): bool
 {
 }
@@ -49,33 +40,19 @@ function apcu_add($key, mixed $value = UNKNOWN, int $ttl = 0): array|bool
 }
 
 /**
- * @param string $key
- * @param int $step
  * @param bool $success
- * @param int $ttl
- * @return false|int
  */
 function apcu_inc(string $key, int $step = 1, &$success = null, int $ttl = 0): int|false
 {
 }
 
 /**
- * @param string $key
- * @param int $step
  * @param bool $success
- * @param int $ttl
- * @return false|int
  */
 function apcu_dec(string $key, int $step = 1, &$success = null, int $ttl = 0): int|false
 {
 }
 
-/**
- * @param string $key
- * @param int $old
- * @param int $new
- * @return bool
- */
 function apcu_cas(string $key, int $old, int $new): bool
 {
 }
@@ -99,10 +76,7 @@ function apcu_delete($key): array|bool
 }
 
 /**
- * @param string $key
  * @param callable(string):mixed $callback
- * @param int $ttl
- * @return mixed
  */
 function apcu_entry(string $key, callable $callback, int $ttl = 0): mixed
 {

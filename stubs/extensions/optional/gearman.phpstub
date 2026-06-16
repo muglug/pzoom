@@ -349,8 +349,6 @@ function gearman_client_wait(GearmanClient $obj): bool
 
 /**
  * @param mixed $obj
- * @param string $function
- * @param string $workload
  * @param string $unique
  * @return mixed
  */
@@ -474,7 +472,6 @@ function gearman_client_ping(GearmanClient $obj, string $workload): bool
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -491,7 +488,6 @@ function gearman_client_add_task(
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -508,7 +504,6 @@ function gearman_client_add_task_high(
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -525,7 +520,6 @@ function gearman_client_add_task_low(
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -542,7 +536,6 @@ function gearman_client_add_task_background(
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -559,7 +552,6 @@ function gearman_client_add_task_high_background(
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $workload
- * @param mixed $context
  * @param mixed $unique_key
  * @return mixed
  */
@@ -583,7 +575,6 @@ function gearman_client_run_tasks(GearmanClient $obj): bool
 /**
  * @param mixed $obj
  * @param mixed $job_handle
- * @param mixed $context
  * @return mixed
  */
 function gearman_client_add_task_status(
@@ -1215,7 +1206,6 @@ function gearman_worker_grab_job(GearmanWorker $obj): GearmanWorker|false
  * @param mixed $obj
  * @param mixed $function_name
  * @param mixed $function
- * @param mixed $context
  * @param mixed $timeout
  * @return mixed
  */

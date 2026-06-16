@@ -62,10 +62,6 @@ namespace ast {
         ) {}
     }
 
-    /**
-     * @param int $kind
-     * @return string
-     */
     function get_kind_name(int $kind): string
     {
     }
@@ -78,25 +74,17 @@ namespace ast {
     }
 
     /**
-     * @param bool $exclude_deprecated
      * @return array<int, int>
      */
     function get_supported_versions(bool $exclude_deprecated = false): array
     {
     }
 
-    /**
-     * @param int $kind
-     * @return bool
-     */
     function kind_uses_flags(int $kind): bool
     {
     }
 
     /**
-     * @param string $code
-     * @param int $version
-     * @param string $filename
      * @return ast\Node
      */
     function parse_code(string $code, int $version, string $filename = 'string code'): Node
@@ -104,8 +92,6 @@ namespace ast {
     }
 
     /**
-     * @param string $filename
-     * @param int $version
      * @return ast\Node
      */
     function parse_file(string $filename, int $version): Node

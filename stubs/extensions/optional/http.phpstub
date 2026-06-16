@@ -153,13 +153,11 @@ namespace {
         public function getHeaders() {}
 
         /**
-         * @param array $header
          * @return void
          */
         public function setHeaders(array $header) {}
 
         /**
-         * @param array $headers
          * @param bool $append [optional]
          * @return void
          */
@@ -325,7 +323,6 @@ namespace {
         public function detach() {}
 
         /**
-         * @param HttpMessage $message
          * @param bool $top [optional]
          * @return void
          */
@@ -600,13 +597,11 @@ namespace {
         public function getSslOptions() {}
 
         /**
-         * @param array $option
          * @return bool true on success or false on failure.
          */
         public function addSslOptions(array $option) {}
 
         /**
-         * @param array $headers
          * @return bool true on success or false on failure.
          */
         public function addHeaders(array $headers) {}
@@ -624,7 +619,6 @@ namespace {
         public function setHeaders(?array $headers = null) {}
 
         /**
-         * @param array $cookies
          * @return bool true on success or false on failure.
          */
         public function addCookies(array $cookies) {}
@@ -703,13 +697,11 @@ namespace {
         public function getQueryData() {}
 
         /**
-         * @param array $query_params
          * @return bool true on success or false on failure.
          */
         public function addQueryData(array $query_params) {}
 
         /**
-         * @param array $post_data
          * @return bool true on success or false on failure.
          */
         public function setPostFields(array $post_data) {}
@@ -721,7 +713,6 @@ namespace {
         public function getPostFields() {}
 
         /**
-         * @param array $post_data
          * @return bool true on success or false on failure.
          */
         public function addPostFields(array $post_data) {}
@@ -758,7 +749,6 @@ namespace {
         public function addRawPostData($raw_post_data) {}
 
         /**
-         * @param array $post_files
          * @return bool true on success or false on failure.
          */
         public function setPostFiles(array $post_files) {}
@@ -994,14 +984,8 @@ namespace {
 
         public function count() {}
 
-        /**
-         * @param HttpRequest $request
-         */
         public function attach(HttpRequest $request) {}
 
-        /**
-         * @param HttpRequest $request
-         */
         public function detach(HttpRequest $request) {}
 
         public function reset() {}
@@ -1031,13 +1015,11 @@ namespace {
         public function __destruct() {}
 
         /**
-         * @param HttpRequest $request
          * @return bool true on success or false on failure.
          */
         public function attach(HttpRequest $request) {}
 
         /**
-         * @param HttpRequest $request
          * @return bool true on success or false on failure.
          */
         public function detach(HttpRequest $request) {}
@@ -2503,7 +2485,6 @@ namespace http {
         public function setResponseCode(int $code) {}
 
         /**
-         * @param string $header_name
          * @param mixed $header_value
          * @param int $response_code
          * @param bool $replace

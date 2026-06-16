@@ -29,7 +29,6 @@ function json_encode(mixed $value, int $flags = 0, int $depth = 512): string|fal
  * @psalm-pure
  *
  * @param int<1, 2147483647> $depth
- * @return mixed
  * @psalm-flow ($json) -> return
  */
 function json_decode(string $json, null|bool $associative = null, int $depth = 512, int $flags = 0): mixed
@@ -38,8 +37,6 @@ function json_decode(string $json, null|bool $associative = null, int $depth = 5
 
 /**
  * @pure
- *
- * @return int
  */
 function json_last_error(): int
 {
@@ -47,8 +44,6 @@ function json_last_error(): int
 
 /**
  * @pure
- *
- * @return string
  */
 function json_last_error_msg(): string
 {

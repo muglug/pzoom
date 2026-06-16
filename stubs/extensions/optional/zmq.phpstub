@@ -178,7 +178,6 @@ class ZMQContext
 class ZMQSocket
 {
     /**
-     * @param ZMQContext $context
      * @param int $type
      * @param null|string $persistent_id
      * @param null|callable $on_new_socket
@@ -358,9 +357,6 @@ class ZMQPoll
 class ZMQDevice
 {
     /**
-     * @param ZMQSocket $frontend
-     * @param ZMQSocket $backend
-     *
      * @return void
      */
     public function __construct(ZMQSocket $frontend, ZMQSocket $backend, ZMQSocket $capture = '') {}

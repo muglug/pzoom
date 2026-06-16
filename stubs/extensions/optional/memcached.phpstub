@@ -298,7 +298,6 @@ class Memcached
     public function getByKey($server_key, $key, ?callable $cache_cb = null, $flags = 0) {}
 
     /**
-     * @param array $keys
      * @param int $flags [optional]
      * @return mixed the array of found items or FALSE on failure.
      */
@@ -306,14 +305,12 @@ class Memcached
 
     /**
      * @param string $server_key
-     * @param array $keys
      * @param int $flags [optional]
      * @return array|false the array of found items or FALSE on failure.
      */
     public function getMultiByKey($server_key, array $keys, $flags = 0) {}
 
     /**
-     * @param array $keys
      * @param bool $with_cas [optional]
      * @param callable $value_cb [optional]
      * @return bool TRUE on success or FALSE on failure.
@@ -322,7 +319,6 @@ class Memcached
 
     /**
      * @param string $server_key
-     * @param array $keys
      * @param bool $with_cas [optional]
      * @param callable $value_cb [optional]
      * @return bool TRUE on success or FALSE on failure.
@@ -372,7 +368,6 @@ class Memcached
     public function touchByKey($server_key, $key, $expiration = 0) {}
 
     /**
-     * @param array $items
      * @param int $expiration [optional]
      * @return bool TRUE on success or FALSE on failure.
      */
@@ -380,7 +375,6 @@ class Memcached
 
     /**
      * @param string $server_key
-     * @param array $items
      * @param int $expiration [optional]
      * @return bool TRUE on success or FALSE on failure.
      */
@@ -477,7 +471,6 @@ class Memcached
     public function delete($key, $time = 0) {}
 
     /**
-     * @param array $keys
      * @param int $time [optional]
      * @return array Returns array indexed by keys and where values are indicating whether operation succeeded or not.
      */
@@ -493,7 +486,6 @@ class Memcached
 
     /**
      * @param string $server_key
-     * @param array $keys
      * @param int $time [optional]
      * @return bool TRUE on success or FALSE on failure.
      */
@@ -546,7 +538,6 @@ class Memcached
     public function addServer($host, $port, $weight = 0) {}
 
     /**
-     * @param array $servers
      * @return bool TRUE on success or FALSE on failure.
      */
     public function addServers(array $servers) {}
@@ -608,14 +599,11 @@ class Memcached
     public function setOption($option, $value) {}
 
     /**
-     * @param array $options
      * @return bool TRUE on success or FALSE on failure.
      */
     public function setOptions(array $options) {}
 
     /**
-     * @param string $username
-     * @param string $password
      * @return void
      */
     public function setSaslAuthData(string $username, string $password) {}
@@ -668,8 +656,6 @@ class Memcached
     public function getLastErrorMessage() {}
 
     /**
-     * @param array $host_map
-     * @param array $forward_map
      * @param int $replicas
      * @return bool
      */

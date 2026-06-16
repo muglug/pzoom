@@ -542,18 +542,11 @@ const RPMTAG_VERSION = 1001;
 
 const RPMTAG_XPM = 1013;
 
-/**
- * @param string $evr1
- * @param string $evr2
- * @return int
- */
 function rpmvercmp(string $evr1, string $evr2): int
 {
 }
 
 /**
- * @param string $path
- * @param bool $full
  * @param string $error
  * @return array<array-key, mixed>
  */
@@ -562,8 +555,6 @@ function rpminfo(string $path, bool $full = false, null|string &$error = null): 
 }
 
 /**
- * @param string $nevr
- * @param bool $full
  * @return array<array-key, mixed>
  */
 function rpmdbinfo(string $nevr, bool $full = false): null|array
@@ -571,20 +562,12 @@ function rpmdbinfo(string $nevr, bool $full = false): null|array
 }
 
 /**
- * @param string $pattern
- * @param int $rpmtag
- * @param int $rpmmire
- * @param bool $full
  * @return array<array-key, mixed>
  */
 function rpmdbsearch(string $pattern, int $rpmtag = RPMTAG_NAME, int $rpmmire = -1, bool $full = false): null|array
 {
 }
 
-/**
- * @param int $tag
- * @return bool
- */
 function rpmaddtag(int $tag): bool
 {
 }

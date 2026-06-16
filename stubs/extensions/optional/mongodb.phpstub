@@ -1563,7 +1563,6 @@ namespace MongoDB\Driver\Monitoring {
 
     /**
      * @param MongoDB\Driver\Monitoring\Subscriber $subscriber
-     * @return void
      */
     function addSubscriber(Subscriber $subscriber): void
     {
@@ -1571,7 +1570,6 @@ namespace MongoDB\Driver\Monitoring {
 
     /**
      * @param MongoDB\Driver\Monitoring\Subscriber $subscriber
-     * @return void
      */
     function removeSubscriber(Subscriber $subscriber): void
     {

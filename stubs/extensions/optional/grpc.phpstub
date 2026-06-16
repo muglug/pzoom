@@ -180,7 +180,6 @@ class Channel
 
     /**
      * @param int     $last_state
-     * @param Timeval $deadline_obj
      *
      * @return bool
      * @throws InvalidArgumentException
@@ -228,9 +227,6 @@ class ChannelCredentials
     }
 
     /**
-     * @param ChannelCredentials $cred1
-     * @param CallCredentials    $cred2
-     *
      * @return ChannelCredentials
      * @throws InvalidArgumentException
      */
@@ -257,8 +253,6 @@ class Call
     public function __construct(Channel $channel, $method, Timeval $absolute_deadline, $host_override = null) {}
 
     /**
-     * @param array $batch
-     *
      * @return object
      * @throws InvalidArgumentException
      * @throws \LogicException

@@ -37,148 +37,76 @@ namespace Couchbase {
 
     interface QueryMetaData
     {
-        /**
-         * @return string|null
-         */
         public function status(): ?string;
 
-        /**
-         * @return string|null
-         */
         public function requestId(): ?string;
 
-        /**
-         * @return string|null
-         */
         public function clientContextId(): ?string;
 
-        /**
-         * @return array|null
-         */
         public function signature(): ?array;
 
-        /**
-         * @return array|null
-         */
         public function warnings(): ?array;
 
-        /**
-         * @return array|null
-         */
         public function errors(): ?array;
 
-        /**
-         * @return array|null
-         */
         public function metrics(): ?array;
 
-        /**
-         * @return array|null
-         */
         public function profile(): ?array;
     }
 
     interface SearchMetaData
     {
-        /**
-         * @return int|null
-         */
         public function successCount(): ?int;
 
-        /**
-         * @return int|null
-         */
         public function errorCount(): ?int;
 
-        /**
-         * @return int|null
-         */
         public function took(): ?int;
 
-        /**
-         * @return int|null
-         */
         public function totalHits(): ?int;
 
-        /**
-         * @return float|null
-         */
         public function maxScore(): ?float;
 
-        /**
-         * @return array|null
-         */
         public function metrics(): ?array;
     }
 
     interface ViewMetaData
     {
-        /**
-         * @return int|null
-         */
         public function totalRows(): ?int;
 
-        /**
-         * @return array|null
-         */
         public function debug(): ?array;
     }
 
     interface Result
     {
-        /**
-         * @return string|null
-         */
         public function cas(): ?string;
     }
 
     interface GetResult extends Result
     {
-        /**
-         * @return array|null
-         */
         public function content(): ?array;
 
-        /**
-         * @return DateTimeInterface|null
-         */
         public function expiryTime(): ?DateTimeInterface;
     }
 
     interface GetReplicaResult extends Result
     {
-        /**
-         * @return array|null
-         */
         public function content(): ?array;
 
-        /**
-         * @return bool
-         */
         public function isReplica(): bool;
     }
 
     interface ExistsResult extends Result
     {
-        /**
-         * @return bool
-         */
         public function exists(): bool;
     }
 
     interface MutationResult extends Result
     {
-        /**
-         * @return MutationToken|null
-         */
         public function mutationToken(): ?MutationToken;
     }
 
     interface CounterResult extends MutationResult
     {
-        /**
-         * @return int
-         */
         public function content(): int;
     }
 
@@ -186,25 +114,19 @@ namespace Couchbase {
     {
         /**
          * @param int $index the index to retrieve content from
-         * @return object|null
          */
         public function content(int $index): ?object;
 
         /**
          * @param int $index the index to check for existence
-         * @return bool
          */
         public function exists(int $index): bool;
 
         /**
          * @param int $index the index to retrieve the error code for
-         * @return int
          */
         public function status(int $index): int;
 
-        /**
-         * @return DateTimeInterface|null
-         */
         public function expiryTime(): ?DateTimeInterface;
     }
 
@@ -212,55 +134,33 @@ namespace Couchbase {
     {
         /**
          * @param int $index the index to retrieve content from
-         * @return array|null
          */
         public function content(int $index): ?array;
     }
 
     interface QueryResult
     {
-        /**
-         * @return QueryMetaData|null
-         */
         public function metaData(): ?QueryMetaData;
 
-        /**
-         * @return array|null
-         */
         public function rows(): ?array;
     }
 
     interface AnalyticsResult
     {
-        /**
-         * @return QueryMetaData|null
-         */
         public function metaData(): ?QueryMetaData;
 
-        /**
-         * @return array|null
-         */
         public function rows(): ?array;
     }
 
     interface TermFacetResult
     {
-        /**
-         * @return string
-         */
         public function term(): string;
 
-        /**
-         * @return int
-         */
         public function count(): int;
     }
 
     interface NumericRangeFacetResult
     {
-        /**
-         * @return string
-         */
         public function name(): string;
 
         /**
@@ -273,55 +173,28 @@ namespace Couchbase {
          */
         public function max();
 
-        /**
-         * @return int
-         */
         public function count(): int;
     }
 
     interface DateRangeFacetResult
     {
-        /**
-         * @return string
-         */
         public function name(): string;
 
-        /**
-         * @return string|null
-         */
         public function start(): ?string;
 
-        /**
-         * @return string|null
-         */
         public function end(): ?string;
 
-        /**
-         * @return int
-         */
         public function count(): int;
     }
 
     interface SearchFacetResult
     {
-        /**
-         * @return string
-         */
         public function field(): string;
 
-        /**
-         * @return int
-         */
         public function total(): int;
 
-        /**
-         * @return int
-         */
         public function missing(): int;
 
-        /**
-         * @return int
-         */
         public function other(): int;
 
         /**
@@ -342,40 +215,22 @@ namespace Couchbase {
 
     interface SearchResult
     {
-        /**
-         * @return SearchMetaData|null
-         */
         public function metaData(): ?SearchMetaData;
 
-        /**
-         * @return array|null
-         */
         public function facets(): ?array;
 
-        /**
-         * @return array|null
-         */
         public function rows(): ?array;
     }
 
     interface ViewResult
     {
-        /**
-         * @return ViewMetaData|null
-         */
         public function metaData(): ?ViewMetaData;
 
-        /**
-         * @return array|null
-         */
         public function rows(): ?array;
     }
 
     class ViewRow
     {
-        /**
-         * @return string|null
-         */
         public function id(): ?string {}
 
             public function key() {}
@@ -387,14 +242,8 @@ namespace Couchbase {
 
     class BaseException extends Exception implements Throwable
     {
-        /**
-         * @return string|null
-         */
         public function ref(): ?string {}
 
-        /**
-         * @return object|null
-         */
         public function context(): ?object {}
     }
 
@@ -677,136 +526,52 @@ namespace Couchbase {
 
     class CouchbaseRemoteAnalyticsLink implements AnalyticsLink
     {
-        /**
-         * @param string $name
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function name(string $name): CouchbaseRemoteAnalyticsLink {}
 
-        /**
-         * @param string $dataverse
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function dataverse(string $dataverse): CouchbaseRemoteAnalyticsLink {}
 
-        /**
-         * @param string $hostname
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function hostname(string $hostname): CouchbaseRemoteAnalyticsLink {}
 
-        /**
-         * @param string $username
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function username(string $username): CouchbaseRemoteAnalyticsLink {}
 
-        /**
-         * @param string $password
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function password(string $password): CouchbaseRemoteAnalyticsLink {}
 
-        /**
-         * @param EncryptionSettings $settings
-         * @return CouchbaseRemoteAnalyticsLink
-         */
         public function encryption(EncryptionSettings $settings): CouchbaseRemoteAnalyticsLink {}
     }
 
     class AzureBlobExternalAnalyticsLink implements AnalyticsLink
     {
-        /**
-         * @param string $name
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function name(string $name): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $dataverse
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function dataverse(string $dataverse): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $connectionString
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function connectionString(string $connectionString): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $accountName
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function accountName(string $accountName): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $accountKey
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function accountKey(string $accountKey): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $signature
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function sharedAccessSignature(string $signature): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $blobEndpoint
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function blobEndpoint(string $blobEndpoint): AzureBlobExternalAnalyticsLink {}
 
-        /**
-         * @param string $suffix
-         * @return AzureBlobExternalAnalyticsLink
-         */
         public function endpointSuffix(string $suffix): AzureBlobExternalAnalyticsLink {}
     }
 
     class S3ExternalAnalyticsLink implements AnalyticsLink
     {
-        /**
-         * @param string $name
-         * @return S3ExternalAnalyticsLink
-         */
         public function name(string $name): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $dataverse
-         * @return S3ExternalAnalyticsLink
-         */
         public function dataverse(string $dataverse): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $accessKeyId
-         * @return S3ExternalAnalyticsLink
-         */
         public function accessKeyId(string $accessKeyId): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $secretAccessKey
-         * @return S3ExternalAnalyticsLink
-         */
         public function secretAccessKey(string $secretAccessKey): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $region
-         * @return S3ExternalAnalyticsLink
-         */
         public function region(string $region): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $sessionToken
-         * @return S3ExternalAnalyticsLink
-         */
         public function sessionToken(string $sessionToken): S3ExternalAnalyticsLink {}
 
-        /**
-         * @param string $serviceEndpoint
-         * @return S3ExternalAnalyticsLink
-         */
         public function serviceEndpoint(string $serviceEndpoint): S3ExternalAnalyticsLink {}
     }
 
@@ -909,21 +674,18 @@ namespace Couchbase {
 
         /**
          * @param string $name the name of the bucket
-         * @return Bucket
          */
         public function bucket(string $name): Bucket {}
 
         /**
          * @param string $statement the N1QL query statement to execute
          * @param QueryOptions $options the options to use when executing the query
-         * @return QueryResult
          */
         public function query(string $statement, QueryOptions $options = null): QueryResult {}
 
         /**
          * @param string $statement the analytics query statement to execute
          * @param AnalyticsOptions $options the options to use when executing the query
-         * @return AnalyticsResult
          */
         public function analyticsQuery(string $statement, AnalyticsOptions $options = null): AnalyticsResult {}
 
@@ -931,33 +693,17 @@ namespace Couchbase {
          * @param string $indexName the fts index to use for the query
          * @param SearchQuery $query the search query to execute
          * @param SearchOptions $options the options to use when executing the query
-         * @return SearchResult
          */
         public function searchQuery(string $indexName, SearchQuery $query, SearchOptions $options = null): SearchResult {}
 
-        /**
-         * @return BucketManager
-         */
         public function buckets(): BucketManager {}
 
-        /**
-         * @return UserManager
-         */
         public function users(): UserManager {}
 
-        /**
-         * @return AnalyticsIndexManager
-         */
         public function analyticsIndexes(): AnalyticsIndexManager {}
 
-        /**
-         * @return QueryIndexManager
-         */
         public function queryIndexes(): QueryIndexManager {}
 
-        /**
-         * @return SearchIndexManager
-         */
         public function searchIndexes(): SearchIndexManager {}
     }
 
@@ -1183,16 +929,12 @@ namespace Couchbase {
 
     class BinaryCollection
     {
-        /**
-         * @return string
-         */
         public function name(): string {}
 
         /**
          * @param string $id the key of the document
          * @param string $value the value to append
          * @param AppendOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function append(string $id, string $value, AppendOptions $options = null): MutationResult {}
 
@@ -1200,43 +942,35 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param string $value the value to prepend
          * @param PrependOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function prepend(string $id, string $value, PrependOptions $options = null): MutationResult {}
 
         /**
          * @param string $id the key of the document
          * @param IncrementOptions $options the options to use for the operation
-         * @return CounterResult
          */
         public function increment(string $id, IncrementOptions $options = null): CounterResult {}
 
         /**
          * @param string $id the key of the document
          * @param DecrementOptions $options the options to use for the operation
-         * @return CounterResult
          */
         public function decrement(string $id, DecrementOptions $options = null): CounterResult {}
     }
 
     class Collection
     {
-        /**
-         * @return string
-         */
         public function name(): string {}
 
         /**
          * @param string $id the key of the document to fetch
          * @param GetOptions $options the options to use for the operation
-         * @return GetResult
          */
         public function get(string $id, GetOptions $options = null): GetResult {}
 
         /**
          * @param string $id the key of the document to check if exists
          * @param ExistsOptions $options the options to use for the operation
-         * @return ExistsResult
          */
         public function exists(string $id, ExistsOptions $options = null): ExistsResult {}
 
@@ -1244,7 +978,6 @@ namespace Couchbase {
          * @param string $id the key of the document to get
          * @param int $lockTime the length of time to lock the document in ms
          * @param GetAndLockOptions $options the options to use for the operation
-         * @return GetResult
          */
         public function getAndLock(string $id, int $lockTime, GetAndLockOptions $options = null): GetResult {}
 
@@ -1252,21 +985,18 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param int $expiry the length of time to update the expiry to in ms
          * @param GetAndTouchOptions $options the options to use for the operation
-         * @return GetResult
          */
         public function getAndTouch(string $id, int $expiry, GetAndTouchOptions $options = null): GetResult {}
 
         /**
          * @param string $id the key of the document
          * @param GetAnyReplicaOptions $options the options to use for the operation
-         * @return GetReplicaResult
          */
         public function getAnyReplica(string $id, GetAnyReplicaOptions $options = null): GetReplicaResult {}
 
         /**
          * @param string $id the key of the document
          * @param GetAllReplicasOptions $options the options to use for the operation
-         * @return array
          */
         public function getAllReplicas(string $id, GetAllReplicasOptions $options = null): array {}
 
@@ -1274,7 +1004,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param mixed $value the value to use for the document
          * @param UpsertOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function upsert(string $id, $value, UpsertOptions $options = null): MutationResult {}
 
@@ -1282,7 +1011,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param mixed $value the value to use for the document
          * @param InsertOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function insert(string $id, $value, InsertOptions $options = null): MutationResult {}
 
@@ -1290,14 +1018,12 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param mixed $value the value to use for the document
          * @param ReplaceOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function replace(string $id, $value, ReplaceOptions $options = null): MutationResult {}
 
         /**
          * @param string $id the key of the document
          * @param RemoveOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function remove(string $id, RemoveOptions $options = null): MutationResult {}
 
@@ -1305,7 +1031,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param string $cas the current cas value of the document
          * @param UnlockOptions $options the options to use for the operation
-         * @return Result
          */
         public function unlock(string $id, string $cas, UnlockOptions $options = null): Result {}
 
@@ -1313,7 +1038,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param int $expiry the expiry time for the document in ms
          * @param TouchOptions $options the options to use for the operation
-         * @return MutationResult
          */
         public function touch(string $id, int $expiry, TouchOptions $options = null): MutationResult {}
 
@@ -1321,7 +1045,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param array $specs the LookupInSpecs to perform against the document
          * @param LookupInOptions $options the options to use for the operation
-         * @return LookupInResult
          */
         public function lookupIn(string $id, array $specs, LookupInOptions $options = null): LookupInResult {}
 
@@ -1329,7 +1052,6 @@ namespace Couchbase {
          * @param string $id the key of the document
          * @param array $specs the MutateInSpecs to perform against the document
          * @param MutateInOptions $options the options to use for the operation
-         * @return MutateInResult
          */
         public function mutateIn(string $id, array $specs, MutateInOptions $options = null): MutateInResult {}
 
@@ -1354,9 +1076,6 @@ namespace Couchbase {
          */
         public function upsertMulti(array $entries, UpsertOptions $options = null): array {}
 
-        /**
-         * @return BinaryCollection
-         */
         public function binary(): BinaryCollection {}
     }
 
@@ -1364,28 +1083,22 @@ namespace Couchbase {
     {
         public function __construct(Bucket $bucket, string $name) {}
 
-        /**
-         * @return string
-         */
         public function name(): string {}
 
         /**
          * @param string $name the name of the collection
-         * @return Collection
          */
         public function collection(string $name): Collection {}
 
         /**
          * @param string $statement the N1QL query statement to execute
          * @param QueryOptions $options the options to use when executing the query
-         * @return QueryResult
          */
         public function query(string $statement, QueryOptions $options = null): QueryResult {}
 
         /**
          * @param string $statement the analytics query statement to execute
          * @param AnalyticsOptions $options the options to use when executing the query
-         * @return AnalyticsResult
          */
         public function analyticsQuery(string $statement, AnalyticsOptions $options = null): AnalyticsResult {}
     }
@@ -1427,19 +1140,12 @@ namespace Couchbase {
 
     class Bucket
     {
-        /**
-         * @return Scope
-         */
         public function defaultScope(): Scope {}
 
-        /**
-         * @return Collection
-         */
         public function defaultCollection(): Collection {}
 
         /**
          * @param string $name the name of the scope
-         * @return Scope
          */
         public function scope(string $name): Scope {}
 
@@ -1449,27 +1155,17 @@ namespace Couchbase {
          */
         public function setTranscoder(callable $encoder, callable $decoder) {}
 
-        /**
-         * @return string
-         */
         public function name(): string {}
 
         /**
          * @param string $designDoc the design document to use for the query
          * @param string $viewName the view to use for the query
          * @param ViewOptions $options the options to use when executing the query
-         * @return ViewResult
          */
         public function viewQuery(string $designDoc, string $viewName, ViewOptions $options = null): ViewResult {}
 
-        /**
-         * @return CollectionManager
-         */
         public function collections(): CollectionManager {}
 
-        /**
-         * @return ViewIndexManager
-         */
         public function viewIndexes(): ViewIndexManager {}
 
         /**
@@ -1527,7 +1223,6 @@ namespace Couchbase {
 
         /**
          * @param MutationResult $source the result object to add to this state
-         * @return MutationState
          */
         public function add(MutationResult $source): MutationState {}
     }
@@ -1626,68 +1321,51 @@ namespace Couchbase {
 
         /**
          * @param int $ms the server side timeout to apply
-         * @return SearchOptions
          */
         public function timeout(int $ms): SearchOptions {}
 
         /**
          * @param int $limit the maximum number of hits to return
-         * @return SearchOptions
          */
         public function limit(int $limit): SearchOptions {}
 
         /**
          * @param int $skip the number of results to skip
-         * @return SearchOptions
          */
         public function skip(int $skip): SearchOptions {}
 
-        /**
-         * @param bool $explain
-         * @return SearchOptions
-         */
         public function explain(bool $explain): SearchOptions {}
 
-        /**
-         * @param bool $disabled
-         * @return SearchOptions
-         */
         public function disableScoring(bool $disabled): SearchOptions {}
 
         /**
          * @param MutationState $state the mutation state information to work with
-         * @return SearchOptions
          */
         public function consistentWith(string $index, MutationState $state): SearchOptions {}
 
         /**
          * @param string[] $fields
-         * @return SearchOptions
          */
         public function fields(array $fields): SearchOptions {}
 
         /**
          * @param SearchFacet[] $facets
-         * @return SearchOptions
          */
         public function facets(array $facets): SearchOptions {}
 
         /**
          * @param array $specs sort the fields that should take part in the sorting.
-         * @return SearchOptions
          */
         public function sort(array $specs): SearchOptions {}
 
         /**
          * @param string $style highlight style to apply. Use constants HIGHLIGHT_HTML,
          * @param string ...$fields the optional fields on which to highlight.
-         * @return SearchOptions
          */
         public function highlight(?string $style = null, ?array $fields = null): SearchOptions {}
 
         /**
          * @param string[] $collectionNames
-         * @return SearchOptions
          */
         public function collections(array $collectionNames): SearchOptions {}
     }
@@ -1707,16 +1385,8 @@ namespace Couchbase {
 
         public function __construct(bool $arg) {}
 
-        /**
-         * @param float $boost
-         * @return BooleanFieldSearchQuery
-         */
         public function boost(float $boost): BooleanFieldSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return BooleanFieldSearchQuery
-         */
         public function field(string $field): BooleanFieldSearchQuery {}
     }
 
@@ -1728,26 +1398,13 @@ namespace Couchbase {
 
         /**
          * @param float $boost
-         * @return BooleanSearchQuery
          */
         public function boost($boost): BooleanSearchQuery {}
 
-        /**
-         * @param ConjunctionSearchQuery $query
-         * @return BooleanSearchQuery
-         */
         public function must(ConjunctionSearchQuery $query): BooleanSearchQuery {}
 
-        /**
-         * @param DisjunctionSearchQuery $query
-         * @return BooleanSearchQuery
-         */
         public function mustNot(DisjunctionSearchQuery $query): BooleanSearchQuery {}
 
-        /**
-         * @param DisjunctionSearchQuery $query
-         * @return BooleanSearchQuery
-         */
         public function should(DisjunctionSearchQuery $query): BooleanSearchQuery {}
     }
 
@@ -1759,14 +1416,9 @@ namespace Couchbase {
 
         /**
          * @param float $boost
-         * @return ConjunctionSearchQuery
          */
         public function boost($boost): ConjunctionSearchQuery {}
 
-        /**
-         * @param SearchQuery ...$queries
-         * @return ConjunctionSearchQuery
-         */
         public function every(SearchQuery ...$queries): ConjunctionSearchQuery {}
     }
 
@@ -1776,36 +1428,20 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return DateRangeSearchQuery
-         */
         public function boost(float $boost): DateRangeSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return DateRangeSearchQuery
-         */
         public function field(string $field): DateRangeSearchQuery {}
 
         /**
          * @param int|string $start The strings will be taken verbatim and supposed to be formatted with custom date
-         * @param bool $inclusive
-         * @return DateRangeSearchQuery
          */
         public function start($start, bool $inclusive = false): DateRangeSearchQuery {}
 
         /**
          * @param int|string $end The strings will be taken verbatim and supposed to be formatted with custom date
-         * @param bool $inclusive
-         * @return DateRangeSearchQuery
          */
         public function end($end, bool $inclusive = false): DateRangeSearchQuery {}
 
-        /**
-         * @param string $dateTimeParser
-         * @return DateRangeSearchQuery
-         */
         public function dateTimeParser(string $dateTimeParser): DateRangeSearchQuery {}
     }
 
@@ -1815,22 +1451,10 @@ namespace Couchbase {
 
         public function __construct(array $queries) {}
 
-        /**
-         * @param float $boost
-         * @return DisjunctionSearchQuery
-         */
         public function boost(float $boost): DisjunctionSearchQuery {}
 
-        /**
-         * @param SearchQuery ...$queries
-         * @return DisjunctionSearchQuery
-         */
         public function either(SearchQuery ...$queries): DisjunctionSearchQuery {}
 
-        /**
-         * @param int $min
-         * @return DisjunctionSearchQuery
-         */
         public function min(int $min): DisjunctionSearchQuery {}
     }
 
@@ -1840,22 +1464,10 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return DocIdSearchQuery
-         */
         public function boost(float $boost): DocIdSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return DocIdSearchQuery
-         */
         public function field(string $field): DocIdSearchQuery {}
 
-        /**
-         * @param string ...$documentIds
-         * @return DocIdSearchQuery
-         */
         public function docIds(string ...$documentIds): DocIdSearchQuery {}
     }
 
@@ -1865,16 +1477,8 @@ namespace Couchbase {
 
         public function __construct(float $top_left_longitude, float $top_left_latitude, float $buttom_right_longitude, float $buttom_right_latitude) {}
 
-        /**
-         * @param float $boost
-         * @return GeoBoundingBoxSearchQuery
-         */
         public function boost(float $boost): GeoBoundingBoxSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return GeoBoundingBoxSearchQuery
-         */
         public function field(string $field): GeoBoundingBoxSearchQuery {}
     }
 
@@ -1884,16 +1488,8 @@ namespace Couchbase {
 
         public function __construct(float $longitude, float $latitude, ?string $distance = null) {}
 
-        /**
-         * @param float $boost
-         * @return GeoDistanceSearchQuery
-         */
         public function boost(float $boost): GeoDistanceSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return GeoDistanceSearchQuery
-         */
         public function field(string $field): GeoDistanceSearchQuery {}
     }
 
@@ -1901,10 +1497,6 @@ namespace Couchbase {
     {
         public function jsonSerialize() {}
 
-        /**
-         * @param float $longitude
-         * @param float $latitude
-         */
         public function __construct(float $longitude, float $latitude) {}
     }
 
@@ -1917,16 +1509,8 @@ namespace Couchbase {
          */
         public function __construct(array $coordinates) {}
 
-        /**
-         * @param float $boost
-         * @return GeoPolygonQuery
-         */
         public function boost(float $boost): GeoPolygonQuery {}
 
-        /**
-         * @param string $field
-         * @return GeoPolygonQuery
-         */
         public function field(string $field): GeoPolygonQuery {}
     }
 
@@ -1936,10 +1520,6 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return MatchAllSearchQuery
-         */
         public function boost(float $boost): MatchAllSearchQuery {}
     }
 
@@ -1949,10 +1529,6 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return MatchNoneSearchQuery
-         */
         public function boost(float $boost): MatchNoneSearchQuery {}
     }
 
@@ -1962,22 +1538,10 @@ namespace Couchbase {
 
         public function __construct(string $value) {}
 
-        /**
-         * @param float $boost
-         * @return MatchPhraseSearchQuery
-         */
         public function boost(float $boost): MatchPhraseSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return MatchPhraseSearchQuery
-         */
         public function field(string $field): MatchPhraseSearchQuery {}
 
-        /**
-         * @param string $analyzer
-         * @return MatchPhraseSearchQuery
-         */
         public function analyzer(string $analyzer): MatchPhraseSearchQuery {}
     }
 
@@ -1987,34 +1551,14 @@ namespace Couchbase {
 
         public function __construct(string $value) {}
 
-        /**
-         * @param float $boost
-         * @return MatchSearchQuery
-         */
         public function boost(float $boost): MatchSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return MatchSearchQuery
-         */
         public function field(string $field): MatchSearchQuery {}
 
-        /**
-         * @param string $analyzer
-         * @return MatchSearchQuery
-         */
         public function analyzer(string $analyzer): MatchSearchQuery {}
 
-        /**
-         * @param int $prefixLength
-         * @return MatchSearchQuery
-         */
         public function prefixLength(int $prefixLength): MatchSearchQuery {}
 
-        /**
-         * @param int $fuzziness
-         * @return MatchSearchQuery
-         */
         public function fuzziness(int $fuzziness): MatchSearchQuery {}
     }
 
@@ -2024,30 +1568,15 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return NumericRangeSearchQuery
-         */
         public function boost(float $boost): NumericRangeSearchQuery {}
 
         /**
          * @param string $field
-         * @return NumericRangeSearchQuery
          */
         public function field($field): NumericRangeSearchQuery {}
 
-        /**
-         * @param float $min
-         * @param bool $inclusive
-         * @return NumericRangeSearchQuery
-         */
         public function min(float $min, bool $inclusive = false): NumericRangeSearchQuery {}
 
-        /**
-         * @param float $max
-         * @param bool $inclusive
-         * @return NumericRangeSearchQuery
-         */
         public function max(float $max, bool $inclusive = false): NumericRangeSearchQuery {}
     }
 
@@ -2057,16 +1586,8 @@ namespace Couchbase {
 
         public function __construct(string ...$terms) {}
 
-        /**
-         * @param float $boost
-         * @return PhraseSearchQuery
-         */
         public function boost(float $boost): PhraseSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return PhraseSearchQuery
-         */
         public function field(string $field): PhraseSearchQuery {}
     }
 
@@ -2076,16 +1597,8 @@ namespace Couchbase {
 
         public function __construct(string $prefix) {}
 
-        /**
-         * @param float $boost
-         * @return PrefixSearchQuery
-         */
         public function boost(float $boost): PrefixSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return PrefixSearchQuery
-         */
         public function field(string $field): PrefixSearchQuery {}
     }
 
@@ -2095,10 +1608,6 @@ namespace Couchbase {
 
         public function __construct(string $query_string) {}
 
-        /**
-         * @param float $boost
-         * @return QueryStringSearchQuery
-         */
         public function boost(float $boost): QueryStringSearchQuery {}
     }
 
@@ -2108,16 +1617,8 @@ namespace Couchbase {
 
         public function __construct(string $regexp) {}
 
-        /**
-         * @param float $boost
-         * @return RegexpSearchQuery
-         */
         public function boost(float $boost): RegexpSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return RegexpSearchQuery
-         */
         public function field(string $field): RegexpSearchQuery {}
     }
 
@@ -2127,28 +1628,12 @@ namespace Couchbase {
 
         public function __construct(string $term) {}
 
-        /**
-         * @param float $boost
-         * @return TermSearchQuery
-         */
         public function boost(float $boost): TermSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return TermSearchQuery
-         */
         public function field(string $field): TermSearchQuery {}
 
-        /**
-         * @param int $prefixLength
-         * @return TermSearchQuery
-         */
         public function prefixLength(int $prefixLength): TermSearchQuery {}
 
-        /**
-         * @param int $fuzziness
-         * @return TermSearchQuery
-         */
         public function fuzziness(int $fuzziness): TermSearchQuery {}
     }
 
@@ -2158,30 +1643,12 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param float $boost
-         * @return TermRangeSearchQuery
-         */
         public function boost(float $boost): TermRangeSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return TermRangeSearchQuery
-         */
         public function field(string $field): TermRangeSearchQuery {}
 
-        /**
-         * @param string $min
-         * @param bool $inclusive
-         * @return TermRangeSearchQuery
-         */
         public function min(string $min, bool $inclusive = true): TermRangeSearchQuery {}
 
-        /**
-         * @param string $max
-         * @param bool $inclusive
-         * @return TermRangeSearchQuery
-         */
         public function max(string $max, bool $inclusive = false): TermRangeSearchQuery {}
     }
 
@@ -2191,16 +1658,8 @@ namespace Couchbase {
 
         public function __construct(string $wildcard) {}
 
-        /**
-         * @param float $boost
-         * @return WildcardSearchQuery
-         */
         public function boost(float $boost): WildcardSearchQuery {}
 
-        /**
-         * @param string $field
-         * @return WildcardSearchQuery
-         */
         public function field(string $field): WildcardSearchQuery {}
     }
 
@@ -2220,10 +1679,8 @@ namespace Couchbase {
         public function __construct(string $field, int $limit) {}
 
         /**
-         * @param string $name
          * @param float $min
          * @param float $max
-         * @return NumericRangeSearchFacet
          */
         public function addRange(string $name, ?float $min = null, ?float $max = null): NumericRangeSearchFacet {}
     }
@@ -2235,10 +1692,8 @@ namespace Couchbase {
         public function __construct(string $field, int $limit) {}
 
         /**
-         * @param string $name
          * @param int|string $start
          * @param int|string $end
-         * @return DateRangeSearchFacet
          */
         public function addRange(string $name, $start = null, $end = null): DateRangeSearchFacet {}
     }
@@ -2251,10 +1706,6 @@ namespace Couchbase {
 
         public function __construct(string $field) {}
 
-        /**
-         * @param bool $descending
-         * @return SearchSortField
-         */
         public function descending(bool $descending): SearchSortField {}
 
         /**
@@ -2300,16 +1751,8 @@ namespace Couchbase {
 
         public function __construct(string $field, float $logitude, float $latitude) {}
 
-        /**
-         * @param bool $descending
-         * @return SearchSortGeoDistance
-         */
         public function descending(bool $descending): SearchSortGeoDistance {}
 
-        /**
-         * @param string $unit
-         * @return SearchSortGeoDistance
-         */
         public function unit(string $unit): SearchSortGeoDistance {}
     }
 
@@ -2319,10 +1762,6 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param bool $descending
-         * @return SearchSortId
-         */
         public function descending(bool $descending): SearchSortId {}
     }
 
@@ -2332,10 +1771,6 @@ namespace Couchbase {
 
         public function __construct() {}
 
-        /**
-         * @param bool $descending
-         * @return SearchSortScore
-         */
         public function descending(bool $descending): SearchSortScore {}
     }
 
@@ -2343,19 +1778,16 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return GetOptions
          */
         public function timeout(int $arg): GetOptions {}
 
         /**
          * @param bool $arg whether or not to include document expiry
-         * @return GetOptions
          */
         public function withExpiry(bool $arg): GetOptions {}
 
         /**
          * @param array $arg the array of field names
-         * @return GetOptions
          */
         public function project(array $arg): GetOptions {}
 
@@ -2369,7 +1801,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return GetAndTouchOptions
          */
         public function timeout(int $arg): GetAndTouchOptions {}
 
@@ -2383,7 +1814,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return GetAndLockOptions
          */
         public function timeout(int $arg): GetAndLockOptions {}
 
@@ -2397,7 +1827,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return GetAllReplicasOptions
          */
         public function timeout(int $arg): GetAllReplicasOptions {}
 
@@ -2411,7 +1840,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return GetAnyReplicaOptions
          */
         public function timeout(int $arg): GetAnyReplicaOptions {}
 
@@ -2425,7 +1853,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return ExistsOptions
          */
         public function timeout(int $arg): ExistsOptions {}
     }
@@ -2434,7 +1861,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return UnlockOptions
          */
         public function timeout(int $arg): UnlockOptions {}
     }
@@ -2443,19 +1869,16 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return InsertOptions
          */
         public function timeout(int $arg): InsertOptions {}
 
         /**
          * @param int $arg the expiry time in ms
-         * @return InsertOptions
          */
         public function expiry(int $arg): InsertOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return InsertOptions
          */
         public function durabilityLevel(int $arg): InsertOptions {}
 
@@ -2469,25 +1892,21 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return UpsertOptions
          */
         public function timeout(int $arg): UpsertOptions {}
 
         /**
          * @param int|DateTimeInterface $arg the relative expiry time in seconds or DateTimeInterface object for absolute point in time
-         * @return UpsertOptions
          */
         public function expiry(mixed $arg): UpsertOptions {}
 
         /**
          * @param bool $shouldPreserve if true, the expiration time will not be updated
-         * @return UpsertOptions
          */
         public function preserveExpiry(bool $shouldPreserve): UpsertOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return UpsertOptions
          */
         public function durabilityLevel(int $arg): UpsertOptions {}
 
@@ -2501,31 +1920,26 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return ReplaceOptions
          */
         public function timeout(int $arg): ReplaceOptions {}
 
         /**
          * @param int|DateTimeInterface $arg the relative expiry time in seconds or DateTimeInterface object for absolute point in time
-         * @return ReplaceOptions
          */
         public function expiry(mixed $arg): ReplaceOptions {}
 
         /**
          * @param bool $shouldPreserve if true, the expiration time will not be updated
-         * @return ReplaceOptions
          */
         public function preserveExpiry(bool $shouldPreserve): ReplaceOptions {}
 
         /**
          * @param string $arg the cas value
-         * @return ReplaceOptions
          */
         public function cas(string $arg): ReplaceOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return ReplaceOptions
          */
         public function durabilityLevel(int $arg): ReplaceOptions {}
 
@@ -2539,13 +1953,11 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return AppendOptions
          */
         public function timeout(int $arg): AppendOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return AppendOptions
          */
         public function durabilityLevel(int $arg): AppendOptions {}
     }
@@ -2554,13 +1966,11 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return PrependOptions
          */
         public function timeout(int $arg): PrependOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return PrependOptions
          */
         public function durabilityLevel(int $arg): PrependOptions {}
     }
@@ -2580,7 +1990,6 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return TouchOptions
          */
         public function timeout(int $arg): TouchOptions {}
     }
@@ -2589,31 +1998,26 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return IncrementOptions
          */
         public function timeout(int $arg): IncrementOptions {}
 
         /**
          * @param int|DateTimeInterface $arg the relative expiry time in seconds or DateTimeInterface object for absolute point in time
-         * @return IncrementOptions
          */
         public function expiry(mixed $arg): IncrementOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return IncrementOptions
          */
         public function durabilityLevel(int $arg): IncrementOptions {}
 
         /**
          * @param int $arg the value to increment by
-         * @return IncrementOptions
          */
         public function delta(int $arg): IncrementOptions {}
 
         /**
          * @param int $arg the initial value to use if counter does not exist
-         * @return IncrementOptions
          */
         public function initial(int $arg): IncrementOptions {}
     }
@@ -2622,31 +2026,26 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return DecrementOptions
          */
         public function timeout(int $arg): DecrementOptions {}
 
         /**
          * @param int|DateTimeInterface $arg the relative expiry time in seconds or DateTimeInterface object for absolute point in time
-         * @return DecrementOptions
          */
         public function expiry(mixed $arg): DecrementOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return DecrementOptions
          */
         public function durabilityLevel(int $arg): DecrementOptions {}
 
         /**
          * @param int $arg the value to decrement by
-         * @return DecrementOptions
          */
         public function delta(int $arg): DecrementOptions {}
 
         /**
          * @param int $arg the initial value to use if counter does not exist
-         * @return DecrementOptions
          */
         public function initial(int $arg): DecrementOptions {}
     }
@@ -2655,19 +2054,16 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return RemoveOptions
          */
         public function timeout(int $arg): RemoveOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return RemoveOptions
          */
         public function durabilityLevel(int $arg): RemoveOptions {}
 
         /**
          * @param string $arg the cas value to use
-         * @return RemoveOptions
          */
         public function cas(string $arg): RemoveOptions {}
     }
@@ -2676,13 +2072,11 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return LookupInOptions
          */
         public function timeout(int $arg): LookupInOptions {}
 
         /**
          * @param bool $arg whether or not to include document expiry
-         * @return LookupInOptions
          */
         public function withExpiry(bool $arg): LookupInOptions {}
     }
@@ -2691,37 +2085,31 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return MutateInOptions
          */
         public function timeout(int $arg): MutateInOptions {}
 
         /**
          * @param string $arg the cas value to use
-         * @return MutateInOptions
          */
         public function cas(string $arg): MutateInOptions {}
 
         /**
          * @param int|DateTimeInterface $arg the relative expiry time in seconds or DateTimeInterface object for absolute point in time
-         * @return MutateInOptions
          */
         public function expiry(mixed $arg): MutateInOptions {}
 
         /**
          * @param bool $shouldPreserve if true, the expiration time will not be updated
-         * @return MutateInOptions
          */
         public function preserveExpiry(bool $shouldPreserve): MutateInOptions {}
 
         /**
          * @param int $arg the durability level to enforce
-         * @return MutateInOptions
          */
         public function durabilityLevel(int $arg): MutateInOptions {}
 
         /**
          * @param int $arg the store semantic to use
-         * @return MutateInOptions
          */
         public function storeSemantics(int $arg): MutateInOptions {}
     }
@@ -2783,110 +2171,92 @@ namespace Couchbase {
     {
         /**
          * @param int $arg the operation timeout to apply
-         * @return QueryOptions
          */
         public function timeout(int $arg): QueryOptions {}
 
         /**
          * @param MutationState $arg the mutation state to achieve consistency with
-         * @return QueryOptions
          */
         public function consistentWith(MutationState $arg): QueryOptions {}
 
         /**
          * @param int $arg the scan consistency level
-         * @return QueryOptions
          */
         public function scanConsistency(int $arg): QueryOptions {}
 
         /**
          * @param int $arg the maximum buffered channel size
-         * @return QueryOptions
          */
         public function scanCap(int $arg): QueryOptions {}
 
         /**
          * @param int $arg the maximum number of items each execution operation can buffer
-         * @return QueryOptions
          */
         public function pipelineCap(int $arg): QueryOptions {}
 
         /**
          * @param int $arg the pipeline batch size
-         * @return QueryOptions
          */
         public function pipelineBatch(int $arg): QueryOptions {}
 
         /**
          * @param int $arg the number of index partitions
-         * @return QueryOptions
          */
         public function maxParallelism(int $arg): QueryOptions {}
 
         /**
          * @param int $arg the query profile mode
-         * @return QueryOptions
          */
         public function profile(int $arg): QueryOptions {}
 
         /**
          * @param bool $arg whether the query is readonly
-         * @return QueryOptions
          */
         public function readonly(bool $arg): QueryOptions {}
 
         /**
          * @param bool $arg whether the FlexIndex allowed
-         * @return QueryOptions
          */
         public function flexIndex(bool $arg): QueryOptions {}
 
         /**
          * @param bool $arg whether the query is adhoc
-         * @return QueryOptions
          */
         public function adhoc(bool $arg): QueryOptions {}
 
         /**
          * @param array $pairs the associative array of parameters
-         * @return QueryOptions
          */
         public function namedParameters(array $pairs): QueryOptions {}
 
         /**
          * @param array $args the array of parameters
-         * @return QueryOptions
          */
         public function positionalParameters(array $args): QueryOptions {}
 
         /**
          * @param string $key the name of the parameter
          * @param string $value the value of the parameter
-         * @return QueryOptions
          */
         public function raw(string $key, $value): QueryOptions {}
 
         /**
          * @param string $arg the client context id
-         * @return QueryOptions
          */
         public function clientContextId(string $arg): QueryOptions {}
 
         /**
          * @param bool $arg whether to return metrics
-         * @return QueryOptions
          */
         public function metrics(bool $arg): QueryOptions {}
 
         /**
          * @param string $arg the name of the scope
-         * @return QueryOptions
          */
         public function scopeName(string $arg): QueryOptions {}
 
         /**
          * @param string $arg the scope qualifier
-         * @return QueryOptions
          */
         public function scopeQualifier(string $arg): QueryOptions {}
     }
@@ -2927,7 +2297,6 @@ namespace Couchbase {
         /**
          * @param string $name The name of the metric.
          * @param array $tags The tags to associate with the metric.
-         * @return ValueRecorder
          */
         public function valueRecorder(string $name, array $tags): ValueRecorder;
     }

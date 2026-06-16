@@ -18,14 +18,9 @@ namespace Vtiful\Kernel {
             public const GRIDLINES_SHOW_PRINT = 2;
             public const GRIDLINES_SHOW_ALL = 3;
 
-            /**
-             * @param array $config
-             */
             public function __construct(array $config) {}
 
             /**
-             * @param string $fileName
-             * @param string $sheetName
              * @return Excel
              */
             public function fileName(string $fileName, string $sheetName = 'Sheet1'): self
@@ -34,8 +29,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $fileName
-             * @param string $sheetName
              * @return Excel
              */
             public function constMemory(string $fileName, string $sheetName = 'Sheet1'): self
@@ -44,7 +37,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string|null $sheetName
              * @return Excel
              */
             public function addSheet(?string $sheetName): self
@@ -53,7 +45,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $sheetName
              * @return Excel
              */
             public function checkoutSheet(string $sheetName): self
@@ -62,7 +53,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param array $header
              * @return Excel
              */
             public function header(array $header): self
@@ -71,7 +61,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param array $data
              * @return Excel
              */
             public function data(array $data): self
@@ -79,9 +68,6 @@ namespace Vtiful\Kernel {
                 return $this;
             }
 
-            /**
-             * @return string
-             */
             public function output(): string
             {
                 return 'FilePath';
@@ -93,7 +79,6 @@ namespace Vtiful\Kernel {
             public function getHandle() {}
 
             /**
-             * @param string $range
              * @return Excel
              */
             public function autoFilter(string $range): self
@@ -102,10 +87,7 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
              * @param int|string|float $data
-             * @param string|null $format
              * @param resource|null $formatHandle
              * @return Excel
              */
@@ -115,10 +97,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
-             * @param int $timestamp
-             * @param string|null $format
              * @param resource|null $formatHandle
              * @return Excel
              */
@@ -128,8 +106,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
              * @param resource $chartResource
              * @return Excel
              */
@@ -139,9 +115,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
-             * @param string $url
              * @param resource|null $formatHandle
              * @return Excel
              */
@@ -151,11 +124,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
-             * @param string $imagePath
-             * @param float $width
-             * @param float $height
              * @return Excel
              */
             public function insertImage(int $row, int $column, string $imagePath, float $width = 1, float $height = 1): self
@@ -164,9 +132,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $row
-             * @param int $column
-             * @param string $formula
              * @return Excel
              */
             public function insertFormula(int $row, int $column, string $formula): self
@@ -175,8 +140,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $range
-             * @param string $data
              * @return Excel
              */
             public function MergeCells(string $range, string $data): self
@@ -185,8 +148,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $range
-             * @param float $cellWidth
              * @param resource|null $formatHandle
              * @return Excel
              */
@@ -196,8 +157,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $range
-             * @param float $cellHeight
              * @param resource|null $formatHandle
              * @return Excel
              */
@@ -207,7 +166,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $fileName
              * @return Excel
              */
             public function openFile(string $fileName): self
@@ -216,8 +174,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string|null $sheetName
-             * @param int         $skipFlag
              * @return Excel
              */
             public function openSheet(?string $sheetName = null, int $skipFlag = 0x00): self
@@ -226,7 +182,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param array $types
              * @return Excel
              */
             public function setType(array $types): self
@@ -234,17 +189,11 @@ namespace Vtiful\Kernel {
                 return $this;
             }
 
-            /**
-             * @return array
-             */
             public function getSheetData(): array
             {
                 return [];
             }
 
-            /**
-             * @return array
-             */
             public function nextRow(): array
             {
                 return [];
@@ -257,8 +206,6 @@ namespace Vtiful\Kernel {
             public function nextCellCallback(callable $callback, ?string $sheetName = null): void {}
 
             /**
-             * @param int $row
-             * @param int $column
              * @return static
              */
             public function freezePanes(int $row, int $column): self
@@ -267,7 +214,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $option
              * @return static
              */
             public function gridline(int $option): self
@@ -276,7 +222,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param int $scale
              * @return static
              */
             public function zoom(int $scale): self
@@ -403,7 +348,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $format
              * @return static
              */
             public function number(string $format): self
@@ -421,7 +365,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param string $fontName
              * @return static
              */
             public function font(string $fontName): self
@@ -430,7 +373,6 @@ namespace Vtiful\Kernel {
             }
 
             /**
-             * @param float $size
              * @return static
              */
             public function fontSize(float $size): self

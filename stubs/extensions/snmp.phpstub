@@ -106,11 +106,7 @@ const SNMP_INTEGER = UNKNOWN;
 const SNMP_COUNTER64 = UNKNOWN;
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmpget(
@@ -123,11 +119,7 @@ function snmpget(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmpgetnext(
@@ -140,11 +132,7 @@ function snmpgetnext(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmpwalk(
@@ -157,11 +145,7 @@ function snmpwalk(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmprealwalk(
@@ -176,11 +160,7 @@ function snmprealwalk(
 /**
  *  @alias snmprealwalk
  *
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmpwalkoid(
@@ -193,14 +173,9 @@ function snmpwalkoid(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
  * @param array<array-key, string>|string $type
  * @param array<array-key, string>|string $value
- * @param int $timeout
- * @param int $retries
- * @return bool
  */
 function snmpset(
     string $hostname,
@@ -213,53 +188,34 @@ function snmpset(
 ): bool {
 }
 
-/**
- * @return bool
- */
 function snmp_get_quick_print(): bool
 {
 }
 
 /**
- * @param bool $enable
  * @return bool
  */
 function snmp_set_quick_print(bool $enable): true
 {
 }
 
-/**
- * @param bool $enable
- * @return true
- */
 function snmp_set_enum_print(bool $enable): true
 {
 }
 
-/**
- * @param int $format
- * @return true
- */
 function snmp_set_oid_output_format(int $format): true
 {
 }
 
 /**
  *  @alias snmp_set_oid_output_format
- *
- * @param int $format
- * @return true
  */
 function snmp_set_oid_numeric_print(int $format): true
 {
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmp2_get(
@@ -272,11 +228,7 @@ function snmp2_get(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmp2_getnext(
@@ -289,11 +241,7 @@ function snmp2_getnext(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmp2_walk(
@@ -306,11 +254,7 @@ function snmp2_walk(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmp2_real_walk(
@@ -323,14 +267,9 @@ function snmp2_real_walk(
 }
 
 /**
- * @param string $hostname
- * @param string $community
  * @param array<array-key, mixed>|string $object_id
  * @param array<array-key, mixed>|string $type
  * @param array<array-key, mixed>|string $value
- * @param int $timeout
- * @param int $retries
- * @return bool
  */
 function snmp2_set(
     string $hostname,
@@ -344,16 +283,7 @@ function snmp2_set(
 }
 
 /**
- * @param string $hostname
- * @param string $security_name
- * @param string $security_level
- * @param string $auth_protocol
- * @param string $auth_passphrase
- * @param string $privacy_protocol
- * @param string $privacy_passphrase
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmp3_get(
@@ -371,16 +301,7 @@ function snmp3_get(
 }
 
 /**
- * @param string $hostname
- * @param string $security_name
- * @param string $security_level
- * @param string $auth_protocol
- * @param string $auth_passphrase
- * @param string $privacy_protocol
- * @param string $privacy_passphrase
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return false|string
  */
 function snmp3_getnext(
@@ -398,16 +319,7 @@ function snmp3_getnext(
 }
 
 /**
- * @param string $hostname
- * @param string $security_name
- * @param string $security_level
- * @param string $auth_protocol
- * @param string $auth_passphrase
- * @param string $privacy_protocol
- * @param string $privacy_passphrase
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmp3_walk(
@@ -425,16 +337,7 @@ function snmp3_walk(
 }
 
 /**
- * @param string $hostname
- * @param string $security_name
- * @param string $security_level
- * @param string $auth_protocol
- * @param string $auth_passphrase
- * @param string $privacy_protocol
- * @param string $privacy_passphrase
  * @param array<array-key, mixed>|string $object_id
- * @param int $timeout
- * @param int $retries
  * @return array<array-key, mixed>|false
  */
 function snmp3_real_walk(
@@ -452,19 +355,9 @@ function snmp3_real_walk(
 }
 
 /**
- * @param string $hostname
- * @param string $security_name
- * @param string $security_level
- * @param string $auth_protocol
- * @param string $auth_passphrase
- * @param string $privacy_protocol
- * @param string $privacy_passphrase
  * @param array<array-key, mixed>|string $object_id
  * @param array<array-key, mixed>|string $type
  * @param array<array-key, mixed>|string $value
- * @param int $timeout
- * @param int $retries
- * @return bool
  */
 function snmp3_set(
     string $hostname,
@@ -482,25 +375,14 @@ function snmp3_set(
 ): bool {
 }
 
-/**
- * @param int $method
- * @return true
- */
 function snmp_set_valueretrieval(int $method): true
 {
 }
 
-/**
- * @return int
- */
 function snmp_get_valueretrieval(): int
 {
 }
 
-/**
- * @param string $filename
- * @return bool
- */
 function snmp_read_mib(string $filename): bool
 {
 }

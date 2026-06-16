@@ -22,7 +22,6 @@ function uopz_add_function(...$arguments): bool
 
 /**
  * @param bool $arguments
- * @return void
  */
 function uopz_allow_exit(...$arguments): void
 {
@@ -34,7 +33,6 @@ function uopz_del_function(...$arguments): bool
 
 /**
  * @param string $arguments
- * @return bool
  */
 function uopz_extend(...$arguments): bool
 {
@@ -44,9 +42,6 @@ function uopz_flags(...$arguments): int
 {
 }
 
-/**
- * @return int|null
- */
 function uopz_get_exit_status(): null|int
 {
 }
@@ -89,7 +84,6 @@ function uopz_get_static(...$arguments): null|array
 
 /**
  * @param string $arguments
- * @return bool
  */
 function uopz_implement(...$arguments): bool
 {
@@ -105,7 +99,6 @@ function uopz_set_hook(...$arguments): bool
 
 /**
  * @param string $arguments
- * @return void
  */
 function uopz_set_mock(...$arguments): void
 {
@@ -113,7 +106,6 @@ function uopz_set_mock(...$arguments): void
 
 /**
  * @param object|string $arguments
- * @return void
  */
 function uopz_set_property(...$arguments): void
 {
@@ -125,7 +117,6 @@ function uopz_set_return(...$arguments): bool
 
 /**
  * @param string $arguments
- * @return void
  */
 function uopz_set_static(...$arguments): void
 {
@@ -141,7 +132,6 @@ function uopz_unset_hook(...$arguments): bool
 
 /**
  * @param string $arguments
- * @return void
  */
 function uopz_unset_mock(...$arguments): void
 {

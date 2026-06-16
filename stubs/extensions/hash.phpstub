@@ -26,10 +26,6 @@ function hash(string $algo, string $data, bool $binary = false, array $options =
 
 /**
  * @pure
- *
- * @param string $known_string
- * @param string $user_string
- * @return bool
  */
 function hash_equals(string $known_string, string $user_string): bool
 {
@@ -156,8 +152,6 @@ function mhash_get_block_size(int $algo): int|false
 }
 
 /**
- * @return string|false
- *
  * @deprecated
  * @pure
  */
@@ -168,8 +162,6 @@ function mhash_get_hash_name(int $algo): string|false
 /**
  * @deprecated
  * @pure
- *
- * @return int
  */
 function mhash_count(): int
 {

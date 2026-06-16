@@ -595,50 +595,26 @@ class SWFVideoStream
     }
 }
 
-/**
- * @param int $threshold
- * @return void
- */
 function ming_setcubicthreshold(int $threshold): void
 {
 }
 
-/**
- * @param float $scale
- * @return void
- */
 function ming_setscale(float $scale): void
 {
 }
 
-/**
- * @param int $version
- * @return void
- */
 function ming_useswfversion(int $version): void
 {
 }
 
-/**
- * @param string $char
- * @return int
- */
 function ming_keypress(string $char): int
 {
 }
 
-/**
- * @param int $use
- * @return void
- */
 function ming_useconstants(int $use): void
 {
 }
 
-/**
- * @param int $level
- * @return void
- */
 function ming_setswfcompression(int $level): void
 {
 }

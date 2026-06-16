@@ -14,46 +14,33 @@ namespace {
     /**
      * @param resource $odbc
      * @param bool $enable
-     * @return bool|int
      */
     function odbc_autocommit($odbc, ?bool $enable = false): int|bool {}
 
     /**
      * @param resource $statement
-     * @param int $mode
-     * @return bool
      */
     function odbc_binmode($statement, int $mode): bool {}
 
     /**
      * @param resource $odbc
-     * @return void
      */
     function odbc_close($odbc): void {}
 
-    /**
-     * @return void
-     */
     function odbc_close_all(): void {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param null|string $schema
-     * @param null|string $table
-     * @param null|string $column
      * @return false|resource
      */
     function odbc_columns($odbc, ?string $catalog = null, ?string $schema = null, ?string $table = null, ?string $column = null) {}
 
     /**
      * @param resource $odbc
-     * @return bool
      */
     function odbc_commit($odbc): bool {}
 
     /**
-     * @param string $dsn
      * @param string $user
      * @param string $user
      * @param int $password
@@ -76,7 +63,6 @@ namespace {
 
     /**
      * @param resource $odbc
-     * @param int $fetch_type
      * @return array<array-key, mixed>|false
      */
     function odbc_data_source($odbc, int $fetch_type): array|false|null {}
@@ -84,25 +70,21 @@ namespace {
     /**
      * @param resource $statement
      * @param array<array-key, mixed> $params
-     * @return bool
      */
     function odbc_execute($statement, array $params = []): bool {}
 
     /**
      * @param resource $odbc
-     * @return string
      */
     function odbc_error($odbc = null): string {}
 
     /**
      * @param resource $odbc
-     * @return string
      */
     function odbc_errormsg($odbc = null): string {}
 
     /**
      * @param Odbc\Connection|resource $odbc The ODBC connection identifier,
-     * @param string $query
      * @param int $flags [optional]
      * @return resource|false an ODBC result identifier if the SQL command was executed
      */
@@ -110,15 +92,12 @@ namespace {
 
     /**
      * @param resource $statement
-     * @param int $row
      * @return array<array-key, mixed>|false
      */
     function odbc_fetch_array($statement, int $row = -1): array|false {}
 
     /**
      * @param resource $statement
-     * @param int $row
-     * @return false|stdClass
      */
     function odbc_fetch_object($statement, int $row = -1): stdClass|false {}
 
@@ -132,86 +111,67 @@ namespace {
     /**
      * @param resource $statement
      * @param array<array-key, mixed> $array
-     * @param int $row
      * @return int
      */
     function odbc_fetch_into($statement, array &$array, int $row = 0): int|false {}
 
     /**
      * @param resource $statement
-     * @param int $field
-     * @return false|int
      */
     function odbc_field_len($statement, int $field): int|false {}
 
     /**
      * @param resource $statement
-     * @param int $field
-     * @return false|int
      */
     function odbc_field_scale($statement, int $field): int|false {}
 
     /**
      * @param resource $statement
-     * @param int $field
-     * @return false|string
      */
     function odbc_field_name($statement, int $field): string|false {}
 
     /**
      * @param resource $statement
-     * @param int $field
-     * @return false|string
      */
     function odbc_field_type($statement, int $field): string|false {}
 
     /**
      * @param resource $statement
-     * @param string $field
-     * @return false|int
      */
     function odbc_field_num($statement, string $field): int|false {}
 
     /**
      * @param resource $statement
-     * @return bool
      */
     function odbc_free_result($statement): bool {}
 
     /**
      * @param resource $odbc
-     * @param int $data_type
      * @return resource
      */
     function odbc_gettypeinfo($odbc, int $data_type = 0) {}
 
     /**
      * @param resource $statement
-     * @param int $length
-     * @return bool
      */
     function odbc_longreadlen($statement, int $length): bool {}
 
     /**
      * @param resource $statement
-     * @return bool
      */
     function odbc_next_result($statement): bool {}
 
     /**
      * @param resource $statement
-     * @return int
      */
     function odbc_num_fields($statement): int {}
 
     /**
      * @param resource $statement
-     * @return int
      */
     function odbc_num_rows($statement): int {}
 
     /**
-     * @param string $dsn
      * @param string $user
      * @param string $user
      * @param int $password
@@ -228,15 +188,12 @@ namespace {
 
     /**
      * @param resource $odbc
-     * @param string $query
      * @return false|resource
      */
     function odbc_prepare($odbc, string $query) {}
 
     /**
      * @param resource $statement
-     * @param int|string $field
-     * @return bool|null|string
      */
     function odbc_result($statement, string|int $field): string|bool|null {}
 
@@ -244,45 +201,27 @@ namespace {
      * @deprecated 8.1
      *
      * @param resource $statement
-     * @param string $format
-     * @return false|int
      */
     function odbc_result_all($statement, string $format = ''): int|false {}
 
     /**
      * @param resource $odbc
-     * @return bool
      */
     function odbc_rollback($odbc): bool {}
 
     /**
      * @param resource $odbc
-     * @param int $which
-     * @param int $option
-     * @param int $value
-     * @return bool
      */
     function odbc_setoption($odbc, int $which, int $option, int $value): bool {}
 
     /**
      * @param resource $odbc
-     * @param int $type
-     * @param null|string $catalog
-     * @param string $schema
-     * @param string $table
-     * @param int $scope
-     * @param int $nullable
      * @return false|resource
      */
     function odbc_specialcolumns($odbc, int $type, ?string $catalog, string $schema, string $table, int $scope, int $nullable) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param string $schema
-     * @param string $table
-     * @param int $unique
-     * @param int $accuracy
      * @return false|resource
      */
     function odbc_statistics($odbc, ?string $catalog, string $schema, string $table, int $unique, int $accuracy) {}
@@ -299,93 +238,56 @@ namespace {
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param string $schema
-     * @param string $table
      * @return false|resource
      */
     function odbc_primarykeys($odbc, ?string $catalog, string $schema, string $table) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param string $schema
-     * @param string $table
-     * @param string $column
      * @return false|resource
      */
     function odbc_columnprivileges($odbc, ?string $catalog, string $schema, string $table, string $column) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param string $schema
-     * @param string $table
      * @return false|resource
      */
     function odbc_tableprivileges($odbc, ?string $catalog, string $schema, string $table) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $pk_catalog
-     * @param string $pk_schema
-     * @param string $pk_table
-     * @param string $fk_catalog
-     * @param string $fk_schema
-     * @param string $fk_table
      * @return false|resource
      */
     function odbc_foreignkeys($odbc, ?string $pk_catalog, string $pk_schema, string $pk_table, string $fk_catalog, string $fk_schema, string $fk_table) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param null|string $schema
-     * @param null|string $procedure
      * @return false|resource
      */
     function odbc_procedures($odbc, ?string $catalog = null, ?string $schema = null, ?string $procedure = null) {}
 
     /**
      * @param resource $odbc
-     * @param null|string $catalog
-     * @param null|string $schema
-     * @param null|string $procedure
-     * @param null|string $column
      * @return false|resource
      */
     function odbc_procedurecolumns($odbc, ?string $catalog = null, ?string $schema = null, ?string $procedure = null, ?string $column = null) {}
 
     /**
      * @param Odbc\Connection $odbc
-     * @param string $query
      * @return Odbc\Result|resource|false ODBC result identifier or FALSE on failure.
      */
     function odbc_do($odbc, string $query) {}
 
     /**
      * @param resource $statement
-     * @param int $field
      * @return int
      */
     function odbc_field_precision($statement, int $field): int|false {}
 
-    /**
-     * @param string $str
-     * @return bool
-     */
     function odbc_connection_string_is_quoted(string $str): bool {}
 
-    /**
-     * @param string $str
-     * @return bool
-     */
     function odbc_connection_string_should_quote(string $str): bool {}
 
-    /**
-     * @param string $str
-     * @return string
-     */
     function odbc_connection_string_quote(string $str): string {}
 
     define('ODBC_TYPE', "unixODBC");

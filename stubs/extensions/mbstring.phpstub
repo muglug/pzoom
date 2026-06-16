@@ -101,9 +101,6 @@ function mb_output_handler(string $string, int $status): string
 
 /**
  * @pure
- *
- * @param string $encoding
- * @return false|string
  */
 function mb_preferred_mime_name(string $encoding): string|false
 {
@@ -303,20 +300,15 @@ function mb_encode_mimeheader(
 
 /**
  * @pure
- *
- * @param string $string
- * @return string
  */
 function mb_decode_mimeheader(string $string): string
 {
 }
 
 /**
- * @param string $to_encoding
  * @param array<array-key, mixed>|string $from_encoding
  * @param array<array-key, mixed>|object|string $var
  * @param array<array-key, mixed>|object|string $vars
- * @return false|string
  */
 function mb_convert_variables(
     string $to_encoding,
@@ -440,9 +432,6 @@ function mb_eregi_replace(
 /**
  * @pure
  *
- * @param string $pattern
- * @param string $string
- * @param int $limit
  * @return false|list<string>
  */
 function mb_split(string $pattern, string $string, int $limit = -1): array|false
@@ -496,8 +485,6 @@ function mb_ereg_search_getregs(): array|false
 
 /**
  * @pure
- *
- * @return int
  */
 function mb_ereg_search_getpos(): int
 {

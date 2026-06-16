@@ -379,9 +379,6 @@ function imagecreate(int $width, int $height): GdImage|false
 {
 }
 
-/**
- * @return int
- */
 function imagetypes(): int
 {
 }
@@ -422,8 +419,6 @@ function imagecreatefrompng(string $filename): GdImage|false
 }
 
 /**
- * @param string $filename
- * @return GdImage|false
  * @psalm-ignore-falsable-return
  */
 function imagecreatefromwebp(string $filename): GdImage|false
@@ -629,7 +624,6 @@ function imagefilledpolygon(GdImage $image, array $points, int $num_points_or_co
 
 /**
  * @param int $font
- * @return int
  */
 function imagefontwidth(GdFont|int $font): int
 {
@@ -637,7 +631,6 @@ function imagefontwidth(GdFont|int $font): int
 
 /**
  * @param int $font
- * @return int
  */
 function imagefontheight(GdFont|int $font): int
 {

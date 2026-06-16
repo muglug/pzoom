@@ -1701,7 +1701,6 @@ function libvirt_storagevolume_delete($res, int $flags = 0): bool {}
  * @param int $offset [optional] position to start reading from
  * @param int $length [optional] limit on amount of data to download
  * @param int $flags [optional] flags for the storage volume download for virStorageVolDownload()
- * @return int
  * @since 0.5.0
  */
 function libvirt_storagevolume_download($res, $stream, int $offset = 0, int $length = 0, int $flags = 0): int {}
@@ -1756,7 +1755,6 @@ function libvirt_storagevolume_lookup_by_path($res, string $path) {}
  * @param resource $res libvirt storagevolume resource
  * @param int $capacity capacity for the storage volume
  * @param int $flags [optional] flags for the storage volume resize for virStorageVolResize()
- * @return int
  * @since 0.5.0
  */
 function libvirt_storagevolume_resize($res, int $capacity, int $flags = 0): int {}
@@ -1767,7 +1765,6 @@ function libvirt_storagevolume_resize($res, int $capacity, int $flags = 0): int 
  * @param int $offset [optional] position to start writing to
  * @param int $length [optional] limit on amount of data to upload
  * @param int $flags [optional] flags for the storage volume upload for virStorageVolUpload()
- * @return int
  * @since 0.5.0
  */
 function libvirt_storagevolume_upload($res, $stream, int $offset = 0, int $length = 0, int $flags = 0): int {}
@@ -1776,14 +1773,12 @@ function libvirt_storagevolume_upload($res, $stream, int $offset = 0, int $lengt
 
 /**
  * @param resource $res libvirt stream resource from libvirt_stream_create()
- * @return int
  * @since 0.5.0
  */
 function libvirt_stream_abort($res): int {}
 
 /**
  * @param resource $res libvirt stream resource from libvirt_stream_create()
- * @return int
  * @since 0.5.0
  */
 function libvirt_stream_close($res): int {}
@@ -1797,7 +1792,6 @@ function libvirt_stream_create($res) {}
 
 /**
  * @param resource $res libvirt stream resource from libvirt_stream_create()
- * @return int
  * @since 0.5.0
  */
 function libvirt_stream_finish($res): int {}
@@ -1806,7 +1800,6 @@ function libvirt_stream_finish($res): int {}
  * @param resource $res libvirt stream resource from libvirt_stream_create()
  * @param string $data buffer
  * @param int $len [optional] amount of data to receive
- * @return int
  * @since 0.5.0
  */
 function libvirt_stream_recv($res, string $data, int $len = 0): int {}
@@ -1815,7 +1808,6 @@ function libvirt_stream_recv($res, string $data, int $len = 0): int {}
  * @param resource $res libvirt stream resource from libvirt_stream_create()
  * @param string $data buffer
  * @param int $length [optional] amount of data to send
- * @return int
  * @since 0.5.0
  */
 function libvirt_stream_send($res, string $data, int $length = 0): int {}

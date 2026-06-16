@@ -74,26 +74,14 @@ function openssl_spki_new(OpenSSLAsymmetricKey $private_key, string $challenge, 
 {
 }
 
-/**
- * @param string $spki
- * @return bool
- */
 function openssl_spki_verify(string $spki): bool
 {
 }
 
-/**
- * @param string $spki
- * @return false|string
- */
 function openssl_spki_export_challenge(string $spki): string|false
 {
 }
 
-/**
- * @param string $spki
- * @return false|string
- */
 function openssl_spki_export(string $spki): string|false
 {
 }
@@ -433,7 +421,6 @@ function openssl_public_decrypt(
 }
 
 /**
- * @param bool $aliases
  * @return array<array-key, mixed>
  */
 function openssl_get_md_methods(bool $aliases = false): array
@@ -441,7 +428,6 @@ function openssl_get_md_methods(bool $aliases = false): array
 }
 
 /**
- * @param bool $aliases
  * @return array<array-key, mixed>
  */
 function openssl_get_cipher_methods(bool $aliases = false): array
@@ -468,9 +454,6 @@ function openssl_random_pseudo_bytes(int $length, null|bool &$strong_result = nu
 {
 }
 
-/**
- * @return false|string
- */
 function openssl_error_string(): string|false
 {
 }

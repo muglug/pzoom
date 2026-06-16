@@ -437,9 +437,6 @@ function uv_idle_stop($idle): void
 {
 }
 
-/**
- * @param UVLoop $loop
- */
 function uv_getaddrinfo(UVLoop $loop, callable $callback, string $node, string $service, array $hints): void
 {
 }

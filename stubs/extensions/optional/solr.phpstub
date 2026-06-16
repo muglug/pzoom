@@ -125,7 +125,6 @@ final class SolrDocument implements ArrayAccess, Iterator, Serializable
     public function key() {}
 
     /**
-     * @param SolrInputDocument $sourceDoc
      * @param bool $overwrite [optional]
      * @return bool
      */
@@ -315,7 +314,6 @@ final class SolrInputDocument
     public const VERSION_ASSERT_EXISTS = 1;
 
     /**
-     * @param SolrInputDocument $child
      * @return void
      * @throws SolrIllegalArgumentException
      * @throws SolrException
@@ -323,7 +321,6 @@ final class SolrInputDocument
     public function addChildDocument(SolrInputDocument $child) {}
 
     /**
-     * @param array &$docs
      * @return void
      * @throws SolrIllegalArgumentException
      * @throws SolrException
@@ -413,7 +410,6 @@ final class SolrInputDocument
     public function hasChildDocuments() {}
 
     /**
-     * @param SolrInputDocument $sourceDoc
      * @param bool $overwrite [optional]
      * @return bool
      */
@@ -834,70 +830,26 @@ class SolrModifiableParams extends SolrParams implements Serializable
 
 abstract class SolrParams implements Serializable
 {
-    /**
-     * @param string $name
-     * @param string $value
-     * @return SolrParams|false
-     */
     final public function add(string $name, string $value): SolrParams|false {}
 
-    /**
-     * @param string $name
-     * @param string $value
-     * @return SolrParams|false
-     */
     public function addParam(string $name, string $value): SolrParams|false {}
 
-    /**
-     * @param string $param_name
-     * @return mixed
-     */
     final public function get(string $param_name): mixed {}
 
-    /**
-     * @param string $param_name
-     * @return mixed
-     */
     final public function getParam(string $param_name): mixed {}
 
-    /**
-     * @return array
-     */
     final public function getParams(): array {}
 
-    /**
-     * @return array
-     */
     final public function getPreparedParams(): array {}
 
-    /**
-     * @return string
-     */
     final public function serialize(): string {}
 
-    /**
-     * @param string $name
-     * @param string $value
-     * @return void
-     */
     final public function set(string $name, string $value): void {}
 
-    /**
-     * @param string $name
-     * @param string $value
-     * @return SolrParams|false
-     */
     public function setParam(string $name, string $value): SolrParams|false {}
 
-    /**
-     * @param bool $url_encode
-     * @return string|false
-     */
     final public function toString(bool $url_encode = false): string|false {}
 
-    /**
-     * @param string $serialized
-     */
     final public function unserialize(string $serialized): void {}
 }
 
@@ -1051,7 +1003,6 @@ class SolrQuery extends SolrModifiableParams implements Serializable
     public function addStatsField($field) {}
 
     /**
-     * @param SolrCollapseFunction $collapseFunction
      * @return SolrQuery
      */
     public function collapse(SolrCollapseFunction $collapseFunction) {}
@@ -2293,7 +2244,6 @@ final class SolrClient
     public const DEFAULT_SYSTEM_SERVLET = 'admin/system';
 
     /**
-     * @param SolrInputDocument $doc
      * @param bool $overwrite [optional]
      * @param int $commitWithin [optional]
      * @return SolrUpdateResponse
@@ -2303,7 +2253,6 @@ final class SolrClient
     public function addDocument(SolrInputDocument $doc, $overwrite = true, $commitWithin = 0) {}
 
     /**
-     * @param array $docs
      * @param bool $overwrite [optional]
      * @param int $commitWithin [optional]
      * @return SolrUpdateResponse
@@ -2323,7 +2272,6 @@ final class SolrClient
     public function commit($softCommit = false, $waitSearcher = true, $expungeDeletes = false) {}
 
     /**
-     * @param array $clientOptions
      * @throws SolrIllegalArgumentException
      */
     public function __construct(array $clientOptions) {}
@@ -2337,7 +2285,6 @@ final class SolrClient
     public function deleteById($id) {}
 
     /**
-     * @param array $ids
      * @return SolrUpdateResponse
      * @throws SolrClientException
      * @throws SolrServerException
@@ -2345,7 +2292,6 @@ final class SolrClient
     public function deleteByIds(array $ids) {}
 
     /**
-     * @param array $queries
      * @return SolrUpdateResponse
      * @throws SolrClientException
      * @throws SolrServerException
@@ -2369,7 +2315,6 @@ final class SolrClient
     public function getById($id) {}
 
     /**
-     * @param array $ids
      * @return SolrQueryResponse
      */
     public function getByIds(array $ids) {}
@@ -2402,7 +2347,6 @@ final class SolrClient
     public function ping() {}
 
     /**
-     * @param SolrParams $query
      * @return SolrQueryResponse
      * @throws SolrClientException
      * @throws SolrServerException

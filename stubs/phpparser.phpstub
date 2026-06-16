@@ -29,7 +29,6 @@ use PhpParser\NodeAbstract;
 class Name extends NodeAbstract {
     /**
      * @param string|string[]|self $name
-     * @param array                $attributes
      */
     public function __construct($name, array $attributes = []) {}
 

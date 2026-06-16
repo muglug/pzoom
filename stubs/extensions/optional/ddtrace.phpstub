@@ -282,7 +282,6 @@ namespace DDTrace {
         function get_priority_sampling(bool $global = false): int|null {}
 
         /**
-         * @param \Exception|\Throwable $exception
          * @param int $skipFrames The number of frames to be dropped from the start. E.g. to hide the fact that we're
          */
         function get_sanitized_exception_trace(\Exception|\Throwable $exception, int $skipFrames = 0): string {}
@@ -431,7 +430,6 @@ namespace DDTrace\UserRequest {
         function notify_commit(\DDTrace\RootSpanData $span, int $status, array $headers, mixed $body = null): ?array {}
 
         /**
-         * @param \DDTrace\RootSpanData $span
          * @param callable $blockingFunction a blocking function taking an array with the keys 'status', 'headers', 'body'
          */
         function set_blocking_function(\DDTrace\RootSpanData $span, callable $blockingFunction): void {}

@@ -555,7 +555,6 @@ namespace {
 
         /**
          * @param string $tableName
-         * @param array $rows
          * @param string $separator
          * @param string $nullAs
          * @param string|null $fields

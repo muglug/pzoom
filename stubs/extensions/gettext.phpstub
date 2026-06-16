@@ -1,18 +1,11 @@
 <?php
 
-/**
- * @param null|string $domain
- * @return string
- */
 function textdomain(null|string $domain = null): string
 {
 }
 
 /**
  * @pure
- *
- * @param string $message
- * @return string
  */
 function _(string $message): string
 {
@@ -20,29 +13,15 @@ function _(string $message): string
 
 /**
  * @pure
- *
- * @param string $message
- * @return string
  */
 function gettext(string $message): string
 {
 }
 
-/**
- * @param string $domain
- * @param string $message
- * @return string
- */
 function dgettext(string $domain, string $message): string
 {
 }
 
-/**
- * @param string $domain
- * @param string $message
- * @param int $category
- * @return string
- */
 function dcgettext(string $domain, string $message, int $category): string
 {
 }
@@ -53,11 +32,6 @@ function bindtextdomain(string $domain, string|null $directory = null): string|f
 
 /**
  * @pure
- *
- * @param string $singular
- * @param string $plural
- * @param int $count
- * @return string
  */
 function ngettext(string $singular, string $plural, int $count): string
 {
@@ -65,12 +39,6 @@ function ngettext(string $singular, string $plural, int $count): string
 
 /**
  * @pure
- *
- * @param string $domain
- * @param string $singular
- * @param string $plural
- * @param int $count
- * @return string
  */
 function dngettext(string $domain, string $singular, string $plural, int $count): string
 {
@@ -78,13 +46,6 @@ function dngettext(string $domain, string $singular, string $plural, int $count)
 
 /**
  * @pure
- *
- * @param string $domain
- * @param string $singular
- * @param string $plural
- * @param int $count
- * @param int $category
- * @return string
  */
 function dcngettext(string $domain, string $singular, string $plural, int $count, int $category): string
 {

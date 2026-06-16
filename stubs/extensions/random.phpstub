@@ -3,8 +3,6 @@
 namespace {
     /**
      * @deprecated
-     *
-     * @return float
      */
     function lcg_value(): float
     {

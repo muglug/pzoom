@@ -105,9 +105,6 @@ class Yar_Concurrent_Client
      * @param string $uri
      * @param string $method
      * @param array $parameters
-     * @param callable $callback
-     * @param callable $error_callback
-     * @param array $options
      *
      * @return int
      */

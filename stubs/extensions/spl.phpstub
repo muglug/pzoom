@@ -210,8 +210,6 @@ class RecursiveIteratorIterator implements OuterIterator
 
     /**
      * @param TIterator $iterator
-     * @param int $mode
-     * @param int $flags
      *
      * @return void
      */
@@ -340,9 +338,6 @@ class IteratorIterator implements OuterIterator
     {
     }
 
-    /**
-     * @return void
-     */
     public function rewind(): void
     {
     }
@@ -538,7 +533,6 @@ interface SeekableIterator extends Iterator
      * @link https://php.net/manual/en/seekableiterator.seek.php
      *
      * @param int $offset The position to seek to.
-     * @return void
      *
      * @since 5.1.0
      */
@@ -809,10 +803,8 @@ class RegexIterator extends FilterIterator
 
     /**
      * @param TIterator $iterator
-     * @param string $regex
      * @param self::MATCH|self::GET_MATCH|self::ALL_MATCHES|self::SPLIT|self::REPLACE $mode
      * @param int-mask<self::USE_KEY> $flags
-     * @param int $preg_flags
      */
     public function __construct(
         Iterator $iterator,
@@ -860,10 +852,8 @@ class RecursiveRegexIterator extends RegexIterator implements RecursiveIterator
 
     /**
      * @param TIterator $iterator
-     * @param string $regex
      * @param self::MATH|self::GET_MATCH|self::ALL_MATCHES|self::SPLIT|self::REPLACE $mode
      * @param self::USE_KEY|0 $flags
-     * @param int $preg_flags
      */
     public function __construct(
         RecursiveIterator $iterator,
@@ -954,37 +944,22 @@ class RecursiveTreeIterator extends RecursiveIteratorIterator implements OuterIt
     {
     }
 
-    /**
-     * @return void
-     */
     public function endChildren(): void
     {
     }
 
-    /**
-     * @return void
-     */
     public function endIteration(): void
     {
     }
 
-    /**
-     * @return string
-     */
     public function getEntry(): string
     {
     }
 
-    /**
-     * @return string
-     */
     public function getPostfix(): string
     {
     }
 
-    /**
-     * @return string
-     */
     public function getPrefix(): string
     {
     }
@@ -998,46 +973,29 @@ class RecursiveTreeIterator extends RecursiveIteratorIterator implements OuterIt
     {
     }
 
-    /**
-     * @return void
-     */
     public function next(): void
     {
     }
 
-    /**
-     * @return void
-     */
     public function nextElement(): void
     {
     }
 
-    /**
-     * @return void
-     */
     public function rewind(): void
     {
     }
 
-    /**
-     * @return void
-     */
     public function setPostfix(string $postfix): void
     {
     }
 
     /**
      * @param self::PREFIX_* $part
-     * @param string $value
-     * @return void
      */
     public function setPrefixPart(int $part, string $value): void
     {
     }
 
-    /**
-     * @return bool
-     */
     public function valid(): bool
     {
     }
@@ -1828,9 +1786,6 @@ class SplFileInfo implements Stringable
     {
     }
 
-    /**
-     * @return string
-     */
     public function __toString(): string
     {
     }
@@ -1989,21 +1944,14 @@ class RecursiveDirectoryIterator extends FilesystemIterator implements Recursive
     const UNIX_PATHS = 8192;
 
     /**
-     * @param string $path
      * @param int-mask<self::CURRENT_AS_PATHNAME,self::CURRENT_AS_FILEINFO,self::CURRENT_AS_SELF,self::KEY_AS_PATHNAME,self::KEY_AS_FILENAME,self::FOLLOW_SYMLINKS,self::NEW_CURRENT_AND_KEY,self::SKIP_DOTS,self::UNIX_PATHS> $flags
      */
     public function __construct(string $path, int $flags = self::KEY_AS_PATHNAME | self::CURRENT_AS_FILEINFO) {}
 
-    /**
-     * @return string
-     */
     public function getSubPath(): string
     {
     }
 
-    /**
-     * @return string
-     */
     public function getSubPathname(): string
     {
     }
@@ -2240,7 +2188,6 @@ class SplDoublyLinkedList implements Iterator, Countable, ArrayAccess, Serializa
      *
      * @param int $index The index where the new value is to be inserted.
      * @param TValue $value The new value for the index.
-     * @return void
      *
      * @link https://php.net/spldoublylinkedlist.add
      * @since 5.5.0
@@ -2281,7 +2228,6 @@ class SplDoublyLinkedList implements Iterator, Countable, ArrayAccess, Serializa
      * @link https://php.net/manual/en/spldoublylinkedlist.push.php
      *
      * @param TValue $value The value to push.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2295,7 +2241,6 @@ class SplDoublyLinkedList implements Iterator, Countable, ArrayAccess, Serializa
      * @link https://php.net/manual/en/spldoublylinkedlist.unshift.php
      *
      * @param TValue $value The value to unshift.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2398,7 +2343,6 @@ class SplDoublyLinkedList implements Iterator, Countable, ArrayAccess, Serializa
      *
      * @param int $index The index being set.
      * @param TValue $value The new value for the index.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2412,7 +2356,6 @@ class SplDoublyLinkedList implements Iterator, Countable, ArrayAccess, Serializa
      * @link https://php.net/manual/en/spldoublylinkedlist.offsetunset.php
      *
      * @param int $index The index being unset.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2501,7 +2444,6 @@ class SplQueue extends SplDoublyLinkedList
      * @link https://php.net/manual/en/splqueue.enqueue.php
      *
      * @param TValue $value The value to enqueue.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2633,8 +2575,6 @@ abstract class SplHeap implements Iterator, Countable
      *
      * @link https://php.net/manual/en/splheap.rewind.php
      *
-     * @return void
-     *
      * @since 5.3.0
      */
     public function rewind(): void
@@ -2671,8 +2611,6 @@ abstract class SplHeap implements Iterator, Countable
      * Move to the next node. This will delete the top node of the heap.
      *
      * @link https://php.net/manual/en/splheap.next.php
-     *
-     * @return void
      *
      * @since 5.3.0
      */
@@ -2752,8 +2690,6 @@ class SplMinHeap extends SplHeap
     /**
      * @param V $value1
      * @param V $value2
-     *
-     * @return int
      */
     protected function compare(mixed $value1, mixed $value2): int
     {
@@ -2852,8 +2788,6 @@ class SplMaxHeap extends SplHeap
     /**
      * @param V $value1
      * @param V $value2
-     *
-     * @return int
      */
     protected function compare(mixed $value1, mixed $value2): int
     {
@@ -2906,7 +2840,6 @@ class SplPriorityQueue implements Iterator, Countable
      *
      * @param TValue $value The value to insert.
      * @param TPriority $priority The associated priority.
-     * @return true
      *
      * @since 5.3.0
      */
@@ -2986,8 +2919,6 @@ class SplPriorityQueue implements Iterator, Countable
      *
      * @link https://php.net/manual/en/splpriorityqueue.rewind.php
      *
-     * @return void
-     *
      * @since 5.3.0
      */
     public function rewind(): void
@@ -3024,8 +2955,6 @@ class SplPriorityQueue implements Iterator, Countable
      * Move to the next node.
      *
      * @link https://php.net/manual/en/splpriorityqueue.next.php
-     *
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3221,7 +3150,6 @@ class SplFixedArray implements Iterator, ArrayAccess, Countable, IteratorAggrega
      *
      * @param int $index The index being sent.
      * @param TValue $value The new value for the index
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3235,7 +3163,6 @@ class SplFixedArray implements Iterator, ArrayAccess, Countable, IteratorAggrega
      * @link https://php.net/manual/en/splfixedarray.offsetunset.php
      *
      * @param int $index The index being unset
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3368,7 +3295,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      *
      * @param TObject $object The object to add.
      * @param TArrayValue|null $data [optional] The data to associate with the object.
-     * @return void
      *
      * @since 5.1.0
      *
@@ -3384,7 +3310,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * @link https://php.net/manual/en/splobjectstorage.detach.php
      *
      * @param TObject $object The object to remove.
-     * @return void
      *
      * @since 5.1.0
      */
@@ -3467,7 +3392,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * @link https://php.net/manual/en/splobjectstorage.setinfo.php
      *
      * @param TArrayValue $info The data to associate with the current iterator entry.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3483,8 +3407,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * @return int The number of objects in the storage.
      *
      * @since 5.1.0
-     *
-     * @param int $mode
      */
     public function count(int $mode = COUNT_NORMAL): int
     {
@@ -3494,8 +3416,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * Rewind the iterator to the first storage element
      *
      * @link https://php.net/manual/en/splobjectstorage.rewind.php
-     *
-     * @return void
      *
      * @since 5.1.0
      */
@@ -3547,8 +3467,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      *
      * @link https://php.net/manual/en/splobjectstorage.next.php
      *
-     * @return void
-     *
      * @since 5.1.0
      */
     public function next(): void
@@ -3561,7 +3479,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * @link https://php.net/manual/en/splobjectstorage.unserialize.php
      *
      * @param string $data The serialized representation of a storage.
-     * @return void
      *
      * @since 5.2.2
      */
@@ -3603,7 +3520,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      *
      * @param TObject $object The object to associate data with.
      * @param TArrayValue|null $info [optional] The data to associate with the object.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3617,7 +3533,6 @@ class SplObjectStorage implements Countable, SeekableIterator, Serializable, Arr
      * @link https://php.net/manual/en/splobjectstorage.offsetunset.php
      *
      * @param TObject $object The object to remove.
-     * @return void
      *
      * @since 5.3.0
      */
@@ -3699,7 +3614,6 @@ class MultipleIterator implements Iterator
 
     /**
      * @param int-mask-of<self::MIT_*> $flags
-     * @return void
      */
     public function setFlags(int $flags): void
     {
@@ -3708,7 +3622,6 @@ class MultipleIterator implements Iterator
     /**
      * @param Iterator<TKey,TValue> $iterator
      * @param string|int $info
-     * @return void
      */
     public function attachIterator(Iterator $iterator, int|string|null $info = null): void
     {
@@ -3716,7 +3629,6 @@ class MultipleIterator implements Iterator
 
     /**
      * @param Iterator<TKey,TValue> $iterator
-     * @return void
      */
     public function detachIterator(Iterator $iterator): void
     {
@@ -3724,15 +3636,11 @@ class MultipleIterator implements Iterator
 
     /**
      * @param Iterator<TKey, TValue> $iterator
-     * @return bool
      */
     public function containsIterator(Iterator $iterator): bool
     {
     }
 
-    /**
-     * @return int
-     */
     public function countIterators(): int
     {
     }

@@ -64,14 +64,8 @@ namespace mysql_xdevapi {
      */
     interface BaseResult
     {
-        /**
-         * @return array
-         */
         public function getWarnings(): array;
 
-        /**
-         * @return int
-         */
         public function getWarningsCount(): int;
     }
 
@@ -108,13 +102,9 @@ namespace mysql_xdevapi {
 
         /**
          * @param string $index_name
-         * @return bool
          */
         public function dropIndex($index_name): bool {}
 
-        /**
-         * @return bool
-         */
         public function existsInDatabase(): bool {}
 
         /**
@@ -123,9 +113,6 @@ namespace mysql_xdevapi {
          */
         public function find($search_condition): CollectionFind {}
 
-        /**
-         * @return string
-         */
         public function getName(): string {}
 
         /**
@@ -187,7 +174,6 @@ namespace mysql_xdevapi {
     class CollectionFind implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSortable
     {
         /**
-         * @param array $placeholder_values
          * @return \mysql_xdevapi\CollectionFind
          */
         public function bind(array $placeholder_values): CollectionFind {}
@@ -198,51 +184,40 @@ namespace mysql_xdevapi {
         public function execute(): DocResult {}
 
         /**
-         * @param string $projection
          * @return \mysql_xdevapi\CollectionFind
          */
         public function fields(string $projection): CollectionFind {}
 
         /**
-         * @param string $sort_expr
          * @return \mysql_xdevapi\CollectionFind
          */
         public function groupBy(string $sort_expr): CollectionFind {}
 
         /**
-         * @param string $sort_expr
          * @return \mysql_xdevapi\CollectionFind
          */
         public function having(string $sort_expr): CollectionFind {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\CollectionFind
          */
         public function limit(int $rows): CollectionFind {}
 
         /**
-         * @param int $lock_waiting_option
          * @return \mysql_xdevapi\CollectionFind
          */
         public function lockExclusive(int $lock_waiting_option): CollectionFind {}
 
         /**
-         * @param int $lock_waiting_option
          * @return \mysql_xdevapi\CollectionFind
          */
         public function lockShared(int $lock_waiting_option): CollectionFind {}
 
         /**
-         * @param int $position
          * @return \mysql_xdevapi\CollectionFind
          */
         public function offset(int $position): CollectionFind {}
 
-        /**
-         * @param string $sort_expr
-         * @return CollectionFind
-         */
         public function sort(string $sort_expr): CollectionFind {}
     }
 
@@ -252,21 +227,16 @@ namespace mysql_xdevapi {
     class CollectionModify implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSkippable, \mysql_xdevapi\CrudOperationSortable
     {
         /**
-         * @param string $collection_field
-         * @param string $expression_or_literal
          * @return \mysql_xdevapi\CollectionModify
          */
         public function arrayAppend(string $collection_field, string $expression_or_literal): CollectionModify {}
 
         /**
-         * @param string $collection_field
-         * @param string $expression_or_literal
          * @return \mysql_xdevapi\CollectionModify
          */
         public function arrayInsert(string $collection_field, string $expression_or_literal): CollectionModify {}
 
         /**
-         * @param array $placeholder_values
          * @return \mysql_xdevapi\CollectionModify
          */
         public function bind(array $placeholder_values): CollectionModify {}
@@ -277,45 +247,36 @@ namespace mysql_xdevapi {
         public function execute(): Result {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\CollectionModify
          */
         public function limit(int $rows): CollectionModify {}
 
         /**
-         * @param string $document
          * @return \mysql_xdevapi\CollectionModify
          */
         public function patch(string $document): CollectionModify {}
 
         /**
-         * @param string $collection_field
-         * @param string $expression_or_literal
          * @return \mysql_xdevapi\CollectionModify
          */
         public function replace(string $collection_field, string $expression_or_literal): CollectionModify {}
 
         /**
-         * @param string $collection_field
-         * @param string $expression_or_literal
          * @return \mysql_xdevapi\CollectionModify
          */
         public function set(string $collection_field, string $expression_or_literal): CollectionModify {}
 
         /**
-         * @param int $position
          * @return \mysql_xdevapi\CollectionModify
          */
         public function skip(int $position): CollectionModify {}
 
         /**
-         * @param string $sort_expr
          * @return \mysql_xdevapi\CollectionModify
          */
         public function sort(string $sort_expr): CollectionModify {}
 
         /**
-         * @param array $fields
          * @return \mysql_xdevapi\CollectionModify
          */
         public function unset(array $fields): CollectionModify {}
@@ -324,7 +285,6 @@ namespace mysql_xdevapi {
     class CollectionRemove implements \mysql_xdevapi\Executable, \mysql_xdevapi\CrudOperationBindable, \mysql_xdevapi\CrudOperationLimitable, \mysql_xdevapi\CrudOperationSortable
     {
         /**
-         * @param array $placeholder_values
          * @return \mysql_xdevapi\CollectionRemove
          */
         public function bind(array $placeholder_values): CollectionRemove {}
@@ -335,13 +295,11 @@ namespace mysql_xdevapi {
         public function execute(): Result {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\CollectionRemove
          */
         public function limit(int $rows): CollectionRemove {}
 
         /**
-         * @param string $sort_expr
          * @return \mysql_xdevapi\CollectionRemove
          */
         public function sort(string $sort_expr): CollectionRemove {}
@@ -352,64 +310,28 @@ namespace mysql_xdevapi {
      */
     class ColumnResult
     {
-        /**
-         * @return string
-         */
         public function getCharacterSetName(): string {}
 
-        /**
-         * @return string
-         */
         public function getCollationName(): string {}
 
-        /**
-         * @return string
-         */
         public function getColumnLabel(): string {}
 
-        /**
-         * @return string
-         */
         public function getColumnName(): string {}
 
-        /**
-         * @return int
-         */
         public function getFractionalDigits(): int {}
 
-        /**
-         * @return int
-         */
         public function getLength(): int {}
 
-        /**
-         * @return string
-         */
         public function getSchemaName(): string {}
 
-        /**
-         * @return string
-         */
         public function getTableLabel(): string {}
 
-        /**
-         * @return string
-         */
         public function getTableName(): string {}
 
-        /**
-         * @return int
-         */
         public function getType(): int {}
 
-        /**
-         * @return int
-         */
         public function isNumberSigned(): int {}
 
-        /**
-         * @return int
-         */
         public function isPadded(): int {}
     }
 
@@ -418,10 +340,6 @@ namespace mysql_xdevapi {
      */
     interface CrudOperationBindable
     {
-        /**
-         * @param array $placeholder_values
-         * @return CrudOperationBindable
-         */
         public function bind(array $placeholder_values): CrudOperationBindable;
     }
 
@@ -430,10 +348,6 @@ namespace mysql_xdevapi {
      */
     interface CrudOperationLimitable
     {
-        /**
-         * @param int $rows
-         * @return CrudOperationLimitable
-         */
         public function limit(int $rows): CrudOperationLimitable;
     }
 
@@ -442,10 +356,6 @@ namespace mysql_xdevapi {
      */
     interface CrudOperationSkippable
     {
-        /**
-         * @param int $skip
-         * @return CrudOperationSkippable
-         */
         public function skip(int $skip): CrudOperationSkippable;
     }
 
@@ -454,10 +364,6 @@ namespace mysql_xdevapi {
      */
     interface CrudOperationSortable
     {
-        /**
-         * @param string $sort_expr
-         * @return CrudOperationSortable
-         */
         public function sort(string $sort_expr): CrudOperationSortable;
     }
 
@@ -466,14 +372,8 @@ namespace mysql_xdevapi {
      */
     interface DatabaseObject
     {
-        /**
-         * @return bool
-         */
         public function existsInDatabase(): bool;
 
-        /**
-         * @return string
-         */
         public function getName(): string;
 
         /**
@@ -487,14 +387,8 @@ namespace mysql_xdevapi {
      */
     class DocResult implements \mysql_xdevapi\BaseResult, \Traversable
     {
-        /**
-         * @return array
-         */
         public function fetchAll(): array {}
 
-        /**
-         * @return array
-         */
         public function fetchOne(): array {}
 
         /**
@@ -502,9 +396,6 @@ namespace mysql_xdevapi {
          */
         public function getWarnings(): array {}
 
-        /**
-         * @return int
-         */
         public function getWarningsCount(): int {}
     }
 
@@ -518,9 +409,6 @@ namespace mysql_xdevapi {
      */
     interface Executable
     {
-        /**
-         * @return Result
-         */
         public function execute(): Result;
     }
 
@@ -553,9 +441,6 @@ namespace mysql_xdevapi {
      */
     class Result implements \mysql_xdevapi\BaseResult, \Traversable
     {
-        /**
-         * @return int
-         */
         public function getAutoIncrementValue(): int {}
 
         /**
@@ -568,9 +453,6 @@ namespace mysql_xdevapi {
          */
         public function getWarnings(): array {}
 
-        /**
-         * @return int
-         */
         public function getWarningsCount(): int {}
     }
 
@@ -589,14 +471,8 @@ namespace mysql_xdevapi {
          */
         public function fetchOne(): array {}
 
-        /**
-         * @return int
-         */
         public function getColumnsCount(): int {}
 
-        /**
-         * @return array
-         */
         public function getColumnNames(): array {}
 
         /**
@@ -609,9 +485,6 @@ namespace mysql_xdevapi {
          */
         public function getWarnings(): array {}
 
-        /**
-         * @return int
-         */
         public function getWarningsCount(): int {}
     }
 
@@ -625,30 +498,20 @@ namespace mysql_xdevapi {
 
         /* Methods */
         /**
-         * @param string $name
          * @return \mysql_xdevapi\Collection
          */
         public function createCollection(string $name): Collection {}
 
-        /**
-         * @param string $collection_name
-         * @return bool
-         */
         public function dropCollection(string $collection_name): bool {}
 
-        /**
-         * @return bool
-         */
         public function existsInDatabase(): bool {}
 
         /**
-         * @param string $name
          * @return \mysql_xdevapi\Collection
          */
         public function getCollection(string $name): Collection {}
 
         /**
-         * @param string $name
          * @return \mysql_xdevapi\Table
          */
         public function getCollectionAsTable(string $name): Table {}
@@ -658,9 +521,6 @@ namespace mysql_xdevapi {
          */
         public function getCollections(): array {}
 
-        /**
-         * @return string
-         */
         public function getName(): string {}
 
         /**
@@ -669,7 +529,6 @@ namespace mysql_xdevapi {
         public function getSession(): Session {}
 
         /**
-         * @param string $name
          * @return \mysql_xdevapi\Table
          */
         public function getTable(string $name): Table {}
@@ -694,35 +553,20 @@ namespace mysql_xdevapi {
      */
     class Session
     {
-        /**
-         * @return bool
-         */
         public function close(): bool {}
 
-        /**
-         * @return object
-         */
         public function commit(): object {}
 
         /**
-         * @param string $schema_name
          * @return \mysql_xdevapi\Schema
          */
         public function createSchema(string $schema_name): Schema {}
 
-        /**
-         * @param string $schema_name
-         * @return bool
-         */
         public function dropSchema(string $schema_name): bool {}
 
-        /**
-         * @return string
-         */
         public function generateUUID(): string {}
 
         /**
-         * @param string $schema_name
          * @return \mysql_xdevapi\Schema
          */
         public function getSchema(string $schema_name): Schema {}
@@ -732,44 +576,20 @@ namespace mysql_xdevapi {
          */
         public function getSchemas(): array {}
 
-        /**
-         * @return int
-         */
         public function getServerVersion(): int {}
 
-        /**
-         * @return array
-         */
         public function listClients(): array {}
 
-        /**
-         * @param string $name
-         * @return string
-         */
         public function quoteName(string $name): string {}
 
-        /**
-         * @param string $name
-         */
         public function releaseSavepoint(string $name): void {}
 
             public function rollback(): void {}
 
-        /**
-         * @param string $name
-         */
         public function rollbackTo(string $name): void {}
 
-        /**
-         * @param string $name
-         * @return string
-         */
         public function setSavepoint(string $name): string {}
 
-        /**
-         * @param string $query
-         * @return SqlStatement
-         */
         public function sql(string $query): SqlStatement {}
 
             public function startTransaction(): void {}
@@ -789,7 +609,6 @@ namespace mysql_xdevapi {
 
         /* Methods */
         /**
-         * @param string $param
          * @return \mysql_xdevapi\SqlStatement
          */
         public function bind(string $param): SqlStatement {}
@@ -809,9 +628,6 @@ namespace mysql_xdevapi {
          */
         public function getResult(): Result {}
 
-        /**
-         * @return bool
-         */
         public function hasMoreResults(): bool {}
     }
 
@@ -821,44 +637,20 @@ namespace mysql_xdevapi {
     class SqlStatementResult implements \mysql_xdevapi\BaseResult, \Traversable
     {
         /* Methods */
-        /**
-         * @return array
-         */
         public function fetchAll(): array {}
 
-        /**
-         * @return array
-         */
         public function fetchOne(): array {}
 
-        /**
-         * @return int
-         */
         public function getAffectedItemsCount(): int {}
 
-        /**
-         * @return int
-         */
         public function getColumnsCount(): int {}
 
-        /**
-         * @return array
-         */
         public function getColumnNames(): array {}
 
-        /**
-         * @return array
-         */
         public function getColumns(): array {}
 
-        /**
-         * @return array
-         */
         public function getGeneratedIds(): array {}
 
-        /**
-         * @return string
-         */
         public function getLastInsertId(): string {}
 
         /**
@@ -866,14 +658,8 @@ namespace mysql_xdevapi {
          */
         public function getWarnings(): array {}
 
-        /**
-         * @return int
-         */
         public function getWarningCounts(): int {}
 
-        /**
-         * @return bool
-         */
         public function hasData(): bool {}
 
         /**
@@ -897,14 +683,8 @@ namespace mysql_xdevapi {
          */
         public function getNextResult(): Result {}
 
-        /**
-         * @return Result
-         */
         public function getResult(): Result {}
 
-        /**
-         * @return bool
-         */
         public function hasMoreResults(): bool {}
     }
 
@@ -917,9 +697,6 @@ namespace mysql_xdevapi {
         public $name;
 
         /* Methods */
-        /**
-         * @return int
-         */
         public function count(): int {}
 
         /**
@@ -927,14 +704,8 @@ namespace mysql_xdevapi {
          */
         public function delete(): TableDelete {}
 
-        /**
-         * @return bool
-         */
         public function existsInDatabase(): bool {}
 
-        /**
-         * @return string
-         */
         public function getName(): string {}
 
         /**
@@ -954,9 +725,6 @@ namespace mysql_xdevapi {
          */
         public function insert($columns, ...$additionalColumns): TableInsert {}
 
-        /**
-         * @return bool
-         */
         public function isView(): bool {}
 
         /**
@@ -979,7 +747,6 @@ namespace mysql_xdevapi {
     {
         /* Methods */
         /**
-         * @param array $placeholder_values
          * @return \mysql_xdevapi\TableDelete
          */
         public function bind(array $placeholder_values): TableDelete {}
@@ -990,19 +757,16 @@ namespace mysql_xdevapi {
         public function execute(): Result {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\TableDelete
          */
         public function limit(int $rows): TableDelete {}
 
         /**
-         * @param string $orderby_expr
          * @return \mysql_xdevapi\TableDelete
          */
         public function orderby(string $orderby_expr): TableDelete {}
 
         /**
-         * @param string $where_expr
          * @return \mysql_xdevapi\TableDelete
          */
         public function where(string $where_expr): TableDelete {}
@@ -1019,7 +783,6 @@ namespace mysql_xdevapi {
         public function execute(): Result {}
 
         /**
-         * @param array $row_values
          * @return \mysql_xdevapi\TableInsert
          */
         public function values(array $row_values): TableInsert {}
@@ -1031,7 +794,6 @@ namespace mysql_xdevapi {
     class TableSelect implements \mysql_xdevapi\Executable
     {
         /**
-         * @param array $placeholder_values
          * @return \mysql_xdevapi\TableSelect
          */
         public function bind(array $placeholder_values): TableSelect {}
@@ -1048,31 +810,26 @@ namespace mysql_xdevapi {
         public function groupBy($sort_expr): TableSelect {}
 
         /**
-         * @param string $sort_expr
          * @return \mysql_xdevapi\TableSelect
          */
         public function having(string $sort_expr): TableSelect {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\TableSelect
          */
         public function limit(int $rows): TableSelect {}
 
         /**
-         * @param int|null $lock_waiting_option
          * @return \mysql_xdevapi\TableSelect
          */
         public function lockExclusive(?int $lock_waiting_option = null): TableSelect {}
 
         /**
-         * @param int|null $lock_waiting_option
          * @return \mysql_xdevapi\TableSelect
          */
         public function lockShared(?int $lock_waiting_option = null): TableSelect {}
 
         /**
-         * @param int $position
          * @return \mysql_xdevapi\TableSelect
          */
         public function offset(int $position): TableSelect {}
@@ -1084,7 +841,6 @@ namespace mysql_xdevapi {
         public function orderby(...$sort_expr): TableSelect {}
 
         /**
-         * @param string $where_expr
          * @return \mysql_xdevapi\TableSelect
          */
         public function where(string $where_expr): TableSelect {}
@@ -1107,7 +863,6 @@ namespace mysql_xdevapi {
         public function execute(): TableUpdate {}
 
         /**
-         * @param int $rows
          * @return \mysql_xdevapi\TableUpdate
          */
         public function limit(int $rows): TableUpdate {}
@@ -1119,14 +874,11 @@ namespace mysql_xdevapi {
         public function orderby(...$orderby_expr): TableUpdate {}
 
         /**
-         * @param string $table_field
-         * @param string $expression_or_literal
          * @return \mysql_xdevapi\TableUpdate
          */
         public function set(string $table_field, string $expression_or_literal): TableUpdate {}
 
         /**
-         * @param string $where_expr
          * @return \mysql_xdevapi\TableUpdate
          */
         public function where(string $where_expr): TableUpdate {}

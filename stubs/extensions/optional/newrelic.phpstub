@@ -2,43 +2,24 @@
 
 namespace {
     /**
-     * @param string $key
      * @param scalar $value
-     * @return bool
      */
     function newrelic_add_custom_parameter(string $key, bool|float|int|string $value): bool
     {
     }
 
-    /**
-     * @param string $functionName
-     * @return bool
-     */
     function newrelic_add_custom_tracer(string $functionName): bool
     {
     }
 
-    /**
-     * @param bool $flag
-     * @return void
-     */
     function newrelic_background_job(bool $flag = true): void
     {
     }
 
-    /**
-     * @param bool $enable_flag
-     * @return void
-     */
     function newrelic_capture_params(bool $enable_flag = true): void
     {
     }
 
-    /**
-     * @param string $metric_name
-     * @param float $value
-     * @return bool
-     */
     function newrelic_custom_metric(string $metric_name, float $value): bool
     {
     }
@@ -57,55 +38,30 @@ namespace {
     {
     }
 
-    /**
-     * @return void
-     */
     function newrelic_end_of_transaction(): void
     {
     }
 
-    /**
-     * @param bool $ignore
-     * @return bool
-     */
     function newrelic_end_transaction(bool $ignore = false): bool
     {
     }
 
-    /**
-     * @param bool $includeTags
-     * @return string
-     */
     function newrelic_get_browser_timing_footer(bool $includeTags = true): string
     {
     }
 
-    /**
-     * @param bool $includeTags
-     * @return string
-     */
     function newrelic_get_browser_timing_header(bool $includeTags = true): string
     {
     }
 
-    /**
-     * @return void
-     */
     function newrelic_ignore_apdex(): void
     {
     }
 
-    /**
-     * @return void
-     */
     function newrelic_ignore_transaction(): void
     {
     }
 
-    /**
-     * @param string $name
-     * @return bool
-     */
     function newrelic_name_transaction(string $name): bool
     {
     }
@@ -120,30 +76,16 @@ namespace {
     }
 
     /**
-     * @param string $name
      * @param array<array-key, mixed> $attributes
-     * @return void
      */
     function newrelic_record_custom_event(string $name, array $attributes): void
     {
     }
 
-    /**
-     * @param string $name
-     * @param string $license
-     * @param bool $xmit
-     * @return bool
-     */
     function newrelic_set_appname(string $name, string $license, bool $xmit = false): bool
     {
     }
 
-    /**
-     * @param string $user_value
-     * @param string $account_value
-     * @param string $product_value
-     * @return bool
-     */
     function newrelic_set_user_attributes(string $user_value, string $account_value, string $product_value): bool
     {
     }
@@ -153,18 +95,14 @@ namespace {
     }
 
     /**
-     * @param string $appname
      * @param string $license
-     * @return bool
      */
     function newrelic_start_transaction(string $appname, null|string $license = null): bool
     {
     }
 
     /**
-     * @param callable $func
      * @param array<array-key, mixed> $parameters
-     * @return mixed
      */
     function newrelic_record_datastore_segment(callable $func, array $parameters): mixed
     {

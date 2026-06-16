@@ -149,7 +149,6 @@ function wincache_ucache_inc($key, $inc_by = 1, &$success = null)
 }
 
 /**
- * @param bool $summaryonly
  * @param string $key
  * @return array<array-key, mixed>|false
  */

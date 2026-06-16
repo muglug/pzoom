@@ -12,7 +12,6 @@ class LibXMLError
 
 /**
  * @param resource $context
- * @return void
  */
 function libxml_set_streams_context($context): void
 {
@@ -22,16 +21,10 @@ function libxml_use_internal_errors(null|bool $use_errors = null): bool
 {
 }
 
-/**
- * @return LibXMLError|false
- */
 function libxml_get_last_error(): LibXMLError|false
 {
 }
 
-/**
- * @return void
- */
 function libxml_clear_errors(): void
 {
 }
@@ -45,9 +38,6 @@ function libxml_get_errors(): array
 
 /**
  * @deprecated
- *
- * @param bool $disable
- * @return bool
  */
 function libxml_disable_entity_loader(bool $disable = true): bool
 {

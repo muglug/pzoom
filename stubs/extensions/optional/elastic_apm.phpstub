@@ -85,13 +85,11 @@ namespace Elastic\Apm {
         public static function newTransaction(string $name, string $type): TransactionBuilderInterface {}
 
         /**
-         * @param \Throwable $throwable
          * @return string|null ID of the reported error event or null if no event was reported
          */
         public static function createErrorFromThrowable(\Throwable $throwable): ?string {}
 
         /**
-         * @param CustomErrorData $customErrorData
          * @return string|null ID of the reported error event or null if no event was reported
          */
         public static function createCustomError(CustomErrorData $customErrorData): ?string {}
@@ -114,13 +112,11 @@ namespace Elastic\Apm {
         public function asCurrent(): self;
 
         /**
-         * @param float $timestamp
          * @return TransactionBuilderInterface
          */
         public function timestamp(float $timestamp): self;
 
         /**
-         * @param \Closure $headerExtractor
          * @return TransactionBuilderInterface
          */
         public function distributedTracingHeaderExtractor(\Closure $headerExtractor): self;
@@ -131,7 +127,6 @@ namespace Elastic\Apm {
         public function begin(): TransactionInterface;
 
         /**
-         * @param \Closure $callback
          * @return mixed The return value of $callback
          */
         public function capture(\Closure $callback);
@@ -184,17 +179,10 @@ namespace Elastic\Apm {
 
             public function context(): TransactionContextInterface;
 
-        /**
-         * @param string|null $result
-         * @return void
-         */
         public function setResult(?string $result): void;
 
             public function getResult(): ?string;
 
-        /**
-         * @return string
-         */
         public function ensureParentId(): string;
     }
 
@@ -204,15 +192,8 @@ namespace Elastic\Apm {
 
             public function getParentId(): string;
 
-        /**
-         * @param string|null $action
-         * @return void
-         */
         public function setAction(?string $action): void;
 
-        /**
-         * @param string|null $subtype
-         */
         public function setSubtype(?string $subtype): void;
 
             public function context(): SpanContextInterface;
@@ -235,41 +216,20 @@ namespace Elastic\Apm {
 
     interface SpanContextDbInterface
     {
-        /**
-         * @param string|null $statement
-         * @return void
-         */
         public function setStatement(?string $statement): void;
     }
 
     interface SpanContextHttpInterface
     {
-        /**
-         * @param string|null $url
-         * @return void
-         */
         public function setUrl(?string $url): void;
 
-        /**
-         * @param int|null $statusCode
-         * @return void
-         */
         public function setStatusCode(?int $statusCode): void;
 
-        /**
-         * @param string|null $method
-         * @return void
-         */
         public function setMethod(?string $method): void;
     }
 
     interface SpanContextDestinationInterface
     {
-        /**
-         * @param string $name
-         * @param string $resource
-         * @param string $type
-         */
         public function setService(string $name, string $resource, string $type): void;
     }
 
@@ -315,14 +275,8 @@ namespace Elastic\Apm {
             ?float $timestamp = null
         );
 
-        /**
-         * @param string $name
-         */
         public function setName(string $name): void;
 
-        /**
-         * @param string $type
-         */
         public function setType(string $type): void;
 
         /**
@@ -343,21 +297,15 @@ namespace Elastic\Apm {
             public function hasEnded(): bool;
 
         /**
-         * @param \Throwable $throwable
          * @return string|null ID of the reported error event or null if no event was reported
          */
         public function createErrorFromThrowable(\Throwable $throwable): ?string;
 
         /**
-         * @param CustomErrorData $customErrorData
          * @return string|null ID of the reported error event or null if no event was reported
          */
         public function createCustomError(CustomErrorData $customErrorData): ?string;
 
-        /**
-         * @param string|null $outcome
-         * @return void
-         */
         public function setOutcome(?string $outcome): void;
 
             public function getOutcome(): ?string;
@@ -426,19 +374,13 @@ namespace Elastic\Apm {
     interface ExecutionSegmentContextInterface
     {
         /**
-         * @param string                     $key
          * @param string|bool|int|float|null $value
-         * @return void
          */
         public function setLabel(string $key, $value): void;
     }
 
     interface TransactionContextRequestInterface
     {
-        /**
-         * @param string $method
-         * @return void
-         */
         public function setMethod(string $method): void;
 
             public function url(): TransactionContextRequestUrlInterface;
@@ -446,46 +388,18 @@ namespace Elastic\Apm {
 
     interface TransactionContextRequestUrlInterface
     {
-        /**
-         * @param ?string $domain
-         * @return void
-         */
         public function setDomain(?string $domain): void;
 
-        /**
-         * @param ?string $full
-         * @return void
-         */
         public function setFull(?string $full): void;
 
-        /**
-         * @param ?string $original
-         * @return void
-         */
         public function setOriginal(?string $original): void;
 
-        /**
-         * @param ?string $path
-         * @return void
-         */
         public function setPath(?string $path): void;
 
-        /**
-         * @param ?int $port
-         * @return void
-         */
         public function setPort(?int $port): void;
 
-        /**
-         * @param ?string $protocol
-         * @return void
-         */
         public function setProtocol(?string $protocol): void;
 
-        /**
-         * @param ?string $query
-         * @return void
-         */
         public function setQuery(?string $query): void;
     }
 }

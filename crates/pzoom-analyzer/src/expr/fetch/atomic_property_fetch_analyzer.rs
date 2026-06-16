@@ -159,6 +159,11 @@ pub fn analyze_property(
                 analysis_data
                     .referenced_properties
                     .insert((prop_info.declaring_class, prop_id));
+                analysis_data.add_class_member_reference(
+                    &_context.function_context,
+                    (prop_info.declaring_class, prop_id),
+                    false,
+                );
             }
             // Visibility, scoped to the class that declares the property (matches Psalm):
             // - private: only the declaring class itself;
@@ -601,6 +606,11 @@ fn get_property_type_inner(
                         analysis_data
                             .referenced_properties
                             .insert((prop_info.declaring_class, prop_id));
+                        analysis_data.add_class_member_reference(
+                            &context.function_context,
+                            (prop_info.declaring_class, prop_id),
+                            false,
+                        );
                     }
                     let property_type = get_pseudo_property_get_type(
                         class_info,

@@ -207,6 +207,10 @@ pub enum IssueKind {
     RedundantPropertyInitializationCheck,
     RedundantPropertyInitialization,
 
+    // Method/function complexity (Psalm's limitMethodComplexity)
+    ComplexMethod,
+    ComplexFunction,
+
     // Type system issues
     MixedAssignment,
     MixedArgument,

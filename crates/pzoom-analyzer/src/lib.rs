@@ -37,6 +37,7 @@ pub mod stmt_analyzer;
 pub mod template;
 pub mod type_expander;
 pub mod type_comparator;
+pub mod unused_symbols;
 
 pub use config::Config;
 pub use context::{BlockContext, FunctionContext, FunctionContextInfo, FunctionLikeId};

@@ -122,6 +122,11 @@ pub struct Config {
     /// Whether to find unused Psalm suppress annotations.
     pub find_unused_suppress: bool,
 
+    /// Psalm's `limitMethodComplexity`: emit ComplexMethod/ComplexFunction
+    /// for function-likes whose data-flow graph exceeds the size/path-length
+    /// limits.
+    pub limit_method_complexity: bool,
+
     /// Psalm's `allConstantsGlobal`: treat every scanned `define()` as a
     /// global constant regardless of call flow.
     pub all_constants_global: bool,
@@ -196,6 +201,7 @@ impl Default for Config {
             plugin_stubs: Vec::new(),
             forbidden_functions: FxHashSet::default(),
             find_unused_suppress: false,
+            limit_method_complexity: false,
             all_constants_global: false,
             error_baseline: None,
             find_unused_baseline_entry: false,

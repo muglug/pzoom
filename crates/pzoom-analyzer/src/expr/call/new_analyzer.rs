@@ -254,11 +254,21 @@ pub fn analyze(
         if analyzer.config.find_unused_code {
             if context.self_class != Some(concrete_class_id) {
                 analysis_data.referenced_classes.insert(concrete_class_id);
+                analysis_data.add_symbol_reference(
+                    &context.function_context,
+                    concrete_class_id,
+                    false,
+                );
             }
             let construct_lc = analyzer.interner.intern("__construct");
             analysis_data
                 .referenced_class_members
                 .insert((concrete_class_id, construct_lc));
+            analysis_data.add_class_member_reference(
+                &context.function_context,
+                (concrete_class_id, construct_lc),
+                false,
+            );
         }
         let mut inferred_type_params = None;
 

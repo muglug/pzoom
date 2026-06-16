@@ -116,6 +116,11 @@ pub struct FunctionAnalysisData {
     /// isMethodReturnReferenced.
     pub method_returns_used: rustc_hash::FxHashSet<(pzoom_str::StrId, pzoom_str::StrId)>,
 
+    /// Hakana-style codebase-wide symbol reference graph (ported wholesale).
+    /// Populated during analysis, merged across all function-likes, and queried
+    /// by the codebase-wide unused-definition pass.
+    pub symbol_references: pzoom_code_info::symbol_references::SymbolReferences,
+
     /// Return types inferred from return statements.
     pub inferred_return_types: Vec<TUnion>,
 
@@ -219,6 +224,76 @@ pub struct FunctionAnalysisData {
 impl FunctionAnalysisData {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record that the function-like currently being analyzed (given by
+    /// `function_context`) references `symbol` (a class/function/enum name).
+    /// Mirrors Hakana's `analysis_data.symbol_references.add_reference_to_symbol`.
+    pub fn add_symbol_reference(
+        &mut self,
+        function_context: &crate::context::FunctionContextInfo,
+        symbol: StrId,
+        in_signature: bool,
+    ) {
+        self.symbol_references.add_reference_to_symbol(
+            function_context.referencing_id().as_ref(),
+            function_context.calling_class,
+            symbol,
+            in_signature,
+        );
+    }
+
+    /// Record a reference to a class member `(class, member)` — a method, class
+    /// constant, enum case or property. Mirrors Hakana's
+    /// `add_reference_to_class_member`.
+    pub fn add_class_member_reference(
+        &mut self,
+        function_context: &crate::context::FunctionContextInfo,
+        class_member: (StrId, StrId),
+        in_signature: bool,
+    ) {
+        self.symbol_references.add_reference_to_class_member(
+            function_context.referencing_id().as_ref(),
+            function_context.calling_class,
+            class_member,
+            in_signature,
+        );
+    }
+
+    /// Record a reference to an *overridden* member (keeps descendant overrides
+    /// alive). Mirrors Hakana's `add_reference_to_overridden_class_member`.
+    pub fn add_overridden_member_reference(
+        &mut self,
+        function_context: &crate::context::FunctionContextInfo,
+        class_member: (StrId, StrId),
+    ) {
+        self.symbol_references.add_reference_to_overridden_class_member(
+            function_context.referencing_id().as_ref(),
+            function_context.calling_class,
+            class_member,
+        );
+    }
+
+    /// Record signature references for a function-like: every class named in a
+    /// parameter or return type is referenced (in_signature = true), attributed
+    /// to the function-like. Mirrors Hakana's functionlike_analyzer.
+    pub fn record_signature_references(
+        &mut self,
+        function_context: &crate::context::FunctionContextInfo,
+        info: &pzoom_code_info::FunctionLikeInfo,
+    ) {
+        let mut classes = rustc_hash::FxHashSet::default();
+        for param in &info.params {
+            if let Some(param_type) = param.get_type() {
+                crate::unused_symbols::record_union_classes(param_type, &mut classes);
+            }
+        }
+        if let Some(return_type) = info.get_return_type() {
+            crate::unused_symbols::record_union_classes(return_type, &mut classes);
+        }
+        for class in classes {
+            self.add_symbol_reference(function_context, class, true);
+        }
     }
 
     /// Add an issue to be reported.

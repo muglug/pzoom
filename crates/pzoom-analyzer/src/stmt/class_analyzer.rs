@@ -112,6 +112,27 @@ fn analyze_class(
         ));
     }
 
+    // A class signature-references its parents, interfaces and used traits
+    // (Hakana's classlike_analyzer): a class extended/implemented/used anywhere
+    // is referenced.
+    if let Some(class_info) = analyzer.codebase.get_class(class_name_id) {
+        for parent_class in &class_info.all_parent_classes {
+            analysis_data
+                .symbol_references
+                .add_symbol_reference_to_symbol(class_name_id, *parent_class, true);
+        }
+        for parent_interface in &class_info.all_parent_interfaces {
+            analysis_data
+                .symbol_references
+                .add_symbol_reference_to_symbol(class_name_id, *parent_interface, true);
+        }
+        for trait_name in &class_info.used_traits {
+            analysis_data
+                .symbol_references
+                .add_symbol_reference_to_symbol(class_name_id, *trait_name, true);
+        }
+    }
+
     // Psalm's ClassAnalyzer: a class named after a reserved word
     // (int|float|bool|string|void|null|false|true|object|mixed, or the bare
     // name `resource`) reports ReservedWord at the class name.
@@ -6709,6 +6730,20 @@ pub(crate) fn analyze_method(
     method_context.namespace = namespace;
     method_context.self_class = Some(class_name_id);
     method_context.parent_class = class_info.and_then(|ci| ci.parent_class);
+    // Record the referencing method so symbol references inside the body are
+    // attributed to it (Hakana's function_context). The member name is stored
+    // lowercased to match how call sites record references, so a recursive
+    // self-call is correctly excluded.
+    {
+        let method_lc_id = analyzer.interner.intern(&method_name.to_lowercase());
+        method_context.function_context.calling_class = Some(class_name_id);
+        method_context.function_context.calling_functionlike_id =
+            Some(crate::context::FunctionLikeId::Method(class_name_id, method_lc_id));
+        if let Some(method_info) = method_info {
+            analysis_data
+                .record_signature_references(&method_context.function_context, method_info);
+        }
+    }
 
     // Add $this if not static
     if !method_info.is_some_and(|mi| mi.is_static) {

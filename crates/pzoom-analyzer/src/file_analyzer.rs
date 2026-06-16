@@ -33,9 +33,12 @@ impl<'a> FileAnalyzer<'a> {
     }
 
     /// Analyze a single file and return its (non line-suppressed) issues.
-    pub fn analyze(&self, file_path: StrId) -> Vec<Issue> {
+    pub fn analyze(
+        &self,
+        file_path: StrId,
+    ) -> (Vec<Issue>, FileReferenceData) {
         let Some(file_info) = self.codebase.files.get(&file_path) else {
-            return Vec::new();
+            return (Vec::new(), FileReferenceData::default());
         };
 
         let path_str = self.interner.lookup(file_path);
@@ -73,6 +76,11 @@ impl<'a> FileAnalyzer<'a> {
             );
         }
         let mut context = BlockContext::new();
+        // File-scope code has no enclosing function or class, so attribute its
+        // symbol references to the file itself (its path StrId), mirroring how
+        // Hakana always has a referencing function-like.
+        context.function_context.calling_functionlike_id =
+            Some(crate::context::FunctionLikeId::Function(file_path));
 
         // Analyze the program's statements.
         let _ = stmt_analyzer::analyze_stmts(
@@ -200,6 +208,13 @@ impl<'a> FileAnalyzer<'a> {
             }
         }
 
+        // Psalm's limitMethodComplexity (StatementsAnalyzer::checkUnreferencedVars):
+        // ComplexMethod/ComplexFunction for function-likes whose variable-use
+        // data-flow graph exceeds the size/path-length limits.
+        if self.config.limit_method_complexity {
+            report_complex_functions(program, &mut analysis_data, file_path, &stmt_analyzer);
+        }
+
         // Unused-variable analysis (Psalm's checkUnreferencedVars /
         // checkParamReferences over its VariableUseGraph; pzoom uses Hakana's
         // walk over the function-body data flow graph). Runs before the
@@ -230,16 +245,15 @@ impl<'a> FileAnalyzer<'a> {
             );
             analysis_data.issues.extend(taint_issues);
         }
-        if self.config.find_unused_code {
-            report_unused_declarations(
-                &mut analysis_data,
-                file_path,
-                file_info,
-                &stmt_analyzer,
-                self.codebase,
-                self.interner,
-            );
-        }
+        // Unused class/method/function detection is codebase-wide (it needs
+        // references from every file), so it runs in a second pass after this
+        // one — see `unused_symbols::find_unused_definitions`. Hand off this
+        // file's contribution to the merged symbol-reference graph.
+        let reference_data = FileReferenceData {
+            symbol_references: std::mem::take(&mut analysis_data.symbol_references),
+            referenced_properties: std::mem::take(&mut analysis_data.referenced_properties),
+            method_returns_used: std::mem::take(&mut analysis_data.method_returns_used),
+        };
 
         // Psalm's findUnusedPsalmSuppress feature (always on in its test
         // harness): inline-suppression matches record the suppressing token's
@@ -354,6 +368,14 @@ impl<'a> FileAnalyzer<'a> {
                 {
                     continue;
                 }
+                // Unused-definition issues are emitted by the codebase-wide pass
+                // (after this one), which owns whether their `@psalm-suppress`
+                // was used, so this per-file pass must not pre-judge them.
+                if self.config.find_unused_code
+                    && crate::unused_symbols::is_unused_definition_kind(&candidate.name)
+                {
+                    continue;
+                }
                 let (line, col) = stmt_analyzer.get_line_column(candidate.offset as u32);
                 filtered.push(Issue::new(
                     IssueKind::UnusedPsalmSuppress,
@@ -372,8 +394,20 @@ impl<'a> FileAnalyzer<'a> {
             }
         }
 
-        filtered
+        (filtered, reference_data)
     }
+}
+
+/// A file's contribution to the codebase-wide unused-definition analysis: its
+/// symbol-reference graph plus the per-file sets the graph does not capture
+/// (reads-only property accesses and used method return values).
+#[derive(Default)]
+pub struct FileReferenceData {
+    pub symbol_references: pzoom_code_info::symbol_references::SymbolReferences,
+    /// Reads-only property accesses and used method return values, which the
+    /// symbol graph does not distinguish (it records writes too).
+    pub referenced_properties: rustc_hash::FxHashSet<(StrId, StrId)>,
+    pub method_returns_used: rustc_hash::FxHashSet<(StrId, StrId)>,
 }
 
 /// Whether the graph holds an assignment source for `name` within the given
@@ -400,6 +434,133 @@ fn body_writes_variable(
 /// (FunctionLikeAnalyzer::isIgnoredForUnusedParam).
 fn is_ignored_for_unused_param(var_name: &str) -> bool {
     var_name.starts_with("$_") || (var_name.starts_with("$unused") && var_name != "$unused")
+}
+
+/// Psalm's limitMethodComplexity (StatementsAnalyzer::checkUnreferencedVars over
+/// its VariableUseGraph): emit ComplexMethod / ComplexFunction for a method /
+/// top-level function whose data-flow graph is too large *and* too spread out.
+///
+/// Psalm flags when `edge_count > max_graph_size` AND
+/// `mean_path_length > max_avg_path_length` AND
+/// `edge_count / unique_destinations > 1.1`, where each edge's length is the
+/// line distance between its endpoints. pzoom's variable-use graph (ported from
+/// Hakana) is materially denser than Psalm's, so matching Psalm's 200 size
+/// limit flags ~4x too many methods; the size limit is calibrated to pzoom's
+/// graph (800) while the path-length (70) and branch ratio (1.1) match Psalm.
+///
+/// Each closure/arrow gets its own graph in Psalm, so an edge is attributed to
+/// the innermost function-like containing both endpoints; closures/arrows never
+/// report themselves.
+fn report_complex_functions(
+    program: &mago_syntax::ast::Program<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    file_path: StrId,
+    stmt_analyzer: &StatementsAnalyzer<'_>,
+) {
+    use mago_span::HasSpan as _;
+    use pzoom_code_info::data_flow::node::DataFlowNodeId;
+    type N<'a, 'b> = mago_syntax::ast::node::Node<'a, 'b>;
+
+    // Calibrated to pzoom's (denser) graph; see the doc comment above.
+    const MAX_GRAPH_SIZE: usize = 800;
+    const MAX_AVG_PATH_LENGTH: f64 = 70.0;
+    const MIN_BRANCH_RATIO: f64 = 1.1;
+
+    // (span_start, span_end, report): report = Some((is_method, name_offset))
+    // for a method/top-level function; None for closures/arrows (they bound
+    // attribution but never report).
+    let func_spans: Vec<(u32, u32, Option<(bool, u32)>)> =
+        N::Program(program).filter_map(|node| {
+            let report = match node {
+                N::Method(m) => Some((true, m.name.span().start.offset)),
+                N::Function(f) => Some((false, f.name.span().start.offset)),
+                N::Closure(_) | N::ArrowFunction(_) => None,
+                _ => return None,
+            };
+            let s = node.span();
+            Some((s.start.offset, s.end.offset, report))
+        });
+    if func_spans.is_empty() {
+        return;
+    }
+    let innermost = |off: u32| -> Option<usize> {
+        func_spans
+            .iter()
+            .enumerate()
+            .filter(|(_, (s, e, _))| off >= *s && off < *e)
+            .min_by_key(|(_, (s, e, _))| e - s)
+            .map(|(i, _)| i)
+    };
+
+    // (is_method, name_offset, count, round(mean)) for each function-like over
+    // the limits. Computed under an immutable borrow of the graph, then emitted.
+    let emits: Vec<(bool, u32, usize, i64)> = {
+        let g = &analysis_data.data_flow_graph;
+        let node_pos = |id: &DataFlowNodeId| {
+            g.vertices
+                .get(id)
+                .or_else(|| g.sources.get(id))
+                .or_else(|| g.sinks.get(id))
+                .and_then(|n| n.get_pos())
+        };
+        let mut owner_len: rustc_hash::FxHashMap<usize, u64> = rustc_hash::FxHashMap::default();
+        let mut owner_dest: rustc_hash::FxHashMap<usize, rustc_hash::FxHashMap<&DataFlowNodeId, usize>> =
+            rustc_hash::FxHashMap::default();
+        for (from, dests) in &g.forward_edges {
+            let Some(fp) = node_pos(from) else { continue };
+            let Some(of) = innermost(fp.start_offset) else { continue };
+            for (to, _) in dests {
+                let Some(tp) = node_pos(to) else { continue };
+                if tp.file_path != fp.file_path || innermost(tp.start_offset) != Some(of) {
+                    continue;
+                }
+                let length = (fp.start_line as i64 - tp.start_line as i64).unsigned_abs();
+                if length == 0 {
+                    continue;
+                }
+                *owner_len.entry(of).or_insert(0) += length;
+                *owner_dest.entry(of).or_default().entry(to).or_insert(0) += 1;
+            }
+        }
+        let mut emits = Vec::new();
+        for (owner, dests) in &owner_dest {
+            let Some((is_method, name_offset)) = func_spans[*owner].2 else {
+                continue;
+            };
+            let count: usize = dests.values().copied().sum();
+            if count == 0 {
+                continue;
+            }
+            let mean = owner_len[owner] as f64 / count as f64;
+            let branch_ratio = count as f64 / dests.len().max(1) as f64;
+            if count > MAX_GRAPH_SIZE && mean > MAX_AVG_PATH_LENGTH && branch_ratio > MIN_BRANCH_RATIO
+            {
+                emits.push((is_method, name_offset, count, mean.round() as i64));
+            }
+        }
+        emits
+    };
+
+    for (is_method, name_offset, count, mean_round) in emits {
+        let (line, col) = stmt_analyzer.get_line_column(name_offset);
+        let (kind, noun) = if is_method {
+            (IssueKind::ComplexMethod, "method")
+        } else {
+            (IssueKind::ComplexFunction, "function")
+        };
+        analysis_data.add_issue(Issue::new(
+            kind,
+            format!(
+                "This {noun}\u{2019}s complexity is greater than the project limit \
+                 (method graph size = {count}, average path length = {mean_round})"
+            ),
+            file_path,
+            name_offset,
+            name_offset + 1,
+            line,
+            col,
+        ));
+    }
 }
 
 /// Report UnusedVariable / UnusedForeachValue / UnusedParam /
@@ -646,7 +807,7 @@ fn stmt_docblock_suppression_match_for_issue(
 
 /// A class-level docblock `@psalm-suppress` covering the issue's position
 /// (Psalm propagates class suppressions to every member analysis).
-fn class_docblock_suppression_match_for_issue(
+pub(crate) fn class_docblock_suppression_match_for_issue(
     contents: &str,
     class_spans: &[(u32, u32)],
     issue: &Issue,
@@ -707,7 +868,7 @@ fn parent_issue_name(issue_name: &str) -> Option<&'static str> {
     }
 }
 
-fn line_suppression_match_for_issue(
+pub(crate) fn line_suppression_match_for_issue(
     lines: &[&str],
     line_offsets: &[usize],
     issue: &Issue,
@@ -1012,84 +1173,24 @@ fn suppresses_issue(token: &str, issue_name: &str) -> bool {
 /// Port of Psalm's `ClassLikes::consolidateAnalyzedData` reporting
 /// (checkClassReferences / checkMethodReferences / checkPropertyReferences),
 /// scoped to the classes declared in the analyzed file.
-fn report_unused_declarations(
-    analysis_data: &mut crate::function_analysis_data::FunctionAnalysisData,
+/// Per-file unused class/method/property/return-value detection, emitting
+/// Psalm's issue kinds. Runs once per analyzed file from the codebase-wide
+/// [`crate::unused_symbols::find_unused_definitions`], which supplies the merged
+/// reference sets (so a definition referenced from any file is seen as used) and
+/// the file's line-start offsets. Returns raw, unsuppressed issues.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn report_unused_declarations(
     file_path: StrId,
     file_info: &pzoom_code_info::file_info::FileInfo,
-    stmt_analyzer: &StatementsAnalyzer<'_>,
+    line_starts: &[usize],
     codebase: &pzoom_code_info::CodebaseInfo,
     interner: &Interner,
-) {
+    referenced: &rustc_hash::FxHashSet<StrId>,
+    referenced_class_members: &rustc_hash::FxHashSet<(StrId, StrId)>,
+    referenced_properties: &rustc_hash::FxHashSet<(StrId, StrId)>,
+    method_returns_used: &rustc_hash::FxHashSet<(StrId, StrId)>,
+) -> Vec<Issue> {
     use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
-
-    // A class declaration references its parents/interfaces, and signature
-    // types reference their named objects (Psalm records these at scan time).
-    fn record_union_classes(
-        union: &pzoom_code_info::TUnion,
-        out: &mut rustc_hash::FxHashSet<StrId>,
-    ) {
-        for atomic in &union.types {
-            match atomic {
-                pzoom_code_info::TAtomic::TNamedObject {
-                    name, type_params, ..
-                } => {
-                    out.insert(*name);
-                    if let Some(type_params) = type_params {
-                        for param in type_params.iter() {
-                            record_union_classes(param, out);
-                        }
-                    }
-                }
-                pzoom_code_info::TAtomic::TClassString { as_type } => {
-                    if let Some(as_type) = as_type {
-                        record_union_classes_atomic(as_type, out);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    fn record_union_classes_atomic(
-        atomic: &pzoom_code_info::TAtomic,
-        out: &mut rustc_hash::FxHashSet<StrId>,
-    ) {
-        if let pzoom_code_info::TAtomic::TNamedObject { name, .. } = atomic {
-            out.insert(*name);
-        }
-    }
-    let mut referenced = std::mem::take(&mut analysis_data.referenced_classes);
-    fn record_signature_refs(
-        info: &pzoom_code_info::FunctionLikeInfo,
-        referenced: &mut rustc_hash::FxHashSet<StrId>,
-    ) {
-        for param in &info.params {
-            if let Some(param_type) = param.get_type() {
-                record_union_classes(param_type, referenced);
-            }
-        }
-        if let Some(return_type) = info.get_return_type() {
-            record_union_classes(return_type, referenced);
-        }
-    }
-    for function_id in &file_info.functions {
-        if let Some(info) = codebase.functionlike_infos.get(function_id) {
-            record_signature_refs(info, &mut referenced);
-        }
-    }
-    for class_id in &file_info.classes {
-        let Some(class_info) = codebase.get_class(*class_id) else {
-            continue;
-        };
-        if let Some(parent) = class_info.parent_class {
-            referenced.insert(parent);
-        }
-        for interface in &class_info.interfaces {
-            referenced.insert(*interface);
-        }
-        for method_info in class_info.methods.values() {
-            record_signature_refs(method_info, &mut referenced);
-        }
-    }
 
     let magic_method_skips = [
         "__destruct",
@@ -1120,10 +1221,14 @@ fn report_unused_declarations(
             continue;
         }
         let class_name = interner.lookup(*class_id).to_string();
+        // Anonymous classes (`new class {}`) are used where they are defined.
+        if class_name.starts_with("@anonymous") {
+            continue;
+        }
         let class_referenced = referenced.contains(class_id);
 
         let mut emit = |kind: IssueKind, message: String, start: u32, end: u32| {
-            let (line, col) = stmt_analyzer.get_line_column(start);
+            let (line, col) = crate::unused_symbols::line_column(line_starts, start);
             new_issues.push(Issue::new(kind, message, file_path, start, end, line, col));
         };
 
@@ -1182,13 +1287,10 @@ fn report_unused_declarations(
                 {
                     continue;
                 }
-                let method_referenced = analysis_data
-                    .referenced_class_members
+                let method_referenced = referenced_class_members
                     .contains(&(*class_id, method_lc))
                     || method_info.declaring_class.is_some_and(|declaring| {
-                        analysis_data
-                            .referenced_class_members
-                            .contains(&(declaring, method_lc))
+                        referenced_class_members.contains(&(declaring, method_lc))
                     });
                 if !method_referenced {
                     // A referenced (or concrete) overridden parent method
@@ -1198,9 +1300,8 @@ fn report_unused_declarations(
                         .get(method_name_id)
                         .is_some_and(|parents| {
                             parents.iter().any(|parent_id| {
-                                let parent_referenced = analysis_data
-                                    .referenced_class_members
-                                    .contains(&(*parent_id, method_lc));
+                                let parent_referenced =
+                                    referenced_class_members.contains(&(*parent_id, method_lc));
                                 let parent_abstract = codebase
                                     .get_class(*parent_id)
                                     .and_then(|parent| parent.methods.get(method_name_id))
@@ -1251,13 +1352,9 @@ fn report_unused_declarations(
                                 pzoom_code_info::TAtomic::TNamedObject { name, .. }
                                     if *name == StrId::STATIC || *name == *class_id
                             )))
-                }) && !analysis_data
-                    .method_returns_used
-                    .contains(&(*class_id, method_lc))
+                }) && !method_returns_used.contains(&(*class_id, method_lc))
                     && !method_info.declaring_class.is_some_and(|declaring| {
-                        analysis_data
-                            .method_returns_used
-                            .contains(&(declaring, method_lc))
+                        method_returns_used.contains(&(declaring, method_lc))
                     })
                 {
                     let (start, end) = method_info
@@ -1298,11 +1395,9 @@ fn report_unused_declarations(
                 {
                     continue;
                 }
-                let prop_referenced = analysis_data
-                    .referenced_properties
+                let prop_referenced = referenced_properties
                     .contains(&(*class_id, *prop_name_id))
-                    || analysis_data
-                        .referenced_properties
+                    || referenced_properties
                         .contains(&(prop_info.declaring_class, *prop_name_id));
                 if prop_referenced {
                     continue;
@@ -1362,6 +1457,5 @@ fn report_unused_declarations(
     }
 
     new_issues.sort_by_key(|issue| issue.location.start_offset);
-    analysis_data.issues.extend(new_issues);
-    analysis_data.referenced_classes = referenced;
+    new_issues
 }

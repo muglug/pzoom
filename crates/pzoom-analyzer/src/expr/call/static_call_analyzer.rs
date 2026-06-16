@@ -223,6 +223,11 @@ pub fn analyze(
                     );
                     if context.self_class != Some(class_info.name) {
                         analysis_data.referenced_classes.insert(class_info.name);
+                        analysis_data.add_symbol_reference(
+                            &context.function_context,
+                            class_info.name,
+                            false,
+                        );
                     }
                 }
                 let resolved_class_name = analyzer.interner.lookup(resolved_class_id);

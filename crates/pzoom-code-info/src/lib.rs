@@ -15,6 +15,7 @@ pub mod member_visibility;
 pub mod property_info;
 pub mod runtime_constants;
 pub mod data_flow;
+pub mod symbol_references;
 pub mod file_info;
 pub mod functionlike_info;
 pub mod issue;

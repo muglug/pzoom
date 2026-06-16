@@ -258,6 +258,11 @@ fn fetch_static_property(
         analysis_data
             .referenced_properties
             .insert((prop_info.declaring_class, prop_id));
+        analysis_data.add_class_member_reference(
+            &context.function_context,
+            (prop_info.declaring_class, prop_id),
+            false,
+        );
     }
     let Some(prop_info) = prop_lookup else {
         // Property not found

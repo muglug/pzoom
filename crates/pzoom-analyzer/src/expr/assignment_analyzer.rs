@@ -659,6 +659,16 @@ fn analyze_assignment_lhs(
                         (assignment_offset, assignment_offset.saturating_add(1)),
                         analysis_data,
                     );
+                    // A generic class-like in the `@var` type must supply the
+                    // right number of params (`@var C<int, int>` on a one-param
+                    // `C` is TooManyTemplateParams) — Psalm validates var
+                    // comments the same way it validates class-member docblocks.
+                    crate::stmt::class_analyzer::check_docblock_generic_param_counts(
+                        analyzer,
+                        annotation_type,
+                        assignment_offset,
+                        analysis_data,
+                    );
 
                     // Psalm (find_unused_variables): a @var annotation whose
                     // type matches the inferred assigned type exactly is

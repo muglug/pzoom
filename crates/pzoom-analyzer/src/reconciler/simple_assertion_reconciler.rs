@@ -471,8 +471,95 @@ pub fn reconcile(
             result.from_docblock = existing_var_type.from_docblock;
             result
         }
+        Assertion::IsLessThan(_)
+        | Assertion::IsLessThanOrEqualTo(_)
+        | Assertion::IsGreaterThan(_)
+        | Assertion::IsGreaterThanOrEqualTo(_) => reconcile_ordering_comparison(
+            assertion,
+            existing_var_type,
+            key,
+            negated,
+            analysis_data,
+            analyzer,
+        ),
         _ => existing_var_type.clone(),
     }
+}
+
+/// Reconciles a `<`/`<=`/`>`/`>=` ordering assertion: narrow the int members to
+/// the asserted range (as the `IsType(range)` path does) and keep or drop
+/// `null`/`false` per Psalm's `doesFilterNullOrFalse` — both compare as 0, so a
+/// comparison removes them only when 0 fails it.
+fn reconcile_ordering_comparison(
+    assertion: &Assertion,
+    existing_var_type: &TUnion,
+    key: Option<&str>,
+    negated: bool,
+    analysis_data: &mut FunctionAnalysisData,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> TUnion {
+    let Some(range) = assertion.ordering_int_range() else {
+        return existing_var_type.clone();
+    };
+
+    let Some(narrowed) =
+        assertion_reconciler::intersect_union_with_atomic(existing_var_type, &range, analyzer)
+    else {
+        // Empty intersection: the comparison can never hold (mirror IsType).
+        if key.is_some() && !existing_var_type.is_mixed() {
+            super::trigger_issue_for_impossible(
+                analysis_data,
+                analyzer,
+                existing_var_type,
+                key.unwrap_or_default(),
+                assertion,
+                false,
+                negated,
+            );
+        }
+        return with_docblock_from(TUnion::nothing(), existing_var_type);
+    };
+
+    let mut result_types = narrowed.types.clone();
+    let mut kept_null_or_false = false;
+    if !assertion.ordering_filters_null_or_false() {
+        for atomic in &existing_var_type.types {
+            if matches!(atomic, TAtomic::TNull | TAtomic::TFalse)
+                && !result_types.contains(atomic)
+            {
+                result_types.push(atomic.clone());
+                kept_null_or_false = true;
+            }
+        }
+    }
+
+    let result = if kept_null_or_false {
+        with_docblock_from(TUnion::from_types(result_types), existing_var_type)
+    } else {
+        // Same result as the IsType(range) path.
+        with_docblock_from(narrowed, existing_var_type)
+    };
+
+    // Psalm's reconcileIs{Less,Greater}Than report `redundant` via
+    // triggerIssueForImpossible when the comparison leaves the type untouched
+    // (e.g. `int<min, 5> < 10`). Report it here directly (intersection clears
+    // the data-flow nodes, so the caller's `==` redundancy check can't see it).
+    if key.is_some()
+        && !existing_var_type.is_mixed()
+        && result.types == existing_var_type.types
+    {
+        super::trigger_issue_for_impossible(
+            analysis_data,
+            analyzer,
+            existing_var_type,
+            key.unwrap_or_default(),
+            assertion,
+            true,
+            negated,
+        );
+    }
+
+    result
 }
 
 fn push_narrowed_template_type(

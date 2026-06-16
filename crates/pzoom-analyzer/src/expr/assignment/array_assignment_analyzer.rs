@@ -255,6 +255,15 @@ fn analyze_assignment_chain<'a>(
                     .expr_types.get(&key_pos).cloned()
                     .map(|t| (*t).clone())
                     .unwrap_or_else(TUnion::array_key);
+                // A null (or possibly-null) key coerces to "" by PHP, but Psalm
+                // flags it: NullArrayOffset for a definite null,
+                // PossiblyNullArrayOffset when only part of the key type is null.
+                maybe_emit_null_array_offset_for_assignment(
+                    analyzer,
+                    analysis_data,
+                    index_expr,
+                    &raw_key_type,
+                );
                 if !root_supports_offset_set {
                     maybe_emit_invalid_array_offset_for_assignment(
                         analyzer,
@@ -2122,6 +2131,46 @@ fn union_for_array_key(key: &ArrayKey) -> TUnion {
             value: value.clone(),
         }),
     }
+}
+
+/// A `null` array key on a plain array coerces to `""` at runtime; Psalm still
+/// reports it — `NullArrayOffset` when the key is definitely null,
+/// `PossiblyNullArrayOffset` when null is only one member of the key type.
+/// Mirrors the read-side check in `array_fetch_analyzer`.
+fn maybe_emit_null_array_offset_for_assignment(
+    analyzer: &StatementsAnalyzer<'_>,
+    analysis_data: &mut FunctionAnalysisData,
+    index_expr: &Expression<'_>,
+    key_type: &TUnion,
+) {
+    let (kind, message) = if key_type.is_null() {
+        (
+            IssueKind::NullArrayOffset,
+            "Cannot access value using null offset".to_string(),
+        )
+    } else if key_type.types.iter().any(|atomic| matches!(atomic, TAtomic::TNull)) {
+        (
+            IssueKind::PossiblyNullArrayOffset,
+            format!(
+                "Cannot access value using possibly null offset {}",
+                key_type.get_id(Some(analyzer.interner))
+            ),
+        )
+    } else {
+        return;
+    };
+
+    let span = index_expr.span();
+    let (line, col) = analyzer.get_line_column(span.start.offset);
+    analysis_data.add_issue(Issue::new(
+        kind,
+        message,
+        analyzer.file_path,
+        span.start.offset,
+        span.end.offset,
+        line,
+        col,
+    ));
 }
 
 fn maybe_emit_invalid_array_offset_for_assignment(

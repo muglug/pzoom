@@ -362,6 +362,16 @@ impl<'a> FileAnalyzer<'a> {
                 if used_suppressions.contains(&candidate.offset) {
                     continue;
                 }
+                // Issues that Psalm only checks under find_unused_variables
+                // (pzoom's report_unused) are never emitted when that mode is
+                // off, so a `@psalm-suppress` of one is not "unused" — Psalm's
+                // findUnusedPsalmSuppress pass does not flag it. Skip the
+                // candidate to match.
+                if !self.config.report_unused
+                    && issue_gated_on_report_unused(&candidate.name)
+                {
+                    continue;
+                }
                 let (line, col) = stmt_analyzer.get_line_column(candidate.offset as u32);
                 filtered.push(Issue::new(
                     IssueKind::UnusedPsalmSuppress,
@@ -683,14 +693,34 @@ fn class_docblock_suppression_match_for_issue(
     None
 }
 
+/// Issues Psalm only checks when `find_unused_variables` is enabled (pzoom's
+/// `report_unused`). With that mode off they are never emitted, so an inline
+/// `@psalm-suppress` of one is exempt from the unused-suppression pass.
+fn issue_gated_on_report_unused(issue_name: &str) -> bool {
+    matches!(
+        issue_name,
+        "UnusedVariable"
+            | "UnusedForeachValue"
+            | "UnnecessaryVarAnnotation"
+            | "UnevaluatedCode"
+            | "UnusedParam"
+            | "UnusedClosureParam"
+    )
+}
+
 /// Psalm's Config::getParentIssueType: suppressing the base kind also
-/// suppresses its Possibly* variant.
+/// suppresses its derived variant (the Possibly* and *GivenDocblockType
+/// children). The reverse never holds — suppressing the child does not
+/// suppress the parent (see `suppresses_issue`).
 fn parent_issue_name(issue_name: &str) -> Option<&'static str> {
     match issue_name {
         "PossiblyUnusedMethod" => Some("UnusedMethod"),
         "PossiblyUnusedProperty" => Some("UnusedProperty"),
         "PossiblyUnusedParam" => Some("UnusedParam"),
         "PossiblyUnusedReturnValue" => Some("UnusedReturnValue"),
+        "RedundantCastGivenDocblockType" => Some("RedundantCast"),
+        "RedundantConditionGivenDocblockType" => Some("RedundantCondition"),
+        "RedundantFunctionCallGivenDocblockType" => Some("RedundantFunctionCall"),
         _ => None,
     }
 }
@@ -991,10 +1021,12 @@ fn suppresses_issue(token: &str, issue_name: &str) -> bool {
         "MixedReturnStatement" | "MixedInferredReturnType" => {
             return issue_name == "MixedReturnStatement";
         }
-        // A `*GivenDocblockType` issue is distinct from its base kind (Psalm
-        // treats them as separate issues): suppressing one must not suppress
-        // the other. pzoom emits these directly where the redundancy follows
-        // from a docblock-provided type, so an exact match is correct.
+        // A `*GivenDocblockType` token suppresses only its own issue, never
+        // the base kind. The parent direction (a `RedundantCast` suppress also
+        // covering `RedundantCastGivenDocblockType`) is Psalm's
+        // getParentIssueType and lives in `parent_issue_name`; without these
+        // arms the generic `strip_suffix` rule below would wrongly let the
+        // child token suppress the parent issue.
         "RedundantCastGivenDocblockType" => {
             return issue_name == "RedundantCastGivenDocblockType";
         }

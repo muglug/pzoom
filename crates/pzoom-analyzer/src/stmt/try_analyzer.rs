@@ -85,11 +85,15 @@ pub fn analyze(
     // Keep an entry context that includes pre-try state and branch outcomes.
     let mut finally_entry_context = original_context.clone();
     finally_entry_context.merge(&try_context);
-    // Like catch entry, the finally runs after a throw that may have
-    // preceded a try assignment (Psalm marks those possibly undefined).
+    // Like catch entry, the finally runs after a throw that may have preceded a
+    // try assignment, so a try-assigned variable read in the finally is possibly
+    // undefined (Psalm). `possibly_undefined_from_try` is the flag
+    // VariableFetchAnalyzer gates the in-scope PossiblyUndefinedVariable report
+    // on, so set it too — otherwise the read passes silently.
     for var_id in &newly_assigned_in_try {
         if let Some(var_type) = finally_entry_context.locals.get_mut(var_id) {
             var_type.possibly_undefined = true;
+            var_type.possibly_undefined_from_try = true;
         }
     }
 
@@ -327,9 +331,11 @@ pub fn analyze(
                     let mut combined = combine_union_types(existing, finally_type, false);
                     // The pessimistic possibly-undefined entry view applies
                     // only INSIDE the finally; the normal path's definedness
-                    // wins afterwards.
+                    // wins afterwards (clear the try-block flag too, so a read
+                    // after the finally is not reported).
                     if existing_defined {
                         combined.possibly_undefined = false;
+                        combined.possibly_undefined_from_try = false;
                     }
                     context.locals.insert(var_id.clone(), combined);
                 } else {

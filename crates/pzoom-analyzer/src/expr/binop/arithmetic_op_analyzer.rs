@@ -465,6 +465,30 @@ pub(crate) fn emit_arithmetic_operand_issue(
         return;
     }
 
+    // Psalm mirrors the nullable check for `false`: a union that merely *contains*
+    // false (e.g. `int|false`) is a PossiblyFalseOperand (ArithmeticOpAnalyzer's
+    // `isFalsable() && !ignore_falsable_issues`).
+    if union
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TFalse))
+        && !union.ignore_falsable_issues
+    {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyFalseOperand,
+            format!(
+                "Cannot use arithmetic on possibly false type {}",
+                union.get_id(Some(analyzer.interner))
+            ),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
     // Psalm's ArithmeticOpAnalyzer reports a mixed operand as MixedOperand
     // and skips the remaining validation for it.
     if union

@@ -219,6 +219,34 @@ pub fn analyze(
     }
     context.check_variables = previous_check_variables;
 
+    // Psalm NewAnalyzer (TTemplateParamClass case): `new $type` where $type is a
+    // templated class-string (`T::class`) instantiates a concrete child of the
+    // template's bound, whose constructor may differ — UnsafeInstantiation unless
+    // the bound preserves its constructor signature. (A non-templated
+    // `class-string<Foo>` bound resolves to `concrete_class_id` and is handled in
+    // the class block below.)
+    if requested_class_id.is_none()
+        && concrete_class_id.is_none()
+        && !is_static_class_reference
+        && let Some(bound_id) = templated_class_string_bound(analyzer, class_expr_type.as_ref())
+        && let Some(bound_info) = analyzer.codebase.get_class(bound_id)
+        && !preserves_constructor_signature(analyzer, bound_info)
+    {
+        let (line, col) = analyzer.get_line_column(pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::UnsafeInstantiation,
+            format!(
+                "Cannot safely instantiate class {} with \"new $class_name\" as its constructor might change in child classes",
+                analyzer.interner.lookup(bound_id)
+            ),
+            analyzer.file_path,
+            pos.0,
+            pos.1,
+            line,
+            col,
+        ));
+    }
+
     // Create the result type
     if let (Some(concrete_class_id), Some(class_name)) = (concrete_class_id, classlike_name) {
         // Psalm records `new` as a class + constructor reference for
@@ -316,6 +344,33 @@ pub fn analyze(
                 analysis_data.add_issue(Issue::new(
                     IssueKind::AbstractInstantiation,
                     format!("Cannot instantiate abstract class {}", class_name),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+
+            // Psalm NewAnalyzer (TClassString case): `new $class(...)` through a
+            // non-templated class-string bound (not a literal class name, not
+            // `new static`) may instantiate a child whose constructor differs.
+            // The bound must be an actual class (`classExists`, so interfaces are
+            // excluded — they have no constructor to change), reported unless it
+            // preserves its constructor signature. Psalm does not exempt a final
+            // *class* here — only a final constructor sets preserve_*.
+            if class_resolved_from_bound
+                && !is_static_class_reference
+                && class_info.kind == ClassLikeKind::Class
+                && !preserves_constructor_signature(analyzer, class_info)
+            {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UnsafeInstantiation,
+                    format!(
+                        "Cannot safely instantiate class {} with \"new $class_name\" as its constructor might change in child classes",
+                        class_name
+                    ),
                     analyzer.file_path,
                     pos.0,
                     pos.1,
@@ -1064,6 +1119,59 @@ fn infer_concrete_class_id_from_class_expr_type(
         .unwrap_or(raw_class_id);
 
     analyzer.codebase.get_class(class_id).map(|_| class_id)
+}
+
+/// Psalm's `preserve_constructor_signature`: set by `@psalm-consistent-constructor`,
+/// a final (own or inherited) `__construct`, or inheritance from such an
+/// ancestor. When true, `new` on a class-string / `new static` is safe because
+/// child classes cannot change the constructor.
+fn preserves_constructor_signature(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+) -> bool {
+    class_info.is_consistent_constructor
+        || class_info
+            .methods
+            .get(&pzoom_str::StrId::CONSTRUCT)
+            .is_some_and(|constructor| constructor.is_final)
+        || class_info.all_parent_classes.iter().any(|parent| {
+            analyzer
+                .codebase
+                .get_class(*parent)
+                .is_some_and(|parent_info| parent_info.is_consistent_constructor)
+        })
+}
+
+/// The bound class of a *templated* class-string (`T::class`, represented as
+/// `class-string<T as Foo>`), for Psalm's UnsafeInstantiation check on
+/// `new $type` (NewAnalyzer's TTemplateParamClass case). Returns the bound only
+/// when it is an existing class (`classExists`, so interface bounds are excluded).
+/// The non-templated `class-string<Foo>` case is handled via `concrete_class_id`.
+fn templated_class_string_bound(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_expr_type: Option<&TUnion>,
+) -> Option<StrId> {
+    let as_type = match class_expr_type?.get_single()? {
+        TAtomic::TClassString {
+            as_type: Some(as_type),
+        } => as_type.as_ref(),
+        TAtomic::TTemplateParamClass { as_type, .. } => as_type.as_ref(),
+        _ => return None,
+    };
+    let TAtomic::TTemplateParam { as_type: bound, .. } = as_type else {
+        return None;
+    };
+    let Some(TAtomic::TNamedObject { name, .. }) = bound.get_single() else {
+        return None;
+    };
+    if *name == StrId::STATIC {
+        return None;
+    }
+    analyzer
+        .codebase
+        .get_class(*name)
+        .filter(|info| info.kind == ClassLikeKind::Class)
+        .map(|_| *name)
 }
 
 fn get_instantiated_type_name_id(

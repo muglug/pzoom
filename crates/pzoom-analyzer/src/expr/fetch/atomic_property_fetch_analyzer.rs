@@ -971,12 +971,12 @@ fn get_property_type_inner(
                             )
                         });
                     } else {
-                        // Psalm checks magic getters first; a plain interface
-                        // fetch reports NoInterfaceProperties and stops — no
-                        // follow-up UndefinedPropertyFetch for the same fetch.
-                        if class_info.kind == ClassLikeKind::Interface
-                            && !class_has_magic_getter(class_info)
-                        {
+                        // Psalm reports a property fetch on an interface as
+                        // NoInterfaceProperties (handleNonExistentClass), *before*
+                        // the @property/__get resolution and regardless of a
+                        // __get magic method. Enum interfaces and PHP 8.4
+                        // get-hooks (handled below) are the only exemptions.
+                        if class_info.kind == ClassLikeKind::Interface {
                             // PHP core enum interfaces have properties: an
                             // interface extending UnitEnum/BackedEnum exposes
                             // the stub-declared $name/$value (Psalm's
@@ -1031,17 +1031,33 @@ fn get_property_type_inner(
                                 continue;
                             }
 
-                            let (line, col) = analyzer.get_line_column(pos.0);
-                            analysis_data.add_issue(Issue::new(
-                                IssueKind::NoInterfaceProperties,
-                                "Interfaces cannot have properties",
-                                analyzer.file_path,
+                            // Psalm returns only when the issue is actually
+                            // reported; a *suppressed* NoInterfaceProperties
+                            // falls through to the magic-getter resolution below
+                            // (so an undeclared property still becomes
+                            // UndefinedMagicPropertyFetch) — unless the interface
+                            // has no __set, where Psalm stops regardless.
+                            if !crate::issue_suppression::is_issue_suppressed_at(
+                                analyzer,
+                                analysis_data,
                                 pos.0,
-                                pos.1,
-                                line,
-                                col,
-                            ));
-                            return None;
+                                "NoInterfaceProperties",
+                            ) {
+                                let (line, col) = analyzer.get_line_column(pos.0);
+                                analysis_data.add_issue(Issue::new(
+                                    IssueKind::NoInterfaceProperties,
+                                    "Interfaces cannot have properties",
+                                    analyzer.file_path,
+                                    pos.0,
+                                    pos.1,
+                                    line,
+                                    col,
+                                ));
+                                return None;
+                            }
+                            if !class_has_magic_setter(class_info) {
+                                return None;
+                            }
                         }
 
                         // A `@mixin` class contributes its declared and
@@ -1259,6 +1275,10 @@ fn get_magic_get_return_type(
 
 fn class_has_magic_getter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
     class_info.methods.contains_key(&pzoom_str::StrId::GET)
+}
+
+fn class_has_magic_setter(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {
+    class_info.methods.contains_key(&pzoom_str::StrId::SET)
 }
 
 pub(crate) fn class_has_sealed_properties(class_info: &pzoom_code_info::ClassLikeInfo) -> bool {

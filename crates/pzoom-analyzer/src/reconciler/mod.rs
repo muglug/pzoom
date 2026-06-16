@@ -662,6 +662,21 @@ pub(crate) fn should_emit_redundant_issue_for_unchanged_assertion(
         Assertion::NotInArray(assertion_type) => {
             not_in_array_is_provably_redundant(existing_var_type, assertion_type)
         }
+        // An ordering comparison is redundant when the value is already wholly
+        // within the asserted int range — same test as IsType(range) above.
+        Assertion::IsLessThan(_)
+        | Assertion::IsLessThanOrEqualTo(_)
+        | Assertion::IsGreaterThan(_)
+        | Assertion::IsGreaterThanOrEqualTo(_) => assertion
+            .ordering_int_range()
+            .and_then(|range| {
+                assertion_reconciler::intersect_union_with_atomic(
+                    existing_var_type,
+                    &range,
+                    analyzer,
+                )
+            })
+            .is_some_and(|intersection| intersection.types == existing_var_type.types),
         _ => false,
     }
 }

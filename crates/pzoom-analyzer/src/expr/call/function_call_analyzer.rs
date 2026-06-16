@@ -116,19 +116,31 @@ pub fn analyze(
         })
         .collect();
 
-    // `X::class` arguments of the class_exists family (and class_alias, whose
-    // alias name does not exist yet) are exempt from class existence checks —
-    // Psalm's Context::inside_class_exists.
+    // `X::class` arguments of the class_exists family are exempt from class
+    // existence checks — Psalm's Context::inside_class_exists (set only for
+    // class_exists/interface_exists/enum_exists/trait_exists, ArgumentsAnalyzer).
+    // class_alias is NOT in that set: Psalm checks its source-class argument
+    // (UndefinedClass on a missing source) and exempts the alias name only by
+    // registering it at scan time — so we must not blanket-exempt it here.
     let is_class_exists_like_call = func_name.is_some_and(|name| {
         name.eq_ignore_ascii_case("class_exists")
             || name.eq_ignore_ascii_case("interface_exists")
             || name.eq_ignore_ascii_case("enum_exists")
             || name.eq_ignore_ascii_case("trait_exists")
-            || name.eq_ignore_ascii_case("class_alias")
     });
     let was_inside_class_exists = context.inside_class_exists;
     if is_class_exists_like_call {
         context.inside_class_exists = true;
+    }
+
+    // class_alias's alias-name (2nd) argument names a class that does not exist
+    // yet. Register the alias from the AST *before* analyzing arguments, so its
+    // `Alias::class` is recognized (is_known_class_alias) and not reported as
+    // UndefinedClass, while the source (1st) argument is still checked. (Psalm
+    // instead registers the alias at scan time; the late re-registration in
+    // named_function_call_handler::handle is idempotent.)
+    if func_name.is_some_and(|name| name.eq_ignore_ascii_case("class_alias")) {
+        named_function_call_handler::apply_class_alias_side_effect(analyzer, func_call, context);
     }
 
     if let Some(func_info) = pre_resolved_func_info {
@@ -184,6 +196,36 @@ pub fn analyze(
             analysis_data,
             context,
         ) {
+            // Psalm validates a call's arguments before computing its (special)
+            // return type; pzoom's early return here would otherwise skip
+            // argument validation for the dependent-type builtins — e.g. the
+            // NullArgument/MixedArgument on `get_class(null)` / `get_class($mixed)`.
+            // Validate types only (not arity): `get_class()` is legal with zero
+            // args, but pzoom's native stub can't mark the param optional, so a
+            // count check would mis-report TooFewArguments. gettype/get_debug_type
+            // take mixed, so in practice only get_class gains a check.
+            if let Some(func_info) = pre_resolved_func_info {
+                let bare = name.trim_start_matches('\\');
+                if bare.eq_ignore_ascii_case("get_class")
+                    || bare.eq_ignore_ascii_case("gettype")
+                    || bare.eq_ignore_ascii_case("get_debug_type")
+                {
+                    let arg_refs: Vec<_> = func_call.argument_list.arguments.iter().collect();
+                    super::arguments_analyzer::check_arguments_match(
+                        analyzer,
+                        &arg_refs,
+                        &arg_positions,
+                        func_info,
+                        name,
+                        analysis_data,
+                        context,
+                        None,
+                        pos,
+                        false,
+                        true,
+                    );
+                }
+            }
             let functionlike_id = pre_resolved_func_info
                 .map(|info| FunctionLikeIdentifier::Function(info.name))
                 .unwrap_or_else(|| {
@@ -2191,7 +2233,7 @@ fn record_named_function_callsite_argument_types(
 ///
 /// These are special syntax that look like function calls but are actually
 /// language constructs handled by the parser/compiler. They won't be in stubs.
-fn is_language_construct(name: &str) -> bool {
+pub(crate) fn is_language_construct(name: &str) -> bool {
     let lower = name.to_lowercase();
     matches!(
         lower.as_str(),
@@ -2223,7 +2265,7 @@ pub(crate) fn is_array_map_function_name(function_id: StrId) -> bool {
     function_id == StrId::ARRAY_MAP
 }
 
-fn is_function_guarded_by_function_exists(
+pub(crate) fn is_function_guarded_by_function_exists(
     context: &BlockContext,
     function_name: &str,
 ) -> bool {

@@ -700,7 +700,15 @@ fn is_redundant_cast(op: &UnaryPrefixOperator, inner_type: &TUnion) -> bool {
 
     match op {
         UnaryPrefixOperator::IntCast(_, _) | UnaryPrefixOperator::IntegerCast(_, _) => {
-            matches!(inner, TAtomic::TInt | TAtomic::TLiteralInt { .. })
+            // Psalm's `(int)` redundancy uses `Union::isInt()`, true for every
+            // int atomic — incl. `int<m,n>` (e.g. `positive-int`) and `literal-int`.
+            matches!(
+                inner,
+                TAtomic::TInt
+                    | TAtomic::TLiteralInt { .. }
+                    | TAtomic::TNonspecificLiteralInt
+                    | TAtomic::TIntRange { .. }
+            )
         }
 
         UnaryPrefixOperator::FloatCast(_, _)

@@ -168,10 +168,11 @@ fn main() {
 
     if worker_count == 1 {
         for (index, test_folder) in &runnable_tests {
-            let result = if let Some(ref base) = base_codebase {
-                run_test_with_base(test_folder, base, cli.update, cli.verbose)
-            } else {
-                run_test(test_folder, &stubs_path, cli.update, cli.verbose)
+            let result = match base_codebase {
+                Some(ref base) if !test_requires_fresh_scan(test_folder) => {
+                    run_test_with_base(test_folder, base, cli.update, cli.verbose)
+                }
+                _ => run_test(test_folder, &stubs_path, cli.update, cli.verbose),
             };
 
             match result {
@@ -217,10 +218,11 @@ fn main() {
                         break;
                     };
 
-                    let result = if let Some(ref base) = base_codebase {
-                        run_test_with_base(test_folder, base, update, verbose)
-                    } else {
-                        run_test(test_folder, &stubs_path, update, verbose)
+                    let result = match base_codebase {
+                        Some(ref base) if !test_requires_fresh_scan(test_folder) => {
+                            run_test_with_base(test_folder, base, update, verbose)
+                        }
+                        _ => run_test(test_folder, &stubs_path, update, verbose),
                     };
 
                     if result_tx
@@ -451,6 +453,44 @@ fn run_test_with_base(
 /// Psalm's test suite, which runs without PECL/third-party extension stubs.
 fn test_enabled_extensions() -> rustc_hash::FxHashSet<String> {
     rustc_hash::FxHashSet::default()
+}
+
+/// Whether a test must be scanned from scratch instead of cloning the shared
+/// base codebase (i.e. `--reuse-codebase` must be ineffective for it).
+///
+/// The base is scanned and populated once for the harness-default PHP version
+/// with unused-code and taint tracking off. A test diverges from that when it:
+/// - pins a different PHP version via `php_version.txt` — re-applying the
+///   CallMap onto an already-populated base does not re-run the
+///   version-dependent stub scan/populate; or
+/// - is an unused-code or taint test — those enable extra scan/populate
+///   tracking the shared base was not built with.
+fn test_requires_fresh_scan(test_folder: &str) -> bool {
+    let input_path = format!("{}/input.php", test_folder);
+
+    if input_path.contains("/UnusedCode/") || input_path.contains("/Taint/") {
+        return true;
+    }
+
+    if let Some(test_dir) = Path::new(&input_path).parent()
+        && let Ok(version) = fs::read_to_string(test_dir.join("php_version.txt"))
+    {
+        let version = version.trim();
+        if !version.is_empty() && php_version_id(version) != BASE_CALLMAP_PHP_VERSION_ID {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Convert a "X.Y[.Z]" PHP version string to a comparable id (matching
+/// `Config::php_version_id`).
+fn php_version_id(version: &str) -> u32 {
+    let mut parts = version.split('.');
+    let major: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(8);
+    let minor: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    major * 10_000 + minor * 100
 }
 
 /// Run a test without a pre-scanned base codebase (slower, scans stubs each time).

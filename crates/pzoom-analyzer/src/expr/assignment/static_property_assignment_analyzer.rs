@@ -120,6 +120,11 @@ pub fn analyze(
                     analysis_data
                         .referenced_properties
                         .insert((prop_info.declaring_class, prop_id));
+                    analysis_data.add_class_member_reference(
+                        &context.function_context,
+                        (prop_info.declaring_class, prop_id),
+                        false,
+                    );
                 }
 
                 // A non-static property is invisible to static access:

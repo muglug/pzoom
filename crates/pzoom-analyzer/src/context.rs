@@ -374,6 +374,21 @@ pub struct FunctionContextInfo {
     pub calling_functionlike_id: Option<FunctionLikeId>,
 }
 
+impl FunctionContextInfo {
+    /// Bridge the analyzer's [`FunctionLikeId`] to code_info's
+    /// [`pzoom_code_info::data_flow::node::FunctionLikeIdentifier`], used as the
+    /// "referencing" key when recording symbol references.
+    pub fn referencing_id(
+        &self,
+    ) -> Option<pzoom_code_info::data_flow::node::FunctionLikeIdentifier> {
+        use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
+        self.calling_functionlike_id.as_ref().map(|id| match id {
+            FunctionLikeId::Function(f) => FunctionLikeIdentifier::Function(*f),
+            FunctionLikeId::Method(c, m) => FunctionLikeIdentifier::Method(*c, *m),
+        })
+    }
+}
+
 /// Identifier for a function-like entity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FunctionLikeId {

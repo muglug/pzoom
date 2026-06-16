@@ -870,6 +870,10 @@ pub(crate) fn enhance_high_order_callable_atomic(
 pub(crate) struct CalleeContext {
     pub class: Option<StrId>,
     pub is_native_callback: bool,
+    /// The function-like containing this callable expression, so a method
+    /// referenced via a callable is attributed to it in the symbol graph.
+    pub referencing_id: Option<pzoom_code_info::data_flow::node::FunctionLikeIdentifier>,
+    pub referencing_class: Option<StrId>,
 }
 
 const PHP_NATIVE_NON_PUBLIC_CB: &[&str] = &[
@@ -997,6 +1001,8 @@ pub(crate) fn validate_callable_argument(
         class: callee_class,
         is_native_callback: callee_class.is_none()
             && PHP_NATIVE_NON_PUBLIC_CB.contains(&callable_name.to_ascii_lowercase().as_str()),
+        referencing_id: context.function_context.referencing_id(),
+        referencing_class: context.function_context.calling_class,
     };
 
     // `map($xs, id())`: the recorded arg type collapsed the callee's unbound
@@ -1701,10 +1707,22 @@ fn resolve_method_callable(
         analysis_data
             .referenced_class_members
             .insert((class_id, method_lc));
+        analysis_data.symbol_references.add_reference_to_class_member(
+            callee_context.referencing_id.as_ref(),
+            callee_context.referencing_class,
+            (class_id, method_lc),
+            false,
+        );
         if let Some(declaring) = method_info.declaring_class {
             analysis_data
                 .referenced_class_members
                 .insert((declaring, method_lc));
+            analysis_data.symbol_references.add_reference_to_class_member(
+                callee_context.referencing_id.as_ref(),
+                callee_context.referencing_class,
+                (declaring, method_lc),
+                false,
+            );
         }
         analysis_data.referenced_classes.insert(class_id);
         analysis_data

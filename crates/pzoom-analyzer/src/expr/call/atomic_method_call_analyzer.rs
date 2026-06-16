@@ -2334,10 +2334,20 @@ pub(crate) fn record_method_reference(
         analysis_data
             .referenced_class_members
             .insert((class_id, method_lc));
+        analysis_data.add_class_member_reference(
+            &context.function_context,
+            (class_id, method_lc),
+            false,
+        );
         if let Some(declaring_class) = declaring_class {
             analysis_data
                 .referenced_class_members
                 .insert((declaring_class, method_lc));
+            analysis_data.add_class_member_reference(
+                &context.function_context,
+                (declaring_class, method_lc),
+                false,
+            );
         }
         // Psalm also records the overridden parent/interface methods as
         // referenced — calling an implementation uses its declaration.
@@ -2352,6 +2362,10 @@ pub(crate) fn record_method_reference(
                         analysis_data
                             .referenced_class_members
                             .insert((*parent_id, method_lc));
+                        analysis_data.add_overridden_member_reference(
+                            &context.function_context,
+                            (*parent_id, method_lc),
+                        );
                     }
                 }
             }

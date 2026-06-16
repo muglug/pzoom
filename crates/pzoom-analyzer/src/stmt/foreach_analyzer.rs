@@ -258,10 +258,20 @@ pub fn analyze(
                     analysis_data
                         .referenced_class_members
                         .insert((*name, method_lc));
+                    analysis_data.add_class_member_reference(
+                        &context.function_context,
+                        (*name, method_lc),
+                        false,
+                    );
                     if let Some(declaring) = method_info.declaring_class {
                         analysis_data
                             .referenced_class_members
                             .insert((declaring, method_lc));
+                        analysis_data.add_class_member_reference(
+                            &context.function_context,
+                            (declaring, method_lc),
+                            false,
+                        );
                     }
                     // The loop consumes the produced values.
                     analysis_data.method_returns_used.insert((*name, method_lc));

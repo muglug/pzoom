@@ -640,6 +640,11 @@ pub fn analyze(
                         && context.self_class != Some(class_id)
                     {
                         analysis_data.referenced_classes.insert(class_id);
+                        analysis_data.add_symbol_reference(
+                            &context.function_context,
+                            class_id,
+                            false,
+                        );
                     }
                     if let Some(method_info) = callable_validation::get_method_info(
                         analyzer,
@@ -652,10 +657,20 @@ pub fn analyze(
                             analysis_data
                                 .referenced_class_members
                                 .insert((class_id, method_lc));
+                            analysis_data.add_class_member_reference(
+                                &context.function_context,
+                                (class_id, method_lc),
+                                false,
+                            );
                             if let Some(declaring) = method_info.declaring_class {
                                 analysis_data
                                     .referenced_class_members
                                     .insert((declaring, method_lc));
+                                analysis_data.add_class_member_reference(
+                                    &context.function_context,
+                                    (declaring, method_lc),
+                                    false,
+                                );
                             }
                             if context.inside_use() {
                                 analysis_data

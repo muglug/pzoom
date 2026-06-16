@@ -177,6 +177,11 @@ pub(crate) fn handle_dynamic_static_call(
                         );
                         if context.self_class != Some(class_info.name) {
                             analysis_data.referenced_classes.insert(class_info.name);
+                            analysis_data.add_symbol_reference(
+                                &context.function_context,
+                                class_info.name,
+                                false,
+                            );
                         }
                     }
                     // A method with no return type of its own resolves through

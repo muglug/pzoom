@@ -130,6 +130,16 @@ pub fn analyze(
     // Create a new context for the function body, preserving namespace
     let mut func_context = BlockContext::new();
     func_context.namespace = context.namespace;
+    // Record the referencing function-like so symbol references inside the body
+    // are attributed to it (Hakana's function_context).
+    if let Some(info) = function_info {
+        func_context.function_context.calling_class = info.declaring_class;
+        func_context.function_context.calling_functionlike_id = Some(match info.declaring_class {
+            Some(class) => crate::context::FunctionLikeId::Method(class, info.name),
+            None => crate::context::FunctionLikeId::Function(info.name),
+        });
+        analysis_data.record_signature_references(&func_context.function_context, info);
+    }
     let no_named_arguments = function_info.is_some_and(|info| info.no_named_arguments);
 
     // Add parameters to context

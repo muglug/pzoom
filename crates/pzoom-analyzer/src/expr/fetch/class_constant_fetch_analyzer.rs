@@ -108,6 +108,7 @@ pub fn analyze(
         && context.self_class != Some(class_id)
     {
         analysis_data.referenced_classes.insert(class_id);
+        analysis_data.add_symbol_reference(&context.function_context, class_id, false);
     }
 
     // Get the constant name

@@ -7,10 +7,11 @@
 //! between the project `Analyzer` and `FileAnalyzer`.
 
 use pzoom_analyzer::Config;
-use pzoom_analyzer::file_analyzer::FileAnalyzer;
+use pzoom_analyzer::file_analyzer::{FileAnalyzer, FileReferenceData};
+use pzoom_code_info::symbol_references::SymbolReferences;
 use pzoom_code_info::{CodebaseInfo, Issue};
 use pzoom_str::{Interner, StrId};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of the analysis phase.
 pub struct AnalysisResult {
@@ -74,10 +75,13 @@ impl<'a> Analyzer<'a> {
         if group_size == 1 {
             let file_analyzer = FileAnalyzer::new(self.codebase, self.interner, self.config);
             let mut issues = Vec::new();
+            let mut refs = ReferenceAccumulator::default();
             for file_path in files_to_analyze {
-                issues.extend(file_analyzer.analyze(*file_path));
+                let (file_issues, file_refs) = file_analyzer.analyze(*file_path);
+                issues.extend(file_issues);
+                refs.merge(file_refs);
             }
-            return issues;
+            return self.finalize_unused(files_to_analyze, issues, refs);
         }
 
         let mut file_groups = FxHashMap::default();
@@ -90,6 +94,7 @@ impl<'a> Analyzer<'a> {
         }
 
         let mut issues = Vec::new();
+        let mut refs = ReferenceAccumulator::default();
 
         // NOTE: FileInfo records mago's parser diagnostics (parse_errors), but
         // they are not surfaced as ParseError issues yet: mago recovers from
@@ -104,20 +109,70 @@ impl<'a> Analyzer<'a> {
                 handles.push(scope.spawn(move || {
                     let file_analyzer = FileAnalyzer::new(self.codebase, self.interner, self.config);
                     let mut group_issues = Vec::new();
+                    let mut group_refs = ReferenceAccumulator::default();
 
                     for file_path in file_group {
-                        group_issues.extend(file_analyzer.analyze(file_path));
+                        let (file_issues, file_refs) = file_analyzer.analyze(file_path);
+                        group_issues.extend(file_issues);
+                        group_refs.merge(file_refs);
                     }
 
-                    group_issues
+                    (group_issues, group_refs)
                 }));
             }
 
             for handle in handles {
-                issues.extend(handle.join().unwrap());
+                let (group_issues, group_refs) = handle.join().unwrap();
+                issues.extend(group_issues);
+                refs.merge_accumulator(group_refs);
             }
         });
 
+        self.finalize_unused(files_to_analyze, issues, refs)
+    }
+
+    /// Codebase-wide unused-definition pass (Hakana's `find_unused_definitions`),
+    /// run once the per-file reference graphs have been merged.
+    fn finalize_unused(
+        &self,
+        files_to_analyze: &[StrId],
+        mut issues: Vec<Issue>,
+        refs: ReferenceAccumulator,
+    ) -> Vec<Issue> {
+        if self.config.find_unused_code {
+            issues.extend(pzoom_analyzer::unused_symbols::find_unused_definitions(
+                self.codebase,
+                self.interner,
+                self.config,
+                files_to_analyze,
+                &refs.symbol_references,
+                &refs.referenced_properties,
+                &refs.method_returns_used,
+            ));
+        }
         issues
+    }
+}
+
+/// Accumulates every analyzed file's [`FileReferenceData`] into one codebase-wide
+/// reference graph for the unused-definition pass.
+#[derive(Default)]
+struct ReferenceAccumulator {
+    symbol_references: SymbolReferences,
+    referenced_properties: FxHashSet<(StrId, StrId)>,
+    method_returns_used: FxHashSet<(StrId, StrId)>,
+}
+
+impl ReferenceAccumulator {
+    fn merge(&mut self, data: FileReferenceData) {
+        self.symbol_references.extend(data.symbol_references);
+        self.referenced_properties.extend(data.referenced_properties);
+        self.method_returns_used.extend(data.method_returns_used);
+    }
+
+    fn merge_accumulator(&mut self, other: ReferenceAccumulator) {
+        self.symbol_references.extend(other.symbol_references);
+        self.referenced_properties.extend(other.referenced_properties);
+        self.method_returns_used.extend(other.method_returns_used);
     }
 }

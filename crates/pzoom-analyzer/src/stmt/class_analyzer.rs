@@ -1978,21 +1978,80 @@ pub(crate) fn check_functionlike_docblock_param_type_mismatches(
         // key-of<T>/value-of<T> are NOT deferred here: the comparator resolves
         // them against the template's bound (Psalm checks them in
         // keyOf/valueOfUnresolvedTemplateParamIsStillChecked).
-        let docblock_has_deferred = localized_docblock.types.iter().any(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TTemplateParam { .. } | TAtomic::TConditional(_)
-            )
-        }) || docblock_return
+        //
+        // A conditional return type (`($x is T ? A : B)`) is flattened to the
+        // union of its branches for the containment check, mirroring Psalm
+        // (the actual return is always one branch; the condition is irrelevant
+        // to whether the declared type fits the native signature). We flatten
+        // the *raw* branches — not the localized type, whose conditional may
+        // have already collapsed (e.g. `never|void` → `null`) in a way that is
+        // not a reliable basis for the comparison. A branch that references a
+        // template or nested conditional is left deferred; the flattened union
+        // is then localized the same way as the docblock return type.
+        let docblock_has_conditional = docblock_return
             .types
             .iter()
             .any(|atomic| matches!(atomic, TAtomic::TConditional(_)));
+        let (docblock_compare, docblock_has_deferred) = if docblock_has_conditional {
+            let mut compare_atomics: Vec<TAtomic> = Vec::new();
+            let mut deferred = false;
+            for atomic in &docblock_return.types {
+                match atomic {
+                    TAtomic::TTemplateParam { .. } => {
+                        deferred = true;
+                        compare_atomics.push(atomic.clone());
+                    }
+                    TAtomic::TConditional(cond) => {
+                        for branch in [&cond.if_true_type, &cond.if_false_type] {
+                            for branch_atomic in &branch.types {
+                                if matches!(
+                                    branch_atomic,
+                                    TAtomic::TTemplateParam { .. } | TAtomic::TConditional(_)
+                                ) {
+                                    deferred = true;
+                                }
+                                compare_atomics.push(branch_atomic.clone());
+                            }
+                        }
+                    }
+                    other => compare_atomics.push(other.clone()),
+                }
+            }
+            let mut compare = TUnion::from_types(compare_atomics);
+            if !template_defaults.template_types.is_empty() {
+                compare = function_call_analyzer::replace_templates_in_union(
+                    &compare,
+                    &template_defaults,
+                );
+            }
+            if let Some(class_info) = class_info {
+                compare = localize_special_class_names_for_final_class(
+                    &compare,
+                    class_info.name,
+                    class_info.parent_class,
+                );
+            }
+            compare = crate::expr::call::callable_validation::normalize_class_constant_param_type(
+                analyzer,
+                &compare,
+                callable_name,
+            );
+            (compare, deferred)
+        } else {
+            // No conditional: compare the localized docblock directly, deferring
+            // only when it still references a template parameter.
+            let deferred = localized_docblock
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }));
+            (localized_docblock.clone(), deferred)
+        };
         let mut comparison_result = TypeComparisonResult::new();
         if !docblock_has_deferred
-            && !localized_docblock.is_mixed()
+            && !docblock_compare.is_mixed()
             && !union_type_comparator::is_contained_by(
                 analyzer.codebase,
-                &localized_docblock,
+                &docblock_compare,
                 &localized_signature,
                 false,
                 false,
@@ -2950,7 +3009,12 @@ fn compare_method_to_guide(
             IssueKind::MethodSignatureMismatch
         };
 
-    if guide_method.is_final
+    // Psalm's FunctionLikeNodeScanner makes every method of a final class
+    // (native `final` or a `@final` docblock) itself final
+    // (`final = classlike->final || isFinal()`), and MethodComparator then flags
+    // any override of a final method. pzoom keeps method/class finality separate,
+    // so check both here.
+    if (guide_method.is_final || guide_class_info.is_final)
         && !implementer_is_pseudo
         // An inherited copy of the very same method (ForkContext gets the
         // final __clone flattened from AbstractContext's ForbidCloning trait)
@@ -2963,8 +3027,8 @@ fn compare_method_to_guide(
             implementer_method,
             IssueKind::MethodSignatureMismatch,
             format!(
-                "Method {} overrides final method {}",
-                implementer_method_id, guide_method_id
+                "Method {} is declared final and cannot be overridden",
+                guide_method_id
             ),
         );
     }
@@ -3544,8 +3608,8 @@ fn compare_method_to_guide(
             implementer_method.signature_return_type.as_ref(),
         )
     {
-        let guide_specialized = specialize_and_expand(guide_return_type);
-        let native_specialized = specialize_and_expand(native_return_type);
+        let mut guide_specialized = specialize_and_expand(guide_return_type);
+        let mut native_specialized = specialize_and_expand(native_return_type);
         let mut inherit_result = TypeComparisonResult::new();
         if union_type_comparator::is_contained_by(
             analyzer.codebase,
@@ -3555,6 +3619,72 @@ fn compare_method_to_guide(
             false,
             &mut inherit_result,
         ) {
+            return;
+        }
+
+        // The native return type is not merely a widening of the inherited
+        // (documenting) docblock return type from the guide. If it is also not a
+        // covariant narrowing of it, the implementation's own declared type
+        // cannot satisfy the inherited declaration — Psalm's
+        // ImplementedReturnTypeMismatch. (Psalm's MethodComparator skips the
+        // docblock comparison once the return type is inherited, but the native
+        // signature here is the method's own declaration, so the conflict is
+        // real.)
+        if guide_method.return_type.is_some() && !guide_is_stubbed {
+            // Psalm treats void as null when comparing docblock return types.
+            if native_specialized.is_void() {
+                native_specialized = TUnion::null();
+            }
+            if guide_specialized.is_void() {
+                guide_specialized = TUnion::null();
+            }
+            let mut comparison_result = TypeComparisonResult::new();
+            if !native_specialized.is_mixed()
+                && !union_type_comparator::is_contained_by(
+                    analyzer.codebase,
+                    &native_specialized,
+                    &guide_specialized,
+                    false,
+                    false,
+                    &mut comparison_result,
+                )
+                && !comparison_result.type_coerced_from_mixed.unwrap_or(false)
+            {
+                let implementer_declaring_method_id = format!(
+                    "{}::{}",
+                    analyzer.interner.lookup(class_info.name),
+                    analyzer.interner.lookup(method_name).to_lowercase()
+                );
+                if comparison_result.type_coerced.unwrap_or(false) {
+                    emit_method_issue(
+                        analyzer,
+                        analysis_data,
+                        implementer_method,
+                        IssueKind::LessSpecificImplementedReturnType,
+                        format!(
+                            "The inherited return type '{}' for {} is more specific than the implemented return type for {} '{}'",
+                            guide_specialized.get_id(Some(analyzer.interner)),
+                            guide_method_id,
+                            implementer_declaring_method_id,
+                            native_specialized.get_id(Some(analyzer.interner))
+                        ),
+                    );
+                } else {
+                    emit_method_issue(
+                        analyzer,
+                        analysis_data,
+                        implementer_method,
+                        IssueKind::ImplementedReturnTypeMismatch,
+                        format!(
+                            "The inherited return type '{}' for {} is different to the implemented return type for {} '{}'",
+                            guide_specialized.get_id(Some(analyzer.interner)),
+                            guide_method_id,
+                            implementer_declaring_method_id,
+                            native_specialized.get_id(Some(analyzer.interner))
+                        ),
+                    );
+                }
+            }
             return;
         }
     }

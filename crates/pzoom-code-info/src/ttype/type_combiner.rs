@@ -1638,16 +1638,58 @@ fn handle_keyed_array_entries(
             combination.objectlike_sealed = false;
         }
 
-    // When the generic side is present and non-empty, the shape is NOT kept:
-    // the entries fold into the generic array in
+    // When the generic side is present and non-empty, the shape is normally NOT
+    // kept: entries fold into the generic array in
     // get_array_type_from_generic_params (Psalm's subsumption — e.g.
     // `array{1234: 1}|array<int, int>` combines to `array<int, int>`).
+    //
+    // Lists are the exception. Psalm models a list as a TKeyedArray with
+    // `is_list` plus fallback params, so combining `list{0: 1}` with `list<0>`
+    // keeps the shape as `list{0?: 0|1, ...<0>}`: the known entries become
+    // possibly-undefined (the general list guarantees none of them) and absorb
+    // the list value type, which also becomes the fallback. This is what lets a
+    // loop body's `$list[0] = …` widen to a possibly-undefined offset on the
+    // next iteration.
     let array_side_empty_or_absent = match &combination.array_type_params {
         None => true,
         Some((_, value_type)) => value_type.is_nothing(),
     };
     if !array_side_empty_or_absent {
-        return new_types;
+        // Non-list arrays subsume (collapse). A list keeps its shape only when
+        // it is possibly-empty: a guaranteed-non-empty list (array_always_filled)
+        // does not make its known entries possibly-undefined, so it folds into a
+        // plain non-empty-list as before.
+        if !combination.all_arrays_lists || combination.array_always_filled {
+            return new_types;
+        }
+        if let Some((list_key, list_value)) = combination.array_type_params.take() {
+            combination.objectlike_key_type =
+                Some(match combination.objectlike_key_type.take() {
+                    Some(existing) => {
+                        combine_union_types(&existing, &list_key, overwrite_empty_array)
+                    }
+                    None => list_key,
+                });
+            combination.objectlike_value_type =
+                Some(match combination.objectlike_value_type.take() {
+                    Some(existing) => {
+                        combine_union_types(&existing, &list_value, overwrite_empty_array)
+                    }
+                    None => list_value,
+                });
+        }
+        combination.objectlike_sealed = false;
+        let fallback_key = combination.objectlike_key_type.clone();
+        let fallback_value = combination.objectlike_value_type.clone();
+        for (key, entry_type) in combination.objectlike_entries.iter_mut() {
+            if let Some(fallback_value) = &fallback_value
+                && fallback_key_contains(fallback_key.as_ref(), key)
+            {
+                *entry_type =
+                    combine_union_types(entry_type, fallback_value, overwrite_empty_array);
+            }
+            entry_type.possibly_undefined = true;
+        }
     }
 
     // Union with an *empty* generic array means every known key can be absent

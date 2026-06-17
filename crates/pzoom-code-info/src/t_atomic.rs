@@ -555,6 +555,7 @@ impl TAtomic {
     /// `fallback_key`/`fallback_value` (when both present) become `params`.
     /// Normalises `is_list` (sequential int keys + possibly-undefined tail) and
     /// `is_nonempty` (any always-defined entry), like Psalm's `TKeyedArray`.
+    #[inline]
     pub fn keyed_array(
         known_values: FxHashMap<ArrayKey, (bool, TUnion)>,
         is_list: bool,
@@ -583,6 +584,7 @@ impl TAtomic {
     }
 
     /// Build a shape from an already-built `Arc`, normalising the flags.
+    #[inline]
     pub fn keyed_array_arc(
         known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
         is_list: bool,
@@ -636,6 +638,7 @@ impl TAtomic {
     /// A `callable-array` shape — Psalm's `TCallableKeyedArray`. Identical to
     /// [`TAtomic::keyed_array`] but flags the result `is_callable` so the
     /// combiner absorbs it into `callable`.
+    #[inline]
     pub fn callable_array(
         known_values: FxHashMap<ArrayKey, (bool, TUnion)>,
         is_list: bool,

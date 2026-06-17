@@ -280,18 +280,14 @@ fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
                 // (Psalm's definitely_existing_mixed_right_properties). The
                 // entry keeps the right side's possibly-undefined flag.
                 if left_params.is_some() {
-                    let mut combined = combine_union_types(&TUnion::mixed(), right_value, false);
-                    combined.possibly_undefined = *right_undefined;
+                    let combined = combine_union_types(&TUnion::mixed(), right_value, false);
                     known_values.insert(key.clone(), (*right_undefined, combined));
                 } else {
-                    let mut value = right_value.clone();
-                    value.possibly_undefined = *right_undefined;
-                    known_values.insert(key.clone(), (*right_undefined, value));
+                    known_values.insert(key.clone(), (*right_undefined, right_value.clone()));
                 }
             }
             Some((left_undefined, left_value)) if *left_undefined => {
-                let mut combined = combine_union_types(left_value, right_value, false);
-                combined.possibly_undefined = *right_undefined;
+                let combined = combine_union_types(left_value, right_value, false);
                 known_values.insert(key.clone(), (*right_undefined, combined));
             }
             _ => {}

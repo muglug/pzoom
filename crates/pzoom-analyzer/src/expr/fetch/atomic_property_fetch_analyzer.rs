@@ -689,7 +689,7 @@ fn get_property_type_inner(
             // property answers directly (`a&object{test2: "lmao"}`).
             TAtomic::TObjectWithProperties { properties, .. } => {
                 let key = pzoom_code_info::ArrayKey::String(prop_name.to_string());
-                if let Some(prop_type) = properties.get(&key) {
+                if let Some((_, prop_type)) = properties.get(&key) {
                     return Some(prop_type.clone());
                 }
             }
@@ -1208,7 +1208,7 @@ fn get_property_type_inner(
                 // declared type; other properties are allowed (these objects are
                 // not sealed), so they read back as `mixed`.
                 let key = pzoom_code_info::ArrayKey::String(prop_name.to_string());
-                if let Some(prop_type) = properties.get(&key) {
+                if let Some((_, prop_type)) = properties.get(&key) {
                     return Some(prop_type.clone());
                 }
                 return Some(TUnion::mixed());

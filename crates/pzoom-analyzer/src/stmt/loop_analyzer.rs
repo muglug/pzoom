@@ -769,7 +769,7 @@ fn loop_types_equal(a: &pzoom_code_info::TUnion, b: &pzoom_code_info::TUnion) ->
         && a.types.iter().all(|atomic| b.types.contains(atomic))
         && a.from_docblock == b.from_docblock
         && a.from_calculation == b.from_calculation
-        && a.possibly_undefined == b.possibly_undefined
+        && a.possibly_undefined_from_try == b.possibly_undefined_from_try
         && a.ignore_nullable_issues == b.ignore_nullable_issues
         && a.ignore_falsable_issues == b.ignore_falsable_issues
 }

@@ -46,7 +46,7 @@ pub(crate) fn unions_structurally_equal(left: &TUnion, right: &TUnion) -> bool {
     // check depends on); only data-flow node noise is ignored.
     if left.from_calculation != right.from_calculation
         || left.from_docblock != right.from_docblock
-        || left.possibly_undefined != right.possibly_undefined
+        || left.possibly_undefined_from_try != right.possibly_undefined_from_try
     {
         return false;
     }

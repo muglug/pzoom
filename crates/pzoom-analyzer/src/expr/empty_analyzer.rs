@@ -75,7 +75,7 @@ pub fn analyze(
     // docblock-flavoured redundancy), anything else is `bool`.
     let result_type = match analysis_data.expr_types.get(&value_pos).cloned() {
         Some(value_type) => {
-            if value_type.is_always_truthy() && !value_type.possibly_undefined {
+            if value_type.is_always_truthy() && !value_type.possibly_undefined_from_try {
                 let mut result = TUnion::new(TAtomic::TFalse);
                 result.from_docblock = value_type.from_docblock;
                 result

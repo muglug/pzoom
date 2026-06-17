@@ -1941,7 +1941,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
             }
         }
         TAtomic::TObjectWithProperties { properties, .. } => {
-            for prop_type in properties.values_mut() {
+            for (_, prop_type) in properties.values_mut() {
                 populate_union_type(prop_type);
             }
         }

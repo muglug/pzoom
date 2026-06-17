@@ -85,7 +85,6 @@ pub fn reconcile(
             );
         } else if !assertion.has_equality()
             && !inside_loop
-            && !existing_var_type.possibly_undefined
             && !existing_var_type.possibly_undefined_from_try
             && !matches!(
                 assertion,

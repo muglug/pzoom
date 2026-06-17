@@ -4727,7 +4727,7 @@ fn analyze_constructor_init_props(
     let mut initialized = FxHashSet::default();
     for (var_name, var_type) in method_context.locals.iter() {
         if let Some(property_name) = var_name.as_str().strip_prefix("$this->")
-            && !var_type.possibly_undefined
+            && !var_type.possibly_undefined_from_try
         {
             let property_id = analyzer.interner.intern(property_name);
             let assigning_class = method_context

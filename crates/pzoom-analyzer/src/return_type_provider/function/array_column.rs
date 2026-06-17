@@ -72,13 +72,11 @@ fn infer_array_column_return_type(
 
     if let Some(properties) = &row_shape {
         if let Some(value_column) = &value_column {
-            if let Some(element) = properties.get(value_column) {
-                let possibly_undefined = element.possibly_undefined;
-                let mut element = element.clone();
+            if let Some((possibly_undefined, element)) = properties.get(value_column) {
+                let possibly_undefined = *possibly_undefined;
                 // array_column skips undefined elements, so the result element is
                 // always defined.
-                element.possibly_undefined = false;
-                result_element_type = Some(element);
+                result_element_type = Some(element.clone());
                 if input_not_empty && !possibly_undefined {
                     have_at_least_one_res = true;
                 }
@@ -90,7 +88,7 @@ fn infer_array_column_return_type(
         }
 
         if let Some(key_column) = &key_column {
-            if let Some(key) = properties.get(key_column) {
+            if let Some((_, key)) = properties.get(key_column) {
                 result_key_type = key.clone();
             }
         }
@@ -175,7 +173,7 @@ fn input_array_value_type(input: &TUnion) -> (Option<TUnion>, bool) {
 fn row_shape_properties(
     analyzer: &StatementsAnalyzer<'_>,
     row: &TUnion,
-) -> Option<FxHashMap<ArrayKey, TUnion>> {
+) -> Option<FxHashMap<ArrayKey, (bool, TUnion)>> {
     match row.get_single()? {
         // A keyed-array shape (former TKeyedArray), including the empty array
         // `[]`. A *generic* array/list (empty known_values with a typed
@@ -185,24 +183,15 @@ fn row_shape_properties(
             params,
             ..
         } if !known_values.is_empty() || params.is_none() => {
-            // Re-fold each entry's possibly-undefined flag into the value union
-            // so callers can read `value.possibly_undefined`.
-            Some(
-                known_values
-                    .iter()
-                    .map(|(key, (possibly_undefined, value))| {
-                        let mut value = value.clone();
-                        value.possibly_undefined = *possibly_undefined;
-                        (key.clone(), value)
-                    })
-                    .collect(),
-            )
+            // The shape map mirrors `known_values`: each entry pairs its
+            // possibly-undefined flag with the value union.
+            Some((**known_values).clone())
         }
         TAtomic::TObjectWithProperties { properties, .. } => Some(properties.clone()),
         TAtomic::TNamedObject { name, .. } => {
             let class_info = analyzer.codebase.get_class(*name)?;
             let calling_class = analyzer.get_declaring_class();
-            let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+            let mut properties: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
             for (prop_id, prop_info) in &class_info.properties {
                 // Mirror Psalm's get_object_vars: include every property visible
                 // from the current context, not just public ones.
@@ -224,7 +213,10 @@ fn row_shape_properties(
                 let key = ArrayKey::String(prop_name.trim_start_matches('$').to_string());
                 properties.insert(
                     key,
-                    prop_info.get_type().cloned().unwrap_or_else(TUnion::mixed),
+                    (
+                        false,
+                        prop_info.get_type().cloned().unwrap_or_else(TUnion::mixed),
+                    ),
                 );
             }
             if properties.is_empty() {

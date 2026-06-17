@@ -126,9 +126,6 @@ pub(crate) fn substitute_templates_in_union(
     result.parent_nodes = union.parent_nodes.clone();
     result.ignore_nullable_issues = union.ignore_nullable_issues || bound_ignore_nullable;
     result.ignore_falsable_issues = union.ignore_falsable_issues || bound_ignore_falsable;
-    // Shape property unions pass through here: an optional key must stay
-    // optional after substitution.
-    result.possibly_undefined = union.possibly_undefined;
     result
 }
 
@@ -400,10 +397,13 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
         } => TAtomic::TObjectWithProperties {
             properties: properties
                 .iter()
-                .map(|(key, value)| {
+                .map(|(key, (possibly_undefined, value))| {
                     (
                         key.clone(),
-                        substitute_templates_in_union(value, template_result),
+                        (
+                            *possibly_undefined,
+                            substitute_templates_in_union(value, template_result),
+                        ),
                     )
                 })
                 .collect(),
@@ -978,12 +978,12 @@ fn infer_template_replacements_from_atomic(
             properties: param_properties,
             ..
         } => {
-            for (key, param_property_type) in param_properties {
+            for (key, (_, param_property_type)) in param_properties {
                 let arg_property_type = match arg_atomic {
                     TAtomic::TObjectWithProperties {
                         properties: arg_properties,
                         ..
-                    } => arg_properties.get(key).cloned(),
+                    } => arg_properties.get(key).map(|(_, value)| value.clone()),
                     TAtomic::TNamedObject {
                         name: arg_name,
                         type_params: arg_type_params,

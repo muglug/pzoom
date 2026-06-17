@@ -40,10 +40,6 @@ pub struct TUnion {
     #[serde(default)]
     pub from_calculation: bool,
 
-    /// Whether this union represents a keyed-array entry that may be undefined.
-    #[serde(default)]
-    pub possibly_undefined: bool,
-
     /// Whether the type has been fully resolved.
     pub is_resolved: bool,
 
@@ -182,7 +178,6 @@ impl TUnion {
             from_docblock_bits: 0,
             docblock_bits_len: 0,
             from_calculation: false,
-            possibly_undefined: false,
             is_resolved: true,
             parent_nodes: Vec::new(),
             ignore_nullable_issues: false,
@@ -203,7 +198,6 @@ impl TUnion {
             from_docblock_bits: 0,
             docblock_bits_len: 0,
             from_calculation: false,
-            possibly_undefined: false,
             is_resolved: true,
             parent_nodes: Vec::new(),
             ignore_nullable_issues: false,
@@ -362,9 +356,9 @@ impl TUnion {
     ///
     /// Returns true if all types in the union are definitely truthy.
     pub fn is_always_truthy(&self) -> bool {
-        // Psalm's isAlwaysTruthy: a possibly-undefined type (incl. from a try
-        // block whose assignment may not have run) is never always-truthy.
-        if self.possibly_undefined || self.possibly_undefined_from_try {
+        // Psalm's isAlwaysTruthy: a type from a try block whose assignment may
+        // not have run is never always-truthy.
+        if self.possibly_undefined_from_try {
             return false;
         }
         !self.types.is_empty() && self.types.iter().all(|t| t.is_truthy())
@@ -578,7 +572,6 @@ impl PartialEq for TUnion {
         self.types == other.types
             && self.from_docblock == other.from_docblock
             && self.from_calculation == other.from_calculation
-            && self.possibly_undefined == other.possibly_undefined
             && self.is_resolved == other.is_resolved
             && self.parent_nodes == other.parent_nodes
             && self.ignore_nullable_issues == other.ignore_nullable_issues

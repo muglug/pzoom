@@ -442,7 +442,7 @@ fn emit_check_type_annotations(
             };
 
             let mut check_type = check_type.clone();
-            check_type.possibly_undefined = annotation.annotation_possibly_undefined;
+            check_type.possibly_undefined_from_try = annotation.annotation_possibly_undefined;
 
             let mut forward = TypeComparisonResult::new();
             let mut reverse = TypeComparisonResult::new();
@@ -464,7 +464,8 @@ fn emit_check_type_annotations(
                     &mut reverse,
                 );
 
-            let mismatch = check_type.possibly_undefined != checked_type.possibly_undefined
+            let mismatch = check_type.possibly_undefined_from_try
+                != checked_type.possibly_undefined_from_try
                 || !contained
                 || !exact_ok;
 
@@ -479,7 +480,7 @@ fn emit_check_type_annotations(
             let check_var = format!(
                 "{}{}",
                 var_name,
-                if checked_type.possibly_undefined {
+                if checked_type.possibly_undefined_from_try {
                     "?"
                 } else {
                     ""

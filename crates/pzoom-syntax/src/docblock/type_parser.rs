@@ -1683,7 +1683,7 @@ fn keyed_array_tree_to_type(
     // mirroring Psalm's `str_starts_with($type, 'callable-')` handling.
     let type_name: &str = value.strip_prefix("callable-").unwrap_or(value);
 
-    let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+    let mut properties: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
     let mut sealed = true;
     // is_list tracking follows Psalm's getTypeFromKeyedArrayTree exactly.
     let mut is_list = true;
@@ -1704,7 +1704,7 @@ fn keyed_array_tree_to_type(
         }
 
         if let NodeKind::KeyedArrayProperty { value: prop_value } = tree.kind(*child).clone() {
-            let mut value_type = match tree.children(*child).first() {
+            let value_type = match tree.children(*child).first() {
                 Some(c) => get_type_from_tree(tree, *c, interner, ctx).into_union(),
                 None => TUnion::mixed(),
             };
@@ -1733,15 +1733,14 @@ fn keyed_array_tree_to_type(
             }
 
             if possibly_undefined {
-                value_type.possibly_undefined = true;
                 had_optional = true;
             }
-            properties.insert(key, value_type);
+            properties.insert(key, (possibly_undefined, value_type));
         } else {
             // Implicit entry — keyed by its position, list stays intact.
             had_implicit = true;
             let value_type = get_type_from_tree(tree, *child, interner, ctx).into_union();
-            properties.insert(ArrayKey::Int(i as i64), value_type);
+            properties.insert(ArrayKey::Int(i as i64), (false, value_type));
         }
     }
     let _ = (had_explicit, had_implicit);
@@ -1781,17 +1780,8 @@ fn keyed_array_tree_to_type(
         fallback_value_type = Some(Box::new(TUnion::mixed()));
     }
 
-    let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = properties
-        .into_iter()
-        .map(|(key, mut value)| {
-            let possibly_undefined = value.possibly_undefined;
-            value.possibly_undefined = false;
-            (key, (possibly_undefined, value))
-        })
-        .collect();
-
     TypeResult::Atomic(TAtomic::keyed_array(
-        known_values,
+        properties,
         is_list,
         sealed,
         fallback_key_type.map(|b| *b),

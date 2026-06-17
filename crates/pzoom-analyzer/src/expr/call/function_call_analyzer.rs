@@ -1577,8 +1577,7 @@ pub(crate) fn infer_array_filter_return_atomic(
                         }
                     });
                 }
-                let mut value_union = value_union.unwrap_or_else(TUnion::nothing);
-                value_union.possibly_undefined = false;
+                let value_union = value_union.unwrap_or_else(TUnion::nothing);
                 return Some(TAtomic::array(
                     key_union.unwrap_or_else(TUnion::array_key),
                     value_union,
@@ -1590,20 +1589,19 @@ pub(crate) fn infer_array_filter_return_atomic(
                 (bool, TUnion),
             > = rustc_hash::FxHashMap::default();
 
-            for (key, (_possibly_undefined, property_type)) in known_values.iter() {
+            for (key, (entry_possibly_undefined, property_type)) in known_values.iter() {
                 if property_type.is_always_falsy() {
                     continue;
                 }
 
-                let mut narrowed_type = narrow_union_to_truthy(property_type);
+                let narrowed_type = narrow_union_to_truthy(property_type);
 
-                // The entry's possibly-undefined flag moves onto the tuple bool
+                // The entry's possibly-undefined flag stays on the tuple bool
                 // (unified invariant): an always-truthy property keeps its own
                 // optionality; any other property is marked possibly-undefined
                 // (old `mark_union_as_possibly_undefined`).
                 let possibly_undefined =
-                    !property_type.is_always_truthy() || narrowed_type.possibly_undefined;
-                narrowed_type.possibly_undefined = false;
+                    !property_type.is_always_truthy() || *entry_possibly_undefined;
                 next_known_values.insert(key.clone(), (possibly_undefined, narrowed_type));
             }
 

@@ -71,7 +71,6 @@ pub(crate) fn resolve_type_variables_in_union(
 
     let mut resolved = TUnion::from_types(resolved_types);
     resolved.from_docblock = union.from_docblock;
-    resolved.possibly_undefined = union.possibly_undefined;
     resolved.parent_nodes = union.parent_nodes.clone();
     resolved
 }

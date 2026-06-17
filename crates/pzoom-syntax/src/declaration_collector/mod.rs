@@ -4401,10 +4401,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 }
 
-                known_values.insert(
-                    property_key,
-                    (property_type.possibly_undefined, property_type.clone()),
-                );
+                known_values.insert(property_key, (false, property_type.clone()));
             }
 
             current_class_name = class_info.parent_class;
@@ -5918,7 +5915,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 );
             }
             TAtomic::TObjectWithProperties { properties, .. } => {
-                for prop_type in properties.values_mut() {
+                for (_, prop_type) in properties.values_mut() {
                     *prop_type = self.resolve_docblock_union_type(
                         prop_type.clone(),
                         self_class,
@@ -6082,12 +6079,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         // Preserve union-level metadata that `from_types` does not reconstruct,
-        // most importantly `possibly_undefined` (the optional-key marker on a
-        // keyed-array shape property) and `from_docblock`.
+        // such as `from_docblock`. (Keyed-array shape-key optionality now lives
+        // in the `known_values` tuple, not on the union.)
         let mut expanded = TUnion::from_types(expanded_types);
         expanded.from_docblock = t_union.from_docblock;
         expanded.from_calculation = t_union.from_calculation;
-        expanded.possibly_undefined = t_union.possibly_undefined;
         expanded.is_resolved = t_union.is_resolved;
         expanded.parent_nodes = t_union.parent_nodes;
         expanded.ignore_nullable_issues = t_union.ignore_nullable_issues;

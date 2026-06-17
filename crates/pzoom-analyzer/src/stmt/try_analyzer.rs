@@ -92,7 +92,6 @@ pub fn analyze(
     // on, so set it too — otherwise the read passes silently.
     for var_id in &newly_assigned_in_try {
         if let Some(var_type) = finally_entry_context.locals.get_mut(var_id) {
-            var_type.possibly_undefined = true;
             var_type.possibly_undefined_from_try = true;
         }
     }
@@ -111,7 +110,6 @@ pub fn analyze(
         // the assignment.
         for var_id in &newly_assigned_in_try {
             if let Some(var_type) = catch_context.locals.get_mut(var_id) {
-                var_type.possibly_undefined = true;
                 var_type.possibly_undefined_from_try = true;
             }
         }
@@ -241,7 +239,6 @@ pub fn analyze(
         finally_entry_context.merge(&catch_context);
         for (var_id, var_type) in finally_entry_context.locals.iter_mut() {
             if !vars_before_catch_merge.contains(var_id) {
-                var_type.possibly_undefined = true;
                 var_type.possibly_undefined_from_try = true;
             }
         }
@@ -271,7 +268,6 @@ pub fn analyze(
                     continue;
                 }
                 if let Some(var_type) = context.locals.get_mut(var_id) {
-                    var_type.possibly_undefined = true;
                     var_type.possibly_undefined_from_try = true;
                 }
             }
@@ -295,7 +291,7 @@ pub fn analyze(
             for (var_id, exit_type) in &finally_scope.borrow().vars_in_scope {
                 if !finally_context.locals.contains_key(var_id) {
                     let mut possibly_undefined = exit_type.clone();
-                    possibly_undefined.possibly_undefined = true;
+                    possibly_undefined.possibly_undefined_from_try = true;
                     finally_context
                         .locals
                         .insert(var_id.clone(), possibly_undefined);
@@ -330,14 +326,13 @@ pub fn analyze(
             // combines vars_in_scope without touching assignment bookkeeping.
             for (var_id, finally_type) in &finally_context.locals {
                 if let Some(existing) = context.locals.get(var_id) {
-                    let existing_defined = !existing.possibly_undefined;
+                    let existing_defined = !existing.possibly_undefined_from_try;
                     let mut combined = combine_union_types(existing, finally_type, false);
                     // The pessimistic possibly-undefined entry view applies
                     // only INSIDE the finally; the normal path's definedness
                     // wins afterwards (clear the try-block flag too, so a read
                     // after the finally is not reported).
                     if existing_defined {
-                        combined.possibly_undefined = false;
                         combined.possibly_undefined_from_try = false;
                     }
                     context.locals.insert(var_id.clone(), combined);

@@ -393,7 +393,7 @@ pub fn analyze(
                 .flatten()
                 .any(|assertion| matches!(assertion, pzoom_code_info::Assertion::IsNotIsset))
             && let Some(declared) = reconciler::resolve_key_type(var_name, context, analyzer)
-            && !declared.possibly_undefined
+            && !declared.possibly_undefined_from_try
             && !declared.is_nullable()
             && !declared
                 .types

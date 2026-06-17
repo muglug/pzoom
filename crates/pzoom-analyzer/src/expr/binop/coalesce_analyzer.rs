@@ -51,10 +51,10 @@ pub fn analyze(
         // present-side type the implicit isset selects.
         expression_identifier::get_expression_var_key(left)
             .and_then(|key| context.locals.get(&key))
-            .filter(|entry| entry.possibly_undefined && !entry.is_mixed())
+            .filter(|entry| entry.possibly_undefined_from_try && !entry.is_mixed())
             .map(|entry| {
                 let mut present = entry.clone();
-                present.possibly_undefined = false;
+                present.possibly_undefined_from_try = false;
                 present
             })
             .or_else(|| resolve_left_isset_type(analyzer, left, analysis_data, context))
@@ -98,7 +98,7 @@ pub fn analyze(
         // an assignment left operand (`($a =& $var) ?? ...`).
         && !matches!(left.unparenthesized(), Expression::Assignment(_))
         && !left_type.is_nullable()
-        && !left_type.possibly_undefined
+        && !left_type.possibly_undefined_from_try
         && !left_type.is_mixed()
         && !context.inside_loop
     {

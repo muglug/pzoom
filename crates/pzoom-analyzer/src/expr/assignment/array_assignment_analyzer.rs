@@ -394,7 +394,7 @@ fn analyze_assignment_chain<'a>(
                         .locals
                         .get(&VarName::new(format!("{}[{}]", root_key, key_repr)))
                 })
-                .is_some_and(|existing| !existing.possibly_undefined);
+                .is_some_and(|existing| !existing.possibly_undefined_from_try);
 
             let key_is_dependent_list_key = single_dim_key_expr.is_some_and(|key_expr| {
                 matches!(
@@ -1385,8 +1385,7 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                         None => fallback_value_type.clone(),
                     });
                 }
-                let mut value_union = value_union.unwrap_or_else(TUnion::mixed);
-                value_union.possibly_undefined = false;
+                let value_union = value_union.unwrap_or_else(TUnion::mixed);
                 other_types.push(if has_defined_property {
                     TAtomic::non_empty_list(value_union)
                 } else {
@@ -1547,7 +1546,7 @@ fn update_generic_array_atomic(
                 let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 known_values.insert(
                     literal_key,
-                    (assigned_type.possibly_undefined, assigned_type.clone()),
+                    (false, assigned_type.clone()),
                 );
 
                 if existing_key.is_nothing() {
@@ -1662,7 +1661,7 @@ fn update_keyed_array_atomic(
                 let mut new_known_values = known_values.clone();
                 new_known_values.insert(
                     ArrayKey::Int(next_list_index(&new_known_values)),
-                    (assigned_type.possibly_undefined, assigned_type.clone()),
+                    (false, assigned_type.clone()),
                 );
 
                 TAtomic::keyed_array(
@@ -1688,7 +1687,7 @@ fn update_keyed_array_atomic(
                 let multiple_keys = literal_keys.len() > 1;
 
                 for key in literal_keys {
-                    let mut next_value = if let Some((_, existing)) = new_known_values.get(&key) {
+                    let next_value = if let Some((_, existing)) = new_known_values.get(&key) {
                         if multiple_keys {
                             combine_union_types(existing, assigned_type, false)
                         } else {
@@ -1697,9 +1696,7 @@ fn update_keyed_array_atomic(
                     } else {
                         assigned_type.clone()
                     };
-                    // A definite write makes the entry always-defined (clear the
-                    // flag on both the entry `bool` and the stored union).
-                    next_value.possibly_undefined = false;
+                    // A definite write makes the entry always-defined.
                     new_known_values.insert(key, (false, next_value));
                 }
 
@@ -1723,7 +1720,6 @@ fn update_keyed_array_atomic(
                 if let Some(fallback_value_type) = fallback_value_type {
                     value_union = combine_union_types(&value_union, fallback_value_type, false);
                 }
-                value_union.possibly_undefined = false;
                 TAtomic::non_empty_list(value_union)
             } else {
                 keyed_array_to_non_empty_array(
@@ -1853,7 +1849,7 @@ fn create_autovivified_array_atomic(key_type: Option<&TUnion>, assigned_type: &T
                 for literal_key in literal_keys {
                     known_values.insert(
                         literal_key,
-                        (assigned_type.possibly_undefined, assigned_type.clone()),
+                        (false, assigned_type.clone()),
                     );
                 }
 
@@ -1879,7 +1875,7 @@ fn create_mixed_container_assignment_atomic(
                 for literal_key in literal_keys {
                     known_values.insert(
                         literal_key,
-                        (assigned_type.possibly_undefined, assigned_type.clone()),
+                        (false, assigned_type.clone()),
                     );
                 }
 

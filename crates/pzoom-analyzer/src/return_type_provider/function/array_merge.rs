@@ -67,7 +67,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
             }
         }
 
-        let mut generic: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+        let mut generic: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
         let mut inner_keys: Vec<TAtomic> = Vec::new();
         let mut inner_values: Vec<TAtomic> = Vec::new();
         let mut all_keyed_arrays = true;
@@ -102,17 +102,21 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                             match key {
                                 ArrayKey::String(_) | ArrayKey::ClassString(_) => {
                                     all_int_offsets = false;
-                                    // Reconstruct the value union carrying its
-                                    // possibly-undefined flag for set_or_combine.
-                                    let mut value = value.clone();
-                                    value.possibly_undefined = *possibly_undefined;
-                                    set_or_combine(&mut generic, key.clone(), &value);
+                                    set_or_combine(
+                                        &mut generic,
+                                        key.clone(),
+                                        *possibly_undefined,
+                                        value,
+                                    );
                                 }
                                 ArrayKey::Int(_) => {
                                     if is_replace {
-                                        let mut value = value.clone();
-                                        value.possibly_undefined = *possibly_undefined;
-                                        set_or_combine(&mut generic, key.clone(), &value);
+                                        set_or_combine(
+                                            &mut generic,
+                                            key.clone(),
+                                            *possibly_undefined,
+                                            value,
+                                        );
                                     } else {
                                         all_keyed_arrays = false;
                                         inner_keys.push(TAtomic::TInt);
@@ -164,7 +168,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                         if !non_empty && value_type.is_nothing() {
                             continue;
                         }
-                        for existing in generic.values_mut() {
+                        for (_, existing) in generic.values_mut() {
                             *existing = combine_union_types(existing, value_type, false);
                         }
                         all_keyed_arrays = false;
@@ -205,16 +209,9 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                     (inner_key, inner_value, false)
                 };
 
-            // Convert the `generic` value map (each union carrying its own
-            // possibly-undefined flag) into the unified `known_values` shape.
-            let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = generic
-                .into_iter()
-                .map(|(key, mut value)| {
-                    let possibly_undefined = value.possibly_undefined;
-                    value.possibly_undefined = false;
-                    (key, (possibly_undefined, value))
-                })
-                .collect();
+            // `generic` already pairs each value union with its
+            // possibly-undefined flag — it is the `known_values` shape directly.
+            let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = generic;
 
             // TODO(unify-array): keyed_array normalises is_list against
             // known_values_form_list; the old code set is_list unconditionally.
@@ -258,16 +255,20 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
     }
 }
 
-fn set_or_combine(generic: &mut FxHashMap<ArrayKey, TUnion>, key: ArrayKey, value: &TUnion) {
+fn set_or_combine(
+    generic: &mut FxHashMap<ArrayKey, (bool, TUnion)>,
+    key: ArrayKey,
+    possibly_undefined: bool,
+    value: &TUnion,
+) {
     match generic.get(&key) {
-        Some(existing) => {
-            let possibly_undefined = existing.possibly_undefined && value.possibly_undefined;
-            let mut combined = combine_union_types(existing, value, false);
-            combined.possibly_undefined = possibly_undefined;
-            generic.insert(key, combined);
+        Some((existing_undefined, existing)) => {
+            let possibly_undefined = *existing_undefined && possibly_undefined;
+            let combined = combine_union_types(existing, value, false);
+            generic.insert(key, (possibly_undefined, combined));
         }
         None => {
-            generic.insert(key, value.clone());
+            generic.insert(key, (possibly_undefined, value.clone()));
         }
     }
 }

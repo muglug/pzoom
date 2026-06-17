@@ -444,10 +444,12 @@ pub fn analyze(
                 known_values,
                 params,
                 is_list,
+                is_nonempty,
                 ..
             } if known_values.is_empty() => {
                 has_valid_access = true;
                 let is_list_atomic = *is_list;
+                let is_nonempty_list = *is_nonempty;
                 if !literal_index_keys.is_empty() {
                     // List keys are non-negative (Psalm types them
                     // int<0, max>): a provably-negative literal offset is a
@@ -478,11 +480,22 @@ pub fn analyze(
                         .unwrap_or_else(TUnion::nothing)
                 };
                 merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
-                // Psalm checks literal int/string offsets only on generic
-                // `array<K,V>` here (shapes/lists go through their own path);
-                // a literal offset contained in the key type but with no proven
-                // entry is PossiblyUndefined{Int,String}ArrayOffset.
-                if !is_list_atomic && !literal_index_keys.is_empty() {
+                // A literal offset within the key type but with no proven entry
+                // is PossiblyUndefined{Int,String}ArrayOffset (ensureArray*OffsetsExist).
+                // Psalm runs this for both generic `array<K,V>` and lists: a list
+                // guarantees only its leading element, so index 0 of a non-empty
+                // list is proven present and every other non-negative literal
+                // index falls through to checkLiteralIntArrayOffset.
+                if is_list_atomic && !literal_index_keys.is_empty() {
+                    for key in &literal_index_keys {
+                        if let ArrayKey::Int(value) = key {
+                            let proven_present = is_nonempty_list && *value == 0;
+                            if *value >= 0 && !proven_present {
+                                tarray_int_offset_unproven = true;
+                            }
+                        }
+                    }
+                } else if !literal_index_keys.is_empty() {
                     let key_accepts = |is_int: bool| {
                         (if is_int {
                             key_type.has_int()

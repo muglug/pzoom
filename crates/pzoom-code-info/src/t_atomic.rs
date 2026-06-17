@@ -112,7 +112,10 @@ pub enum TAtomic {
     /// `is_list`/`is_nonempty`.
     TArray {
         /// Known entries; `bool` is `possibly_undefined`. Behind `Arc` so cloning
-        /// a shape is a refcount bump (copy-on-write via `Arc::make_mut`).
+        /// a shape is a refcount bump (copy-on-write via `Arc::make_mut`). A
+        /// generic array/list (no known entries) shares one interned empty map
+        /// (`empty_known_values_arc`), so building one is a refcount bump rather
+        /// than a heap allocation.
         known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
         /// Typed fallback `(key, value)` params for keys outside `known_values`,
         /// or `None` when there is no typed fallback.
@@ -328,6 +331,40 @@ pub struct ConditionalReturnType {
     pub if_false_type: TUnion,
 }
 
+/// The shared empty `known_values` map. Every generic array/list (no known
+/// entries) points at this one `Arc`, so constructing one is a refcount bump
+/// rather than a fresh `Arc::new(empty_map)` heap allocation. The field type is
+/// unchanged, so all read sites keep working.
+pub fn empty_known_values_arc() -> std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>> {
+    static EMPTY: std::sync::LazyLock<std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(FxHashMap::default()));
+    std::sync::Arc::clone(&EMPTY)
+}
+
+/// Normalise an owned `known_values` map into the `TArray::known_values` field,
+/// sharing the interned empty map when it has no entries (no allocation).
+pub fn known_values_field(
+    known_values: FxHashMap<ArrayKey, (bool, TUnion)>,
+) -> std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>> {
+    if known_values.is_empty() {
+        empty_known_values_arc()
+    } else {
+        std::sync::Arc::new(known_values)
+    }
+}
+
+/// Normalise an `Arc<known_values>` into the field, swapping an empty map for
+/// the shared interned one.
+pub fn known_values_field_arc(
+    known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
+) -> std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>> {
+    if known_values.is_empty() {
+        empty_known_values_arc()
+    } else {
+        known_values
+    }
+}
+
 /// Whether `known_values` form a valid list: integer keys `0..n` with a
 /// possibly-undefined "tail" (once one entry is possibly-undefined, every later
 /// one is too). Mirrors the invariant Psalm enforces in `TKeyedArray`.
@@ -493,7 +530,7 @@ impl TAtomic {
     #[inline]
     pub fn array(key_type: TUnion, value_type: TUnion) -> Self {
         TAtomic::TArray {
-            known_values: std::sync::Arc::new(FxHashMap::default()),
+            known_values: empty_known_values_arc(),
             params: Some(Box::new((key_type, value_type))),
             is_list: false,
             is_nonempty: false,
@@ -506,7 +543,7 @@ impl TAtomic {
     #[inline]
     pub fn non_empty_array(key_type: TUnion, value_type: TUnion) -> Self {
         TAtomic::TArray {
-            known_values: std::sync::Arc::new(FxHashMap::default()),
+            known_values: empty_known_values_arc(),
             params: Some(Box::new((key_type, value_type))),
             is_list: false,
             is_nonempty: true,
@@ -519,7 +556,7 @@ impl TAtomic {
     #[inline]
     pub fn list(value_type: TUnion) -> Self {
         TAtomic::TArray {
-            known_values: std::sync::Arc::new(FxHashMap::default()),
+            known_values: empty_known_values_arc(),
             params: Some(Box::new((TUnion::new(TAtomic::TInt), value_type))),
             is_list: true,
             is_nonempty: false,
@@ -532,7 +569,7 @@ impl TAtomic {
     #[inline]
     pub fn non_empty_list(value_type: TUnion) -> Self {
         TAtomic::TArray {
-            known_values: std::sync::Arc::new(FxHashMap::default()),
+            known_values: empty_known_values_arc(),
             params: Some(Box::new((TUnion::new(TAtomic::TInt), value_type))),
             is_list: true,
             is_nonempty: true,
@@ -574,7 +611,7 @@ impl TAtomic {
         let is_list = is_list && known_values_form_list(&known_values);
         let is_nonempty = array_known_values_nonempty(&known_values);
         TAtomic::TArray {
-            known_values: std::sync::Arc::new(known_values),
+            known_values: known_values_field(known_values),
             params,
             is_list,
             is_nonempty,
@@ -594,7 +631,7 @@ impl TAtomic {
         let is_list = is_list && known_values_form_list(&known_values);
         let is_nonempty = array_known_values_nonempty(&known_values);
         TAtomic::TArray {
-            known_values,
+            known_values: known_values_field_arc(known_values),
             params,
             is_list,
             is_nonempty,
@@ -624,7 +661,7 @@ impl TAtomic {
                 is_callable,
                 ..
             } => TAtomic::TArray {
-                known_values,
+                known_values: known_values_field_arc(known_values),
                 params,
                 is_list: *is_list,
                 is_nonempty: *is_nonempty,

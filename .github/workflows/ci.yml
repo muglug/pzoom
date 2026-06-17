@@ -10,7 +10,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
+  # Build the release binaries once and share them with the jobs that need
+  # them, so the (expensive) release compile only happens a single time.
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout pzoom
@@ -25,11 +27,69 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
+      - name: Upload release binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: pzoom-binaries
+          path: |
+            target/release/pzoom
+            target/release/pzoom-test
+          if-no-files-found: error
+          retention-days: 1
+
+  # Unit tests compile their own test binaries, so they run independently of
+  # the release build.
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Unit tests
         run: cargo test --workspace
 
+  # Inference tests consume the prebuilt pzoom-test binary.
+  inference-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: pzoom-binaries
+          path: target/release
+
+      - name: Make binaries executable
+        run: chmod +x target/release/pzoom target/release/pzoom-test
+
       - name: Inference tests
-        run: cargo run --release -p pzoom-test-runner -- --reuse-codebase
+        run: ./target/release/pzoom-test --reuse-codebase
+
+  # Documentation test consumes the prebuilt pzoom binary.
+  documentation-test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: pzoom-binaries
+          path: target/release
+
+      - name: Make binaries executable
+        run: chmod +x target/release/pzoom target/release/pzoom-test
 
       - name: Checkout Psalm (6.x)
         uses: actions/checkout@v4

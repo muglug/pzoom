@@ -819,14 +819,49 @@ pub(crate) fn get_method_return_type(
         // 'external_mutation_free'/'pure' attributes, set on `new`/pure-call
         // nodes) — mutating an object held in a variable is observable later.
         if analyzer.config.find_unused_code {
-            record_method_reference(
-                analyzer,
-                class_id,
-                method_info.declaring_class,
-                method_name,
-                context,
-                analysis_data,
-            );
+            // A call on a union receiver (`A|B`) resolves a method on each
+            // member, and Psalm's Methods::methodExists records a reference for
+            // every one of them. Record each member's resolved method, not only
+            // the single best candidate, so e.g. `B::foo` stays alive when the
+            // call is typed `A|B`.
+            let mut recorded_any = false;
+            for atomic in &receiver_atomics {
+                if let TAtomic::TNamedObject {
+                    name, type_params, ..
+                } = atomic
+                    && let Some(atomic_class_info) = analyzer.codebase.get_class(*name)
+                    && let Some((member_class_id, _, member_method_info)) =
+                        resolve_named_object_instance_method(
+                            analyzer,
+                            atomic_class_info,
+                            type_params.as_deref(),
+                            method_name,
+                            Some(&analysis_data.type_variable_bounds),
+                        )
+                {
+                    record_method_reference(
+                        analyzer,
+                        member_class_id,
+                        member_method_info.declaring_class,
+                        method_name,
+                        context,
+                        analysis_data,
+                    );
+                    recorded_any = true;
+                }
+            }
+            // Fall back to the resolved candidate (e.g. template/intersection
+            // receivers that the per-atomic walk above doesn't cover).
+            if !recorded_any {
+                record_method_reference(
+                    analyzer,
+                    class_id,
+                    method_info.declaring_class,
+                    method_name,
+                    context,
+                    analysis_data,
+                );
+            }
         }
 
         let receiver_is_fresh_pure_value = receiver_is_pure_compatible

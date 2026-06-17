@@ -1039,20 +1039,33 @@ fn scrape_list_properties(
     non_empty: bool,
     overwrite_empty_array: bool,
 ) {
-    let key_type = TUnion::new(TAtomic::TInt);
+    // Psalm has no dedicated list atomic: a generic `list<V>` is a `TKeyedArray`
+    // with `is_list`, a single property at offset 0 (possibly-undefined unless
+    // the list is non-empty) and fallback params `[list-key, V]` — see
+    // `Type::getListAtomic` / `getNonEmptyListAtomic`. Scanning a list through
+    // the keyed-array path (rather than as a bare generic array) is what lets the
+    // combiner keep a list's shape when it merges with a list shape, e.g.
+    // `list{0: 1} | list<0>` stays `list{0?: 0|1, ...<0>}`, exactly as Psalm's
+    // TypeCombiner does — its value rides on `objectlike_value_type` instead of
+    // `array_type_params`. A pure generic list is re-canonicalised back to
+    // `TList`/`TNonEmptyList` when the shape is built (see `generic_list_atomic`).
+    let mut entry = value_type.clone();
+    entry.possibly_undefined = !non_empty;
+    let mut properties = FxHashMap::default();
+    properties.insert(ArrayKey::Int(0), entry);
 
-    if let Some((ref mut existing_key, ref mut existing_value)) = combination.array_type_params {
-        *existing_key = combine_union_types(existing_key, &key_type, overwrite_empty_array);
-        *existing_value = combine_union_types(existing_value, &value_type, overwrite_empty_array);
-    } else {
-        combination.array_type_params = Some((key_type, value_type));
-    }
+    scrape_keyed_array_properties(
+        combination,
+        std::sync::Arc::new(properties),
+        true,
+        false,
+        Some(TUnion::new(TAtomic::TInt)),
+        Some(value_type),
+        overwrite_empty_array,
+    );
 
-    if !non_empty {
-        combination.array_always_filled = false;
-    }
-
-    // Keep list status if we haven't seen a non-list
+    // A list is never callable (Psalm clears `all_arrays_callable` for any
+    // non-callable keyed array); the keyed-array scan leaves the flag untouched.
     combination.all_arrays_callable = false;
 }
 
@@ -1613,6 +1626,43 @@ fn merge_string_types(existing: &TAtomic, new: &TAtomic) -> TAtomic {
     }
 }
 
+/// Psalm's `TKeyedArray::isGenericList`: recognise a list shape that is exactly
+/// a generic `list<V>` / `non-empty-list<V>` — a single property at offset 0
+/// whose value type equals the fallback value. pzoom keeps generic lists as the
+/// dedicated `TList`/`TNonEmptyList` atomics, so the combiner re-canonicalises
+/// such a shape back to them; the property's `possibly_undefined` flag selects
+/// the possibly-empty (`TList`) vs. non-empty (`TNonEmptyList`) variant.
+fn generic_list_atomic(
+    is_list: bool,
+    entries: &std::collections::BTreeMap<ArrayKey, TUnion>,
+    fallback_value_type: Option<&TUnion>,
+) -> Option<TAtomic> {
+    if !is_list || entries.len() != 1 {
+        return None;
+    }
+    let entry = entries.get(&ArrayKey::Int(0))?;
+    let fallback_value = fallback_value_type?;
+
+    // Compare the atomic members only, ignoring `possibly_undefined` and other
+    // per-union provenance flags (Psalm's `equals(..., false, false)`): the
+    // offset-0 property always carries the fallback's value type. Use a
+    // set-style comparison so member ordering can't defeat the match.
+    if entry.types.len() != fallback_value.types.len()
+        || !entry.types.iter().all(|t| fallback_value.types.contains(t))
+    {
+        return None;
+    }
+
+    let mut value_type = fallback_value.clone();
+    value_type.possibly_undefined = false;
+    let value_type = Box::new(value_type);
+    Some(if entry.possibly_undefined {
+        TAtomic::TList { value_type }
+    } else {
+        TAtomic::TNonEmptyList { value_type }
+    })
+}
+
 fn handle_keyed_array_entries(
     combination: &mut TypeCombination,
     overwrite_empty_array: bool,
@@ -1640,55 +1690,21 @@ fn handle_keyed_array_entries(
         combination.objectlike_sealed = false;
     }
 
-    // When the generic side is present and non-empty, the shape is normally NOT
-    // kept: entries fold into the generic array in
+    // When the generic side is present and non-empty, the shape is NOT kept:
+    // the entries fold into the generic array in
     // get_array_type_from_generic_params (Psalm's subsumption — e.g.
     // `array{1234: 1}|array<int, int>` combines to `array<int, int>`).
     //
-    // Lists are the exception. Psalm models a list as a TKeyedArray with
-    // `is_list` plus fallback params, so combining `list{0: 1}` with `list<0>`
-    // keeps the shape as `list{0?: 0|1, ...<0>}`: the known entries become
-    // possibly-undefined (the general list guarantees none of them) and absorb
-    // the list value type, which also becomes the fallback. This is what lets a
-    // loop body's `$list[0] = …` widen to a possibly-undefined offset on the
-    // next iteration.
+    // Lists never reach this branch with a non-empty generic side: a generic
+    // `list<V>` is scanned as a keyed-array shape (see `scrape_list_properties`),
+    // so its value rides on `objectlike_value_type`, not `array_type_params` —
+    // exactly as in Psalm, where a list *is* a `TKeyedArray` with `is_list`.
     let array_side_empty_or_absent = match &combination.array_type_params {
         None => true,
         Some((_, value_type)) => value_type.is_nothing(),
     };
     if !array_side_empty_or_absent {
-        // Non-list arrays subsume (collapse). A list keeps its shape only when
-        // it is possibly-empty: a guaranteed-non-empty list (array_always_filled)
-        // does not make its known entries possibly-undefined, so it folds into a
-        // plain non-empty-list as before.
-        if !combination.all_arrays_lists || combination.array_always_filled {
-            return new_types;
-        }
-        if let Some((list_key, list_value)) = combination.array_type_params.take() {
-            combination.objectlike_key_type = Some(match combination.objectlike_key_type.take() {
-                Some(existing) => combine_union_types(&existing, &list_key, overwrite_empty_array),
-                None => list_key,
-            });
-            combination.objectlike_value_type =
-                Some(match combination.objectlike_value_type.take() {
-                    Some(existing) => {
-                        combine_union_types(&existing, &list_value, overwrite_empty_array)
-                    }
-                    None => list_value,
-                });
-        }
-        combination.objectlike_sealed = false;
-        let fallback_key = combination.objectlike_key_type.clone();
-        let fallback_value = combination.objectlike_value_type.clone();
-        for (key, entry_type) in combination.objectlike_entries.iter_mut() {
-            if let Some(fallback_value) = &fallback_value
-                && fallback_key_contains(fallback_key.as_ref(), key)
-            {
-                *entry_type =
-                    combine_union_types(entry_type, fallback_value, overwrite_empty_array);
-            }
-            entry_type.possibly_undefined = true;
-        }
+        return new_types;
     }
 
     // Union with an *empty* generic array means every known key can be absent
@@ -1727,19 +1743,36 @@ fn handle_keyed_array_entries(
             }
         };
 
-        // A `Foo::class` key keeps its class-string identity through the merge:
-        // it rides on the `ArrayKey::ClassString` variant in the entries map.
-        new_types.push(TAtomic::TKeyedArray {
-            properties: std::sync::Arc::new(
-                std::mem::take(&mut combination.objectlike_entries)
-                    .into_iter()
-                    .collect(),
-            ),
-            is_list: combination.all_arrays_lists,
-            sealed: combination.objectlike_sealed,
-            fallback_key_type: fallback.as_ref().map(|(k, _)| k.clone()),
-            fallback_value_type: fallback.map(|(_, v)| v),
-        });
+        // A pure generic `list<V>` / `non-empty-list<V>` is kept by Psalm as a
+        // `TKeyedArray` with `is_list` (a single offset-0 property equal to the
+        // fallback value); pzoom's canonical generic list is the dedicated
+        // `TList`/`TNonEmptyList` atomic, so re-canonicalise it here. A list
+        // *shape* that carries more than the fallback — e.g.
+        // `list{0?: 0|1, ...<0>}` — is not a generic list and stays a keyed
+        // array, which is what preserves a possibly-undefined offset across loop
+        // iterations.
+        if let Some(list_atomic) = generic_list_atomic(
+            combination.all_arrays_lists,
+            &combination.objectlike_entries,
+            fallback.as_ref().map(|(_, value_type)| value_type.as_ref()),
+        ) {
+            combination.objectlike_entries.clear();
+            new_types.push(list_atomic);
+        } else {
+            // A `Foo::class` key keeps its class-string identity through the
+            // merge: it rides on the `ArrayKey::ClassString` variant in the map.
+            new_types.push(TAtomic::TKeyedArray {
+                properties: std::sync::Arc::new(
+                    std::mem::take(&mut combination.objectlike_entries)
+                        .into_iter()
+                        .collect(),
+                ),
+                is_list: combination.all_arrays_lists,
+                sealed: combination.objectlike_sealed,
+                fallback_key_type: fallback.as_ref().map(|(k, _)| k.clone()),
+                fallback_value_type: fallback.map(|(_, v)| v),
+            });
+        }
     }
 
     // "if we're merging an empty array with an object-like, clobber empty

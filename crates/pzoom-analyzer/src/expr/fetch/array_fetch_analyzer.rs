@@ -525,11 +525,12 @@ pub fn analyze(
                             result_ignore_nullable |= value_type.ignore_nullable_issues;
                             result_ignore_falsable |= value_type.ignore_falsable_issues;
                             if value_type.possibly_undefined {
-                                // A matching but possibly-undefined property
-                                // yields a possibly-undefined result regardless
-                                // of any fallback params (Psalm reads the
-                                // property, not the `...<K,V>` fallback, for a
-                                // key that names a property).
+                                // A key that names a possibly-undefined property
+                                // yields a possibly-undefined offset even when the
+                                // shape has `...<K,V>` fallback params: Psalm's
+                                // ArrayFetchAnalyzer reads the property itself
+                                // (which is possibly-undefined), not the fallback,
+                                // for a key that is present in `properties`.
                                 has_possibly_undefined_offset = true;
                                 if let Some(fallback) = fallback_value_type {
                                     for t in &fallback.types {

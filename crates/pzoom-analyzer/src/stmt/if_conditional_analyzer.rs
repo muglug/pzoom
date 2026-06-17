@@ -11,7 +11,7 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion};
+use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarName};
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
@@ -47,7 +47,14 @@ pub fn analyze(
     // context immutably, so work on a clone that becomes post_if_context.
     let mut outer_working = outer_context.clone();
     outer_working.if_body_context = None;
+    // Psalm's IfConditionalAnalyzer resets `assigned_var_ids` to empty before each
+    // condition pass and reads the vars assigned in that pass by their PRESENCE
+    // afterwards, then restores. This detects a reassignment of an already-defined
+    // variable (`if (rand() && ($pos = $str))`) even though the per-operand
+    // analyzers reset their clones' counts, which a count-vs-outer-baseline
+    // comparison would miss.
     let pre_condition_assigned = outer_context.assigned_var_ids.clone();
+    outer_working.assigned_var_ids.clear();
 
     // Psalm clones `$if_context` BEFORE the externally-applied analysis when the
     // internally- and externally-applied expressions differ: scope entries the
@@ -73,6 +80,14 @@ pub fn analyze(
     );
     outer_working.inside_conditional = was_inside_conditional;
 
+    // Vars assigned by the definitely-evaluated sub-expression (presence, from the
+    // empty baseline), then restore the real counts (pre + this pass).
+    let first_cond_assigned: FxHashSet<VarName> =
+        outer_working.assigned_var_ids.keys().cloned().collect();
+    let external_assigned = std::mem::take(&mut outer_working.assigned_var_ids);
+    outer_working.assigned_var_ids = pre_condition_assigned.clone();
+    outer_working.assigned_var_ids.extend(external_assigned);
+
     let if_context = early_if_context
         .take()
         .unwrap_or_else(|| outer_working.clone());
@@ -88,13 +103,21 @@ pub fn analyze(
     let post_if_context = outer_working.clone();
 
     let cond_unparenthesized = cond.unparenthesized();
+    let mut more_cond_assigned: FxHashSet<VarName> = FxHashSet::default();
     if !std::ptr::eq(internally_applied_if_cond_expr, cond_unparenthesized)
         || !std::ptr::eq(externally_applied_if_cond_expr, cond_unparenthesized)
     {
+        // Reset before the full-condition pass; the vars it assigns are then its
+        // post-pass keys (presence). Restore (pre + external + full) afterwards.
+        let baseline_assigned = std::mem::take(&mut if_conditional_context.assigned_var_ids);
         let was_inside_conditional = if_conditional_context.inside_conditional;
         if_conditional_context.inside_conditional = true;
         expression_analyzer::analyze(analyzer, cond, analysis_data, &mut if_conditional_context);
         if_conditional_context.inside_conditional = was_inside_conditional;
+        more_cond_assigned = if_conditional_context.assigned_var_ids.keys().cloned().collect();
+        let full_cond_assigned = std::mem::take(&mut if_conditional_context.assigned_var_ids);
+        if_conditional_context.assigned_var_ids = baseline_assigned;
+        if_conditional_context.assigned_var_ids.extend(full_cond_assigned);
     }
 
     add_branch_dataflow(analyzer, cond, analysis_data);
@@ -122,21 +145,11 @@ pub fn analyze(
         .reconciled_expression_clauses
         .extend(if_conditional_context.reconciled_expression_clauses);
 
-    // Psalm's assigned_in_conditional_var_ids: vars whose assignment count grew
-    // while analyzing the condition — in the externally-applied pass, the full
-    // condition pass, or an operator's merge into the shared body context.
-    let mut assigned_in_conditional_var_ids = FxHashSet::default();
-    for assigned in [
-        &outer_working.assigned_var_ids,
-        &if_conditional_context.assigned_var_ids,
-        &if_body_context.assigned_var_ids,
-    ] {
-        for (var_id, count) in assigned {
-            if pre_condition_assigned.get(var_id).copied().unwrap_or(0) < *count {
-                assigned_in_conditional_var_ids.insert(var_id.clone());
-            }
-        }
-    }
+    // Psalm's `assigned_in_conditional_var_ids`: the union of the vars assigned in
+    // the externally-applied pass and the full-condition pass (each captured by
+    // presence from a reset baseline).
+    let mut assigned_in_conditional_var_ids = first_cond_assigned;
+    assigned_in_conditional_var_ids.extend(more_cond_assigned);
 
     IfConditionalScope {
         if_body_context,

@@ -1129,10 +1129,15 @@ fn analyze_destructuring_element(
     // shape's properties (the elements just gain |null instead).
     let positional_over_list_shape = matches!(lookup_key, DestructuringLookupKey::Int(_))
         && matches!(element, ArrayElement::Value(_))
-        && rhs_type
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, TAtomic::TKeyedArray { is_list: true, .. }));
+        && rhs_type.types.iter().any(|atomic| {
+            // A list shape: a list with known entries (old `TKeyedArray`
+            // with `is_list`); a generic `list<V>` has no known entries.
+            matches!(
+                atomic,
+                TAtomic::TArray { is_list: true, known_values, .. }
+                    if !known_values.is_empty()
+            )
+        });
     if rhs_type.is_nullable() && !rhs_type.ignore_nullable_issues && !positional_over_list_shape {
         let (line, col) = analyzer.get_line_column(assignment_offset);
         analysis_data.add_issue(Issue::new(
@@ -1150,13 +1155,15 @@ fn analyze_destructuring_element(
     // (Psalm's list-assignment handling, which then clears the flag).
     if let Some(array_key) = lookup_key_to_array_key(&lookup_key) {
         let optional_property_hit = rhs_type.types.iter().any(|atomic| match atomic {
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type: None,
+            // A shape with no typed fallback (old `TKeyedArray` with
+            // `fallback_value_type: None`) whose named entry is optional.
+            TAtomic::TArray {
+                known_values,
+                params: None,
                 ..
-            } => properties
+            } => known_values
                 .get(&array_key)
-                .is_some_and(|property_type| property_type.possibly_undefined),
+                .is_some_and(|(possibly_undefined, _)| *possibly_undefined),
             _ => false,
         });
         if optional_property_hit {
@@ -1180,16 +1187,21 @@ fn analyze_destructuring_element(
         let mut offset_can_exist = false;
         for atomic in &rhs_type.types {
             match atomic {
-                TAtomic::TKeyedArray {
-                    properties,
-                    sealed,
-                    fallback_value_type,
+                // A generic array/list (unsealed, or with a typed fallback) can
+                // always hold the offset; only a sealed shape lacking the key
+                // proves it absent. A generic `array<K,V>`/`list<V>` is unsealed,
+                // so `!is_sealed` keeps `offset_can_exist` true as before.
+                // TODO(unify-array): the empty array `[]` is now `empty_array()`
+                // (sealed, no params, no entries) and so sets `saw_sealed_shape`,
+                // where the old generic `TArray{nothing,nothing}` set
+                // `offset_can_exist`; `[$a] = []` now reports the missing offset.
+                TAtomic::TArray {
+                    known_values,
+                    params,
+                    is_sealed,
                     ..
                 } => {
-                    if properties.contains_key(&array_key)
-                        || !*sealed
-                        || fallback_value_type.is_some()
-                    {
+                    if known_values.contains_key(&array_key) || !*is_sealed || params.is_some() {
                         offset_can_exist = true;
                     } else {
                         saw_sealed_shape = true;
@@ -1275,13 +1287,7 @@ fn rhs_can_be_destructured(analyzer: &StatementsAnalyzer<'_>, rhs_type: &TUnion)
     rhs_type.types.iter().any(|atomic| {
         matches!(
             atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
-                | TAtomic::TMixed
-                | TAtomic::TNonEmptyMixed
+            TAtomic::TArray { .. } | TAtomic::TMixed | TAtomic::TNonEmptyMixed
         ) || matches!(atomic, TAtomic::TNamedObject { name, .. } if is_class_subtype_of(*name, array_access_id, analyzer.codebase))
     })
 }
@@ -1309,29 +1315,39 @@ fn infer_destructured_value_type(
 
     for atomic in &rhs_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
+            // Generic array/list (no known entries): the element type is the
+            // fallback `params` value (a fallback-less empty array has none).
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } if known_values.is_empty() => {
                 saw_destructurable_type = true;
-                add_inferred_union(&mut inferred_type, value_type);
+                let value_type = params
+                    .as_deref()
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(TUnion::nothing);
+                add_inferred_union(&mut inferred_type, &value_type);
             }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            // Shape (known entries): read the named entry, falling back to the
+            // typed fallback `params` value, then to every known value.
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
                 saw_destructurable_type = true;
+                let fallback_value_type = params.as_deref().map(|(_, v)| v);
                 if let Some(array_key) = lookup_key_to_array_key(lookup_key) {
-                    if let Some(property_type) = properties.get(&array_key) {
+                    if let Some((_, property_type)) = known_values.get(&array_key) {
                         add_inferred_union(&mut inferred_type, property_type);
                     } else if let Some(fallback_value_type) = fallback_value_type {
                         add_inferred_union(&mut inferred_type, fallback_value_type);
                     }
                 } else if let Some(fallback_value_type) = fallback_value_type {
                     add_inferred_union(&mut inferred_type, fallback_value_type);
-                } else if !properties.is_empty() {
-                    for property_type in properties.values() {
+                } else {
+                    for (_, property_type) in known_values.values() {
                         add_inferred_union(&mut inferred_type, property_type);
                     }
                 }

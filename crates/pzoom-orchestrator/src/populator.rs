@@ -533,7 +533,7 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
             }
             UnresolvedConstExpr::ArrayLiteral(entries) => {
                 // Mirrors the scan-time inferer's shape assembly.
-                let mut properties = FxHashMap::default();
+                let mut properties: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 let mut next_int_key = 0i64;
                 let mut is_list = true;
                 for entry in entries {
@@ -547,22 +547,26 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     );
                     if entry.is_spread {
                         // Spreading an empty array contributes nothing.
-                        if matches!(
-                            value_type.get_single(),
-                            Some(TAtomic::TArray { value_type, .. }) if value_type.is_nothing()
-                        ) {
+                        if let Some(t) = value_type.get_single()
+                            && t.is_generic_array()
+                            && t.array_params().is_some_and(|(_, v)| v.is_nothing())
+                        {
                             continue;
                         }
                         // Inline the spread array's entries (string keys kept,
                         // int keys renumbered), like PHP's constant evaluation.
-                        let Some(TAtomic::TKeyedArray {
-                            properties: spread_properties,
+                        let Some(TAtomic::TArray {
+                            known_values: spread_known,
                             ..
                         }) = value_type.get_single()
                         else {
                             return TUnion::mixed();
                         };
-                        let mut spread_entries: Vec<_> = spread_properties
+                        if spread_known.is_empty() {
+                            // A generic array spread (no known shape).
+                            return TUnion::mixed();
+                        }
+                        let mut spread_entries: Vec<_> = spread_known
                             .iter()
                             .map(|(key, value)| (key.clone(), value.clone()))
                             .collect();
@@ -594,30 +598,21 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                             }
                             if let ArrayKey::Int(value) = key {
                                 next_int_key = value + 1;
-                                properties.insert(ArrayKey::Int(value), value_type);
+                                properties.insert(ArrayKey::Int(value), (false, value_type));
                             } else {
-                                properties.insert(key, value_type);
+                                properties.insert(key, (false, value_type));
                             }
                         }
                         None => {
-                            properties.insert(ArrayKey::Int(next_int_key), value_type);
+                            properties.insert(ArrayKey::Int(next_int_key), (false, value_type));
                             next_int_key += 1;
                         }
                     }
                 }
                 if properties.is_empty() {
-                    return TUnion::new(TAtomic::TArray {
-                        key_type: Box::new(TUnion::nothing()),
-                        value_type: Box::new(TUnion::nothing()),
-                    });
+                    return TUnion::new(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
                 }
-                TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list,
-                    sealed: true,
-                    fallback_key_type: None,
-                    fallback_value_type: None,
-                })
+                TUnion::new(TAtomic::keyed_array(properties, is_list, true, None, None))
             }
             UnresolvedConstExpr::Concat(lhs, rhs) => {
                 let lhs_type =
@@ -647,12 +642,15 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     resolve_const_expr(array, codebase, interner, visiting, hit_cycle, failures);
                 let key_type =
                     resolve_const_expr(key, codebase, interner, visiting, hit_cycle, failures);
-                let (Some(TAtomic::TKeyedArray { properties, .. }), Some(key)) =
+                let (Some(TAtomic::TArray { known_values, .. }), Some(key)) =
                     (array_type.get_single(), const_union_to_array_key(&key_type))
                 else {
                     return TUnion::mixed();
                 };
-                properties.get(&key).cloned().unwrap_or_else(TUnion::mixed)
+                known_values
+                    .get(&key)
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(TUnion::mixed)
             }
             UnresolvedConstExpr::Plus(lhs, rhs) => {
                 let lhs_type =
@@ -662,32 +660,31 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                 match (lhs_type.get_single(), rhs_type.get_single()) {
                     // PHP's `+` on arrays keeps the left operand's keys.
                     (
-                        Some(TAtomic::TKeyedArray {
-                            properties: lhs_properties,
+                        Some(TAtomic::TArray {
+                            known_values: lhs_known,
                             is_list: lhs_is_list,
-                            sealed,
-                            fallback_key_type,
-                            fallback_value_type,
+                            is_sealed,
+                            params,
+                            ..
                         }),
-                        Some(TAtomic::TKeyedArray {
-                            properties: rhs_properties,
+                        Some(TAtomic::TArray {
+                            known_values: rhs_known,
                             is_list: rhs_is_list,
                             ..
                         }),
-                    ) => {
-                        let mut properties = (**lhs_properties).clone();
-                        for (key, value) in rhs_properties.iter() {
-                            properties
+                    ) if !lhs_known.is_empty() && !rhs_known.is_empty() => {
+                        let mut known_values = (**lhs_known).clone();
+                        for (key, value) in rhs_known.iter() {
+                            known_values
                                 .entry(key.clone())
                                 .or_insert_with(|| value.clone());
                         }
-                        TUnion::new(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(properties),
-                            is_list: *lhs_is_list && *rhs_is_list,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        })
+                        TUnion::new(TAtomic::keyed_array_arc(
+                            std::sync::Arc::new(known_values),
+                            *lhs_is_list && *rhs_is_list,
+                            *is_sealed,
+                            params.clone(),
+                        ))
                     }
                     (
                         Some(TAtomic::TLiteralInt { value: lhs_value }),
@@ -1909,18 +1906,17 @@ pub fn populate_union_type(t_union: &mut TUnion) {
 pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
     match t_atomic {
         TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
+            known_values,
+            params,
+            ..
         } => {
-            populate_union_type(key_type);
-            populate_union_type(value_type);
-        }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            populate_union_type(value_type);
+            for (_, value) in std::sync::Arc::make_mut(known_values).values_mut() {
+                populate_union_type(value);
+            }
+            if let Some(params) = params.as_mut() {
+                populate_union_type(&mut params.0);
+                populate_union_type(&mut params.1);
+            }
         }
         TAtomic::TClassStringMap {
             as_type,
@@ -1931,22 +1927,6 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
                 populate_atomic_type(inner);
             }
             populate_union_type(value_param);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            for prop_type in std::sync::Arc::make_mut(properties).values_mut() {
-                populate_union_type(prop_type);
-            }
-            if let Some(key_type) = fallback_key_type {
-                populate_union_type(key_type);
-            }
-            if let Some(value_type) = fallback_value_type {
-                populate_union_type(value_type);
-            }
         }
         TAtomic::TNamedObject { type_params, .. } => {
             if let Some(params) = type_params {

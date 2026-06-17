@@ -500,16 +500,16 @@ pub(crate) fn get_superglobal_default_type(var_name: &str) -> Option<TUnion> {
 
     match normalized {
         "_SERVER" | "_GET" | "_POST" | "_FILES" | "_COOKIE" | "_SESSION" | "_REQUEST"
-        | "GLOBALS" => Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        })),
+        | "GLOBALS" => Some(TUnion::new(TAtomic::array(
+            TUnion::array_key(),
+            TUnion::mixed(),
+        ))),
         // Psalm types $_ENV entries as scalar (environment values are
         // strings/numbers, never arrays or objects).
-        "_ENV" => Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::new(TAtomic::TScalar)),
-        })),
+        "_ENV" => Some(TUnion::new(TAtomic::array(
+            TUnion::array_key(),
+            TUnion::new(TAtomic::TScalar),
+        ))),
         // Psalm: $argv/$argc exist only in CLI — null otherwise, with
         // ignore_nullable_issues set; $argc is int<1, max>.
         "argc" => {
@@ -525,9 +525,7 @@ pub(crate) fn get_superglobal_default_type(var_name: &str) -> Option<TUnion> {
         }
         "argv" => {
             let mut argv_type = TUnion::from_types(vec![
-                TAtomic::TNonEmptyList {
-                    value_type: Box::new(TUnion::string()),
-                },
+                TAtomic::non_empty_list(TUnion::string()),
                 TAtomic::TNull,
             ]);
             argv_type.ignore_nullable_issues = true;
@@ -536,9 +534,8 @@ pub(crate) fn get_superglobal_default_type(var_name: &str) -> Option<TUnion> {
         // Psalm: exists only in the local scope after a successful network
         // request — `non-empty-list<non-falsy-string>`, possibly undefined.
         "http_response_header" => {
-            let mut header_list = TUnion::new(TAtomic::TNonEmptyList {
-                value_type: Box::new(TUnion::new(TAtomic::TTruthyString)),
-            });
+            let mut header_list =
+                TUnion::new(TAtomic::non_empty_list(TUnion::new(TAtomic::TTruthyString)));
             header_list.possibly_undefined = true;
             Some(header_list)
         }

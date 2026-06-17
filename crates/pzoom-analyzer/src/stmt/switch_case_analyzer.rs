@@ -738,10 +738,10 @@ fn get_debug_type_case_type(analyzer: &StatementsAnalyzer<'_>, case_label: &str)
         "float" => Some(TUnion::new(TAtomic::TFloat)),
         "bool" => Some(TUnion::new(TAtomic::TBool)),
         "null" => Some(TUnion::null()),
-        "array" => Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        })),
+        "array" => Some(TUnion::new(TAtomic::array(
+            TUnion::array_key(),
+            TUnion::mixed(),
+        ))),
         other => {
             let class_id = analyzer.interner.intern(other.trim_start_matches('\\'));
             analyzer.codebase.get_class(class_id).map(|_| {
@@ -762,10 +762,10 @@ fn get_gettype_case_type(case_label: &str) -> Option<TUnion> {
         "integer" => Some(TUnion::new(TAtomic::TInt)),
         "double" => Some(TUnion::new(TAtomic::TFloat)),
         "string" => Some(TUnion::new(TAtomic::TString)),
-        "array" => Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        })),
+        "array" => Some(TUnion::new(TAtomic::array(
+            TUnion::array_key(),
+            TUnion::mixed(),
+        ))),
         "object" => Some(TUnion::new(TAtomic::TObject)),
         "null" => Some(TUnion::new(TAtomic::TNull)),
         "resource" => Some(TUnion::new(TAtomic::TResource)),

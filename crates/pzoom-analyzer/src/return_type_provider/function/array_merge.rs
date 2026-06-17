@@ -41,10 +41,16 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
             )?;
             if arg.is_unpacked() {
                 let spread_nonempty = arg_type.types.iter().all(|atomic| match atomic {
-                    TAtomic::TNonEmptyList { .. } | TAtomic::TNonEmptyArray { .. } => true,
-                    TAtomic::TKeyedArray { properties, .. } => {
-                        properties.values().any(|value| !value.possibly_undefined)
-                    }
+                    // Generic non-empty array/list.
+                    TAtomic::TArray {
+                        is_nonempty: true,
+                        known_values,
+                        ..
+                    } if known_values.is_empty() => true,
+                    // A shape: non-empty when some entry is always-defined.
+                    TAtomic::TArray { known_values, .. } => known_values
+                        .values()
+                        .any(|(possibly_undefined, _)| !*possibly_undefined),
                     _ => false,
                 });
                 if !spread_nonempty {
@@ -74,28 +80,39 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
         for arg_type in &arg_unit_types {
             for atomic in &arg_type.types {
                 match atomic {
-                    TAtomic::TKeyedArray {
-                        properties,
+                    // A shape (former TKeyedArray): known entries, possibly with
+                    // a typed fallback in `params`. The empty array `[]` (empty
+                    // known_values, no typed fallback) is also a (degenerate)
+                    // shape here — it sets `all_empty = false` and contributes no
+                    // entries, exactly as an empty `TKeyedArray` did, so a lone
+                    // `[]` falls through to a `None` (deferring to the stub).
+                    TAtomic::TArray {
+                        known_values,
+                        params,
                         is_list,
-                        fallback_key_type,
-                        fallback_value_type,
                         ..
-                    } => {
+                    } if !known_values.is_empty() || params.is_none() => {
                         all_empty = false;
-                        max_keyed_array_size = max_keyed_array_size.max(properties.len());
+                        max_keyed_array_size = max_keyed_array_size.max(known_values.len());
 
-                        for (key, value) in properties.iter() {
-                            if !value.possibly_undefined {
+                        for (key, (possibly_undefined, value)) in known_values.iter() {
+                            if !*possibly_undefined {
                                 any_nonempty = true;
                             }
                             match key {
                                 ArrayKey::String(_) | ArrayKey::ClassString(_) => {
                                     all_int_offsets = false;
-                                    set_or_combine(&mut generic, key.clone(), value);
+                                    // Reconstruct the value union carrying its
+                                    // possibly-undefined flag for set_or_combine.
+                                    let mut value = value.clone();
+                                    value.possibly_undefined = *possibly_undefined;
+                                    set_or_combine(&mut generic, key.clone(), &value);
                                 }
                                 ArrayKey::Int(_) => {
                                     if is_replace {
-                                        set_or_combine(&mut generic, key.clone(), value);
+                                        let mut value = value.clone();
+                                        value.possibly_undefined = *possibly_undefined;
+                                        set_or_combine(&mut generic, key.clone(), &value);
                                     } else {
                                         all_keyed_arrays = false;
                                         inner_keys.push(TAtomic::TInt);
@@ -105,27 +122,45 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                             }
                         }
 
-                        if !is_list {
+                        if !*is_list {
                             all_nonempty_lists = false;
                         }
-                        if let Some(fk) = fallback_key_type {
+                        if let Some((fk, fv)) = params.as_deref() {
                             all_keyed_arrays = false;
                             inner_keys.extend(fk.types.iter().cloned());
-                        }
-                        if let Some(fv) = fallback_value_type {
-                            all_keyed_arrays = false;
                             inner_values.extend(fv.types.iter().cloned());
                         }
                     }
+                    // A generic list (former TList/TNonEmptyList): empty
+                    // known_values, list-typed fallback. Lists merge/replace by
+                    // sequential int keys, so they keep list-ness in the result
+                    // (mirrors Psalm treating a list as a keyed array with int
+                    // offsets).
                     TAtomic::TArray {
-                        key_type,
-                        value_type,
-                    }
-                    | TAtomic::TNonEmptyArray {
-                        key_type,
-                        value_type,
+                        params: Some(params),
+                        is_list: true,
+                        is_nonempty,
+                        ..
                     } => {
-                        let non_empty = matches!(atomic, TAtomic::TNonEmptyArray { .. });
+                        let value_type = &params.1;
+                        all_keyed_arrays = false;
+                        if *is_nonempty {
+                            any_nonempty = true;
+                        }
+                        all_empty = false;
+                        inner_keys.push(TAtomic::TInt);
+                        inner_values.extend(value_type.types.iter().cloned());
+                    }
+                    // A generic array (former TArray/TNonEmptyArray): empty
+                    // known_values, typed fallback, not a list.
+                    TAtomic::TArray {
+                        params: Some(params),
+                        is_nonempty,
+                        ..
+                    } => {
+                        let key_type = &params.0;
+                        let value_type = &params.1;
+                        let non_empty = *is_nonempty;
                         if !non_empty && value_type.is_nothing() {
                             continue;
                         }
@@ -142,19 +177,6 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                         }
                         all_empty = false;
                         inner_keys.extend(key_type.types.iter().cloned());
-                        inner_values.extend(value_type.types.iter().cloned());
-                    }
-                    // Lists merge/replace by sequential int keys, so they keep
-                    // list-ness in the result (mirrors Psalm treating a list as a
-                    // keyed array with int offsets).
-                    TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                        let non_empty = matches!(atomic, TAtomic::TNonEmptyList { .. });
-                        all_keyed_arrays = false;
-                        if non_empty {
-                            any_nonempty = true;
-                        }
-                        all_empty = false;
-                        inner_keys.push(TAtomic::TInt);
                         inner_values.extend(value_type.types.iter().cloned());
                     }
                     // A first-pass `isset($acc[$k])` artifact inside a loop:
@@ -180,49 +202,55 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                 if all_keyed_arrays || inner_key.is_none() || inner_value.is_none() {
                     (None, None, true)
                 } else {
-                    (inner_key.map(Box::new), inner_value.map(Box::new), false)
+                    (inner_key, inner_value, false)
                 };
 
-            return Some(TUnion::new(TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(generic),
-                is_list: all_nonempty_lists || all_int_offsets,
+            // Convert the `generic` value map (each union carrying its own
+            // possibly-undefined flag) into the unified `known_values` shape.
+            let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = generic
+                .into_iter()
+                .map(|(key, mut value)| {
+                    let possibly_undefined = value.possibly_undefined;
+                    value.possibly_undefined = false;
+                    (key, (possibly_undefined, value))
+                })
+                .collect();
+
+            // TODO(unify-array): keyed_array normalises is_list against
+            // known_values_form_list; the old code set is_list unconditionally.
+            // For non-replace merges the map is string-keyed (is_list already
+            // false); for replace it is int-keyed, where normalisation only
+            // tightens an inconsistent flag.
+            return Some(TUnion::new(TAtomic::keyed_array(
+                known_values,
+                all_nonempty_lists || all_int_offsets,
                 sealed,
                 fallback_key_type,
                 fallback_value_type,
-            }));
+            )));
         }
 
         if all_empty {
-            return Some(TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::nothing()),
-                value_type: Box::new(TUnion::nothing()),
-            }));
+            return Some(TUnion::new(TAtomic::array(
+                TUnion::nothing(),
+                TUnion::nothing(),
+            )));
         }
 
         if let Some(inner_value) = inner_value {
             if all_int_offsets {
                 return Some(TUnion::new(if any_nonempty {
-                    TAtomic::TNonEmptyList {
-                        value_type: Box::new(inner_value),
-                    }
+                    TAtomic::non_empty_list(inner_value)
                 } else {
-                    TAtomic::TList {
-                        value_type: Box::new(inner_value),
-                    }
+                    TAtomic::list(inner_value)
                 }));
             }
 
             let inner_key = inner_key.unwrap_or_else(TUnion::array_key);
             return Some(TUnion::new(if any_nonempty {
-                TAtomic::TNonEmptyArray {
-                    key_type: Box::new(inner_key),
-                    value_type: Box::new(inner_value),
-                }
+                TAtomic::non_empty_array(inner_key, inner_value)
             } else {
-                TAtomic::TArray {
-                    key_type: Box::new(inner_key),
-                    value_type: Box::new(inner_value),
-                }
+                TAtomic::array(inner_key, inner_value)
             }));
         }
 

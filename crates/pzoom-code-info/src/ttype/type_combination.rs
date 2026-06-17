@@ -72,6 +72,11 @@ pub(crate) struct TypeCombination {
 
     /// Class string types
     pub class_string_types: FxHashMap<String, TAtomic>,
+
+    /// `callable-array` shapes (Psalm's `TCallableKeyedArray`), kept as discrete
+    /// atoms rather than merged into `objectlike_entries` so a plain `callable`
+    /// can absorb them (and they don't fold into ordinary array shapes).
+    pub callable_arrays: Vec<TAtomic>,
 }
 
 impl TypeCombination {
@@ -103,6 +108,7 @@ impl TypeCombination {
             ints: Some(FxHashMap::default()),
             floats: Some(FxHashMap::default()),
             class_string_types: FxHashMap::default(),
+            callable_arrays: Vec::new(),
         }
     }
 

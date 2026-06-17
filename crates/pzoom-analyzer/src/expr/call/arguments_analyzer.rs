@@ -326,14 +326,17 @@ fn resolve_argument_param_indices(
             let arg_pos = arg_positions.get(arg_index).copied().unwrap_or((0, 0));
             if let Some(spread_type) = get_argument_value_type(analysis_data, arg, arg_pos)
                 && let [
-                    pzoom_code_info::TAtomic::TKeyedArray {
-                        properties,
-                        fallback_value_type: None,
+                    pzoom_code_info::TAtomic::TArray {
+                        known_values,
+                        params: None,
                         ..
                     },
                 ] = spread_type.types.as_slice()
+                // A sealed shape (old TKeyedArray with no value fallback) whose
+                // keys are statically enumerable.
+                && !known_values.is_empty()
             {
-                let mut keys: Vec<&pzoom_code_info::ArrayKey> = properties.keys().collect();
+                let mut keys: Vec<&pzoom_code_info::ArrayKey> = known_values.keys().collect();
                 keys.sort();
                 for key in keys {
                     match key {
@@ -1314,40 +1317,53 @@ pub(crate) fn apply_param_out_types(
             {
                 let mut array_atomics: Vec<TAtomic> = Vec::new();
                 for atomic in &existing.types {
-                    match atomic {
-                        TAtomic::TKeyedArray {
-                            properties,
-                            fallback_key_type,
-                            fallback_value_type,
-                            ..
-                        } => {
-                            let (key_type, value_type) =
-                                crate::expr::array_analyzer::get_keyed_array_generic_params(
-                                    properties,
-                                    fallback_key_type.as_deref(),
-                                    fallback_value_type.as_deref(),
-                                );
-                            array_atomics.push(TAtomic::TNonEmptyArray {
-                                key_type: Box::new(key_type),
-                                value_type: Box::new(value_type),
-                            });
+                    let TAtomic::TArray {
+                        known_values,
+                        params,
+                        is_list,
+                        is_nonempty,
+                        ..
+                    } = atomic
+                    else {
+                        continue;
+                    };
+
+                    if !known_values.is_empty() {
+                        // A shape (old TKeyedArray) generalizes to a non-empty
+                        // array of its key/value types (order is lost).
+                        let (key_type, value_type) =
+                            crate::expr::array_analyzer::get_keyed_array_generic_params(
+                                known_values,
+                                params.as_deref().map(|(key, _)| key),
+                                params.as_deref().map(|(_, value)| value),
+                            );
+                        array_atomics.push(TAtomic::non_empty_array(key_type, value_type));
+                    } else if *is_list {
+                        // A generic list (old TList / TNonEmptyList) becomes an
+                        // int-keyed array preserving non-emptiness.
+                        match params.as_deref() {
+                            Some((_, value_type)) => {
+                                let value_type = value_type.clone();
+                                array_atomics.push(if *is_nonempty {
+                                    TAtomic::non_empty_array(TUnion::int(), value_type)
+                                } else {
+                                    TAtomic::array(TUnion::int(), value_type)
+                                });
+                            }
+                            // `[]` (empty sealed list) — old code treated this as
+                            // an empty TKeyedArray and generalized it to
+                            // non-empty-array<array-key, mixed>.
+                            // TODO(unify-array): `[]` now has empty known_values;
+                            // closest-equivalent to the old keyed-array path.
+                            None => array_atomics.push(TAtomic::non_empty_array(
+                                TUnion::array_key(),
+                                TUnion::mixed(),
+                            )),
                         }
-                        TAtomic::TList { value_type } => {
-                            array_atomics.push(TAtomic::TArray {
-                                key_type: Box::new(TUnion::int()),
-                                value_type: value_type.clone(),
-                            });
-                        }
-                        TAtomic::TNonEmptyList { value_type } => {
-                            array_atomics.push(TAtomic::TNonEmptyArray {
-                                key_type: Box::new(TUnion::int()),
-                                value_type: value_type.clone(),
-                            });
-                        }
-                        TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. } => {
-                            array_atomics.push(atomic.clone());
-                        }
-                        _ => {}
+                    } else {
+                        // A generic array (old TArray / TNonEmptyArray, incl. the
+                        // array<never, never> sentinel) passes through unchanged.
+                        array_atomics.push(atomic.clone());
                     }
                 }
                 if !array_atomics.is_empty() {
@@ -1761,11 +1777,26 @@ fn unpacked_iterable_element_type(
     let mut element_type: Option<TUnion> = None;
     for atomic in &arg_type.types {
         let member = match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TIterable { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => Some((**value_type).clone()),
+            TAtomic::TIterable { value_type, .. } => Some((**value_type).clone()),
+            // Any array: its element type is the typed fallback value combined
+            // with every known entry's value. A generic array (empty
+            // known_values) yields just the fallback value.
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } => {
+                let mut combined = params.as_deref().map(|(_, value)| value.clone());
+                for (_, property_type) in known_values.values() {
+                    combined = Some(match combined {
+                        Some(existing) => {
+                            pzoom_code_info::combine_union_types(&existing, property_type, false)
+                        }
+                        None => property_type.clone(),
+                    });
+                }
+                combined
+            }
             // Unpacking a Traversable object (`f(...$generator)`) contributes
             // its value param, remapped through @template-extends when the
             // object is a Traversable subtype.
@@ -1783,22 +1814,6 @@ fn unpacked_iterable_element_type(
                     )
                     .unwrap_or_else(|| type_params.clone());
                 mapped.get(1).cloned()
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
-                ..
-            } => {
-                let mut combined = fallback_value_type.as_deref().cloned();
-                for property_type in properties.values() {
-                    combined = Some(match combined {
-                        Some(existing) => {
-                            pzoom_code_info::combine_union_types(&existing, property_type, false)
-                        }
-                        None => property_type.clone(),
-                    });
-                }
-                combined
             }
             _ => None,
         };

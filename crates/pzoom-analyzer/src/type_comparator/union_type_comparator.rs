@@ -129,10 +129,7 @@ pub fn is_contained_by_in_context(
         } = input_type_part
         {
             let decomposed = TUnion::from_types(vec![
-                TAtomic::TArray {
-                    key_type: key_type.clone(),
-                    value_type: value_type.clone(),
-                },
+                TAtomic::array((**key_type).clone(), (**value_type).clone()),
                 TAtomic::TNamedObject {
                     name: pzoom_str::StrId::TRAVERSABLE,
                     type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),

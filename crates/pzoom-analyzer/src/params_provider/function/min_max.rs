@@ -32,25 +32,16 @@ impl FunctionParamsProvider for MinMaxParamsProvider {
         if let Some(arg_pos) = event.arg_positions.first().copied()
             && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
             && !arg_type.types.iter().any(|atomic| {
-                matches!(
-                    atomic,
-                    TAtomic::TArray { .. }
-                        | TAtomic::TNonEmptyArray { .. }
-                        | TAtomic::TList { .. }
-                        | TAtomic::TNonEmptyList { .. }
-                        | TAtomic::TKeyedArray { .. }
-                        | TAtomic::TMixed
-                        | TAtomic::TNonEmptyMixed
-                )
+                atomic.is_array() || matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
             })
         {
             return None;
         }
 
-        let non_empty_array = TUnion::new(TAtomic::TNonEmptyArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        });
+        let non_empty_array = TUnion::new(TAtomic::non_empty_array(
+            TUnion::array_key(),
+            TUnion::mixed(),
+        ));
 
         Some(FunctionParamsProviderResult::Params(vec![ParamInfo {
             name: StrId::VALUE,

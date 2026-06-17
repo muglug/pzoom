@@ -217,10 +217,9 @@ pub fn analyze_prefix(
         UnaryPrefixOperator::BoolCast(_, _) | UnaryPrefixOperator::BooleanCast(_, _) => {
             TUnion::bool()
         }
-        UnaryPrefixOperator::ArrayCast(_, _) => TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        }),
+        UnaryPrefixOperator::ArrayCast(_, _) => {
+            TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed()))
+        }
         UnaryPrefixOperator::ObjectCast(_, _) => TUnion::new(TAtomic::TObject),
         UnaryPrefixOperator::UnsetCast(_, _) => TUnion::null(),
         UnaryPrefixOperator::VoidCast(_, _) => TUnion::void(),

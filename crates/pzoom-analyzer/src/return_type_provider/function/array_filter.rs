@@ -57,19 +57,20 @@ fn infer_array_filter_return_type(
         };
 
         if let Some(callback_assertions) = &callback_assertions {
-            match &mut filtered_atomic {
-                TAtomic::TArray { value_type, .. }
-                | TAtomic::TNonEmptyArray { value_type, .. }
-                | TAtomic::TList { value_type }
-                | TAtomic::TNonEmptyList { value_type } => {
-                    **value_type = apply_assertions_to_union(
-                        analyzer,
-                        callback_assertions,
-                        value_type,
-                        analysis_data,
-                    );
-                }
-                _ => {}
+            // `infer_array_filter_return_atomic` yields a generic array/list
+            // whose value type is the typed fallback (`params.1`); narrow it.
+            if let TAtomic::TArray {
+                params: Some(params),
+                ..
+            } = &mut filtered_atomic
+            {
+                let narrowed = apply_assertions_to_union(
+                    analyzer,
+                    callback_assertions,
+                    &params.1,
+                    analysis_data,
+                );
+                params.1 = narrowed;
             }
         }
 
@@ -100,10 +101,7 @@ fn infer_array_filter_return_type(
             array_info.value_type
         };
 
-        return Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(key_type),
-            value_type: Box::new(value_type),
-        }));
+        return Some(TUnion::new(TAtomic::array(key_type, value_type)));
     }
 
     Some(TUnion::from_types(filtered_types))
@@ -141,10 +139,7 @@ fn callback_param_assertions(
                 return_type: None,
                 is_pure: None,
             },
-            "is_array" => TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            },
+            "is_array" => TAtomic::array(TUnion::array_key(), TUnion::mixed()),
             "is_iterable" => TAtomic::TIterable {
                 key_type: Box::new(TUnion::mixed()),
                 value_type: Box::new(TUnion::mixed()),

@@ -651,11 +651,14 @@ fn check_property_defaults(
             if default_type.is_null() {
                 continue;
             }
-            let default_is_empty_array = matches!(
-                default_type.get_single(),
-                Some(TAtomic::TArray { key_type, value_type })
-                    if key_type.is_nothing() && value_type.is_nothing()
-            );
+            let default_is_empty_array = default_type.get_single().is_some_and(|single| {
+                single
+                    .array_known_values()
+                    .is_some_and(|known_values| known_values.is_empty())
+                    && single
+                        .array_params()
+                        .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing())
+            });
             if default_is_empty_array {
                 continue;
             }
@@ -2656,22 +2659,22 @@ fn check_undefined_classes_in_constant_initializers(
                             ));
                         }
                     }
-                    TAtomic::TKeyedArray { properties, .. } => {
-                        stack.extend(properties.values());
+                    // A shape (known entries) scans its entry types; a generic
+                    // array/list scans its fallback key/value params. Preserve
+                    // the old split so a shape's fallback isn't newly scanned.
+                    TAtomic::TArray {
+                        known_values,
+                        params,
+                        ..
+                    } if !known_values.is_empty() => {
+                        stack.extend(known_values.values().map(|(_, value)| value));
                     }
                     TAtomic::TArray {
-                        key_type,
-                        value_type,
-                    }
-                    | TAtomic::TNonEmptyArray {
-                        key_type,
-                        value_type,
+                        params: Some(params),
+                        ..
                     } => {
-                        stack.push(key_type);
-                        stack.push(value_type);
-                    }
-                    TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                        stack.push(value_type);
+                        stack.push(&params.0);
+                        stack.push(&params.1);
                     }
                     _ => {}
                 }
@@ -6026,38 +6029,24 @@ fn collect_class_template_param_names(union: &TUnion, class_id: StrId, found: &m
                     collect_class_template_param_names(type_param, class_id, found);
                 }
             }
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => {
                 collect_class_template_param_names(key_type, class_id, found);
                 collect_class_template_param_names(value_type, class_id, found);
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                collect_class_template_param_names(value_type, class_id, found);
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                for property_type in properties.values() {
+                for (_, property_type) in known_values.values() {
                     collect_class_template_param_names(property_type, class_id, found);
                 }
-                if let Some(fallback_key_type) = fallback_key_type {
-                    collect_class_template_param_names(fallback_key_type, class_id, found);
-                }
-                if let Some(fallback_value_type) = fallback_value_type {
-                    collect_class_template_param_names(fallback_value_type, class_id, found);
+                if let Some(params) = params {
+                    collect_class_template_param_names(&params.0, class_id, found);
+                    collect_class_template_param_names(&params.1, class_id, found);
                 }
             }
             _ => {}
@@ -7083,14 +7072,9 @@ pub(crate) fn analyze_method(
 
             if info.is_variadic {
                 if no_named_arguments {
-                    TUnion::new(TAtomic::TList {
-                        value_type: Box::new(base_type),
-                    })
+                    TUnion::new(TAtomic::list(base_type))
                 } else {
-                    TUnion::new(TAtomic::TArray {
-                        key_type: Box::new(TUnion::array_key()),
-                        value_type: Box::new(base_type),
-                    })
+                    TUnion::new(TAtomic::array(TUnion::array_key(), base_type))
                 }
             } else {
                 base_type
@@ -7668,15 +7652,10 @@ fn is_empty_array_default_for_array_like_param(default_type: &TUnion, param_type
         return false;
     }
 
-    param_type.types.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TKeyedArray { .. }
-                | TAtomic::TIterable { .. }
-        )
-    })
+    param_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TArray { .. } | TAtomic::TIterable { .. }))
 }
 
 fn is_empty_array_type(union: &TUnion) -> bool {
@@ -7686,15 +7665,15 @@ fn is_empty_array_type(union: &TUnion) -> bool {
 
     match single {
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => key_type.is_nothing() && value_type.is_nothing(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+            known_values,
+            params,
             ..
-        } => properties.is_empty() && fallback_key_type.is_none() && fallback_value_type.is_none(),
+        } => {
+            known_values.is_empty()
+                && params
+                    .as_deref()
+                    .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing())
+        }
         _ => false,
     }
 }
@@ -7961,75 +7940,29 @@ fn replace_extended_templates_in_atomic(
 ) -> TAtomic {
     match atomic_type {
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => TAtomic::TArray {
-            key_type: Box::new(replace_extended_templates_in_union(
-                key_type,
-                template_extended_params,
-            )),
-            value_type: Box::new(replace_extended_templates_in_union(
-                value_type,
-                template_extended_params,
-            )),
-        },
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(replace_extended_templates_in_union(
-                key_type,
-                template_extended_params,
-            )),
-            value_type: Box::new(replace_extended_templates_in_union(
-                value_type,
-                template_extended_params,
-            )),
-        },
-        TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(replace_extended_templates_in_union(
-                value_type,
-                template_extended_params,
-            )),
-        },
-        TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(replace_extended_templates_in_union(
-                value_type,
-                template_extended_params,
-            )),
-        },
-        TAtomic::TKeyedArray {
-            properties,
-            is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            known_values,
+            params,
+            ..
         } => {
-            let mut new_properties = rustc_hash::FxHashMap::default();
-            for (key, value) in properties.iter() {
-                new_properties.insert(
+            let mut new_known_values = rustc_hash::FxHashMap::default();
+            for (key, (possibly_undefined, value)) in known_values.iter() {
+                new_known_values.insert(
                     key.clone(),
-                    replace_extended_templates_in_union(value, template_extended_params),
+                    (
+                        *possibly_undefined,
+                        replace_extended_templates_in_union(value, template_extended_params),
+                    ),
                 );
             }
 
-            TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(new_properties),
-                is_list: *is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.as_ref().map(|fallback_key| {
-                    Box::new(replace_extended_templates_in_union(
-                        fallback_key,
-                        template_extended_params,
-                    ))
-                }),
-                fallback_value_type: fallback_value_type.as_ref().map(|fallback_value| {
-                    Box::new(replace_extended_templates_in_union(
-                        fallback_value,
-                        template_extended_params,
-                    ))
-                }),
-            }
+            let new_params = params.as_ref().map(|params| {
+                Box::new((
+                    replace_extended_templates_in_union(&params.0, template_extended_params),
+                    replace_extended_templates_in_union(&params.1, template_extended_params),
+                ))
+            });
+
+            atomic_type.rebuilt_array(std::sync::Arc::new(new_known_values), new_params)
         }
         TAtomic::TNamedObject {
             name, type_params, ..

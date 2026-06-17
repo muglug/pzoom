@@ -525,10 +525,8 @@ fn scrape_function_call_assertions(
                 {
                     if let Some(key_union) = extract_array_key_union_for_key_exists(haystack_type) {
                         if !key_union.is_nothing() {
-                            let key_haystack = TUnion::new(TAtomic::TArray {
-                                key_type: Box::new(TUnion::array_key()),
-                                value_type: Box::new(key_union),
-                            });
+                            let key_haystack =
+                                TUnion::new(TAtomic::array(TUnion::array_key(), key_union));
                             add_in_array_assertions(result, &key_var_name, key_haystack, cond_id);
                             added_key_constraint = true;
                         }
@@ -949,10 +947,7 @@ fn scrape_function_call_assertions(
                                 .cloned()
                         })
                         .and_then(|arg_type| get_array_assertion_from_union(&arg_type))
-                        .unwrap_or_else(|| TAtomic::TArray {
-                            key_type: Box::new(TUnion::array_key()),
-                            value_type: Box::new(TUnion::mixed()),
-                        });
+                        .unwrap_or_else(|| TAtomic::array(TUnion::array_key(), TUnion::mixed()));
                     (Some(narrowed_array_type), true)
                 }
                 "is_object" => (Some(TAtomic::TObject), true),
@@ -1953,10 +1948,9 @@ fn get_cast_type_comparison(
             UnaryPrefixOperator::BoolCast(_, _) | UnaryPrefixOperator::BooleanCast(_, _) => {
                 TAtomic::TBool
             }
-            UnaryPrefixOperator::ArrayCast(_, _) => TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            },
+            UnaryPrefixOperator::ArrayCast(_, _) => {
+                TAtomic::array(TUnion::array_key(), TUnion::mixed())
+            }
             UnaryPrefixOperator::ObjectCast(_, _) => TAtomic::TObject,
             _ => return None,
         };
@@ -3195,27 +3189,19 @@ fn extract_in_array_value_union(haystack_type: &TUnion) -> Option<TUnion> {
     let mut value_union: Option<TUnion> = None;
 
     for atomic in &haystack_type.types {
-        match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
+        if let TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } = atomic
+        {
+            for (_, value_type) in known_values.values() {
                 merge_in_array_value_union(&mut value_union, value_type);
             }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
-                ..
-            } => {
-                for property_type in properties.values() {
-                    merge_in_array_value_union(&mut value_union, property_type);
-                }
 
-                if let Some(fallback_value_type) = fallback_value_type {
-                    merge_in_array_value_union(&mut value_union, fallback_value_type);
-                }
+            if let Some(params) = params {
+                merge_in_array_value_union(&mut value_union, &params.1);
             }
-            _ => {}
         }
     }
 
@@ -3238,60 +3224,23 @@ fn get_array_assertion_from_union(union: &TUnion) -> Option<TAtomic> {
     for atomic in &union.types {
         match atomic {
             TAtomic::TArray {
-                key_type: atomic_key_type,
-                value_type: atomic_value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type: atomic_key_type,
-                value_type: atomic_value_type,
-            } => {
-                key_type = Some(match key_type {
-                    Some(existing) => combine_union_types(&existing, atomic_key_type, false),
-                    None => (**atomic_key_type).clone(),
-                });
-                value_type = Some(match value_type {
-                    Some(existing) => combine_union_types(&existing, atomic_value_type, false),
-                    None => (**atomic_value_type).clone(),
-                });
-            }
-            TAtomic::TList {
-                value_type: atomic_value_type,
-            }
-            | TAtomic::TNonEmptyList {
-                value_type: atomic_value_type,
-            } => {
-                key_type = Some(match key_type {
-                    Some(existing) => combine_union_types(&existing, &TUnion::int(), false),
-                    None => TUnion::int(),
-                });
-                value_type = Some(match value_type {
-                    Some(existing) => combine_union_types(&existing, atomic_value_type, false),
-                    None => (**atomic_value_type).clone(),
-                });
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+                known_values,
+                params,
                 ..
             } => {
-                if let Some(fallback_key_type) = fallback_key_type {
+                if let Some(params) = params {
+                    let (atomic_key_type, atomic_value_type) = (&params.0, &params.1);
                     key_type = Some(match key_type {
-                        Some(existing) => combine_union_types(&existing, fallback_key_type, false),
-                        None => (**fallback_key_type).clone(),
+                        Some(existing) => combine_union_types(&existing, atomic_key_type, false),
+                        None => atomic_key_type.clone(),
                     });
-                }
-
-                if let Some(fallback_value_type) = fallback_value_type {
                     value_type = Some(match value_type {
-                        Some(existing) => {
-                            combine_union_types(&existing, fallback_value_type, false)
-                        }
-                        None => (**fallback_value_type).clone(),
+                        Some(existing) => combine_union_types(&existing, atomic_value_type, false),
+                        None => atomic_value_type.clone(),
                     });
                 }
 
-                for (prop_key, prop_type) in properties.iter() {
+                for (prop_key, (_, prop_type)) in known_values.iter() {
                     let prop_key_type = match prop_key {
                         ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
                         ArrayKey::String(value) | ArrayKey::ClassString(value) => {
@@ -3332,35 +3281,30 @@ fn get_array_assertion_from_union(union: &TUnion) -> Option<TAtomic> {
                 });
             }
             TAtomic::TTemplateParam { as_type, .. } => {
-                if let Some(template_atomic) = get_array_assertion_from_union(as_type) {
-                    if let TAtomic::TArray {
-                        key_type: template_key_type,
-                        value_type: template_value_type,
-                    } = template_atomic
-                    {
-                        key_type = Some(match key_type {
-                            Some(existing) => {
-                                combine_union_types(&existing, &template_key_type, false)
-                            }
-                            None => (*template_key_type).clone(),
-                        });
-                        value_type = Some(match value_type {
-                            Some(existing) => {
-                                combine_union_types(&existing, &template_value_type, false)
-                            }
-                            None => (*template_value_type).clone(),
-                        });
-                    }
+                if let Some(template_atomic) = get_array_assertion_from_union(as_type)
+                    && let Some((template_key_type, template_value_type)) =
+                        template_atomic.array_params()
+                {
+                    key_type = Some(match key_type {
+                        Some(existing) => combine_union_types(&existing, template_key_type, false),
+                        None => template_key_type.clone(),
+                    });
+                    value_type = Some(match value_type {
+                        Some(existing) => {
+                            combine_union_types(&existing, template_value_type, false)
+                        }
+                        None => template_value_type.clone(),
+                    });
                 }
             }
             _ => {}
         }
     }
 
-    Some(TAtomic::TArray {
-        key_type: Box::new(key_type.unwrap_or_else(TUnion::array_key)),
-        value_type: Box::new(value_type.unwrap_or_else(TUnion::mixed)),
-    })
+    Some(TAtomic::array(
+        key_type.unwrap_or_else(TUnion::array_key),
+        value_type.unwrap_or_else(TUnion::mixed),
+    ))
 }
 
 fn union_is_definitely_string_like(union: &TUnion) -> bool {
@@ -3507,39 +3451,29 @@ fn extract_array_key_union_for_key_exists(array_union: &TUnion) -> Option<TUnion
     let mut key_types = Vec::new();
 
     for atomic in &array_union.types {
-        match atomic {
-            TAtomic::TArray { key_type, .. } | TAtomic::TNonEmptyArray { key_type, .. } => {
-                for key_atomic in &key_type.types {
+        if let TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } = atomic
+        {
+            for key in known_values.keys() {
+                let key_atomic = match key {
+                    ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
+                    ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                        TAtomic::TLiteralString {
+                            value: value.clone(),
+                        }
+                    }
+                };
+                add_loose_array_key_atomic(&mut key_types, &key_atomic);
+            }
+
+            if let Some(params) = params {
+                for key_atomic in &params.0.types {
                     add_loose_array_key_atomic(&mut key_types, key_atomic);
                 }
             }
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => {
-                add_loose_array_key_atomic(&mut key_types, &TAtomic::TInt);
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                ..
-            } => {
-                for key in properties.keys() {
-                    let key_atomic = match key {
-                        ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
-                        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
-                            TAtomic::TLiteralString {
-                                value: value.clone(),
-                            }
-                        }
-                    };
-                    add_loose_array_key_atomic(&mut key_types, &key_atomic);
-                }
-
-                if let Some(fallback_key_type) = fallback_key_type {
-                    for key_atomic in &fallback_key_type.types {
-                        add_loose_array_key_atomic(&mut key_types, key_atomic);
-                    }
-                }
-            }
-            _ => {}
         }
     }
 

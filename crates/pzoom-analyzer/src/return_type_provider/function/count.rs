@@ -80,41 +80,47 @@ fn infer_count_return_type(
 
     for atomic in &value_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. } if value_type.is_nothing() => {
-                // count(array<never, never>) is provably 0 (Psalm's
-                // CountReturnTypeProvider TArray empty arm).
+            // A generic array/list (former TArray/TNonEmptyArray/TList/
+            // TNonEmptyList): empty known_values with a typed fallback.
+            TAtomic::TArray {
+                known_values,
+                params: Some(params),
+                is_nonempty,
+                ..
+            } if known_values.is_empty() => {
                 saw_array_like = true;
-                exact_count = match exact_count {
-                    None => Some(0),
-                    Some(0) => Some(0),
-                    Some(_) => None,
-                };
+                if params.1.is_nothing() {
+                    // count(array<never, never>) is provably 0 (Psalm's
+                    // CountReturnTypeProvider TArray empty arm).
+                    exact_count = match exact_count {
+                        None => Some(0),
+                        Some(0) => Some(0),
+                        Some(_) => None,
+                    };
+                } else {
+                    if *is_nonempty {
+                        saw_non_empty = true;
+                    }
+                    exact_count = None;
+                }
             }
-            TAtomic::TArray { .. } | TAtomic::TList { .. } => {
-                saw_array_like = true;
-                exact_count = None;
-            }
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
-                saw_array_like = true;
-                saw_non_empty = true;
-                exact_count = None;
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+            // A keyed-array shape (former TKeyedArray), including the empty
+            // array `[]` (empty known_values, no typed fallback — counts as 0).
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
                 saw_array_like = true;
 
-                if fallback_key_type.is_some() || fallback_value_type.is_some() {
+                if params.is_some() {
                     exact_count = None;
                 } else {
                     let mut fixed_count = 0i64;
                     let mut has_optional = false;
 
-                    for property_type in properties.values() {
-                        if property_type.possibly_undefined {
+                    for (possibly_undefined, _value) in known_values.values() {
+                        if *possibly_undefined {
                             has_optional = true;
                         } else {
                             fixed_count += 1;

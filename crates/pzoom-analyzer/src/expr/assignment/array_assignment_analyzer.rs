@@ -190,10 +190,7 @@ fn analyze_assignment_chain<'a>(
     context.inside_assignment_root = was_inside_assignment_root;
     let root_type = if suppress_undefined_root {
         // Psalm seeds an undeclared assignment root as a fresh empty array.
-        TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::nothing()),
-            value_type: Box::new(TUnion::nothing()),
-        })
+        TUnion::new(TAtomic::empty_array())
     } else {
         analysis_data
             .expr_types
@@ -208,16 +205,11 @@ fn analyze_assignment_chain<'a>(
         Expression::Call(
             Call::Function(_) | Call::Method(_) | Call::NullSafeMethod(_) | Call::StaticMethod(_)
         )
-    ) && root_type.types.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
-        )
-    }) {
+    ) && root_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TArray { .. }))
+    {
         let span = root_expr.span();
         let (line, col) = analyzer.get_line_column(span.start.offset);
         analysis_data.add_issue(Issue::new(
@@ -389,14 +381,10 @@ fn analyze_assignment_chain<'a>(
             .key_type
             .as_ref()
             .is_some_and(|key_type| get_literal_keys_if_all_literals(key_type).is_none())
-        && root_type.types.iter().any(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { is_list: true, .. }
-            )
-        })
+        && root_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TArray { is_list: true, .. }))
         && {
             let offset_in_scope = root_var_key
                 .as_ref()
@@ -457,9 +445,7 @@ fn analyze_assignment_chain<'a>(
             // stays a list instead of degrading to `array<array-key, _>`.
             combine_union_types(
                 container_type,
-                &TUnion::new(TAtomic::TNonEmptyList {
-                    value_type: Box::new(updated_child_type),
-                }),
+                &TUnion::new(TAtomic::non_empty_list(updated_child_type)),
                 true,
             )
         } else {
@@ -762,19 +748,10 @@ fn union_has_array_like(union: &TUnion) -> bool {
     union.types.iter().any(|atomic| {
         matches!(
             atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
-                | TAtomic::TClassStringMap { .. }
+            TAtomic::TArray { .. } | TAtomic::TClassStringMap { .. }
         ) || matches!(atomic, TAtomic::TObjectIntersection { types } if types.iter().any(|nested| matches!(
             nested,
             TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
         )))
     })
 }
@@ -872,10 +849,10 @@ fn apply_assignment_to_container(
                     analysis_data.type_variable_bounds.get_mut(name)
                 {
                     let mut bound = pzoom_code_info::TemplateBound::new(
-                        TUnion::new(TAtomic::TArray {
-                            key_type: Box::new(key_type.cloned().unwrap_or_else(TUnion::array_key)),
-                            value_type: Box::new(assigned_type.clone()),
-                        }),
+                        TUnion::new(TAtomic::array(
+                            key_type.cloned().unwrap_or_else(TUnion::array_key),
+                            assigned_type.clone(),
+                        )),
                         0,
                         None,
                         None,
@@ -887,43 +864,57 @@ fn apply_assignment_to_container(
                 has_writable = true;
                 updated.push(atomic.clone());
             }
+            // A shape (known entries) — keyed-array update.
             TAtomic::TArray {
-                key_type: existing_key,
-                value_type: existing_value,
+                known_values,
+                params,
+                is_list,
+                is_sealed,
+                ..
+            } if !known_values.is_empty() => {
+                has_writable = true;
+                updated.push(update_keyed_array_atomic(
+                    known_values,
+                    *is_list,
+                    *is_sealed,
+                    params.as_deref().map(|(k, _)| k),
+                    params.as_deref().map(|(_, v)| v),
+                    key_type,
+                    assigned_type,
+                    inside_loop,
+                ));
             }
-            | TAtomic::TNonEmptyArray {
-                key_type: existing_key,
-                value_type: existing_value,
+            // A generic list (`list<V>`).
+            TAtomic::TArray {
+                params: Some(params),
+                is_list: true,
+                ..
+            } => {
+                has_writable = true;
+                updated.push(update_list_atomic(&params.1, key_type, assigned_type));
+            }
+            // A generic array (`array<K,V>`).
+            TAtomic::TArray {
+                params: Some(params),
+                ..
             } => {
                 has_writable = true;
                 updated.push(update_generic_array_atomic(
-                    existing_key,
-                    existing_value,
+                    &params.0,
+                    &params.1,
                     key_type,
                     assigned_type,
                 ));
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            // A fallback-less empty array (`[]`/`empty_array()`): the old empty
+            // generic `array<nothing, nothing>` autovivification path.
+            TAtomic::TArray { .. } => {
                 has_writable = true;
-                updated.push(update_list_atomic(value_type, key_type, assigned_type));
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                has_writable = true;
-                updated.push(update_keyed_array_atomic(
-                    properties,
-                    *is_list,
-                    *sealed,
-                    fallback_key_type.as_deref(),
-                    fallback_value_type.as_deref(),
+                updated.push(update_generic_array_atomic(
+                    &TUnion::nothing(),
+                    &TUnion::nothing(),
                     key_type,
                     assigned_type,
-                    inside_loop,
                 ));
             }
             TAtomic::TClassStringMap {
@@ -1007,10 +998,6 @@ fn apply_assignment_to_container(
                     matches!(
                         intersection_atomic,
                         TAtomic::TArray { .. }
-                            | TAtomic::TNonEmptyArray { .. }
-                            | TAtomic::TList { .. }
-                            | TAtomic::TNonEmptyList { .. }
-                            | TAtomic::TKeyedArray { .. }
                             | TAtomic::TString
                             | TAtomic::TNonEmptyString
                             | TAtomic::TLiteralString { .. }
@@ -1071,10 +1058,6 @@ fn apply_assignment_to_container(
                     matches!(
                         bound,
                         TAtomic::TArray { .. }
-                            | TAtomic::TNonEmptyArray { .. }
-                            | TAtomic::TList { .. }
-                            | TAtomic::TNonEmptyList { .. }
-                            | TAtomic::TKeyedArray { .. }
                             | TAtomic::TString
                             | TAtomic::TNonEmptyString
                             | TAtomic::TLiteralString { .. }
@@ -1095,11 +1078,15 @@ fn apply_assignment_to_container(
                     // Only SHAPE bounds degrade: a generic-array bound
                     // (`TData as array`) written with key-of/indexed-access
                     // values stays within the template (Psalm's
-                    // keyOfClassTemplate tests).
-                    let bound_is_shape = as_type
-                        .types
-                        .iter()
-                        .all(|bound| matches!(bound, TAtomic::TKeyedArray { .. }));
+                    // keyOfClassTemplate tests). A shape is an array with known
+                    // entries (old `TKeyedArray`); a generic `array<…>`/`list<…>`
+                    // has none.
+                    let bound_is_shape = as_type.types.iter().all(|bound| {
+                        matches!(
+                            bound,
+                            TAtomic::TArray { known_values, .. } if !known_values.is_empty()
+                        )
+                    });
                     if bound_is_shape {
                         let updated_bound = apply_assignment_to_container(
                             analyzer,
@@ -1368,40 +1355,21 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
 
     for atomic in &union.types {
         match atomic {
+            // A list shape (known entries, `is_list`): collapse to a list,
+            // keeping it non-empty when some entry is always-defined. Psalm keeps
+            // lists lists across loop iterations rather than flattening to
+            // `array<int, _>`.
             TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => {
-                saw_array_like = true;
-                widened_key_type = Some(match widened_key_type {
-                    Some(ref existing) => combine_union_types(existing, key_type, false),
-                    None => (**key_type).clone(),
-                });
-                widened_value_type = Some(match widened_value_type {
-                    Some(ref existing) => combine_union_types(existing, value_type, false),
-                    None => (**value_type).clone(),
-                });
-            }
-            // Psalm keeps lists lists across loop iterations: a list shape
-            // converges by combining with `non-empty-list<value>` at the
-            // append site rather than flattening to `array<int, _>`.
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => {
-                other_types.push(atomic.clone());
-            }
-            TAtomic::TKeyedArray {
+                known_values,
+                params,
                 is_list: true,
-                properties,
-                fallback_value_type,
                 ..
-            } => {
+            } if !known_values.is_empty() => {
+                let fallback_value_type = params.as_deref().map(|(_, v)| v);
                 let mut value_union: Option<TUnion> = None;
                 let mut has_defined_property = false;
-                for value_type in properties.values() {
-                    if !value_type.possibly_undefined {
+                for (possibly_undefined, value_type) in known_values.values() {
+                    if !*possibly_undefined {
                         has_defined_property = true;
                     }
                     value_union = Some(match value_union {
@@ -1414,34 +1382,34 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                         Some(ref existing) => {
                             combine_union_types(existing, fallback_value_type, false)
                         }
-                        None => (**fallback_value_type).clone(),
+                        None => fallback_value_type.clone(),
                     });
                 }
                 let mut value_union = value_union.unwrap_or_else(TUnion::mixed);
                 value_union.possibly_undefined = false;
                 other_types.push(if has_defined_property {
-                    TAtomic::TNonEmptyList {
-                        value_type: Box::new(value_union),
-                    }
+                    TAtomic::non_empty_list(value_union)
                 } else {
-                    TAtomic::TList {
-                        value_type: Box::new(value_union),
-                    }
+                    TAtomic::list(value_union)
                 });
             }
-            TAtomic::TKeyedArray {
-                properties,
+            // A non-list shape (known entries): widen its keys/values into the
+            // generic array accumulator.
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                fallback_key_type,
-                fallback_value_type,
                 ..
-            } => {
+            } if !known_values.is_empty() => {
                 saw_array_like = true;
+
+                let fallback_key_type = params.as_deref().map(|(k, _)| k);
+                let fallback_value_type = params.as_deref().map(|(_, v)| v);
 
                 let mut keyed_key_type: Option<TUnion> = None;
                 let mut keyed_value_type: Option<TUnion> = None;
 
-                for (key, value_type) in properties.iter() {
+                for (key, (_possibly_undefined, value_type)) in known_values.iter() {
                     let key_union = match key {
                         ArrayKey::Int(_) => TUnion::int(),
                         ArrayKey::String(_) | ArrayKey::ClassString(_) => TUnion::string(),
@@ -1462,7 +1430,7 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                         Some(ref existing) => {
                             combine_union_types(existing, fallback_key_type, false)
                         }
-                        None => (**fallback_key_type).clone(),
+                        None => fallback_key_type.clone(),
                     });
                 } else if *is_list {
                     keyed_key_type = Some(match keyed_key_type {
@@ -1476,7 +1444,7 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                         Some(ref existing) => {
                             combine_union_types(existing, fallback_value_type, false)
                         }
-                        None => (**fallback_value_type).clone(),
+                        None => fallback_value_type.clone(),
                     });
                 }
 
@@ -1492,6 +1460,45 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
                     None => keyed_value_type,
                 });
             }
+            // A generic list (`list<V>`): keep it as-is — Psalm keeps lists lists
+            // across loop iterations.
+            TAtomic::TArray {
+                is_list: true,
+                params: Some(_),
+                ..
+            } => {
+                other_types.push(atomic.clone());
+            }
+            // A generic array (`array<K,V>`): widen its key/value.
+            TAtomic::TArray {
+                params: Some(params),
+                ..
+            } => {
+                saw_array_like = true;
+                let key_type = &params.0;
+                let value_type = &params.1;
+                widened_key_type = Some(match widened_key_type {
+                    Some(ref existing) => combine_union_types(existing, key_type, false),
+                    None => key_type.clone(),
+                });
+                widened_value_type = Some(match widened_value_type {
+                    Some(ref existing) => combine_union_types(existing, value_type, false),
+                    None => value_type.clone(),
+                });
+            }
+            // A fallback-less empty array (`[]`): the old empty generic
+            // `array<nothing, nothing>` widen path (key/value = nothing).
+            TAtomic::TArray { .. } => {
+                saw_array_like = true;
+                widened_key_type = Some(match widened_key_type {
+                    Some(ref existing) => combine_union_types(existing, &TUnion::nothing(), false),
+                    None => TUnion::nothing(),
+                });
+                widened_value_type = Some(match widened_value_type {
+                    Some(ref existing) => combine_union_types(existing, &TUnion::nothing(), false),
+                    None => TUnion::nothing(),
+                });
+            }
             _ => other_types.push(atomic.clone()),
         }
     }
@@ -1500,10 +1507,10 @@ fn widen_array_like_type_for_loop(union: &TUnion) -> TUnion {
         // The widening runs on the type *after* an array assignment, which
         // always leaves at least one element — Psalm keeps the post-write
         // type non-empty across loop iterations.
-        other_types.push(TAtomic::TNonEmptyArray {
-            key_type: Box::new(widened_key_type.unwrap_or_else(TUnion::array_key)),
-            value_type: Box::new(widened_value_type.unwrap_or_else(TUnion::mixed)),
-        });
+        other_types.push(TAtomic::non_empty_array(
+            widened_key_type.unwrap_or_else(TUnion::array_key),
+            widened_value_type.unwrap_or_else(TUnion::mixed),
+        ));
     }
 
     if other_types.is_empty() {
@@ -1524,15 +1531,10 @@ fn update_generic_array_atomic(
     match key_type {
         None => {
             if existing_key.is_nothing() || key_union_is_int_only(existing_key) {
-                TAtomic::TNonEmptyList {
-                    value_type: Box::new(merged_value),
-                }
+                TAtomic::non_empty_list(merged_value)
             } else {
                 let merged_key = combine_union_types(existing_key, &TUnion::int(), false);
-                TAtomic::TNonEmptyArray {
-                    key_type: Box::new(merged_key),
-                    value_type: Box::new(merged_value),
-                }
+                TAtomic::non_empty_array(merged_key, merged_value)
             }
         }
         Some(key_type) => {
@@ -1541,27 +1543,30 @@ fn update_generic_array_atomic(
             // is array{x: 1}), carrying the generic as fallback otherwise
             // (array{b: 5, ...<array-key, mixed>}).
             if let Some(literal_key) = single_literal_array_key(key_type) {
-                let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
                 let is_first_list_entry = matches!(literal_key, ArrayKey::Int(0));
-                properties.insert(literal_key, assigned_type.clone());
+                let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
+                known_values.insert(
+                    literal_key,
+                    (assigned_type.possibly_undefined, assigned_type.clone()),
+                );
 
                 if existing_key.is_nothing() {
-                    return TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(properties),
-                        is_list: is_first_list_entry,
-                        sealed: true,
-                        fallback_key_type: None,
-                        fallback_value_type: None,
-                    };
+                    return TAtomic::keyed_array(
+                        known_values,
+                        is_first_list_entry,
+                        true,
+                        None,
+                        None,
+                    );
                 }
 
-                return TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: false,
-                    sealed: false,
-                    fallback_key_type: Some(Box::new(existing_key.clone())),
-                    fallback_value_type: Some(Box::new(existing_value.clone())),
-                };
+                return TAtomic::keyed_array(
+                    known_values,
+                    false,
+                    false,
+                    Some(existing_key.clone()),
+                    Some(existing_value.clone()),
+                );
             }
 
             let normalized_key = normalize_key_union(key_type);
@@ -1574,10 +1579,7 @@ fn update_generic_array_atomic(
                 combine_union_types(existing_key, &normalized_key, false)
             };
 
-            TAtomic::TNonEmptyArray {
-                key_type: Box::new(merged_key),
-                value_type: Box::new(merged_value),
-            }
+            TAtomic::non_empty_array(merged_key, merged_value)
         }
     }
 }
@@ -1599,31 +1601,29 @@ fn update_list_atomic(
     let merged_value = combine_union_types(existing_value, assigned_type, false);
 
     match key_type {
-        None => TAtomic::TNonEmptyList {
-            value_type: Box::new(merged_value),
-        },
-        Some(key_type) if key_union_has_only_literal_ints(key_type) => TAtomic::TNonEmptyList {
-            value_type: Box::new(merged_value),
-        },
-        Some(key_type) => TAtomic::TNonEmptyArray {
+        None => TAtomic::non_empty_list(merged_value),
+        Some(key_type) if key_union_has_only_literal_ints(key_type) => {
+            TAtomic::non_empty_list(merged_value)
+        }
+        Some(key_type) => TAtomic::non_empty_array(
             // The list's own keys are int<0, max>; the union with the written
             // key keeps Psalm's precision (array<int<0, max>, T> for an
             // int-typed offset) instead of degrading to array-key.
-            key_type: Box::new(combine_union_types(
+            combine_union_types(
                 &TUnion::new(TAtomic::TIntRange {
                     min: Some(0),
                     max: None,
                 }),
                 key_type,
                 false,
-            )),
-            value_type: Box::new(merged_value),
-        },
+            ),
+            merged_value,
+        ),
     }
 }
 
 fn update_keyed_array_atomic(
-    properties: &FxHashMap<ArrayKey, TUnion>,
+    known_values: &FxHashMap<ArrayKey, (bool, TUnion)>,
     is_list: bool,
     sealed: bool,
     fallback_key_type: Option<&TUnion>,
@@ -1642,18 +1642,16 @@ fn update_keyed_array_atomic(
                     // append instead combines the shape with
                     // `non-empty-list<value>`, so the type converges across
                     // iterations while staying a list.
-                    let shape = TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(properties.clone()),
+                    let shape = TAtomic::keyed_array(
+                        known_values.clone(),
                         is_list,
                         sealed,
-                        fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
-                        fallback_value_type: fallback_value_type.map(|t| Box::new(t.clone())),
-                    };
+                        fallback_key_type.cloned(),
+                        fallback_value_type.cloned(),
+                    );
                     let combined = combine_union_types(
                         &TUnion::new(shape),
-                        &TUnion::new(TAtomic::TNonEmptyList {
-                            value_type: Box::new(assigned_type.clone()),
-                        }),
+                        &TUnion::new(TAtomic::non_empty_list(assigned_type.clone())),
                         true,
                     );
                     if let Some(single) = combined.get_single() {
@@ -1661,22 +1659,22 @@ fn update_keyed_array_atomic(
                     }
                 }
 
-                let mut new_properties = properties.clone();
-                new_properties.insert(
-                    ArrayKey::Int(next_list_index(&new_properties)),
-                    assigned_type.clone(),
+                let mut new_known_values = known_values.clone();
+                new_known_values.insert(
+                    ArrayKey::Int(next_list_index(&new_known_values)),
+                    (assigned_type.possibly_undefined, assigned_type.clone()),
                 );
 
-                TAtomic::TKeyedArray {
-                    is_list: true,
+                TAtomic::keyed_array(
+                    new_known_values,
+                    true,
                     sealed,
-                    properties: std::sync::Arc::new(new_properties),
-                    fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
-                    fallback_value_type: fallback_value_type.map(|t| Box::new(t.clone())),
-                }
+                    fallback_key_type.cloned(),
+                    fallback_value_type.cloned(),
+                )
             } else {
                 keyed_array_to_non_empty_array(
-                    properties,
+                    known_values,
                     fallback_key_type,
                     fallback_value_type,
                     &TUnion::int(),
@@ -1686,50 +1684,50 @@ fn update_keyed_array_atomic(
         }
         Some(key_type) => {
             if let Some(literal_keys) = get_literal_keys_if_all_literals(key_type) {
-                let mut new_properties = properties.clone();
+                let mut new_known_values = known_values.clone();
                 let multiple_keys = literal_keys.len() > 1;
 
                 for key in literal_keys {
-                    if let Some(existing) = new_properties.get(&key).cloned() {
-                        let mut next_value = if multiple_keys {
-                            combine_union_types(&existing, assigned_type, false)
+                    let mut next_value = if let Some((_, existing)) = new_known_values.get(&key) {
+                        if multiple_keys {
+                            combine_union_types(existing, assigned_type, false)
                         } else {
                             assigned_type.clone()
-                        };
-                        next_value.possibly_undefined = false;
-                        new_properties.insert(key, next_value);
+                        }
                     } else {
-                        let mut inserted_value = assigned_type.clone();
-                        inserted_value.possibly_undefined = false;
-                        new_properties.insert(key, inserted_value);
-                    }
+                        assigned_type.clone()
+                    };
+                    // A definite write makes the entry always-defined (clear the
+                    // flag on both the entry `bool` and the stored union).
+                    next_value.possibly_undefined = false;
+                    new_known_values.insert(key, (false, next_value));
                 }
 
-                TAtomic::TKeyedArray {
-                    is_list: keyed_array_properties_form_list(&new_properties),
+                // `keyed_array` re-derives `is_list` (and `is_nonempty`) from the
+                // entries — equivalent to the old `keyed_array_properties_form_list`.
+                TAtomic::keyed_array(
+                    new_known_values,
+                    true,
                     sealed,
-                    properties: std::sync::Arc::new(new_properties),
-                    fallback_key_type: fallback_key_type.map(|t| Box::new(t.clone())),
-                    fallback_value_type: fallback_value_type.map(|t| Box::new(t.clone())),
-                }
+                    fallback_key_type.cloned(),
+                    fallback_value_type.cloned(),
+                )
             } else if is_list && key_union_is_int_only(key_type) {
                 // Non-literal int offset into a list: broaden every element with the
                 // new value, keeping the list (Psalm widens the element type rather
                 // than collapsing a list to a generic `array<int, …>`).
                 let mut value_union = assigned_type.clone();
-                for value in properties.values() {
+                for (_, value) in known_values.values() {
                     value_union = combine_union_types(&value_union, value, false);
                 }
                 if let Some(fallback_value_type) = fallback_value_type {
                     value_union = combine_union_types(&value_union, fallback_value_type, false);
                 }
                 value_union.possibly_undefined = false;
-                TAtomic::TNonEmptyList {
-                    value_type: Box::new(value_union),
-                }
+                TAtomic::non_empty_list(value_union)
             } else {
                 keyed_array_to_non_empty_array(
-                    properties,
+                    known_values,
                     fallback_key_type,
                     fallback_value_type,
                     key_type,
@@ -1820,7 +1818,7 @@ fn update_class_string_map_atomic(
 }
 
 fn keyed_array_to_non_empty_array(
-    properties: &FxHashMap<ArrayKey, TUnion>,
+    known_values: &FxHashMap<ArrayKey, (bool, TUnion)>,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
 
@@ -1830,7 +1828,7 @@ fn keyed_array_to_non_empty_array(
     let mut key_union = normalize_key_union(assigned_key_type);
     let mut value_union = assigned_type.clone();
 
-    for (key, value) in properties.iter() {
+    for (key, (_possibly_undefined, value)) in known_values.iter() {
         key_union = combine_union_types(&key_union, &union_for_array_key(key), false);
         value_union = combine_union_types(&value_union, value, false);
     }
@@ -1843,36 +1841,27 @@ fn keyed_array_to_non_empty_array(
         value_union = combine_union_types(&value_union, fallback_value_type, false);
     }
 
-    TAtomic::TNonEmptyArray {
-        key_type: Box::new(key_union),
-        value_type: Box::new(value_union),
-    }
+    TAtomic::non_empty_array(key_union, value_union)
 }
 
 fn create_autovivified_array_atomic(key_type: Option<&TUnion>, assigned_type: &TUnion) -> TAtomic {
     match key_type {
-        None => TAtomic::TNonEmptyList {
-            value_type: Box::new(assigned_type.clone()),
-        },
+        None => TAtomic::non_empty_list(assigned_type.clone()),
         Some(key_type) => {
             if let Some(literal_keys) = get_literal_keys_if_all_literals(key_type) {
-                let mut properties = FxHashMap::default();
+                let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 for literal_key in literal_keys {
-                    properties.insert(literal_key, assigned_type.clone());
+                    known_values.insert(
+                        literal_key,
+                        (assigned_type.possibly_undefined, assigned_type.clone()),
+                    );
                 }
 
-                TAtomic::TKeyedArray {
-                    is_list: keyed_array_properties_form_list(&properties),
-                    sealed: true,
-                    properties: std::sync::Arc::new(properties),
-                    fallback_key_type: None,
-                    fallback_value_type: None,
-                }
+                // `keyed_array` derives `is_list` from the entries (old
+                // `keyed_array_properties_form_list`).
+                TAtomic::keyed_array(known_values, true, true, None, None)
             } else {
-                TAtomic::TNonEmptyArray {
-                    key_type: Box::new(normalize_key_union(key_type)),
-                    value_type: Box::new(assigned_type.clone()),
-                }
+                TAtomic::non_empty_array(normalize_key_union(key_type), assigned_type.clone())
             }
         }
     }
@@ -1883,28 +1872,29 @@ fn create_mixed_container_assignment_atomic(
     assigned_type: &TUnion,
 ) -> TAtomic {
     match key_type {
-        None => TAtomic::TNonEmptyList {
-            value_type: Box::new(assigned_type.clone()),
-        },
+        None => TAtomic::non_empty_list(assigned_type.clone()),
         Some(key_type) => {
             if let Some(literal_keys) = get_literal_keys_if_all_literals(key_type) {
-                let mut properties = FxHashMap::default();
+                let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 for literal_key in literal_keys {
-                    properties.insert(literal_key, assigned_type.clone());
+                    known_values.insert(
+                        literal_key,
+                        (assigned_type.possibly_undefined, assigned_type.clone()),
+                    );
                 }
 
-                TAtomic::TKeyedArray {
-                    is_list: keyed_array_properties_form_list(&properties),
-                    sealed: false,
-                    properties: std::sync::Arc::new(properties),
-                    fallback_key_type: Some(Box::new(TUnion::array_key())),
-                    fallback_value_type: Some(Box::new(TUnion::mixed())),
-                }
+                // `keyed_array` derives `is_list` from the entries (old
+                // `keyed_array_properties_form_list`); the `...<array-key, mixed>`
+                // fallback keeps it unsealed.
+                TAtomic::keyed_array(
+                    known_values,
+                    true,
+                    false,
+                    Some(TUnion::array_key()),
+                    Some(TUnion::mixed()),
+                )
             } else {
-                TAtomic::TNonEmptyArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(assigned_type.clone()),
-                }
+                TAtomic::non_empty_array(TUnion::array_key(), assigned_type.clone())
             }
         }
     }
@@ -1920,21 +1910,29 @@ fn infer_child_type_for_dim(
 
     for atomic in &container_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
-                append_union_types_unique(&mut result, value_type);
+            // Generic array/list (no known entries): the element type is the
+            // fallback `params` value (a fallback-less empty array has none).
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } if known_values.is_empty() => {
+                if let Some((_, value_type)) = params.as_deref() {
+                    append_union_types_unique(&mut result, value_type);
+                }
             }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            // Shape (known entries): read the named entry, falling back to the
+            // typed fallback `params` value, then to every known value.
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
+                let fallback_value_type = params.as_deref().map(|(_, v)| v);
                 if let Some(literal_keys) = &literal_keys {
                     let mut found = false;
                     for literal_key in literal_keys {
-                        if let Some(property_type) = properties.get(literal_key) {
+                        if let Some((_, property_type)) = known_values.get(literal_key) {
                             found = true;
                             append_union_types_unique(&mut result, property_type);
                         }
@@ -1948,7 +1946,7 @@ fn infer_child_type_for_dim(
                 } else if let Some(fallback) = fallback_value_type {
                     append_union_types_unique(&mut result, fallback);
                 } else {
-                    for property_type in properties.values() {
+                    for (_, property_type) in known_values.values() {
                         append_union_types_unique(&mut result, property_type);
                     }
                 }
@@ -2106,10 +2104,6 @@ fn normalize_assignment_key_union(key_type: &TUnion) -> TUnion {
                 push_atomic_unique(&mut normalized, TAtomic::TInt);
             }
             TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TObject
             | TAtomic::TNamedObject { .. }
             | TAtomic::TResource
@@ -2206,10 +2200,6 @@ fn maybe_emit_invalid_array_offset_for_assignment(
             | TAtomic::TNamedObject { .. }
             | TAtomic::TResource
             | TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TCallable { .. }
             | TAtomic::TClosure { .. }
             | TAtomic::TVoid => {
@@ -2240,40 +2230,13 @@ fn maybe_emit_invalid_array_offset_for_assignment(
     ));
 }
 
-fn keyed_array_properties_form_list(properties: &FxHashMap<ArrayKey, TUnion>) -> bool {
-    if properties.is_empty() {
-        return true;
-    }
-
-    let mut int_keys: Vec<i64> = Vec::with_capacity(properties.len());
-
-    for key in properties.keys() {
-        let ArrayKey::Int(value) = key else {
-            return false;
-        };
-
-        if *value < 0 {
-            return false;
-        }
-
-        int_keys.push(*value);
-    }
-
-    int_keys.sort_unstable();
-
-    for (i, value) in int_keys.iter().enumerate() {
-        if *value != i as i64 {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn next_list_index(properties: &FxHashMap<ArrayKey, TUnion>) -> i64 {
+/// The next sequential integer key for a list append (max int key + 1), over a
+/// unified array's `known_values`. The entries' possibly-undefined `bool` is
+/// irrelevant — only the keys matter.
+fn next_list_index(known_values: &FxHashMap<ArrayKey, (bool, TUnion)>) -> i64 {
     let mut max_index = -1_i64;
 
-    for key in properties.keys() {
+    for key in known_values.keys() {
         if let ArrayKey::Int(value) = key {
             max_index = max_index.max(*value);
         }

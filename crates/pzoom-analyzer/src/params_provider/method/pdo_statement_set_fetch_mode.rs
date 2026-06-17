@@ -53,10 +53,7 @@ impl MethodParamsProvider for PdoStatementSetFetchMode {
                 ));
                 let mut ctor_args = make_param(
                     "$ctorargs",
-                    TUnion::new(TAtomic::TArray {
-                        key_type: Box::new(TUnion::array_key()),
-                        value_type: Box::new(TUnion::mixed()),
-                    }),
+                    TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed())),
                 );
                 ctor_args.is_variadic = true;
                 params.push(ctor_args);

@@ -435,23 +435,28 @@ fn reconcile_not_in_array(
 
     for atomic in &array_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
-                for value_atomic in &value_type.types {
-                    if matches!(
-                        value_atomic,
-                        TAtomic::TLiteralInt { .. }
-                            | TAtomic::TLiteralString { .. }
-                            | TAtomic::TLiteralFloat { .. }
-                            | TAtomic::TTrue
-                            | TAtomic::TFalse
-                            | TAtomic::TEnumCase { .. }
-                    ) {
-                        values_to_remove.push(value_atomic.clone());
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } => {
+                // Every possible value: the typed fallback plus each known entry.
+                if let Some((_, value_type)) = params.as_deref() {
+                    for value_atomic in &value_type.types {
+                        if matches!(
+                            value_atomic,
+                            TAtomic::TLiteralInt { .. }
+                                | TAtomic::TLiteralString { .. }
+                                | TAtomic::TLiteralFloat { .. }
+                                | TAtomic::TTrue
+                                | TAtomic::TFalse
+                                | TAtomic::TEnumCase { .. }
+                        ) {
+                            values_to_remove.push(value_atomic.clone());
+                        }
                     }
                 }
-            }
-            TAtomic::TKeyedArray { properties, .. } => {
-                for value in properties.values() {
+                for (_, value) in known_values.values() {
                     for value_atomic in &value.types {
                         if matches!(
                             value_atomic,
@@ -839,22 +844,15 @@ fn narrow_after_subtraction(
             // Psalm clamps a mixed iterable key to array-key when converting
             // to the array side (arrays cannot have mixed keys).
             let array_key_type = if key_type.is_mixed() {
-                Box::new(TUnion::array_key())
+                TUnion::array_key()
             } else {
-                key_type.clone()
+                (**key_type).clone()
             };
-            Some(TAtomic::TArray {
-                key_type: array_key_type,
-                value_type: value_type.clone(),
-            })
+            Some(TAtomic::array(array_key_type, (**value_type).clone()))
         }
         (
             TAtomic::TCallable { .. },
             TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TString
             | TAtomic::TNonEmptyString
             | TAtomic::TNumericString

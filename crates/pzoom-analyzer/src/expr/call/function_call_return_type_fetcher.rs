@@ -1142,23 +1142,13 @@ pub(crate) fn fetch_preg_split_return_type(
     let list_atomic = if let Some(flags_pos) = arg_positions.get(3).copied() {
         let flags_type = analysis_data.expr_types.get(&flags_pos).cloned()?;
         match get_single_literal_int(&flags_type) {
-            Some(0 | 2) => TAtomic::TNonEmptyList {
-                value_type: Box::new(TUnion::string()),
-            },
-            Some(1 | 3) => TAtomic::TList {
-                value_type: Box::new(TUnion::string()),
-            },
-            Some(_) => TAtomic::TList {
-                value_type: Box::new(TUnion::new(make_offset_capture_shape())),
-            },
-            None => TAtomic::TNonEmptyList {
-                value_type: Box::new(TUnion::string()),
-            },
+            Some(0 | 2) => TAtomic::non_empty_list(TUnion::string()),
+            Some(1 | 3) => TAtomic::list(TUnion::string()),
+            Some(_) => TAtomic::list(TUnion::new(make_offset_capture_shape())),
+            None => TAtomic::non_empty_list(TUnion::string()),
         }
     } else {
-        TAtomic::TNonEmptyList {
-            value_type: Box::new(TUnion::string()),
-        }
+        TAtomic::non_empty_list(TUnion::string())
     };
 
     let mut result = TUnion::from_types(vec![list_atomic, TAtomic::TFalse]);
@@ -1171,9 +1161,7 @@ pub(crate) fn fetch_hrtime_return_type(
     arg_positions: &[Pos],
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
-    let tuple_type = TAtomic::TNonEmptyList {
-        value_type: Box::new(TUnion::int()),
-    };
+    let tuple_type = TAtomic::non_empty_list(TUnion::int());
 
     if args.is_empty() {
         return Some(TUnion::new(tuple_type));
@@ -1237,17 +1225,11 @@ fn get_single_literal_bool(union: &TUnion) -> Option<bool> {
 }
 
 fn make_offset_capture_shape() -> TAtomic {
-    let mut properties = FxHashMap::default();
-    properties.insert(ArrayKey::Int(0), TUnion::string());
-    properties.insert(ArrayKey::Int(1), TUnion::int());
+    let mut known_values = FxHashMap::default();
+    known_values.insert(ArrayKey::Int(0), (false, TUnion::string()));
+    known_values.insert(ArrayKey::Int(1), (false, TUnion::int()));
 
-    TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: true,
-        sealed: true,
-        fallback_key_type: None,
-        fallback_value_type: None,
-    }
+    TAtomic::keyed_array(known_values, true, true, None, None)
 }
 
 /// Map each parameter to its argument's inferred type, so conditional return

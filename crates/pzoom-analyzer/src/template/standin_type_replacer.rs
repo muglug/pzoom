@@ -267,19 +267,17 @@ fn extract_indexed_access_value_type(array_type: &TUnion) -> TUnion {
 
     for atomic in &array_type.types {
         let extracted = match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TIterable { value_type, .. } => Some((**value_type).clone()),
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                Some((**value_type).clone())
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            TAtomic::TIterable { value_type, .. } => Some((**value_type).clone()),
+            // The unified array atomic: the value type combines every known
+            // entry's value with the typed fallback `params.1` (covers generic
+            // `array<K, V>` / `list<V>` and shapes alike).
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => Some(extract_keyed_array_value_type(
-                properties,
-                fallback_value_type.as_deref(),
+                known_values,
+                params.as_deref().map(|(_, value)| value),
             )),
             TAtomic::TTemplateParam { as_type, .. } => {
                 Some(extract_indexed_access_value_type(as_type))
@@ -324,20 +322,6 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
                 .cloned()
                 .unwrap_or_else(|| atomic.clone())
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        } => TAtomic::TArray {
-            key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
-            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
-        },
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
-            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
-        },
         TAtomic::TIterable {
             key_type,
             value_type,
@@ -345,12 +329,35 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
             key_type: Box::new(substitute_templates_in_union(key_type, template_result)),
             value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
-        TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
-        },
-        TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
-        },
+        // The unified array atomic: substitute templates in every known-entry
+        // value and the typed fallback `params`, preserving the shape's flags and
+        // each entry's possibly-undefined bool (`rebuilt_array` keeps them
+        // without re-normalising).
+        TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } => {
+            let mut new_known_values = rustc_hash::FxHashMap::default();
+            for (key, (possibly_undefined, value)) in known_values.iter() {
+                new_known_values.insert(
+                    key.clone(),
+                    (
+                        *possibly_undefined,
+                        substitute_templates_in_union(value, template_result),
+                    ),
+                );
+            }
+            atomic.rebuilt_array(
+                std::sync::Arc::new(new_known_values),
+                params.as_ref().map(|params| {
+                    Box::new((
+                        substitute_templates_in_union(&params.0, template_result),
+                        substitute_templates_in_union(&params.1, template_result),
+                    ))
+                }),
+            )
+        }
         TAtomic::TNamedObject {
             name,
             type_params: None,
@@ -418,33 +425,6 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
                 TAtomic::TObjectIntersection {
                     types: replaced_types,
                 }
-            }
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
-        } => {
-            let mut new_properties = rustc_hash::FxHashMap::default();
-            for (key, value) in properties.iter() {
-                new_properties.insert(
-                    key.clone(),
-                    substitute_templates_in_union(value, template_result),
-                );
-            }
-
-            TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(new_properties),
-                is_list: *is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.as_ref().map(|key_type| {
-                    Box::new(substitute_templates_in_union(key_type, template_result))
-                }),
-                fallback_value_type: fallback_value_type.as_ref().map(|value_type| {
-                    Box::new(substitute_templates_in_union(value_type, template_result))
-                }),
             }
         }
         TAtomic::TCallable {
@@ -528,12 +508,12 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
 }
 
 pub(crate) fn extract_keyed_array_value_type(
-    properties: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion>,
+    known_values: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, (bool, TUnion)>,
     fallback_value_type: Option<&TUnion>,
 ) -> TUnion {
     let mut value_type = fallback_value_type.cloned().unwrap_or_else(TUnion::nothing);
 
-    for property_type in properties.values() {
+    for (_possibly_undefined, property_type) in known_values.values() {
         value_type = if value_type.is_nothing() {
             property_type.clone()
         } else {
@@ -882,15 +862,7 @@ fn infer_template_replacements_from_atomic(
                 );
             }
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
@@ -919,40 +891,85 @@ fn infer_template_replacements_from_atomic(
                 template_result,
             );
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            let arg_value_type = match arg_atomic {
-                TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                    (**value_type).clone()
-                }
-                TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
-                    (**value_type).clone()
-                }
-                TAtomic::TKeyedArray {
-                    properties,
-                    fallback_value_type,
-                    ..
-                } => {
-                    let mut combined = fallback_value_type
-                        .as_ref()
-                        .map(|value_type| (**value_type).clone())
-                        .unwrap_or_else(TUnion::mixed);
-
-                    for property_type in properties.values() {
-                        combined = combine_union_types(&combined, property_type, false);
+        // The unified array atomic as a *param*. A generic, non-list array
+        // (`array<K, V>` / `non-empty-array<K, V>`) infers both key and value
+        // templates; a generic list (`list<V>` / `non-empty-list<V>`) infers
+        // only the value (the list key is always `int`); a shape param (known
+        // entries present) records no bound here, matching the old code which
+        // had no `TKeyedArray` param arm.
+        TAtomic::TArray {
+            known_values,
+            params,
+            is_list,
+            ..
+        } if known_values.is_empty() => {
+            if *is_list {
+                // List param: infer the value template from the argument's value.
+                let arg_value_type = match arg_atomic {
+                    TAtomic::TArray {
+                        known_values: arg_known_values,
+                        params: arg_params,
+                        ..
+                    } => {
+                        if arg_known_values.is_empty() {
+                            // Generic array/list arg: its value is `params.1`, or
+                            // `never` for the empty literal (no typed fallback).
+                            arg_params
+                                .as_deref()
+                                .map(|(_, value)| value.clone())
+                                .unwrap_or_else(TUnion::nothing)
+                        } else {
+                            // Shape arg: combine the fallback value with every
+                            // known entry value.
+                            let mut combined = arg_params
+                                .as_deref()
+                                .map(|(_, value)| value.clone())
+                                .unwrap_or_else(TUnion::mixed);
+                            for (_, property_type) in arg_known_values.values() {
+                                combined = combine_union_types(&combined, property_type, false);
+                            }
+                            combined
+                        }
                     }
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed => TUnion::mixed(),
+                    _ => return,
+                };
 
-                    combined
+                if let Some(params) = params {
+                    infer_template_replacements_from_union(
+                        analyzer,
+                        &params.1,
+                        &arg_value_type,
+                        template_result,
+                    );
                 }
-                TAtomic::TMixed | TAtomic::TNonEmptyMixed => TUnion::mixed(),
-                _ => return,
-            };
+            } else {
+                // Generic array param: infer both key and value templates. A
+                // mixed argument binds the nested templates to mixed.
+                let Some((arg_key_type, arg_value_type)) = extract_array_like_key_value(arg_atomic)
+                    .or_else(|| {
+                        matches!(arg_atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
+                            .then(|| (TUnion::mixed(), TUnion::mixed()))
+                    })
+                else {
+                    return;
+                };
 
-            infer_template_replacements_from_union(
-                analyzer,
-                value_type,
-                &arg_value_type,
-                template_result,
-            );
+                if let Some(params) = params {
+                    infer_template_replacements_from_union(
+                        analyzer,
+                        &params.0,
+                        &arg_key_type,
+                        template_result,
+                    );
+                    infer_template_replacements_from_union(
+                        analyzer,
+                        &params.1,
+                        &arg_value_type,
+                        template_result,
+                    );
+                }
+            }
         }
         // `object{value: T}` params bind T from the argument's matching
         // property — a shape property or a (possibly templated) class
@@ -1411,37 +1428,29 @@ fn extract_class_string_atomic(
 
 fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)> {
     match arg_atomic {
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => Some(((**key_type).clone(), (**value_type).clone())),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            Some((TUnion::int(), (**value_type).clone()))
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        // The unified array atomic. The typed fallback `params` seed the key /
+        // value (a list's `params.0` is already `int`; an empty literal `[]`
+        // has no `params`, seeding `never`/`never`). Every known entry then
+        // contributes its literal key and its value.
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            let mut key_union = fallback_key_type
-                .as_ref()
-                .map(|key_type| (**key_type).clone())
+            let mut key_union = params
+                .as_deref()
+                .map(|(key, _)| key.clone())
                 .unwrap_or_else(TUnion::nothing);
-            let mut value_union = fallback_value_type
-                .as_ref()
-                .map(|value_type| (**value_type).clone())
+            let mut value_union = params
+                .as_deref()
+                .map(|(_, value)| value.clone())
                 .unwrap_or_else(TUnion::nothing);
 
-            for (key, value) in properties.iter() {
+            for (key, (_possibly_undefined, value)) in known_values.iter() {
                 let key_union_part = match key {
                     pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                         TUnion::new(TAtomic::TLiteralInt { value: *value })
@@ -1458,9 +1467,9 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
                 value_union = combine_union_types(&value_union, value, false);
             }
 
-            // An empty array literal (`[]`) is `array<never, never>`; keep the
-            // `never` key/value so template inference resolves the params to
-            // `never` (matching Psalm) rather than widening to `array-key`/`mixed`.
+            // An empty array literal (`[]`) keeps `never` key/value so template
+            // inference resolves the params to `never` (matching Psalm) rather
+            // than widening to `array-key`/`mixed`.
             Some((key_union, value_union))
         }
         TAtomic::TNamedObject {
@@ -1662,26 +1671,23 @@ fn dissolve_nested_template_params(union: &TUnion) -> TUnion {
                 TAtomic::TTemplateParam { as_type, .. } if depth < 8 => {
                     dissolve_atomics(&as_type.types, out, depth + 1);
                 }
+                // A *generic* array (no known entries): dissolve the typed
+                // fallback `params`, preserving the flags. Shapes (known entries
+                // present) are left untouched — the old code had no `TKeyedArray`
+                // arm here, cloning shapes verbatim via the `other` arm.
                 TAtomic::TArray {
-                    key_type,
-                    value_type,
-                } => out.push(TAtomic::TArray {
-                    key_type: Box::new(dissolve_union(key_type, depth + 1)),
-                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
-                }),
-                TAtomic::TNonEmptyArray {
-                    key_type,
-                    value_type,
-                } => out.push(TAtomic::TNonEmptyArray {
-                    key_type: Box::new(dissolve_union(key_type, depth + 1)),
-                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
-                }),
-                TAtomic::TList { value_type } => out.push(TAtomic::TList {
-                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
-                }),
-                TAtomic::TNonEmptyList { value_type } => out.push(TAtomic::TNonEmptyList {
-                    value_type: Box::new(dissolve_union(value_type, depth + 1)),
-                }),
+                    known_values,
+                    params,
+                    ..
+                } if known_values.is_empty() => out.push(atomic.rebuilt_array(
+                    known_values.clone(),
+                    params.as_ref().map(|params| {
+                        Box::new((
+                            dissolve_union(&params.0, depth + 1),
+                            dissolve_union(&params.1, depth + 1),
+                        ))
+                    }),
+                )),
                 TAtomic::TIterable {
                     key_type,
                     value_type,

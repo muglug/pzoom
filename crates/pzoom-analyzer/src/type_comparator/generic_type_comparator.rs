@@ -202,39 +202,31 @@ fn atomic_contains_any_literal(atomic: &TAtomic) -> bool {
         | TAtomic::TTrue
         | TAtomic::TFalse => true,
         TAtomic::TArray {
-            key_type,
-            value_type,
+            known_values,
+            params,
+            is_nonempty,
+            ..
         } => {
-            // The empty array (`array<never, never>`) is treated as a literal.
-            (key_type.is_nothing() && value_type.is_nothing())
-                || union_contains_any_literal(key_type)
-                || union_contains_any_literal(value_type)
-        }
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => union_contains_any_literal(key_type) || union_contains_any_literal(value_type),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_contains_any_literal(value_type)
+            // The empty array literal (Psalm's `array<never, never>` / `[]`) is
+            // treated as a literal: a generic array (no known entries) that is
+            // not non-empty and whose typed fallback is absent or `never`/`never`.
+            let is_empty_array_literal = known_values.is_empty()
+                && !*is_nonempty
+                && params
+                    .as_deref()
+                    .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing());
+            is_empty_array_literal
+                || known_values
+                    .values()
+                    .any(|(_, value_type)| union_contains_any_literal(value_type))
+                || params.as_deref().is_some_and(|(key, value)| {
+                    union_contains_any_literal(key) || union_contains_any_literal(value)
+                })
         }
         TAtomic::TIterable {
             key_type,
             value_type,
         } => union_contains_any_literal(key_type) || union_contains_any_literal(value_type),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            properties.values().any(union_contains_any_literal)
-                || fallback_key_type
-                    .as_deref()
-                    .is_some_and(union_contains_any_literal)
-                || fallback_value_type
-                    .as_deref()
-                    .is_some_and(union_contains_any_literal)
-        }
         TAtomic::TNamedObject {
             type_params: Some(type_params),
             ..
@@ -257,32 +249,21 @@ fn atomic_has_template(atomic: &TAtomic) -> bool {
         | TAtomic::TTemplateKeyOf { .. }
         | TAtomic::TTemplateValueOf { .. }
         | TAtomic::TTemplatePropertiesOf { .. } => true,
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => union_has_template(key_type) || union_has_template(value_type),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_has_template(value_type)
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            properties.values().any(union_has_template)
-                || fallback_key_type.as_deref().is_some_and(union_has_template)
-                || fallback_value_type
-                    .as_deref()
-                    .is_some_and(union_has_template)
+            known_values
+                .values()
+                .any(|(_, value_type)| union_has_template(value_type))
+                || params.as_deref().is_some_and(|(key, value)| {
+                    union_has_template(key) || union_has_template(value)
+                })
         }
         TAtomic::TNamedObject {
             type_params: Some(type_params),

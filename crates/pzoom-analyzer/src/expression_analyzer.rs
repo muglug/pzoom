@@ -532,10 +532,10 @@ fn analyze_legacy_array(
     if array.elements.is_empty() {
         analysis_data.expr_types.insert(
             pos,
-            Rc::new(TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::nothing()),
-                value_type: Box::new(TUnion::nothing()),
-            })),
+            Rc::new(TUnion::new(TAtomic::array(
+                TUnion::nothing(),
+                TUnion::nothing(),
+            ))),
         );
         return;
     }
@@ -609,22 +609,24 @@ fn analyze_legacy_array(
     }
 
     let expr_type = if all_keys_known && !known_items.is_empty() {
-        TUnion::new(TAtomic::TKeyedArray {
-            properties: std::sync::Arc::new(known_items),
+        let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = known_items
+            .into_iter()
+            .map(|(key, value)| (key, (value.possibly_undefined, value)))
+            .collect();
+        TUnion::new(TAtomic::keyed_array(
+            known_values,
             is_list,
-            sealed: true,
-            fallback_key_type: None,
-            fallback_value_type: None,
-        })
+            true,
+            None,
+            None,
+        ))
     } else if is_list && !value_types.is_empty() {
         let mut value_union = value_types.remove(0);
         for t in value_types {
             value_union = combine_union_types(&value_union, &t, false);
         }
 
-        TUnion::new(TAtomic::TNonEmptyList {
-            value_type: Box::new(value_union),
-        })
+        TUnion::new(TAtomic::non_empty_list(value_union))
     } else {
         let key_union = if key_types.is_empty() {
             TUnion::array_key()
@@ -644,10 +646,7 @@ fn analyze_legacy_array(
             value_union
         };
 
-        TUnion::new(TAtomic::TNonEmptyArray {
-            key_type: Box::new(key_union),
-            value_type: Box::new(value_union),
-        })
+        TUnion::new(TAtomic::non_empty_array(key_union, value_union))
     };
 
     analysis_data.expr_types.insert(pos, Rc::new(expr_type));

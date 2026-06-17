@@ -29,12 +29,7 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
         let first_pos = event.arg_positions.first().copied()?;
         let first_arg_type = analysis_data.expr_types.get(&first_pos).cloned()?;
 
-        let fallback = || {
-            TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::string()),
-                value_type: Box::new(TUnion::mixed()),
-            })
-        };
+        let fallback = || TUnion::new(TAtomic::array(TUnion::string(), TUnion::mixed()));
 
         match first_arg_type.get_single()? {
             // A known enum case yields its `name` (and `value` when backed) as
@@ -59,25 +54,25 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                 {
                     properties.insert(ArrayKey::String("value".to_string()), case_value);
                 }
-                Some(TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: false,
-                    sealed: true,
-                    fallback_key_type: None,
-                    fallback_value_type: None,
-                }))
+                Some(TUnion::new(TAtomic::keyed_array(
+                    known_values_from_properties(properties),
+                    false,
+                    true,
+                    None,
+                    None,
+                )))
             }
             TAtomic::TObjectWithProperties { properties, .. } => {
                 if properties.is_empty() {
                     return Some(fallback());
                 }
-                Some(TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties.clone()),
-                    is_list: false,
-                    sealed: true,
-                    fallback_key_type: None,
-                    fallback_value_type: None,
-                }))
+                Some(TUnion::new(TAtomic::keyed_array(
+                    known_values_from_properties(properties.clone()),
+                    false,
+                    true,
+                    None,
+                    None,
+                )))
             }
             TAtomic::TNamedObject { name, .. } => {
                 let class_name = event.analyzer.interner.lookup(*name);
@@ -108,10 +103,10 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
 
                 if properties.is_empty() {
                     if class_info.is_final {
-                        return Some(TUnion::new(TAtomic::TArray {
-                            key_type: Box::new(TUnion::nothing()),
-                            value_type: Box::new(TUnion::nothing()),
-                        }));
+                        return Some(TUnion::new(TAtomic::array(
+                            TUnion::nothing(),
+                            TUnion::nothing(),
+                        )));
                     }
                     return Some(fallback());
                 }
@@ -119,17 +114,32 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                 // A non-final class may gain properties in subclasses, so the
                 // shape stays open (Psalm's string => mixed fallback params).
                 let open = !class_info.is_final;
-                Some(TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: false,
-                    sealed: !open,
-                    fallback_key_type: open.then(|| Box::new(TUnion::string())),
-                    fallback_value_type: open.then(|| Box::new(TUnion::mixed())),
-                }))
+                Some(TUnion::new(TAtomic::keyed_array(
+                    known_values_from_properties(properties),
+                    false,
+                    !open,
+                    open.then(TUnion::string),
+                    open.then(TUnion::mixed),
+                )))
             }
             _ => None,
         }
     }
+}
+
+/// Convert a property map (each union carrying its own possibly-undefined flag)
+/// into the unified `known_values` shape map (`bool` = possibly_undefined).
+fn known_values_from_properties(
+    properties: FxHashMap<ArrayKey, TUnion>,
+) -> FxHashMap<ArrayKey, (bool, TUnion)> {
+    properties
+        .into_iter()
+        .map(|(key, mut value)| {
+            let possibly_undefined = value.possibly_undefined;
+            value.possibly_undefined = false;
+            (key, (possibly_undefined, value))
+        })
+        .collect()
 }
 
 /// Whether the property is visible from the analyzer's current class context

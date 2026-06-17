@@ -481,8 +481,14 @@ pub fn is_contained_by_in_context(
             // `InvalidScalarArgument`). pzoom has no per-atomic docblock flag, so we
             // preserve the incoming value across the nested element comparisons.
             let saved_scalar_match = atomic_comparison_result.scalar_type_match_found;
-            let keyed_shape_pair = matches!(input_type_part, TAtomic::TKeyedArray { .. })
-                && matches!(container_type_part, TAtomic::TKeyedArray { .. });
+            // A shape-vs-shape comparison is two unified arrays that both carry
+            // known entries (the old `TKeyedArray`-vs-`TKeyedArray` pairing).
+            let is_shape = |atomic: &TAtomic| {
+                atomic
+                    .array_known_values()
+                    .is_some_and(|known_values| !known_values.is_empty())
+            };
+            let keyed_shape_pair = is_shape(input_type_part) && is_shape(container_type_part);
             atomic_comparison_result.scalar_type_match_found = None;
             let result = array_type_comparator::is_contained_by(
                 codebase,
@@ -580,13 +586,15 @@ pub fn is_contained_by_in_context(
             // A keyed shape checks each entry against the container's value
             // union individually: combining distinct entry shapes first would
             // merge them into one all-optional shape matching neither union
-            // branch (Psalm compares per property).
-            if let TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+            // branch (Psalm compares per property). Only shapes (known entries
+            // present) take this path; a generic array falls through to the
+            // params-based check below.
+            if let TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } = input_type_part
+                && !known_values.is_empty()
             {
                 use pzoom_code_info::ArrayKey;
 
@@ -617,7 +625,7 @@ pub fn is_contained_by_in_context(
                             )
                     };
 
-                for (key, value) in properties.iter() {
+                for (key, (_possibly_undefined, value)) in known_values.iter() {
                     let key_union = match key {
                         ArrayKey::Int(i) => {
                             pzoom_code_info::TUnion::new(TAtomic::TLiteralInt { value: *i })
@@ -634,12 +642,12 @@ pub fn is_contained_by_in_context(
                         return false;
                     }
                 }
-                if let Some(fallback_key_type) = fallback_key_type
+                if let Some((fallback_key_type, _)) = params.as_deref()
                     && !key_contained(fallback_key_type, atomic_comparison_result)
                 {
                     return false;
                 }
-                if let Some(fallback_value_type) = fallback_value_type
+                if let Some((_, fallback_value_type)) = params.as_deref()
                     && !value_contained(fallback_value_type, atomic_comparison_result)
                 {
                     return false;
@@ -933,28 +941,29 @@ fn array_atomic_key_value_types(
     use pzoom_code_info::{ArrayKey, TUnion, combine_union_types};
 
     match atomic {
+        // A *generic* array (no known entries): the key/value are the typed
+        // fallback `params` (a list's `params.0` is `int`), or `never`/`never`
+        // for the empty literal `[]` (no typed fallback).
         TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => Some(((**key_type).clone(), (**value_type).clone())),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            Some((TUnion::int(), (**value_type).clone()))
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+            known_values,
+            params,
+            ..
+        } if known_values.is_empty() => Some(match params.as_deref() {
+            Some((key, value)) => (key.clone(), value.clone()),
+            None => (TUnion::nothing(), TUnion::nothing()),
+        }),
+        // A shape (known entries present): combine the literal keys / values of
+        // every known entry with the typed fallback `params`, defaulting to
+        // `array-key` / `mixed` for an entry-less fallback.
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            let mut key_union: Option<TUnion> = fallback_key_type.as_ref().map(|k| (**k).clone());
-            let mut value_union: Option<TUnion> =
-                fallback_value_type.as_ref().map(|v| (**v).clone());
+            let mut key_union: Option<TUnion> = params.as_deref().map(|(k, _)| k.clone());
+            let mut value_union: Option<TUnion> = params.as_deref().map(|(_, v)| v.clone());
 
-            for (key, value) in properties.iter() {
+            for (key, (_possibly_undefined, value)) in known_values.iter() {
                 let key_atomic = match key {
                     ArrayKey::Int(i) => TAtomic::TLiteralInt { value: *i },
                     ArrayKey::String(s) | ArrayKey::ClassString(s) => {
@@ -982,14 +991,7 @@ fn array_atomic_key_value_types(
 }
 
 fn is_array_type(atomic: &TAtomic) -> bool {
-    matches!(
-        atomic,
-        TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
-    )
+    atomic.is_array()
 }
 
 /// Check if a type is a callable type.

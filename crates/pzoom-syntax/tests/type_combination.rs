@@ -612,25 +612,17 @@ const CASES: &[Case] = &[
 /// - `arrayTraversableToIterable`: Psalm only recombines a *docblock*
 ///   param-less `Traversable` with an array into `iterable`; the combiner has
 ///   no per-atomic docblock provenance to make that call;
-/// - `complexArrayFallback2` / `combineNonEmptyListWithTKeyedArrayList`:
-///   Psalm rebuilds positional `list{0?: ..., ...<V>}` entries from list
-///   min/max counts in getArrayTypeFromGenericParams; pzoom collapses to a
-///   generic (non-empty) list.
 const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
+    // Psalm only recombines a *docblock* param-less `Traversable` with an array
+    // into `iterable`; pzoom has no per-atomic docblock provenance, and a bare
+    // `Traversable` narrowed from `instanceof` must stay separate
+    // (tests/inference/TypeCombination/ArrayAndTraversableNotIterable).
     (
         "arrayTraversableToIterable",
         "Traversable|array<array-key, mixed>",
     ),
-    (
-        "combineCallableAndCallableArray",
-        "callable|list{class-string|object, non-empty-string}",
-    ),
     ("combineCallableAndCallableList", "callable|callable-list"),
     ("combineCallableAndCallableObject", "callable|object"),
-    (
-        "combineCallableArrayAndCallable",
-        "callable|list{class-string|object, non-empty-string}",
-    ),
     ("combineCallableListAndCallable", "callable|callable-list"),
     ("combineCallableObjectAndCallable", "callable|object"),
     ("combineClassStringWithTraitString", "class-string"),
@@ -639,14 +631,9 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
         "empty-scalar|non-empty-scalar",
     ),
     (
-        "combineNonEmptyListWithTKeyedArrayList",
-        "non-empty-list<null|string>",
-    ),
-    (
         "combineRefinedClassStringWithTraitString",
         "class-string|class-string<Exception>",
     ),
-    ("complexArrayFallback2", "list<0|a>"),
 ];
 
 #[test]

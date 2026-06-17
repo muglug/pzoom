@@ -100,25 +100,14 @@ fn substitute_union(existing: &TUnion, old_type: &TUnion, new_type: Option<&TUni
     // reaches the same end state through TypeCombiner in its branch merges):
     // `array<never, never>|list<T>` must read as `list<T>` downstream.
     let has_empty_array = atomics.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TArray { key_type, value_type }
-                if key_type.is_nothing() && value_type.is_nothing()
-        )
+        atomic
+            .array_known_values()
+            .is_some_and(|known_values| known_values.is_empty())
+            && atomic
+                .array_params()
+                .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing())
     });
-    if has_empty_array
-        && atomics.len() > 1
-        && atomics.iter().all(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TArray { .. }
-                    | TAtomic::TNonEmptyArray { .. }
-                    | TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { .. }
-            )
-        })
-    {
+    if has_empty_array && atomics.len() > 1 && atomics.iter().all(|atomic| atomic.is_array()) {
         atomics = pzoom_code_info::ttype::type_combiner::combine(atomics, false);
     }
 

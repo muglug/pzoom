@@ -447,11 +447,7 @@ fn is_risky_truthy_falsy_coalesce_union(union: &TUnion) -> bool {
 
 fn is_array_like_atomic(atomic: &TAtomic) -> bool {
     match atomic {
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. } => true,
+        TAtomic::TArray { .. } => true,
         TAtomic::TTemplateParam { as_type, .. } => as_type.types.iter().any(is_array_like_atomic),
         _ => false,
     }

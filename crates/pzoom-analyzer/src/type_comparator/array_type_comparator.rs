@@ -6,6 +6,34 @@ use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
 
 use super::{type_comparison_result::TypeComparisonResult, union_type_comparator};
 
+/// The key/value params of a *generic* array atomic (one with no known
+/// entries), mapping the unified `TArray` back onto the old
+/// `TArray`/`TNonEmptyArray`/`TList`/`TNonEmptyList` distinction. Returns
+/// `(is_list, is_nonempty, key, value)`. A list's key is `int`; an empty array
+/// literal (`[]` / `array<never, never>`, no typed `params`) has `never`
+/// key/value. Returns `None` for shapes (known entries present) and non-arrays.
+fn generic_array_params(atomic: &TAtomic) -> Option<(bool, bool, TUnion, TUnion)> {
+    let TAtomic::TArray {
+        known_values,
+        params,
+        is_list,
+        is_nonempty,
+        ..
+    } = atomic
+    else {
+        return None;
+    };
+    if !known_values.is_empty() {
+        return None;
+    }
+    let (key, value) = match params.as_deref() {
+        Some((key, value)) => (key.clone(), value.clone()),
+        None => (TUnion::nothing(), TUnion::nothing()),
+    };
+    let key = if *is_list { TUnion::int() } else { key };
+    Some((*is_list, *is_nonempty, key, value))
+}
+
 /// Check if an input array type is contained by a container array type.
 pub fn is_contained_by(
     codebase: &CodebaseInfo,
@@ -13,70 +41,36 @@ pub fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> bool {
-    // Generic array comparisons
-    if let TAtomic::TArray {
-        key_type: container_key,
-        value_type: container_value,
-    } = container_type_part
+    // Comparisons against a *generic* container array (no known entries),
+    // dispatched on its old TArray/TNonEmptyArray/TList/TNonEmptyList shape.
+    if let Some((container_is_list, container_is_nonempty, container_key, container_value)) =
+        generic_array_params(container_type_part)
     {
-        match input_type_part {
-            TAtomic::TArray {
-                key_type: input_key,
-                value_type: input_value,
-            } => {
+        let container_key = &container_key;
+        let container_value = &container_value;
+
+        if !container_is_list && !container_is_nonempty {
+            // Container is a generic `array<K, V>`.
+            if let Some((_, _, input_key, input_value)) = generic_array_params(input_type_part) {
                 return compare_array_params(
                     codebase,
-                    input_key,
-                    input_value,
+                    &input_key,
+                    &input_value,
                     container_key,
                     container_value,
                     atomic_comparison_result,
                 );
             }
-            TAtomic::TNonEmptyArray {
-                key_type: input_key,
-                value_type: input_value,
-            } => {
-                return compare_array_params(
-                    codebase,
-                    input_key,
-                    input_value,
-                    container_key,
-                    container_value,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TList {
-                value_type: input_value,
-            } => {
-                // List has int keys
-                let int_key = TUnion::int();
-                return compare_array_params(
-                    codebase,
-                    &int_key,
-                    input_value,
-                    container_key,
-                    container_value,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TNonEmptyList {
-                value_type: input_value,
-            } => {
-                let int_key = TUnion::int();
-                return compare_array_params(
-                    codebase,
-                    &int_key,
-                    input_value,
-                    container_key,
-                    container_value,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TKeyedArray { properties, .. } => {
-                // Keyed arrays need to have compatible value types
-                // Check that all values in the keyed array are compatible with container value type
-                for (key, value_type) in properties.iter() {
+            if let TAtomic::TArray {
+                known_values: properties,
+                ..
+            } = input_type_part
+                && !properties.is_empty()
+            {
+                // Keyed arrays need to have compatible value types. Check that
+                // all values in the keyed array are compatible with container
+                // value type.
+                for (key, (_possibly_undefined, value_type)) in properties.iter() {
                     // Check key compatibility (if container has specific key type)
                     if !container_key.is_mixed() {
                         let key_type = normalize_array_key_union_for_comparison(
@@ -112,50 +106,21 @@ pub fn is_contained_by(
                 }
                 return true;
             }
-            _ => {}
-        }
-    }
-
-    // Non-empty array comparisons
-    if let TAtomic::TNonEmptyArray {
-        key_type: container_key,
-        value_type: container_value,
-    } = container_type_part
-    {
-        match input_type_part {
-            TAtomic::TNonEmptyArray {
-                key_type: input_key,
-                value_type: input_value,
-            } => {
-                return compare_array_params(
-                    codebase,
-                    input_key,
-                    input_value,
-                    container_key,
-                    container_value,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TNonEmptyList {
-                value_type: input_value,
-            } => {
-                let int_key = TUnion::int();
-                return compare_array_params(
-                    codebase,
-                    &int_key,
-                    input_value,
-                    container_key,
-                    container_value,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TArray {
-                value_type: input_value,
-                ..
-            }
-            | TAtomic::TList {
-                value_type: input_value,
-            } => {
+        } else if !container_is_list && container_is_nonempty {
+            // Container is a `non-empty-array<K, V>`.
+            if let Some((_, input_is_nonempty, input_key, input_value)) =
+                generic_array_params(input_type_part)
+            {
+                if input_is_nonempty {
+                    return compare_array_params(
+                        codebase,
+                        &input_key,
+                        &input_value,
+                        container_key,
+                        container_value,
+                        atomic_comparison_result,
+                    );
+                }
                 // A definitely-empty array (`array<never, never>`, e.g. the `[]`
                 // literal) can never satisfy a non-empty constraint, so it is a hard
                 // mismatch rather than a coercion (Psalm yields InvalidArgument here).
@@ -165,21 +130,22 @@ pub fn is_contained_by(
                 }
                 return false;
             }
-            TAtomic::TKeyedArray { properties, .. } => {
-                if properties.is_empty() {
-                    return false;
-                }
-
+            if let TAtomic::TArray {
+                known_values: properties,
+                ..
+            } = input_type_part
+                && !properties.is_empty()
+            {
                 // A shape with only optional keys can still be empty and is therefore
                 // not safely contained by non-empty array constraints.
                 if properties
                     .values()
-                    .all(|property_type| property_type.possibly_undefined)
+                    .all(|(possibly_undefined, _)| *possibly_undefined)
                 {
                     return false;
                 }
                 // Check that all values in the keyed array are compatible
-                for (key, value_type) in properties.iter() {
+                for (key, (_possibly_undefined, value_type)) in properties.iter() {
                     // Check key compatibility
                     if !container_key.is_mixed() {
                         let key_type = normalize_array_key_union_for_comparison(
@@ -214,68 +180,21 @@ pub fn is_contained_by(
                 }
                 return true;
             }
-            _ => {}
-        }
-    }
-
-    // List comparisons
-    if let TAtomic::TList {
-        value_type: container_value,
-    } = container_type_part
-    {
-        match input_type_part {
-            TAtomic::TList {
-                value_type: input_value,
-            } => {
-                return union_type_comparator::is_contained_by(
-                    codebase,
-                    input_value,
-                    container_value,
-                    false,
-                    false,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TNonEmptyList {
-                value_type: input_value,
-            } => {
-                return union_type_comparator::is_contained_by(
-                    codebase,
-                    input_value,
-                    container_value,
-                    false,
-                    false,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TKeyedArray {
-                is_list: true,
-                properties,
-                ..
-            } => {
-                // Check that all values are compatible with container value type
-                for (_key, value_type) in properties.iter() {
-                    if !union_type_comparator::is_contained_by(
+        } else if container_is_list && !container_is_nonempty {
+            // Container is a generic `list<V>`.
+            if let Some((input_is_list, _, input_key, input_value)) =
+                generic_array_params(input_type_part)
+            {
+                if input_is_list {
+                    return union_type_comparator::is_contained_by(
                         codebase,
-                        value_type,
+                        &input_value,
                         container_value,
                         false,
                         false,
                         atomic_comparison_result,
-                    ) {
-                        return false;
-                    }
+                    );
                 }
-                return true;
-            }
-            TAtomic::TArray {
-                key_type: input_key,
-                value_type: input_value,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type: input_key,
-                value_type: input_value,
-            } => {
                 // Psalm (ArrayTypeComparator:87-99): a generic array is never
                 // *contained* in a list — list-ness is information the array
                 // lacks — but it is always *coercible* to one. The empty
@@ -287,45 +206,97 @@ pub fn is_contained_by(
                 atomic_comparison_result.type_coerced = Some(true);
                 return false;
             }
-            TAtomic::TKeyedArray { is_list: false, .. } => {
+            if let TAtomic::TArray {
+                known_values: properties,
+                is_list: input_is_list,
+                ..
+            } = input_type_part
+                && !properties.is_empty()
+            {
+                if *input_is_list {
+                    // Check that all values are compatible with container value type
+                    for (_key, (_possibly_undefined, value_type)) in properties.iter() {
+                        if !union_type_comparator::is_contained_by(
+                            codebase,
+                            value_type,
+                            container_value,
+                            false,
+                            false,
+                            atomic_comparison_result,
+                        ) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
                 // Same Psalm rule for non-list shapes vs list containers.
                 atomic_comparison_result.type_coerced = Some(true);
                 return false;
             }
-            _ => {}
-        }
-    }
+        } else {
+            // Container is a `non-empty-list<V>`.
+            if let Some((input_is_list, input_is_nonempty, input_key, input_value)) =
+                generic_array_params(input_type_part)
+            {
+                if input_is_list && input_is_nonempty {
+                    return union_type_comparator::is_contained_by(
+                        codebase,
+                        &input_value,
+                        container_value,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    );
+                }
+                if input_is_list {
+                    // Psalm reports InvalidArgument / InvalidReturnStatement for
+                    // list -> non-empty-list (its keyed-array comparator does not
+                    // mark the emptiness mismatch as a coercion), unlike the
+                    // generic array -> non-empty-array case which coerces.
+                    return false;
+                }
+                if input_is_nonempty {
+                    // Psalm: a generic array is never *contained* in a list —
+                    // list-ness is information the array lacks — but a compatible
+                    // one is *coercible* (ArgumentTypeCoercion at call sites).
+                    let int_key = TUnion::int();
+                    if !union_type_comparator::is_contained_by(
+                        codebase,
+                        &input_key,
+                        &int_key,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    ) {
+                        return false;
+                    }
 
-    // Non-empty list comparisons
-    if let TAtomic::TNonEmptyList {
-        value_type: container_value,
-    } = container_type_part
-    {
-        match input_type_part {
-            TAtomic::TNonEmptyList {
-                value_type: input_value,
-            } => {
-                return union_type_comparator::is_contained_by(
-                    codebase,
-                    input_value,
-                    container_value,
-                    false,
-                    false,
-                    atomic_comparison_result,
-                );
-            }
-            TAtomic::TList { .. } => {
-                // Psalm reports InvalidArgument / InvalidReturnStatement for
-                // list -> non-empty-list (its keyed-array comparator does not
-                // mark the emptiness mismatch as a coercion), unlike the
-                // generic array -> non-empty-array case which coerces.
-                return false;
-            }
-            TAtomic::TKeyedArray {
+                    if input_value.is_nothing() {
+                        return false;
+                    }
+
+                    if union_type_comparator::is_contained_by(
+                        codebase,
+                        &input_value,
+                        container_value,
+                        false,
+                        false,
+                        atomic_comparison_result,
+                    ) {
+                        atomic_comparison_result.type_coerced = Some(true);
+                    }
+                    return false;
+                }
+                // A plain (possibly-empty, non-list) generic array input fell
+                // through the old TNonEmptyList match with no arm: leave it to
+                // the shape/fallthrough handling below (ultimately `false`).
+            } else if let TAtomic::TArray {
+                known_values: properties,
                 is_list: true,
-                properties,
                 ..
-            } => {
+            } = input_type_part
+                && !properties.is_empty()
+            {
                 if properties.is_empty() {
                     return false;
                 }
@@ -333,12 +304,12 @@ pub fn is_contained_by(
                 // A list-shape with only optional offsets may still be empty.
                 if properties
                     .values()
-                    .all(|property_type| property_type.possibly_undefined)
+                    .all(|(possibly_undefined, _)| *possibly_undefined)
                 {
                     return false;
                 }
                 // Check that all values are compatible with container value type
-                for (_key, value_type) in properties.iter() {
+                for (_key, (_possibly_undefined, value_type)) in properties.iter() {
                     if !union_type_comparator::is_contained_by(
                         codebase,
                         value_type,
@@ -352,42 +323,6 @@ pub fn is_contained_by(
                 }
                 return true;
             }
-            TAtomic::TNonEmptyArray {
-                key_type: input_key,
-                value_type: input_value,
-            } => {
-                // Psalm: a generic array is never *contained* in a list —
-                // list-ness is information the array lacks — but a compatible
-                // one is *coercible* (ArgumentTypeCoercion at call sites).
-                let int_key = TUnion::int();
-                if !union_type_comparator::is_contained_by(
-                    codebase,
-                    input_key,
-                    &int_key,
-                    false,
-                    false,
-                    atomic_comparison_result,
-                ) {
-                    return false;
-                }
-
-                if input_value.is_nothing() {
-                    return false;
-                }
-
-                if union_type_comparator::is_contained_by(
-                    codebase,
-                    input_value,
-                    container_value,
-                    false,
-                    false,
-                    atomic_comparison_result,
-                ) {
-                    atomic_comparison_result.type_coerced = Some(true);
-                }
-                return false;
-            }
-            _ => {}
         }
     }
 
@@ -397,16 +332,18 @@ pub fn is_contained_by(
     // never>`, the `[]` literal) satisfies a shape whose keys are *all* optional,
     // because it simply omits every key. Matches Psalm, which contains
     // `array<never, never>` in any all-optional shape (a required key fails).
-    if let TAtomic::TKeyedArray { properties, .. } = container_type_part {
-        let input_is_empty_array = matches!(
-            input_type_part,
-            TAtomic::TArray { value_type, .. } | TAtomic::TList { value_type }
-                if value_type.is_nothing()
-        );
+    if let TAtomic::TArray {
+        known_values: properties,
+        ..
+    } = container_type_part
+        && !properties.is_empty()
+    {
+        let input_is_empty_array = generic_array_params(input_type_part)
+            .is_some_and(|(_, is_nonempty, _, value)| !is_nonempty && value.is_nothing());
         if input_is_empty_array {
             return properties
                 .values()
-                .all(|property_type| property_type.possibly_undefined);
+                .all(|(possibly_undefined, _)| *possibly_undefined);
         }
     }
 
@@ -427,37 +364,25 @@ pub fn is_contained_by(
     // array-key vs the shape's literal keys, a from-mixed coercion) flow out;
     // a maybe-empty input against a required-key shape is then an emptiness
     // coercion.
-    if let TAtomic::TKeyedArray {
-        properties,
-        fallback_key_type,
-        fallback_value_type,
+    if let TAtomic::TArray {
+        known_values: properties,
+        params: container_params,
         ..
     } = container_type_part
+        && !properties.is_empty()
     {
-        let input_params = match input_type_part {
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => Some(((**key_type).clone(), (**value_type).clone())),
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                Some((TUnion::int(), (**value_type).clone()))
-            }
-            _ => None,
-        };
+        let input_params = generic_array_params(input_type_part)
+            .map(|(_, input_is_nonempty, key, value)| (input_is_nonempty, key, value));
 
-        if let Some((input_key, input_value)) = input_params {
+        if let Some((input_is_nonempty, input_key, input_value)) = input_params {
             let mut container_key: Option<TUnion> =
-                fallback_key_type.as_ref().map(|k| (**k).clone());
+                container_params.as_deref().map(|(key, _)| key.clone());
             let mut container_value: Option<TUnion> =
-                fallback_value_type.as_ref().map(|v| (**v).clone());
+                container_params.as_deref().map(|(_, value)| value.clone());
             let mut has_required_key = false;
 
-            for (key, value) in properties.iter() {
-                if !value.possibly_undefined {
+            for (key, (possibly_undefined, value)) in properties.iter() {
+                if !*possibly_undefined {
                     has_required_key = true;
                 }
                 let key_union = array_key_to_literal_union(key);
@@ -483,12 +408,7 @@ pub fn is_contained_by(
             // coercion, even for non-empty inputs (non-empty-list<T> vs
             // list{T, T} is a plain mismatch). Checked before the param
             // comparison so its internal coercion flags don't leak out.
-            if has_required_key
-                && matches!(
-                    input_type_part,
-                    TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. }
-                )
-            {
+            if has_required_key && input_is_nonempty {
                 return false;
             }
 

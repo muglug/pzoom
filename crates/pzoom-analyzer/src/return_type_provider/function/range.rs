@@ -74,7 +74,5 @@ fn infer_range_return_type(
         value_type = TUnion::from_types(normalized);
     }
 
-    Some(TUnion::new(TAtomic::TNonEmptyList {
-        value_type: Box::new(value_type),
-    }))
+    Some(TUnion::new(TAtomic::non_empty_list(value_type)))
 }

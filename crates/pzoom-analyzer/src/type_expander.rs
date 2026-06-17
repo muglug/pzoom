@@ -121,23 +121,37 @@ fn expand_atomic(
                 expand_union(codebase, interner, &mut conditional.if_false_type, options);
             }
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
             expand_union(codebase, interner, key_type, options);
             expand_union(codebase, interner, value_type, options);
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            expand_union(codebase, interner, value_type, options);
+        TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } => {
+            // Recurse into shape field types (the `known_values` map) and the
+            // typed fallback `params`. Avoid copy-on-write of the (possibly
+            // shared) `known_values` map — and per-entry union clones — when no
+            // entry can be changed by expansion (Hakana's
+            // shapes-to-copy-on-write optimisation, slackhq/hakana@8f9f1a4).
+            let needs_expansion = known_values
+                .values()
+                .any(|(_, value_type)| union_needs_expansion(value_type, options));
+            if needs_expansion {
+                for (_, value_type) in std::sync::Arc::make_mut(known_values).values_mut() {
+                    if union_needs_expansion(value_type, options) {
+                        expand_union(codebase, interner, value_type, options);
+                    }
+                }
+            }
+            if let Some(params) = params {
+                expand_union(codebase, interner, &mut params.0, options);
+                expand_union(codebase, interner, &mut params.1, options);
+            }
         }
         TAtomic::TClassStringMap {
             as_type,
@@ -271,34 +285,6 @@ fn expand_atomic(
         | TAtomic::TTemplateKeyOf { as_type, .. }
         | TAtomic::TTemplateValueOf { as_type, .. } => {
             expand_union(codebase, interner, as_type, options);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            // Recurse into shape field types and fallback params (Psalm expands
-            // these). Avoid copy-on-write of the (possibly shared) properties
-            // map — and per-entry union clones — when no entry can be changed
-            // by expansion (Hakana's shapes-to-copy-on-write optimisation,
-            // slackhq/hakana@8f9f1a4).
-            let needs_expansion = properties
-                .values()
-                .any(|value_type| union_needs_expansion(value_type, options));
-            if needs_expansion {
-                for value_type in std::sync::Arc::make_mut(properties).values_mut() {
-                    if union_needs_expansion(value_type, options) {
-                        expand_union(codebase, interner, value_type, options);
-                    }
-                }
-            }
-            if let Some(fallback_key) = fallback_key_type {
-                expand_union(codebase, interner, fallback_key, options);
-            }
-            if let Some(fallback_value) = fallback_value_type {
-                expand_union(codebase, interner, fallback_value, options);
-            }
         }
         TAtomic::TTemplateParamClass { as_type, .. } => {
             expand_atomic_in_place(as_type, codebase, interner, options);
@@ -575,7 +561,7 @@ fn build_properties_of_keyed_array(
 ) -> Option<TAtomic> {
     let class_info = codebase.get_class(classlike_name)?;
 
-    let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+    let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
     for (property_name, property_info) in &class_info.properties {
         if property_info.is_static {
             continue;
@@ -594,10 +580,11 @@ fn build_properties_of_keyed_array(
             &TypeExpansionOptions::default(),
         );
         let key = ArrayKey::String(interner.lookup(*property_name).to_string());
-        properties.insert(key, property_type);
+        // A class property is always present in the shape (not optional).
+        known_values.insert(key, (false, property_type));
     }
 
-    if properties.is_empty() {
+    if known_values.is_empty() {
         return None;
     }
 
@@ -616,19 +603,16 @@ fn build_properties_of_keyed_array(
     let (fallback_key_type, fallback_value_type) = if all_sealed {
         (None, None)
     } else {
-        (
-            Some(Box::new(TUnion::string())),
-            Some(Box::new(TUnion::mixed())),
-        )
+        (Some(TUnion::string()), Some(TUnion::mixed()))
     };
 
-    Some(TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: false,
-        sealed: all_sealed,
+    Some(TAtomic::keyed_array(
+        known_values,
+        false,
+        all_sealed,
         fallback_key_type,
         fallback_value_type,
-    })
+    ))
 }
 
 fn visibility_matches(filter: PropertiesOfVisibility, visibility: Visibility) -> bool {
@@ -737,20 +721,22 @@ fn union_needs_expansion(union: &TUnion, options: &TypeExpansionOptions) -> bool
 fn atomic_needs_expansion(atomic: &TAtomic, options: &TypeExpansionOptions) -> bool {
     match atomic {
         TAtomic::TConditional(_) | TAtomic::TPropertiesOf { .. } => true,
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => union_needs_expansion(key_type, options) || union_needs_expansion(value_type, options),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_needs_expansion(value_type, options)
+        TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } => {
+            known_values
+                .values()
+                .any(|(_, value_type)| union_needs_expansion(value_type, options))
+                || params.as_ref().is_some_and(|params| {
+                    union_needs_expansion(&params.0, options)
+                        || union_needs_expansion(&params.1, options)
+                })
         }
         TAtomic::TClassStringMap {
             as_type,
@@ -804,22 +790,6 @@ fn atomic_needs_expansion(atomic: &TAtomic, options: &TypeExpansionOptions) -> b
         TAtomic::TTemplateParam { as_type, .. }
         | TAtomic::TTemplateKeyOf { as_type, .. }
         | TAtomic::TTemplateValueOf { as_type, .. } => union_needs_expansion(as_type, options),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
-            ..
-        } => {
-            properties
-                .values()
-                .any(|value_type| union_needs_expansion(value_type, options))
-                || fallback_key_type
-                    .as_ref()
-                    .is_some_and(|fallback| union_needs_expansion(fallback, options))
-                || fallback_value_type
-                    .as_ref()
-                    .is_some_and(|fallback| union_needs_expansion(fallback, options))
-        }
         TAtomic::TTemplateParamClass { as_type, .. } => atomic_needs_expansion(as_type, options),
         TAtomic::TClassString {
             as_type: Some(as_type),

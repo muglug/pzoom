@@ -27,17 +27,14 @@ pub fn get_key_of_union(union: &TUnion) -> TUnion {
 
 fn get_key_of_atomic(atomic: &TAtomic) -> TUnion {
     match atomic {
-        TAtomic::TArray { key_type, .. }
-        | TAtomic::TNonEmptyArray { key_type, .. }
-        | TAtomic::TIterable { key_type, .. } => (**key_type).clone(),
-        TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => TUnion::int(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
+        TAtomic::TIterable { key_type, .. } => (**key_type).clone(),
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
             let mut key_types: Vec<TAtomic> = Vec::new();
-            for key in properties.keys() {
+            for key in known_values.keys() {
                 let key_atomic = match key {
                     ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
                     ArrayKey::String(value) => TAtomic::TLiteralString {
@@ -51,8 +48,8 @@ fn get_key_of_atomic(atomic: &TAtomic) -> TUnion {
                     key_types.push(key_atomic);
                 }
             }
-            if let Some(fallback_key_type) = fallback_key_type {
-                for fallback_atomic in &fallback_key_type.types {
+            if let Some(params) = params {
+                for fallback_atomic in &params.0.types {
                     if !key_types.contains(fallback_atomic) {
                         key_types.push(fallback_atomic.clone());
                     }
@@ -89,26 +86,22 @@ pub fn get_value_of_union(union: &TUnion) -> TUnion {
 
 fn get_value_of_atomic(atomic: &TAtomic) -> TUnion {
     match atomic {
-        TAtomic::TArray { value_type, .. }
-        | TAtomic::TNonEmptyArray { value_type, .. }
-        | TAtomic::TIterable { value_type, .. }
-        | TAtomic::TList { value_type }
-        | TAtomic::TNonEmptyList { value_type } => (**value_type).clone(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        TAtomic::TIterable { value_type, .. } => (**value_type).clone(),
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
             let mut value_types: Vec<TAtomic> = Vec::new();
-            for value in properties.values() {
+            for (_, value) in known_values.values() {
                 for value_atomic in &value.types {
                     if !value_types.contains(value_atomic) {
                         value_types.push(value_atomic.clone());
                     }
                 }
             }
-            if let Some(fallback_value_type) = fallback_value_type {
-                for fallback_atomic in &fallback_value_type.types {
+            if let Some(params) = params {
+                for fallback_atomic in &params.1.types {
                     if !value_types.contains(fallback_atomic) {
                         value_types.push(fallback_atomic.clone());
                     }

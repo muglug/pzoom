@@ -45,34 +45,22 @@ impl TAtomic {
     /// `TAtomic::get_all_child_nodes` (Psalm's `Type\Atomic::getChildNodes`).
     pub fn get_child_nodes(&self) -> Vec<TypeNode<'_>> {
         match self {
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => vec![TypeNode::Union(key_type), TypeNode::Union(value_type)],
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                vec![TypeNode::Union(value_type)]
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                let mut nodes: Vec<TypeNode<'_>> =
-                    properties.values().map(TypeNode::Union).collect();
-                if let Some(key_type) = fallback_key_type {
-                    nodes.push(TypeNode::Union(key_type));
-                }
-                if let Some(value_type) = fallback_value_type {
-                    nodes.push(TypeNode::Union(value_type));
+                let mut nodes: Vec<TypeNode<'_>> = known_values
+                    .values()
+                    .map(|(_, value)| TypeNode::Union(value))
+                    .collect();
+                if let Some(params) = params {
+                    nodes.push(TypeNode::Union(&params.0));
+                    nodes.push(TypeNode::Union(&params.1));
                 }
                 nodes
             }

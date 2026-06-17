@@ -1708,13 +1708,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         };
 
         let cases_return_type = TUnion::new(if has_enum_cases {
-            TAtomic::TNonEmptyList {
-                value_type: Box::new(enum_case_union),
-            }
+            TAtomic::non_empty_list(enum_case_union)
         } else {
-            TAtomic::TList {
-                value_type: Box::new(enum_case_union),
-            }
+            TAtomic::list(enum_case_union)
         });
 
         let cases_name = StrId::CASES;
@@ -3621,10 +3617,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             };
 
             let property_type = if param_info.is_variadic {
-                TUnion::new(TAtomic::TArray {
-                    key_type: Box::new(TUnion::int()),
-                    value_type: Box::new(param_type.clone()),
-                })
+                TUnion::new(TAtomic::array(TUnion::int(), param_type.clone()))
             } else {
                 param_type.clone()
             };
@@ -3993,16 +3986,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let has_undertyped_native_parameters = params.iter().any(|param| {
             !param.has_docblock_type
                 && param.get_type().is_none_or(|param_type| {
-                    param_type.types.iter().any(|atomic| {
-                        matches!(
-                            atomic,
-                            TAtomic::TArray { .. }
-                                | TAtomic::TNonEmptyArray { .. }
-                                | TAtomic::TList { .. }
-                                | TAtomic::TNonEmptyList { .. }
-                                | TAtomic::TKeyedArray { .. }
-                        )
-                    })
+                    param_type.types.iter().any(|atomic| atomic.is_array())
                 })
         });
         let mut unmatched: Vec<(String, u32)> = Vec::new();
@@ -4112,10 +4096,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 "properties-of"
                 | "public-properties-of"
                 | "protected-properties-of"
-                | "private-properties-of" => TUnion::new(TAtomic::TArray {
-                    key_type: Box::new(TUnion::string()),
-                    value_type: Box::new(TUnion::mixed()),
-                }),
+                | "private-properties-of" => {
+                    TUnion::new(TAtomic::array(TUnion::string(), TUnion::mixed()))
+                }
                 _ => unreachable!(),
             });
         }
@@ -4318,10 +4301,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             })
             .collect();
         if deferred.is_empty() {
-            TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::string()),
-                value_type: Box::new(TUnion::mixed()),
-            })
+            TUnion::new(TAtomic::array(TUnion::string(), TUnion::mixed()))
         } else {
             TUnion::from_types(deferred)
         }
@@ -4382,7 +4362,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     ) -> TUnion {
         let mut current_class_name = Some(class_name);
         let mut all_sealed = true;
-        let mut properties = FxHashMap::default();
+        let mut known_values: FxHashMap<pzoom_code_info::t_atomic::ArrayKey, (bool, TUnion)> =
+            FxHashMap::default();
 
         while let Some(current_name) = current_class_name {
             let Some(class_info) = self
@@ -4416,37 +4397,36 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let property_name = self.interner.lookup(property.name).to_string();
                 let property_key = pzoom_code_info::t_atomic::ArrayKey::String(property_name);
 
-                if properties.contains_key(&property_key) {
+                if known_values.contains_key(&property_key) {
                     continue;
                 }
 
-                properties.insert(property_key, property_type.clone());
+                known_values.insert(
+                    property_key,
+                    (property_type.possibly_undefined, property_type.clone()),
+                );
             }
 
             current_class_name = class_info.parent_class;
         }
 
-        if properties.is_empty() {
+        if known_values.is_empty() {
             return TUnion::nothing();
         }
 
         let (sealed, fallback_key_type, fallback_value_type) = if all_sealed {
             (true, None, None)
         } else {
-            (
-                false,
-                Some(Box::new(TUnion::string())),
-                Some(Box::new(TUnion::mixed())),
-            )
+            (false, Some(TUnion::string()), Some(TUnion::mixed()))
         };
 
-        TUnion::new(TAtomic::TKeyedArray {
-            properties: std::sync::Arc::new(properties),
-            is_list: false,
+        TUnion::new(TAtomic::keyed_array(
+            known_values,
+            false,
             sealed,
             fallback_key_type,
             fallback_value_type,
-        })
+        ))
     }
 
     fn get_docblock_return_type(
@@ -5498,10 +5478,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             "is_numeric" => TAtomic::TNumeric,
             "is_resource" => TAtomic::TResource,
             "is_scalar" => TAtomic::TScalar,
-            "is_array" => TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            },
+            "is_array" => TAtomic::array(TUnion::array_key(), TUnion::mixed()),
             _ => return Vec::new(),
         };
 
@@ -5873,15 +5850,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 *classlike_name =
                     self.resolve_docblock_class_name(*classlike_name, self_class, parent_class);
             }
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => {
@@ -5898,13 +5867,35 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     template_map,
                 );
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                **value_type = self.resolve_docblock_union_type(
-                    (**value_type).clone(),
-                    self_class,
-                    parent_class,
-                    template_map,
-                );
+            // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray):
+            // resolve every known entry's value type plus the typed fallback params.
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } => {
+                for (_, prop_type) in std::sync::Arc::make_mut(known_values).values_mut() {
+                    *prop_type = self.resolve_docblock_union_type(
+                        prop_type.clone(),
+                        self_class,
+                        parent_class,
+                        template_map,
+                    );
+                }
+                if let Some(params) = params {
+                    params.0 = self.resolve_docblock_union_type(
+                        params.0.clone(),
+                        self_class,
+                        parent_class,
+                        template_map,
+                    );
+                    params.1 = self.resolve_docblock_union_type(
+                        params.1.clone(),
+                        self_class,
+                        parent_class,
+                        template_map,
+                    );
+                }
             }
             TAtomic::TClassStringMap {
                 as_type,
@@ -5925,37 +5916,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     parent_class,
                     template_map,
                 );
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
-                ..
-            } => {
-                for prop_type in std::sync::Arc::make_mut(properties).values_mut() {
-                    *prop_type = self.resolve_docblock_union_type(
-                        prop_type.clone(),
-                        self_class,
-                        parent_class,
-                        template_map,
-                    );
-                }
-                if let Some(key_type) = fallback_key_type {
-                    **key_type = self.resolve_docblock_union_type(
-                        (**key_type).clone(),
-                        self_class,
-                        parent_class,
-                        template_map,
-                    );
-                }
-                if let Some(value_type) = fallback_value_type {
-                    **value_type = self.resolve_docblock_union_type(
-                        (**value_type).clone(),
-                        self_class,
-                        parent_class,
-                        template_map,
-                    );
-                }
             }
             TAtomic::TObjectWithProperties { properties, .. } => {
                 for prop_type in properties.values_mut() {
@@ -6152,40 +6112,6 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         match atomic {
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            } => vec![TAtomic::TArray {
-                key_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *key_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-                value_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *value_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-            }],
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => vec![TAtomic::TNonEmptyArray {
-                key_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *key_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-                value_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *value_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-            }],
             TAtomic::TIterable {
                 key_type,
                 value_type,
@@ -6203,65 +6129,63 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     class_constants,
                 )),
             }],
-            TAtomic::TList { value_type } => vec![TAtomic::TList {
-                value_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *value_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-            }],
-            TAtomic::TNonEmptyList { value_type } => vec![TAtomic::TNonEmptyList {
-                value_type: Box::new(self.expand_docblock_class_constant_wildcards(
-                    *value_type,
-                    self_class,
-                    parent_class,
-                    class_constants,
-                )),
-            }],
-            TAtomic::TKeyedArray {
-                properties,
+            // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray):
+            // expand wildcards in each known entry's value and the typed fallback
+            // params, preserving the flags unchanged.
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => vec![TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(
-                    std::sync::Arc::try_unwrap(properties)
+                is_nonempty,
+                is_sealed,
+                is_callable,
+            } => {
+                let known_values = std::sync::Arc::new(
+                    std::sync::Arc::try_unwrap(known_values)
                         .unwrap_or_else(|shared| (*shared).clone())
                         .into_iter()
-                        .map(|(key, prop_type)| {
+                        .map(|(key, (possibly_undefined, prop_type))| {
                             (
                                 key,
-                                self.expand_docblock_class_constant_wildcards(
-                                    prop_type,
-                                    self_class,
-                                    parent_class,
-                                    class_constants,
+                                (
+                                    possibly_undefined,
+                                    self.expand_docblock_class_constant_wildcards(
+                                        prop_type,
+                                        self_class,
+                                        parent_class,
+                                        class_constants,
+                                    ),
                                 ),
                             )
                         })
                         .collect(),
-                ),
-                is_list,
-                sealed,
-                fallback_key_type: fallback_key_type.map(|key_type| {
-                    Box::new(self.expand_docblock_class_constant_wildcards(
-                        *key_type,
-                        self_class,
-                        parent_class,
-                        class_constants,
+                );
+                let params = params.map(|params| {
+                    let (key_type, value_type) = *params;
+                    Box::new((
+                        self.expand_docblock_class_constant_wildcards(
+                            key_type,
+                            self_class,
+                            parent_class,
+                            class_constants,
+                        ),
+                        self.expand_docblock_class_constant_wildcards(
+                            value_type,
+                            self_class,
+                            parent_class,
+                            class_constants,
+                        ),
                     ))
-                }),
-                fallback_value_type: fallback_value_type.map(|value_type| {
-                    Box::new(self.expand_docblock_class_constant_wildcards(
-                        *value_type,
-                        self_class,
-                        parent_class,
-                        class_constants,
-                    ))
-                }),
-            }],
+                });
+                vec![TAtomic::TArray {
+                    known_values,
+                    params,
+                    is_list,
+                    is_nonempty,
+                    is_sealed,
+                    is_callable,
+                }]
+            }
             TAtomic::TNamedObject {
                 name, type_params, ..
             } => {
@@ -7604,34 +7528,29 @@ fn docblock_param_is_variadic(content: &str) -> bool {
 /// falls back to its generic value type).
 fn docblock_array_value_type(docblock_type: &TUnion) -> Option<TUnion> {
     for atomic in &docblock_type.types {
-        match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
-                return Some((**value_type).clone());
+        // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray).
+        // A generic array/list has empty `known_values` and yields its fallback
+        // value (`params.1`); a shape combines every known value with the fallback.
+        if let TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } = atomic
+        {
+            let mut value_type: Option<TUnion> = None;
+            for (_, property_type) in known_values.values() {
+                value_type = Some(match value_type {
+                    Some(existing) => combine_union_types(&existing, property_type, false),
+                    None => property_type.clone(),
+                });
             }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
-                ..
-            } => {
-                let mut value_type: Option<TUnion> = None;
-                for property_type in properties.values() {
-                    value_type = Some(match value_type {
-                        Some(existing) => combine_union_types(&existing, property_type, false),
-                        None => property_type.clone(),
-                    });
-                }
-                if let Some(fallback) = fallback_value_type {
-                    value_type = Some(match value_type {
-                        Some(existing) => combine_union_types(&existing, fallback, false),
-                        None => (**fallback).clone(),
-                    });
-                }
-                return value_type;
+            if let Some((_, fallback)) = params.as_deref() {
+                value_type = Some(match value_type {
+                    Some(existing) => combine_union_types(&existing, fallback, false),
+                    None => fallback.clone(),
+                });
             }
-            _ => {}
+            return value_type;
         }
     }
 
@@ -7952,21 +7871,33 @@ fn resolve_key_of_template_union(union: &TUnion) -> TUnion {
 
 fn resolve_key_of_template_atomic(atomic: &TAtomic) -> TUnion {
     match atomic {
-        TAtomic::TArray { key_type, .. }
-        | TAtomic::TNonEmptyArray { key_type, .. }
-        | TAtomic::TIterable { key_type, .. } => (**key_type).clone(),
-        TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => TUnion::int(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
+        TAtomic::TIterable { key_type, .. } => (**key_type).clone(),
+        // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray).
+        TAtomic::TArray {
+            known_values,
+            params,
+            is_list,
             ..
         } => {
-            let mut key_union = fallback_key_type
-                .as_ref()
-                .map(|key_type| (**key_type).clone())
+            // Generic array/list (no known entries): a list keys by `int`, a plain
+            // array by its fallback key (`params.0`).
+            if known_values.is_empty() {
+                if *is_list {
+                    return TUnion::int();
+                }
+                return params
+                    .as_deref()
+                    .map(|(key, _)| key.clone())
+                    .unwrap_or_else(TUnion::array_key);
+            }
+
+            // Shape: combine the fallback key with every known key (old TKeyedArray).
+            let mut key_union = params
+                .as_deref()
+                .map(|(key, _)| key.clone())
                 .unwrap_or_else(TUnion::nothing);
 
-            for key in properties.keys() {
+            for key in known_values.keys() {
                 let key_atomic = match key {
                     pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                         TAtomic::TLiteralInt { value: *value }
@@ -8020,22 +7951,29 @@ fn resolve_value_of_template_union(union: &TUnion) -> TUnion {
 
 fn resolve_value_of_template_atomic(atomic: &TAtomic) -> TUnion {
     match atomic {
-        TAtomic::TArray { value_type, .. }
-        | TAtomic::TNonEmptyArray { value_type, .. }
-        | TAtomic::TIterable { value_type, .. }
-        | TAtomic::TList { value_type }
-        | TAtomic::TNonEmptyList { value_type } => (**value_type).clone(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        TAtomic::TIterable { value_type, .. } => (**value_type).clone(),
+        // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray).
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            let mut value_union = fallback_value_type
-                .as_ref()
-                .map(|value_type| (**value_type).clone())
+            // A generic array/list (no known entries) yields its fallback value
+            // (`params.1`), matching the old TArray/TList arms.
+            if known_values.is_empty() {
+                return params
+                    .as_deref()
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(TUnion::mixed);
+            }
+
+            // Shape: combine the fallback value with every known value (old TKeyedArray).
+            let mut value_union = params
+                .as_deref()
+                .map(|(_, value)| value.clone())
                 .unwrap_or_else(TUnion::nothing);
 
-            for property_value in properties.values() {
+            for (_, property_value) in known_values.values() {
                 value_union = if value_union.is_nothing() {
                     property_value.clone()
                 } else {
@@ -8219,11 +8157,7 @@ fn loose_scalar_family(atomic: &TAtomic) -> Option<&'static str> {
 /// debug form so it never matches.
 fn psalm_signature_match_key(atomic: &TAtomic) -> String {
     match atomic {
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. } => "array".to_string(),
+        TAtomic::TArray { .. } => "array".to_string(),
         TAtomic::TInt => "int".to_string(),
         TAtomic::TFloat => "float".to_string(),
         TAtomic::TString => "string".to_string(),
@@ -8720,20 +8654,35 @@ fn union_has_valid_array_keys(union: &TUnion) -> bool {
 
 fn atomic_has_valid_array_keys(atomic: &TAtomic) -> bool {
     match atomic {
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => union_is_valid_array_key(key_type) && union_has_valid_array_keys(value_type),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_has_valid_array_keys(value_type)
+        // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray).
+        // Old shapes (TKeyedArray) had no arm here and fell through to `_ => true`,
+        // so keep that: only generic arrays/lists are validated. A generic list
+        // keys by `int`, so only its fallback value is checked; a generic array
+        // also checks its fallback key.
+        TAtomic::TArray {
+            known_values,
+            params,
+            is_list,
+            ..
+        } => {
+            if !known_values.is_empty() {
+                return true;
+            }
+            match params.as_deref() {
+                Some((key, value)) => {
+                    let value_ok = union_has_valid_array_keys(value);
+                    if *is_list {
+                        value_ok
+                    } else {
+                        union_is_valid_array_key(key) && value_ok
+                    }
+                }
+                None => true,
+            }
         }
         TAtomic::TNamedObject {
             type_params: Some(type_params),
@@ -8770,11 +8719,7 @@ fn union_is_valid_array_key(union: &TUnion) -> bool {
         | TAtomic::TTemplateParamClass { .. } => true,
         TAtomic::TNamedObject { .. } => true,
         // Psalm tolerates these in docblocks and reports access issues later.
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. } => true,
+        TAtomic::TArray { .. } => true,
         _ => false,
     })
 }
@@ -9051,49 +8996,59 @@ fn merge_intersected_shapes(members: &[TAtomic]) -> Option<TAtomic> {
         return None;
     }
 
-    let mut properties: FxHashMap<pzoom_code_info::t_atomic::ArrayKey, TUnion> =
+    let mut known_values: FxHashMap<pzoom_code_info::t_atomic::ArrayKey, (bool, TUnion)> =
         FxHashMap::default();
     let mut sealed = true;
-    let mut fallback_key_type: Option<Box<TUnion>> = None;
-    let mut fallback_value_type: Option<Box<TUnion>> = None;
+    let mut fallback_key_type: Option<TUnion> = None;
+    let mut fallback_value_type: Option<TUnion> = None;
 
     for member in members {
-        let TAtomic::TKeyedArray {
-            properties: member_properties,
+        // Old guard: only non-list `TKeyedArray` shapes merge. In the unified
+        // type a shape is a `TArray` with known entries (or a sealed empty shape);
+        // generic `array<K,V>`/`list<V>` (empty, unsealed) are rejected as before.
+        // TODO(unify-array): a degenerate empty *sealed* shape (`array{}`) is
+        // treated as a shape here; the old code merged it as a TKeyedArray too,
+        // but it is now indistinguishable from `[]`.
+        let TAtomic::TArray {
+            known_values: member_known_values,
+            params: member_params,
             is_list: false,
-            sealed: member_sealed,
-            fallback_key_type: member_fallback_key,
-            fallback_value_type: member_fallback_value,
+            is_sealed: member_sealed,
             ..
         } = member
         else {
             return None;
         };
+        if member_known_values.is_empty() && !*member_sealed {
+            return None;
+        }
 
-        for (key, value_type) in member_properties.iter() {
-            if let Some(existing) = properties.get(key) {
+        for (key, (possibly_undefined, value_type)) in member_known_values.iter() {
+            if let Some((_, existing)) = known_values.get(key) {
                 if existing != value_type {
                     return None;
                 }
             } else {
-                properties.insert(key.clone(), value_type.clone());
+                known_values.insert(key.clone(), (*possibly_undefined, value_type.clone()));
             }
         }
 
         sealed &= *member_sealed;
-        if fallback_key_type.is_none() {
-            fallback_key_type = member_fallback_key.clone();
-            fallback_value_type = member_fallback_value.clone();
+        if fallback_key_type.is_none()
+            && let Some((member_fallback_key, member_fallback_value)) = member_params.as_deref()
+        {
+            fallback_key_type = Some(member_fallback_key.clone());
+            fallback_value_type = Some(member_fallback_value.clone());
         }
     }
 
-    Some(TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: false,
+    Some(TAtomic::keyed_array(
+        known_values,
+        false,
         sealed,
         fallback_key_type,
         fallback_value_type,
-    })
+    ))
 }
 
 fn constructor_is_external_mutation_free(stmts: &[Statement<'_>]) -> bool {
@@ -9187,11 +9142,7 @@ impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, Vec<&'arena str>>
 /// shapes/lists key as plain "array"; named objects key by class name.
 fn loose_atomic_key(interner: &Interner, atomic: &TAtomic) -> String {
     match atomic {
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. } => "array".to_string(),
+        TAtomic::TArray { .. } => "array".to_string(),
         TAtomic::TNamedObject { name, .. } => interner.lookup(*name).to_string(),
         other => other.get_id(Some(interner)),
     }
@@ -9264,37 +9215,25 @@ fn remove_used_templates_atomic(template_readonly: &mut FxHashSet<StrId>, atomic
             template_readonly.remove(name);
             remove_used_templates_atomic(template_readonly, as_type);
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
             remove_used_templates(template_readonly, key_type);
             remove_used_templates(template_readonly, value_type);
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            remove_used_templates(template_readonly, value_type);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray):
+        // recurse into every known entry's value plus the typed fallback params.
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            for property_type in properties.values() {
+            for (_, property_type) in known_values.values() {
                 remove_used_templates(template_readonly, property_type);
             }
-            if let Some(fallback_key_type) = fallback_key_type {
+            if let Some((fallback_key_type, fallback_value_type)) = params.as_deref() {
                 remove_used_templates(template_readonly, fallback_key_type);
-            }
-            if let Some(fallback_value_type) = fallback_value_type {
                 remove_used_templates(template_readonly, fallback_value_type);
             }
         }
@@ -9439,12 +9378,10 @@ fn merge_same_class_generic_members(resolved_types: &mut Vec<TAtomic>) {
             .types
             .iter()
             .map(|atomic| match atomic {
-                TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TKeyedArray { is_list: false, .. } => "array".to_string(),
-                TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { is_list: true, .. } => "list".to_string(),
+                // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray):
+                // a list keys as "list", every other array shape as "array".
+                TAtomic::TArray { is_list: false, .. } => "array".to_string(),
+                TAtomic::TArray { is_list: true, .. } => "list".to_string(),
                 other => other.get_id(None),
             })
             .collect::<Vec<_>>()

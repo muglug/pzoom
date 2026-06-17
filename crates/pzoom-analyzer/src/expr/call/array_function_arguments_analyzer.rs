@@ -40,15 +40,32 @@ pub(crate) fn handle_splice_by_ref(
     };
 
     let input_is_listy = existing_type.types.iter().all(|atomic| match atomic {
-        TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => true,
-        TAtomic::TKeyedArray { is_list, .. } => *is_list,
-        TAtomic::TArray { key_type, .. } | TAtomic::TNonEmptyArray { key_type, .. } => {
-            key_type.types.iter().all(|key_atomic| {
-                matches!(
-                    key_atomic,
-                    TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
-                )
-            })
+        TAtomic::TArray {
+            known_values,
+            params,
+            is_list,
+            ..
+        } => {
+            if *is_list {
+                return true;
+            }
+            // A generic array's key-ness is read from its typed fallback; a
+            // shape (known_values populated) with no list flag is not listy.
+            // TODO(unify-array): an empty-known_values non-list array falls to
+            // the generic-array key check below (old non-list TKeyedArray with
+            // empty properties returned false); harmless for splice listiness.
+            if !known_values.is_empty() {
+                return false;
+            }
+            match params.as_deref() {
+                Some((key_type, _)) => key_type.types.iter().all(|key_atomic| {
+                    matches!(
+                        key_atomic,
+                        TAtomic::TInt | TAtomic::TLiteralInt { .. } | TAtomic::TIntRange { .. }
+                    )
+                }),
+                None => false,
+            }
         }
         _ => false,
     });
@@ -76,18 +93,12 @@ pub(crate) fn handle_splice_by_ref(
         false,
     );
     let by_ref_type = if input_is_listy {
-        TUnion::new(TAtomic::TList {
-            value_type: Box::new(combined_value),
-        })
+        TUnion::new(TAtomic::list(combined_value))
     } else {
-        TUnion::new(TAtomic::TArray {
-            key_type: Box::new(pzoom_code_info::combine_union_types(
-                &array_info.key_type,
-                &TUnion::int(),
-                false,
-            )),
-            value_type: Box::new(combined_value),
-        })
+        TUnion::new(TAtomic::array(
+            pzoom_code_info::combine_union_types(&array_info.key_type, &TUnion::int(), false),
+            combined_value,
+        ))
     };
 
     context.set_var_type(var_id, by_ref_type);
@@ -113,25 +124,28 @@ pub(crate) fn handle_by_ref_array_adjustment(
     for atomic in &existing_type.types {
         let mut atomic = atomic.clone();
 
-        if let TAtomic::TKeyedArray {
-            properties,
+        if let TAtomic::TArray {
+            known_values,
+            params,
             is_list,
-            fallback_key_type,
-            fallback_value_type,
             ..
         } = &atomic
+            // Only shapes (old TKeyedArray) take this path; generic
+            // arrays/lists fall straight through to the emptiness adjustment.
+            && !known_values.is_empty()
         {
+            let fallback_value_type = params.as_deref().map(|(_, value)| value);
             if *is_list && !inside_loop && (is_shift || fallback_value_type.is_none()) {
                 // Drop the first (shift, reindexing) / last (pop) element of
                 // the fixed shape.
-                let mut int_entries: Vec<(i64, TUnion)> = properties
+                let mut int_entries: Vec<(i64, bool, TUnion)> = known_values
                     .iter()
-                    .filter_map(|(key, value)| match key {
-                        ArrayKey::Int(index) => Some((*index, value.clone())),
+                    .filter_map(|(key, (possibly_undefined, value))| match key {
+                        ArrayKey::Int(index) => Some((*index, *possibly_undefined, value.clone())),
                         ArrayKey::String(_) | ArrayKey::ClassString(_) => None,
                     })
                     .collect();
-                int_entries.sort_by_key(|(index, _)| *index);
+                int_entries.sort_by_key(|(index, _, _)| *index);
 
                 if is_shift {
                     if !int_entries.is_empty() {
@@ -143,36 +157,37 @@ pub(crate) fn handle_by_ref_array_adjustment(
 
                 if int_entries.is_empty() {
                     new_atomics.push(match fallback_value_type {
-                        Some(fallback_value) => TAtomic::TList {
-                            value_type: fallback_value.clone(),
-                        },
-                        None => TAtomic::TArray {
-                            key_type: Box::new(TUnion::new(TAtomic::TNothing)),
-                            value_type: Box::new(TUnion::new(TAtomic::TNothing)),
-                        },
+                        Some(fallback_value) => TAtomic::list(fallback_value.clone()),
+                        None => TAtomic::array(
+                            TUnion::new(TAtomic::TNothing),
+                            TUnion::new(TAtomic::TNothing),
+                        ),
                     });
                 } else {
-                    let reindexed: rustc_hash::FxHashMap<ArrayKey, TUnion> = int_entries
+                    let reindexed: rustc_hash::FxHashMap<ArrayKey, (bool, TUnion)> = int_entries
                         .into_iter()
                         .enumerate()
-                        .map(|(new_index, (_, value))| (ArrayKey::Int(new_index as i64), value))
+                        .map(|(new_index, (_, possibly_undefined, value))| {
+                            (ArrayKey::Int(new_index as i64), (possibly_undefined, value))
+                        })
                         .collect();
-                    new_atomics.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(reindexed),
-                        is_list: true,
-                        sealed: fallback_value_type.is_none(),
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
+                    let fallback_key_type = params.as_deref().map(|(key, _)| key.clone());
+                    new_atomics.push(TAtomic::keyed_array(
+                        reindexed,
+                        true,
+                        fallback_value_type.is_none(),
+                        fallback_key_type,
+                        fallback_value_type.cloned(),
+                    ));
                 }
                 continue;
             }
 
             // Degrade other shapes to their generic form before the
             // emptiness adjustment below.
-            let value_type = properties
+            let value_type = known_values
                 .values()
-                .fold(None::<TUnion>, |acc, value| {
+                .fold(None::<TUnion>, |acc, (_, value)| {
                     Some(match acc {
                         None => value.clone(),
                         Some(existing) => combine_union_types(&existing, value, false),
@@ -184,29 +199,32 @@ pub(crate) fn handle_by_ref_array_adjustment(
                 })
                 .unwrap_or_else(TUnion::mixed);
             atomic = if *is_list {
-                TAtomic::TList {
-                    value_type: Box::new(value_type),
-                }
+                TAtomic::list(value_type)
             } else {
-                TAtomic::TArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(value_type),
-                }
+                TAtomic::array(TUnion::array_key(), value_type)
             };
         }
 
+        // Demote a non-empty generic array/list to its possibly-empty form
+        // (old TNonEmptyArray -> TArray, TNonEmptyList -> TList); everything
+        // else passes through unchanged.
         match atomic {
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => {
+            TAtomic::TArray {
+                known_values,
+                params,
+                is_list,
+                is_nonempty: true,
+                is_sealed,
+                is_callable,
+            } if known_values.is_empty() => {
                 new_atomics.push(TAtomic::TArray {
-                    key_type,
-                    value_type,
+                    known_values,
+                    params,
+                    is_list,
+                    is_nonempty: false,
+                    is_sealed,
+                    is_callable,
                 });
-            }
-            TAtomic::TNonEmptyList { value_type } => {
-                new_atomics.push(TAtomic::TList { value_type });
             }
             other => new_atomics.push(other),
         }
@@ -255,16 +273,7 @@ pub(crate) fn handle_array_addition(
             // `array{}|list<T>`-style unions into the combined atomic so
             // push/unshift still adjusts precisely instead of falling back
             // to the stub's generic param-out.
-            let all_arrays = existing_type.types.iter().all(|atomic| {
-                matches!(
-                    atomic,
-                    TAtomic::TArray { .. }
-                        | TAtomic::TNonEmptyArray { .. }
-                        | TAtomic::TList { .. }
-                        | TAtomic::TNonEmptyList { .. }
-                        | TAtomic::TKeyedArray { .. }
-                )
-            });
+            let all_arrays = existing_type.types.iter().all(|atomic| atomic.is_array());
             if !all_arrays {
                 return false;
             }
@@ -282,41 +291,39 @@ pub(crate) fn handle_array_addition(
             }
         }
     };
+    // The `array<never, never>` sentinel (old empty `TArray`): a generic array
+    // whose typed fallback is `(never, never)`.
     let is_empty_array = matches!(
         &array_atomic,
-        TAtomic::TArray { key_type, value_type }
-            if key_type.is_nothing() && value_type.is_nothing()
+        TAtomic::TArray { known_values, params: Some(params), .. }
+            if known_values.is_empty() && params.0.is_nothing() && params.1.is_nothing()
     );
     let is_definite_list_shape = matches!(
         &array_atomic,
-        TAtomic::TKeyedArray { properties, is_list: true, .. }
-            if properties.values().all(|value| !value.possibly_undefined)
+        TAtomic::TArray { known_values, is_list: true, .. }
+            if !known_values.is_empty()
+                && known_values.values().all(|(possibly_undefined, _)| !*possibly_undefined)
     );
     // Generic (non-shape) arrays and lists need no element-count tracking:
     // Psalm's handleAddition always runs for them and the result is non-empty
     // (push/unshift onto any array yields at least one element).
-    let is_generic_array_or_list = matches!(
-        &array_atomic,
-        TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-    );
+    let is_generic_array_or_list = array_atomic.is_generic_array();
     // An optional-entry list shape (a loop-merge of empty and filled states)
     // degrades to its generic list form before the addition — Psalm's
     // element-count tracking keeps these precise; folding to list<V> keeps
     // listness and the value union instead of bailing to the stub's
     // array<array-key, mixed> param-out.
     let array_atomic = match &array_atomic {
-        TAtomic::TKeyedArray {
-            properties,
+        TAtomic::TArray {
+            known_values,
+            params,
             is_list: true,
-            fallback_value_type,
             ..
-        } if !is_definite_list_shape => {
-            let combined_value = properties
+        } if !known_values.is_empty() && !is_definite_list_shape => {
+            let fallback_value_type = params.as_deref().map(|(_, value)| value);
+            let combined_value = known_values
                 .values()
-                .fold(None::<TUnion>, |acc, value| {
+                .fold(None::<TUnion>, |acc, (_, value)| {
                     let mut value = value.clone();
                     value.possibly_undefined = false;
                     Some(match acc {
@@ -329,16 +336,17 @@ pub(crate) fn handle_array_addition(
                     None => value,
                 });
             match combined_value {
-                Some(value_type) => TAtomic::TList {
-                    value_type: Box::new(value_type),
-                },
+                Some(value_type) => TAtomic::list(value_type),
                 None => array_atomic,
             }
         }
         _ => array_atomic,
     };
-    let is_generic_array_or_list =
-        is_generic_array_or_list || matches!(&array_atomic, TAtomic::TList { .. });
+    // The degrade above yields a possibly-empty generic list (old `TList`).
+    let is_generic_array_or_list = is_generic_array_or_list
+        || (array_atomic.is_generic_array()
+            && array_atomic.array_is_list()
+            && !array_atomic.array_is_nonempty());
 
     if !is_empty_array && !is_definite_list_shape && !is_generic_array_or_list {
         // Non-list optional-entry shapes keep the generic flow.
@@ -376,26 +384,25 @@ pub(crate) fn handle_array_addition(
         if arg_value_type.is_mixed() {
             by_ref_type = combine_union_types(
                 &by_ref_type,
-                &TUnion::new(TAtomic::TArray {
-                    key_type: Box::new(new_offset_type),
-                    value_type: Box::new(TUnion::mixed()),
-                }),
+                &TUnion::new(TAtomic::array(new_offset_type, TUnion::mixed())),
                 false,
             );
         } else if arg.is_unpacked() {
             // Degrade unpacked shapes to their generic list/array form.
             let mut degraded = arg_value_type.clone();
             for atomic in degraded.types.iter_mut() {
-                if let TAtomic::TKeyedArray {
-                    properties,
+                if let TAtomic::TArray {
+                    known_values,
+                    params,
                     is_list,
-                    fallback_value_type,
                     ..
                 } = atomic
+                    && !known_values.is_empty()
                 {
-                    let value_type = properties
+                    let fallback_value_type = params.as_deref().map(|(_, value)| value);
+                    let value_type = known_values
                         .values()
-                        .fold(None::<TUnion>, |acc, value| {
+                        .fold(None::<TUnion>, |acc, (_, value)| {
                             Some(match acc {
                                 None => value.clone(),
                                 Some(existing) => combine_union_types(&existing, value, false),
@@ -407,103 +414,102 @@ pub(crate) fn handle_array_addition(
                         })
                         .unwrap_or_else(TUnion::mixed);
                     *atomic = if *is_list {
-                        TAtomic::TNonEmptyList {
-                            value_type: Box::new(value_type),
-                        }
+                        TAtomic::non_empty_list(value_type)
                     } else {
-                        TAtomic::TNonEmptyArray {
-                            key_type: Box::new(TUnion::array_key()),
-                            value_type: Box::new(value_type),
-                        }
+                        TAtomic::non_empty_array(TUnion::array_key(), value_type)
                     };
                 }
             }
             by_ref_type = combine_union_types(&by_ref_type, &degraded, false);
-        } else if let TAtomic::TKeyedArray {
-            properties,
+        } else if let TAtomic::TArray {
+            known_values,
+            params,
             is_list: true,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            is_sealed,
+            ..
         } = &array_atomic
+            // A fixed list SHAPE (old list-form TKeyedArray).
+            && !known_values.is_empty()
         {
             // A fixed list shape gains the value at the front (unshift,
             // reindexing) or the end (push).
-            let mut int_entries: Vec<TUnion> = {
-                let mut entries: Vec<(i64, TUnion)> = properties
+            let mut int_entries: Vec<(bool, TUnion)> = {
+                let mut entries: Vec<(i64, bool, TUnion)> = known_values
                     .iter()
-                    .filter_map(|(key, value)| match key {
-                        ArrayKey::Int(index) => Some((*index, value.clone())),
+                    .filter_map(|(key, (possibly_undefined, value))| match key {
+                        ArrayKey::Int(index) => Some((*index, *possibly_undefined, value.clone())),
                         ArrayKey::String(_) | ArrayKey::ClassString(_) => None,
                     })
                     .collect();
-                entries.sort_by_key(|(index, _)| *index);
-                entries.into_iter().map(|(_, value)| value).collect()
+                entries.sort_by_key(|(index, _, _)| *index);
+                entries
+                    .into_iter()
+                    .map(|(_, possibly_undefined, value)| (possibly_undefined, value))
+                    .collect()
             };
+            let inserted = (arg_value_type.possibly_undefined, arg_value_type);
             if is_unshift {
-                int_entries.insert(0, arg_value_type);
+                int_entries.insert(0, inserted);
             } else {
-                int_entries.push(arg_value_type);
+                int_entries.push(inserted);
             }
-            let reindexed: rustc_hash::FxHashMap<ArrayKey, TUnion> = int_entries
+            let reindexed: rustc_hash::FxHashMap<ArrayKey, (bool, TUnion)> = int_entries
                 .into_iter()
                 .enumerate()
-                .map(|(index, value)| (ArrayKey::Int(index as i64), value))
+                .map(|(index, entry)| (ArrayKey::Int(index as i64), entry))
                 .collect();
-            by_ref_type = TUnion::new(TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(reindexed),
-                is_list: true,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.clone(),
-                fallback_value_type: fallback_value_type.clone(),
-            });
-        } else if let TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } =
-            &array_atomic
+            let fallback_key_type = params.as_deref().map(|(key, _)| key.clone());
+            let fallback_value_type = params.as_deref().map(|(_, value)| value.clone());
+            by_ref_type = TUnion::new(TAtomic::keyed_array(
+                reindexed,
+                true,
+                *is_sealed,
+                fallback_key_type,
+                fallback_value_type,
+            ));
+        } else if let TAtomic::TArray {
+            known_values,
+            params: Some(params),
+            is_list: true,
+            ..
+        } = &array_atomic
+            // A generic list (old TList / TNonEmptyList): known_values empty.
+            && known_values.is_empty()
         {
+            let value_type = &params.1;
             // Keep list-ness (Psalm's list representation is a keyed shape, so
             // its shape arm covers this): unshift puts the definite value at
             // offset 0 with the old values as the fallback; push keeps a
             // non-empty list of the combined value type.
             by_ref_type = if is_unshift {
                 let mut properties = rustc_hash::FxHashMap::default();
-                properties.insert(ArrayKey::Int(0), arg_value_type);
-                TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: true,
-                    sealed: false,
-                    fallback_key_type: Some(Box::new(TUnion::int())),
-                    fallback_value_type: Some(value_type.clone()),
-                })
+                properties.insert(ArrayKey::Int(0), (false, arg_value_type));
+                TUnion::new(TAtomic::keyed_array(
+                    properties,
+                    true,
+                    false,
+                    Some(TUnion::int()),
+                    Some(value_type.clone()),
+                ))
             } else {
-                TUnion::new(TAtomic::TNonEmptyList {
-                    value_type: Box::new(combine_union_types(value_type, &arg_value_type, false)),
-                })
+                TUnion::new(TAtomic::non_empty_list(combine_union_types(
+                    value_type,
+                    &arg_value_type,
+                    false,
+                )))
             };
-        } else if matches!(
-            &array_atomic,
-            TAtomic::TArray { key_type, value_type }
-                if key_type.is_nothing() && value_type.is_nothing()
-        ) {
+        } else if is_empty_array {
             // Adding to an empty array yields the one-element list shape.
             let mut properties = rustc_hash::FxHashMap::default();
-            properties.insert(ArrayKey::Int(0), arg_value_type);
-            by_ref_type = TUnion::new(TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(properties),
-                is_list: true,
-                sealed: true,
-                fallback_key_type: None,
-                fallback_value_type: None,
-            });
+            properties.insert(ArrayKey::Int(0), (false, arg_value_type));
+            by_ref_type = TUnion::new(TAtomic::keyed_array(properties, true, true, None, None));
         } else {
             // overwrite_empty_array=true, like Psalm's handleAddition generic
             // arm: one non-empty member makes the combined array non-empty
             // (push/unshift onto any array yields at least one element).
             by_ref_type = combine_union_types(
                 &by_ref_type,
-                &TUnion::new(TAtomic::TNonEmptyArray {
-                    key_type: Box::new(new_offset_type),
-                    value_type: Box::new(arg_value_type),
-                }),
+                &TUnion::new(TAtomic::non_empty_array(new_offset_type, arg_value_type)),
                 true,
             );
         }

@@ -76,26 +76,17 @@ impl FunctionReturnTypeProvider for ParseUrlReturnTypeProvider {
             }
         }
 
-        let mut properties = FxHashMap::default();
+        // All URL parts are optional (possibly-undefined) in the result shape.
+        let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
         for key in [
             "scheme", "user", "pass", "host", "path", "query", "fragment",
         ] {
-            let mut component = TUnion::string();
-            component.possibly_undefined = true;
-            properties.insert(ArrayKey::String(key.to_string()), component);
+            known_values.insert(ArrayKey::String(key.to_string()), (true, TUnion::string()));
         }
-        let mut port = TUnion::int();
-        port.possibly_undefined = true;
-        properties.insert(ArrayKey::String("port".to_string()), port);
+        known_values.insert(ArrayKey::String("port".to_string()), (true, TUnion::int()));
 
         let mut result = TUnion::from_types(vec![
-            TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(properties),
-                is_list: false,
-                sealed: true,
-                fallback_key_type: None,
-                fallback_value_type: None,
-            },
+            TAtomic::keyed_array(known_values, false, true, None, None),
             TAtomic::TFalse,
         ]);
         result.ignore_falsable_issues = true;

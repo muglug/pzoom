@@ -360,92 +360,35 @@ fn replace_atomic(
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TAtomic {
     match atomic {
+        // The unified array atomic: substitute templates in every known-entry
+        // value and in the typed fallback `params`, preserving the shape's flags
+        // and each entry's possibly-undefined bool (`rebuilt_array` keeps them
+        // without re-normalising).
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => TAtomic::TArray {
-            key_type: Box::new(replace_union(
-                codebase,
-                key_type,
-                template_result,
-                resolving_templates,
-            )),
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(replace_union(
-                codebase,
-                key_type,
-                template_result,
-                resolving_templates,
-            )),
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TKeyedArray {
-            properties,
-            is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            known_values,
+            params,
+            ..
         } => {
-            let mut new_properties = FxHashMap::default();
-            for (key, value) in properties.iter() {
-                new_properties.insert(
+            let mut new_known_values = FxHashMap::default();
+            for (key, (possibly_undefined, value)) in known_values.iter() {
+                new_known_values.insert(
                     key.clone(),
-                    replace_union(codebase, value, template_result, resolving_templates),
+                    (
+                        *possibly_undefined,
+                        replace_union(codebase, value, template_result, resolving_templates),
+                    ),
                 );
             }
 
-            TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(new_properties),
-                is_list: *is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.as_ref().map(|fallback_key| {
-                    Box::new(replace_union(
-                        codebase,
-                        fallback_key,
-                        template_result,
-                        resolving_templates,
+            atomic.rebuilt_array(
+                std::sync::Arc::new(new_known_values),
+                params.as_ref().map(|params| {
+                    Box::new((
+                        replace_union(codebase, &params.0, template_result, resolving_templates),
+                        replace_union(codebase, &params.1, template_result, resolving_templates),
                     ))
                 }),
-                fallback_value_type: fallback_value_type.as_ref().map(|fallback_value| {
-                    Box::new(replace_union(
-                        codebase,
-                        fallback_value,
-                        template_result,
-                        resolving_templates,
-                    ))
-                }),
-            }
+            )
         }
         TAtomic::TNamedObject {
             name,

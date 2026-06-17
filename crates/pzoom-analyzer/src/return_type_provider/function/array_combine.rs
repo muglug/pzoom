@@ -53,18 +53,28 @@ impl FunctionReturnTypeProvider for ArrayCombineReturnTypeProvider {
 /// length (a general array, a fallback, or possibly-undefined elements).
 fn known_tuple_len(union: &TUnion) -> Option<usize> {
     match union.get_single() {
-        Some(TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type: None,
+        // A sealed keyed-array shape (former TKeyedArray with no fallback),
+        // including the empty array `[]`: a fixed length unless some entry is
+        // possibly-undefined.
+        Some(TAtomic::TArray {
+            known_values,
+            params: None,
             ..
         }) => {
-            if properties.values().any(|value| value.possibly_undefined) {
+            if known_values
+                .values()
+                .any(|(possibly_undefined, _)| *possibly_undefined)
+            {
                 None
             } else {
-                Some(properties.len())
+                Some(known_values.len())
             }
         }
-        Some(TAtomic::TArray { value_type, .. }) if value_type.is_nothing() => Some(0),
+        // A generic `array<never, never>` is provably length 0.
+        Some(TAtomic::TArray {
+            params: Some(params),
+            ..
+        }) if params.1.is_nothing() => Some(0),
         _ => None,
     }
 }

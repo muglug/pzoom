@@ -790,62 +790,34 @@ fn reconcile_truthy(
                 // Keep float but note that 0.0 could be removed in strict mode
                 acceptable_types.push(atomic.clone());
             }
+            // A *shape* (known entries present).
             TAtomic::TArray {
-                key_type,
-                value_type,
-            } => {
-                // A definitely-empty array is never truthy — drop it (Psalm).
-                if value_type.is_nothing() {
-                    did_remove_type = true;
-                    continue;
-                }
-                // Narrow to non-empty array
-                acceptable_types.push(TAtomic::TNonEmptyArray {
-                    key_type: key_type.clone(),
-                    value_type: value_type.clone(),
-                });
-            }
-            TAtomic::TList { value_type } => {
-                if value_type.is_nothing() {
-                    did_remove_type = true;
-                    continue;
-                }
-                acceptable_types.push(TAtomic::TNonEmptyList {
-                    value_type: value_type.clone(),
-                });
-            }
-            TAtomic::TKeyedArray {
-                properties,
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                if properties.is_empty() && *sealed && fallback_value_type.is_none() {
-                    did_remove_type = true;
-                    continue;
-                }
-
+                ..
+            } if !known_values.is_empty() => {
                 if atomic.is_truthy() {
                     acceptable_types.push(atomic.clone());
                 } else if *is_list
-                    && properties
+                    && known_values
                         .get(&ArrayKey::Int(0))
-                        .is_some_and(|first| first.possibly_undefined)
+                        .is_some_and(|(possibly_undefined, _)| *possibly_undefined)
                 {
                     // Psalm's `reconcileTruthyOrNonEmpty`: a possibly-empty list
                     // becomes non-empty by making its first element definite.
-                    let mut narrowed_properties = (**properties).clone();
-                    if let Some(first) = narrowed_properties.get_mut(&ArrayKey::Int(0)) {
-                        first.possibly_undefined = false;
+                    let mut narrowed_known_values = (**known_values).clone();
+                    if let Some((possibly_undefined, _)) =
+                        narrowed_known_values.get_mut(&ArrayKey::Int(0))
+                    {
+                        *possibly_undefined = false;
                     }
-                    acceptable_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(narrowed_properties),
-                        is_list: *is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
+                    acceptable_types.push(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(narrowed_known_values),
+                        *is_list,
+                        atomic.array_is_sealed(),
+                        params.clone(),
+                    ));
                 } else {
                     // Psalm keeps a non-list shape unchanged on a truthy
                     // assertion (its all-optional keys stay optional); the
@@ -853,6 +825,37 @@ fn reconcile_truthy(
                     // non-empty-array would lose the shape's keys.
                     acceptable_types.push(atomic.clone());
                 }
+            }
+            // A generic LIST (no known entries).
+            TAtomic::TArray {
+                params,
+                is_list: true,
+                ..
+            } => {
+                let value_type = params.as_deref().map(|(_, value)| value);
+                if value_type.is_none_or(|value| value.is_nothing()) {
+                    // A definitely-empty list is never truthy — drop it.
+                    did_remove_type = true;
+                    continue;
+                }
+                acceptable_types.push(TAtomic::non_empty_list(
+                    value_type.expect("checked Some above").clone(),
+                ));
+            }
+            // A generic ARRAY (no known entries, not a list).
+            TAtomic::TArray { params, .. } => {
+                let value_type = params.as_deref().map(|(_, value)| value);
+                // A definitely-empty array is never truthy — drop it (Psalm).
+                if value_type.is_none_or(|value| value.is_nothing()) {
+                    did_remove_type = true;
+                    continue;
+                }
+                let (key_type, value_type) = params.as_deref().expect("checked Some above");
+                // Narrow to non-empty array
+                acceptable_types.push(TAtomic::non_empty_array(
+                    key_type.clone(),
+                    value_type.clone(),
+                ));
             }
             TAtomic::TMixed => {
                 acceptable_types.push(TAtomic::TNonEmptyMixed);
@@ -1005,61 +1008,66 @@ fn reconcile_non_empty_countable(
 
     for atomic in &existing_var_type.types {
         match atomic {
+            // A *shape* (known entries present).
             TAtomic::TArray {
-                key_type,
-                value_type,
+                known_values,
+                params,
+                is_list,
+                ..
+            } if !known_values.is_empty() => {
+                // A non-empty LIST shape has its first element defined
+                // (Psalm's reconcileNonEmptyCountable list branch).
+                if *is_list
+                    && known_values
+                        .get(&ArrayKey::Int(0))
+                        .is_some_and(|(possibly_undefined, _)| *possibly_undefined)
+                {
+                    did_remove_type = true;
+                    let mut narrowed_known_values = (**known_values).clone();
+                    if let Some((possibly_undefined, _)) =
+                        narrowed_known_values.get_mut(&ArrayKey::Int(0))
+                    {
+                        *possibly_undefined = false;
+                    }
+                    acceptable_types.push(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(narrowed_known_values),
+                        *is_list,
+                        atomic.array_is_sealed(),
+                        params.clone(),
+                    ));
+                } else {
+                    acceptable_types.push(atomic.clone());
+                }
+            }
+            // A generic non-empty array/list is already non-empty — keep as-is.
+            TAtomic::TArray {
+                is_nonempty: true, ..
             } => {
-                did_remove_type = true;
-                if !value_type.is_nothing() {
-                    acceptable_types.push(TAtomic::TNonEmptyArray {
-                        key_type: key_type.clone(),
-                        value_type: value_type.clone(),
-                    });
-                }
-            }
-            TAtomic::TList { value_type } => {
-                did_remove_type = true;
-                if !value_type.is_nothing() {
-                    acceptable_types.push(TAtomic::TNonEmptyList {
-                        value_type: value_type.clone(),
-                    });
-                }
-            }
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
                 acceptable_types.push(atomic.clone());
             }
-            TAtomic::TKeyedArray {
-                properties,
-                is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
+            // A generic possibly-empty LIST.
+            TAtomic::TArray {
+                params,
+                is_list: true,
+                ..
             } => {
-                if !properties.is_empty() {
-                    // A non-empty LIST shape has its first element defined
-                    // (Psalm's reconcileNonEmptyCountable list branch).
-                    if *is_list
-                        && properties
-                            .get(&ArrayKey::Int(0))
-                            .is_some_and(|first| first.possibly_undefined)
-                    {
-                        did_remove_type = true;
-                        let mut narrowed_properties = (**properties).clone();
-                        if let Some(first) = narrowed_properties.get_mut(&ArrayKey::Int(0)) {
-                            first.possibly_undefined = false;
-                        }
-                        acceptable_types.push(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(narrowed_properties),
-                            is_list: *is_list,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        });
-                    } else {
-                        acceptable_types.push(atomic.clone());
-                    }
-                } else {
-                    did_remove_type = true;
+                did_remove_type = true;
+                if let Some((_, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    acceptable_types.push(TAtomic::non_empty_list(value_type.clone()));
+                }
+            }
+            // A generic possibly-empty ARRAY.
+            TAtomic::TArray { params, .. } => {
+                did_remove_type = true;
+                if let Some((key_type, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    acceptable_types.push(TAtomic::non_empty_array(
+                        key_type.clone(),
+                        value_type.clone(),
+                    ));
                 }
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
@@ -1120,41 +1128,41 @@ fn reconcile_exact_count(
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray {
-                properties,
+            // A *shape* (known entries present).
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                if properties.len() == count {
+                ..
+            } if !known_values.is_empty() => {
+                let sealed = atomic.array_is_sealed();
+                if known_values.len() == count {
                     // Psalm's reconcileExactlyCountable: the first `count`
                     // entries of a list are now definitely present.
                     let needs_defining = *is_list
-                        && properties
+                        && known_values
                             .values()
-                            .any(|property| property.possibly_undefined);
+                            .any(|(possibly_undefined, _)| *possibly_undefined);
                     if needs_defining {
                         did_remove_type = true;
-                        let mut defined_properties = (**properties).clone();
-                        for property in defined_properties.values_mut() {
-                            property.possibly_undefined = false;
+                        let mut defined_known_values = (**known_values).clone();
+                        for (possibly_undefined, _) in defined_known_values.values_mut() {
+                            *possibly_undefined = false;
                         }
-                        acceptable_types.push(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(defined_properties),
-                            is_list: *is_list,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        });
+                        acceptable_types.push(TAtomic::keyed_array_arc(
+                            std::sync::Arc::new(defined_known_values),
+                            *is_list,
+                            sealed,
+                            params.clone(),
+                        ));
                     } else {
                         acceptable_types.push(atomic.clone());
                     }
                 } else if *is_list
-                    && properties.len() > count
-                    && properties
+                    && known_values.len() > count
+                    && known_values
                         .values()
-                        .filter(|property| !property.possibly_undefined)
+                        .filter(|(possibly_undefined, _)| !*possibly_undefined)
                         .count()
                         <= count
                 {
@@ -1162,28 +1170,27 @@ fn reconcile_exact_count(
                     // under count === N keeps the first N defined and drops the
                     // rest (Psalm reshapes through min/max count bounds).
                     did_remove_type = true;
-                    let mut defined_properties: rustc_hash::FxHashMap<
+                    let mut defined_known_values: rustc_hash::FxHashMap<
                         pzoom_code_info::ArrayKey,
-                        TUnion,
+                        (bool, TUnion),
                     > = rustc_hash::FxHashMap::default();
                     for index in 0..count {
-                        if let Some(property) =
-                            properties.get(&pzoom_code_info::ArrayKey::Int(index as i64))
+                        if let Some((_, value)) =
+                            known_values.get(&pzoom_code_info::ArrayKey::Int(index as i64))
                         {
-                            let mut property = property.clone();
-                            property.possibly_undefined = false;
-                            defined_properties
-                                .insert(pzoom_code_info::ArrayKey::Int(index as i64), property);
+                            defined_known_values.insert(
+                                pzoom_code_info::ArrayKey::Int(index as i64),
+                                (false, value.clone()),
+                            );
                         }
                     }
-                    if defined_properties.len() == count {
-                        acceptable_types.push(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(defined_properties),
-                            is_list: true,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        });
+                    if defined_known_values.len() == count {
+                        acceptable_types.push(TAtomic::keyed_array_arc(
+                            std::sync::Arc::new(defined_known_values),
+                            true,
+                            sealed,
+                            params.clone(),
+                        ));
                     }
                 } else {
                     did_remove_type = true;
@@ -1191,65 +1198,69 @@ fn reconcile_exact_count(
                     // required keys fit within the count and either an open
                     // fallback or optional keys can make up (or absent
                     // themselves down to) the difference.
-                    let required_count = properties
+                    let required_count = known_values
                         .values()
-                        .filter(|property| !property.possibly_undefined)
+                        .filter(|(possibly_undefined, _)| !*possibly_undefined)
                         .count();
-                    let max_count = if fallback_value_type.is_some() {
+                    let max_count = if params.is_some() {
                         usize::MAX
                     } else {
-                        properties.len()
+                        known_values.len()
                     };
                     if required_count <= count && count <= max_count {
                         acceptable_types.push(atomic.clone());
                     }
                 }
             }
+            // A generic LIST (no known entries).
             TAtomic::TArray {
-                key_type,
-                value_type,
+                params,
+                is_list: true,
+                ..
             } => {
                 did_remove_type = true;
                 if count == 0 {
-                    // Empty array
-                    acceptable_types.push(TAtomic::TArray {
-                        key_type: Box::new(TUnion::nothing()),
-                        value_type: Box::new(TUnion::nothing()),
-                    });
-                } else if !value_type.is_nothing() {
-                    // Non-empty array
-                    acceptable_types.push(TAtomic::TNonEmptyArray {
-                        key_type: key_type.clone(),
-                        value_type: value_type.clone(),
-                    });
+                    acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
+                } else if let Some((_, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    let mut known_values = rustc_hash::FxHashMap::default();
+                    for i in 0..count {
+                        known_values.insert(ArrayKey::Int(i as i64), (false, value_type.clone()));
+                    }
+                    acceptable_types.push(TAtomic::keyed_array(
+                        known_values,
+                        true,
+                        true,
+                        None,
+                        None,
+                    ));
                 }
             }
-            TAtomic::TNonEmptyArray { .. } => {
+            // A generic non-empty ARRAY (not a list).
+            TAtomic::TArray {
+                is_nonempty: true, ..
+            } => {
                 if count > 0 {
                     acceptable_types.push(atomic.clone());
                 } else {
                     did_remove_type = true;
                 }
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            // A generic possibly-empty ARRAY (not a list).
+            TAtomic::TArray { params, .. } => {
                 did_remove_type = true;
                 if count == 0 {
-                    acceptable_types.push(TAtomic::TArray {
-                        key_type: Box::new(TUnion::nothing()),
-                        value_type: Box::new(TUnion::nothing()),
-                    });
-                } else if !value_type.is_nothing() {
-                    let mut properties = rustc_hash::FxHashMap::default();
-                    for i in 0..count {
-                        properties.insert(ArrayKey::Int(i as i64), (**value_type).clone());
-                    }
-                    acceptable_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(properties),
-                        is_list: true,
-                        sealed: true,
-                        fallback_key_type: None,
-                        fallback_value_type: None,
-                    });
+                    // Empty array
+                    acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
+                } else if let Some((key_type, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    // Non-empty array
+                    acceptable_types.push(TAtomic::non_empty_array(
+                        key_type.clone(),
+                        value_type.clone(),
+                    ));
                 }
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
@@ -1295,7 +1306,13 @@ fn reconcile_has_at_least_count(
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray { .. } => {
+            // A *shape* (known entries present).
+            TAtomic::TArray {
+                known_values,
+                params,
+                is_list,
+                ..
+            } if !known_values.is_empty() => {
                 // Mirror Psalm's reconcileNonEmptyCountable: compare the bound against
                 // the shape's own getMinCount()/getMaxCount().
                 let prop_min_count = atomic.get_min_count().unwrap_or(0);
@@ -1307,27 +1324,21 @@ fn reconcile_has_at_least_count(
                 } else if prop_min_count >= count {
                     // Already guaranteed: redundant, keep the type unchanged.
                     acceptable_types.push(atomic.clone());
-                } else if let TAtomic::TKeyedArray {
-                    properties,
-                    is_list: true,
-                    sealed,
-                    fallback_key_type,
-                    fallback_value_type,
-                } = atomic
-                {
+                } else if *is_list {
                     // Psalm's reconcileNonEmptyCountable list branch: entries
                     // 0..count become definite (materialized from the
                     // fallback when absent).
                     did_remove_type = true;
-                    let mut new_properties = (**properties).clone();
+                    let fallback_value_type = params.as_deref().map(|(_, value)| value);
+                    let mut new_known_values = (**known_values).clone();
                     let mut complete = true;
                     for index in 0..count {
                         let key = pzoom_code_info::t_atomic::ArrayKey::Int(index as i64);
-                        match new_properties.get_mut(&key) {
-                            Some(entry) => entry.possibly_undefined = false,
+                        match new_known_values.get_mut(&key) {
+                            Some((possibly_undefined, _)) => *possibly_undefined = false,
                             None => match fallback_value_type {
                                 Some(fallback) => {
-                                    new_properties.insert(key, (**fallback).clone());
+                                    new_known_values.insert(key, (false, fallback.clone()));
                                 }
                                 None => {
                                     complete = false;
@@ -1337,13 +1348,12 @@ fn reconcile_has_at_least_count(
                         }
                     }
                     if complete {
-                        acceptable_types.push(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(new_properties),
-                            is_list: true,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        });
+                        acceptable_types.push(TAtomic::keyed_array_arc(
+                            std::sync::Arc::new(new_known_values),
+                            true,
+                            atomic.array_is_sealed(),
+                            params.clone(),
+                        ));
                     } else {
                         acceptable_types.push(atomic.clone());
                     }
@@ -1353,28 +1363,36 @@ fn reconcile_has_at_least_count(
                     acceptable_types.push(atomic.clone());
                 }
             }
+            // A generic non-empty array/list is already non-empty — keep as-is.
             TAtomic::TArray {
-                key_type,
-                value_type,
+                is_nonempty: true, ..
+            } => {
+                acceptable_types.push(atomic.clone());
+            }
+            // A generic possibly-empty LIST.
+            TAtomic::TArray {
+                params,
+                is_list: true,
+                ..
             } => {
                 did_remove_type = true;
-                if !value_type.is_nothing() {
-                    acceptable_types.push(TAtomic::TNonEmptyArray {
-                        key_type: key_type.clone(),
-                        value_type: value_type.clone(),
-                    });
+                if let Some((_, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    acceptable_types.push(TAtomic::non_empty_list(value_type.clone()));
                 }
             }
-            TAtomic::TList { value_type } => {
+            // A generic possibly-empty ARRAY.
+            TAtomic::TArray { params, .. } => {
                 did_remove_type = true;
-                if !value_type.is_nothing() {
-                    acceptable_types.push(TAtomic::TNonEmptyList {
-                        value_type: value_type.clone(),
-                    });
+                if let Some((key_type, value_type)) = params.as_deref()
+                    && !value_type.is_nothing()
+                {
+                    acceptable_types.push(TAtomic::non_empty_array(
+                        key_type.clone(),
+                        value_type.clone(),
+                    ));
                 }
-            }
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => {
-                acceptable_types.push(atomic.clone());
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
                 did_remove_type = true;
@@ -1492,36 +1510,28 @@ fn normalize_in_array_assertion_union(assertion_type: &TUnion) -> Option<TUnion>
 
     for atomic in &assertion_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
-                saw_array_like = true;
-                value_union = Some(match value_union {
-                    Some(existing) => combine_union_types(&existing, value_type, false),
-                    None => (**value_type).clone(),
-                });
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
                 saw_array_like = true;
 
-                for property_type in properties.values() {
+                // Every possible value: the known entries' value types plus the
+                // typed fallback value (Psalm folds both for in_array narrowing).
+                for (_, property_type) in known_values.values() {
                     value_union = Some(match value_union {
                         Some(existing) => combine_union_types(&existing, property_type, false),
                         None => property_type.clone(),
                     });
                 }
 
-                if let Some(fallback_value_type) = fallback_value_type {
+                if let Some((_, fallback_value_type)) = params.as_deref() {
                     value_union = Some(match value_union {
                         Some(existing) => {
                             combine_union_types(&existing, fallback_value_type, false)
                         }
-                        None => (**fallback_value_type).clone(),
+                        None => fallback_value_type.clone(),
                     });
                 }
             }
@@ -1552,29 +1562,29 @@ fn reconcile_has_array_key(
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray {
-                properties,
+            // A *shape* (known entries present).
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
+                ..
+            } if !known_values.is_empty() => {
+                let sealed = atomic.array_is_sealed();
                 // If the key exists and is optional, make it required
-                if properties.contains_key(array_key) {
+                if known_values.contains_key(array_key) {
                     // Key exists - keep as is
                     result_types.push(atomic.clone());
-                } else if let Some(fallback) = fallback_value_type {
+                } else if let Some((_, fallback)) = params.as_deref() {
                     // Add the key with the fallback type
                     did_remove_type = true;
-                    let mut new_properties = (**properties).clone();
-                    new_properties.insert(array_key.clone(), (**fallback).clone());
-                    result_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(new_properties),
-                        is_list: *is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
+                    let mut new_known_values = (**known_values).clone();
+                    new_known_values.insert(array_key.clone(), (false, fallback.clone()));
+                    result_types.push(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(new_known_values),
+                        *is_list,
+                        sealed,
+                        params.clone(),
+                    ));
                 } else if !sealed {
                     // Open array - key could exist
                     did_remove_type = true;
@@ -1584,14 +1594,40 @@ fn reconcile_has_array_key(
                     did_remove_type = true;
                 }
             }
+            // A generic LIST (no known entries).
             TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
+                params,
+                is_list: true,
+                ..
             } => {
+                if !matches!(array_key, ArrayKey::Int(_)) {
+                    did_remove_type = true;
+                    continue;
+                }
+
+                did_remove_type = true;
+                // The empty list `[]` (no params) has element type `never`.
+                let value_type = params
+                    .as_deref()
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(TUnion::nothing);
+                let mut known_values = rustc_hash::FxHashMap::default();
+                known_values.insert(array_key.clone(), (false, value_type.clone()));
+                result_types.push(TAtomic::keyed_array(
+                    known_values,
+                    matches!(array_key, ArrayKey::Int(0)),
+                    false,
+                    Some(TUnion::int()),
+                    Some(value_type),
+                ));
+            }
+            // A generic ARRAY (no known entries, not a list).
+            TAtomic::TArray { params, .. } => {
+                let Some((key_type, value_type)) = params.as_deref() else {
+                    // The empty array `[]`: no key type allows the key.
+                    did_remove_type = true;
+                    continue;
+                };
                 if !key_type_allows_array_key(key_type, array_key) {
                     did_remove_type = true;
                     continue;
@@ -1599,46 +1635,32 @@ fn reconcile_has_array_key(
 
                 // General array with a known key - promote to open keyed-array with fallback.
                 did_remove_type = true;
-                let mut properties = rustc_hash::FxHashMap::default();
-                properties.insert(array_key.clone(), (**value_type).clone());
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: matches!(array_key, ArrayKey::Int(0)),
-                    sealed: false,
-                    fallback_key_type: Some(key_type.clone()),
-                    fallback_value_type: Some(value_type.clone()),
-                });
-            }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                if !matches!(array_key, ArrayKey::Int(_)) {
-                    did_remove_type = true;
-                    continue;
-                }
-
-                did_remove_type = true;
-                let mut properties = rustc_hash::FxHashMap::default();
-                properties.insert(array_key.clone(), (**value_type).clone());
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: matches!(array_key, ArrayKey::Int(0)),
-                    sealed: false,
-                    fallback_key_type: Some(Box::new(TUnion::int())),
-                    fallback_value_type: Some(value_type.clone()),
-                });
+                let mut known_values = rustc_hash::FxHashMap::default();
+                known_values.insert(array_key.clone(), (false, value_type.clone()));
+                result_types.push(TAtomic::keyed_array(
+                    known_values,
+                    matches!(array_key, ArrayKey::Int(0)),
+                    false,
+                    Some(key_type.clone()),
+                    Some(value_type.clone()),
+                ));
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
                 did_remove_type = true;
 
-                let mut properties = rustc_hash::FxHashMap::default();
-                properties.insert(array_key.clone(), TUnion::new(TAtomic::TNonEmptyMixed));
+                let mut known_values = rustc_hash::FxHashMap::default();
+                known_values.insert(
+                    array_key.clone(),
+                    (false, TUnion::new(TAtomic::TNonEmptyMixed)),
+                );
 
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: matches!(array_key, ArrayKey::Int(0)),
-                    sealed: false,
-                    fallback_key_type: Some(Box::new(TUnion::array_key())),
-                    fallback_value_type: Some(Box::new(TUnion::mixed())),
-                });
+                result_types.push(TAtomic::keyed_array(
+                    known_values,
+                    matches!(array_key, ArrayKey::Int(0)),
+                    false,
+                    Some(TUnion::array_key()),
+                    Some(TUnion::mixed()),
+                ));
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 did_remove_type = true;
@@ -1729,43 +1751,47 @@ fn reconcile_has_nonnull_entry_for_key(
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray {
-                properties,
+            // A *shape* (known entries present).
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
-                if let Some(prop_type) = properties.get(array_key).cloned() {
-                    // Narrow the property to non-null
+                ..
+            } if !known_values.is_empty() => {
+                let sealed = atomic.array_is_sealed();
+                if let Some((entry_undefined, entry_value)) = known_values.get(array_key) {
+                    // Reconstruct the property union carrying its possibly-
+                    // undefined flag, then narrow it to non-null.
+                    let mut prop_type = entry_value.clone();
+                    prop_type.possibly_undefined = *entry_undefined;
                     let narrowed =
                         super::simple_negated_assertion_reconciler::subtract_null(&prop_type);
                     if narrowed != prop_type {
                         did_remove_type = true;
                     }
-                    let mut new_properties = (**properties).clone();
-                    new_properties.insert(array_key.clone(), narrowed);
-                    result_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(new_properties),
-                        is_list: *is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
-                } else if let Some(fallback) = fallback_value_type {
+                    // `subtract_null` clears possibly_undefined; the entry is now
+                    // defined (tuple bool false).
+                    let mut new_known_values = (**known_values).clone();
+                    new_known_values.insert(array_key.clone(), (false, narrowed));
+                    result_types.push(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(new_known_values),
+                        *is_list,
+                        sealed,
+                        params.clone(),
+                    ));
+                } else if let Some((_, fallback)) = params.as_deref() {
                     // Add the key with non-null fallback type
                     did_remove_type = true;
                     let narrowed =
                         super::simple_negated_assertion_reconciler::subtract_null(fallback);
-                    let mut new_properties = (**properties).clone();
-                    new_properties.insert(array_key.clone(), narrowed);
-                    result_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(new_properties),
-                        is_list: *is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
+                    let mut new_known_values = (**known_values).clone();
+                    new_known_values.insert(array_key.clone(), (false, narrowed));
+                    result_types.push(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(new_known_values),
+                        *is_list,
+                        sealed,
+                        params.clone(),
+                    ));
                 } else if !sealed {
                     did_remove_type = true;
                     result_types.push(atomic.clone());
@@ -1773,40 +1799,48 @@ fn reconcile_has_nonnull_entry_for_key(
                     did_remove_type = true;
                 }
             }
+            // A generic LIST (no known entries).
             TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
+                params,
+                is_list: true,
+                ..
             } => {
                 did_remove_type = true;
-                let mut properties = rustc_hash::FxHashMap::default();
+                let value_type = params
+                    .as_deref()
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(TUnion::nothing);
                 let narrowed_value =
-                    super::simple_negated_assertion_reconciler::subtract_null(value_type);
-                properties.insert(array_key.clone(), narrowed_value);
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: matches!(array_key, ArrayKey::Int(0)),
-                    sealed: false,
-                    fallback_key_type: Some(key_type.clone()),
-                    fallback_value_type: Some(value_type.clone()),
-                });
+                    super::simple_negated_assertion_reconciler::subtract_null(&value_type);
+                let mut known_values = rustc_hash::FxHashMap::default();
+                known_values.insert(array_key.clone(), (false, narrowed_value));
+                result_types.push(TAtomic::keyed_array(
+                    known_values,
+                    matches!(array_key, ArrayKey::Int(0)),
+                    false,
+                    Some(TUnion::int()),
+                    Some(value_type),
+                ));
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
+            // A generic ARRAY (no known entries, not a list).
+            TAtomic::TArray { params, .. } => {
+                let Some((key_type, value_type)) = params.as_deref() else {
+                    // The empty array `[]`: nothing to narrow.
+                    did_remove_type = true;
+                    continue;
+                };
                 did_remove_type = true;
-                let mut properties = rustc_hash::FxHashMap::default();
                 let narrowed_value =
                     super::simple_negated_assertion_reconciler::subtract_null(value_type);
-                properties.insert(array_key.clone(), narrowed_value);
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: matches!(array_key, ArrayKey::Int(0)),
-                    sealed: false,
-                    fallback_key_type: Some(Box::new(TUnion::int())),
-                    fallback_value_type: Some(value_type.clone()),
-                });
+                let mut known_values = rustc_hash::FxHashMap::default();
+                known_values.insert(array_key.clone(), (false, narrowed_value));
+                result_types.push(TAtomic::keyed_array(
+                    known_values,
+                    matches!(array_key, ArrayKey::Int(0)),
+                    false,
+                    Some(key_type.clone()),
+                    Some(value_type.clone()),
+                ));
             }
             TAtomic::TString => {
                 did_remove_type = true;
@@ -1900,10 +1934,7 @@ fn reconcile_array_access(
         }
 
         let mut reconciled_type = TUnion::from_types(vec![
-            TAtomic::TNonEmptyArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            },
+            TAtomic::non_empty_array(TUnion::array_key(), TUnion::mixed()),
             TAtomic::TNamedObject {
                 name: StrId::ARRAY_ACCESS,
                 type_params: None,
@@ -1923,20 +1954,27 @@ fn reconcile_array_access(
             // Array access (`$a[...]`) implies the array is non-empty, so narrow a
             // generic array/list to its non-empty form. Matches Psalm.
             match atomic {
+                // A generic possibly-empty LIST.
                 TAtomic::TArray {
-                    key_type,
-                    value_type,
-                } => {
-                    acceptable_types.push(TAtomic::TNonEmptyArray {
-                        key_type: key_type.clone(),
-                        value_type: value_type.clone(),
-                    });
+                    known_values,
+                    params: Some(params),
+                    is_list: true,
+                    is_nonempty: false,
+                    ..
+                } if known_values.is_empty() => {
+                    acceptable_types.push(TAtomic::non_empty_list(params.1.clone()));
                     narrowed_to_non_empty = true;
                 }
-                TAtomic::TList { value_type } => {
-                    acceptable_types.push(TAtomic::TNonEmptyList {
-                        value_type: value_type.clone(),
-                    });
+                // A generic possibly-empty ARRAY (not a list).
+                TAtomic::TArray {
+                    known_values,
+                    params: Some(params),
+                    is_list: false,
+                    is_nonempty: false,
+                    ..
+                } if known_values.is_empty() => {
+                    acceptable_types
+                        .push(TAtomic::non_empty_array(params.0.clone(), params.1.clone()));
                     narrowed_to_non_empty = true;
                 }
                 _ => acceptable_types.push(atomic.clone()),
@@ -2002,12 +2040,7 @@ fn is_more_specific(a: &TAtomic, b: &TAtomic) -> bool {
 /// Checks if a type can be accessed as an array.
 fn can_be_array_accessed(atomic: &TAtomic, allow_int_key: bool) -> bool {
     match atomic {
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. }
-        | TAtomic::TClassStringMap { .. } => true,
+        TAtomic::TArray { .. } | TAtomic::TClassStringMap { .. } => true,
 
         TAtomic::TString | TAtomic::TNonEmptyString | TAtomic::TLiteralString { .. } => {
             // String access with int key

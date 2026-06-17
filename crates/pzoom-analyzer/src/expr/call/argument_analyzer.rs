@@ -87,16 +87,12 @@ pub fn analyze(
                 }
             } else {
                 let is_iterable = arg_type.types.iter().any(|t| {
-                    matches!(
-                        t,
-                        TAtomic::TArray { .. }
-                            | TAtomic::TNonEmptyArray { .. }
-                            | TAtomic::TList { .. }
-                            | TAtomic::TNonEmptyList { .. }
-                            | TAtomic::TKeyedArray { .. }
-                            | TAtomic::TClassStringMap { .. }
-                            | TAtomic::TIterable { .. }
-                    ) || is_traversable_object(analyzer, t)
+                    t.is_array()
+                        || matches!(
+                            t,
+                            TAtomic::TClassStringMap { .. } | TAtomic::TIterable { .. }
+                        )
+                        || is_traversable_object(analyzer, t)
                 });
 
                 if !is_iterable {

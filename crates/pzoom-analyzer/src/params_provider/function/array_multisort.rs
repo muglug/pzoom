@@ -324,17 +324,7 @@ fn is_writable_variable(expr: &Expression<'_>) -> bool {
 }
 
 fn union_is_array(union: &TUnion) -> bool {
-    !union.types.is_empty()
-        && union.types.iter().all(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TArray { .. }
-                    | TAtomic::TNonEmptyArray { .. }
-                    | TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { .. }
-            )
-        })
+    !union.types.is_empty() && union.types.iter().all(|atomic| atomic.is_array())
 }
 
 /// When every atomic in the union is a literal int, return those values.

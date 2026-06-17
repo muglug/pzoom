@@ -43,9 +43,7 @@ impl FunctionReturnTypeProvider for ArrayRandReturnTypeProvider {
             return Some(key_type);
         }
 
-        let keys_list = TUnion::new(TAtomic::TList {
-            value_type: Box::new(key_type.clone()),
-        });
+        let keys_list = TUnion::new(TAtomic::list(key_type.clone()));
 
         if num_literal.is_some() {
             return Some(keys_list);

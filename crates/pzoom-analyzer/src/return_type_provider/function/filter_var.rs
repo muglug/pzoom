@@ -77,27 +77,34 @@ impl FunctionReturnTypeProvider for FilterVarReturnTypeProvider {
             };
             match options_type.get_single() {
                 Some(TAtomic::TLiteralInt { value }) => flags = *value,
-                Some(TAtomic::TKeyedArray { properties, .. }) => {
-                    if let Some(flags_type) =
-                        properties.get(&pzoom_code_info::ArrayKey::String("flags".to_string()))
+                // An options *shape* (former TKeyedArray): a generic array
+                // (non-empty known_values, or the empty `[]`). A generic
+                // `array<...>` is not a shape and defers to the fallback.
+                Some(TAtomic::TArray {
+                    known_values,
+                    params,
+                    ..
+                }) if !known_values.is_empty() || params.is_none() => {
+                    if let Some((_, flags_type)) =
+                        known_values.get(&pzoom_code_info::ArrayKey::String("flags".to_string()))
                     {
                         match flags_type.get_single() {
                             Some(TAtomic::TLiteralInt { value }) => flags = *value,
                             _ => return None,
                         }
                     }
-                    if let Some(options_value) =
-                        properties.get(&pzoom_code_info::ArrayKey::String("options".to_string()))
-                        && let Some(TAtomic::TKeyedArray {
-                            properties: option_properties,
+                    if let Some((_, options_value)) =
+                        known_values.get(&pzoom_code_info::ArrayKey::String("options".to_string()))
+                        && let Some(TAtomic::TArray {
+                            known_values: option_known_values,
                             ..
                         }) = options_value.get_single()
                     {
-                        default_type = option_properties
+                        default_type = option_known_values
                             .get(&pzoom_code_info::ArrayKey::String("default".to_string()))
-                            .cloned();
-                        min_range = literal_int_property(option_properties, "min_range");
-                        max_range = literal_int_property(option_properties, "max_range");
+                            .map(|(_, value)| value.clone());
+                        min_range = literal_int_property(option_known_values, "min_range");
+                        max_range = literal_int_property(option_known_values, "max_range");
                     }
                 }
                 _ => return unknown_fallback(),
@@ -159,10 +166,7 @@ impl FunctionReturnTypeProvider for FilterVarReturnTypeProvider {
         };
 
         let success_atomic = if force_array {
-            TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::new(success_atomic)),
-            }
+            TAtomic::array(TUnion::array_key(), TUnion::new(success_atomic))
         } else {
             success_atomic
         };
@@ -210,11 +214,12 @@ fn named_arg_pos(
 }
 
 fn literal_int_property(
-    properties: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion>,
+    known_values: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, (bool, TUnion)>,
     name: &str,
 ) -> Option<i64> {
-    match properties
+    match known_values
         .get(&pzoom_code_info::ArrayKey::String(name.to_string()))?
+        .1
         .get_single()
     {
         Some(TAtomic::TLiteralInt { value }) => Some(*value),

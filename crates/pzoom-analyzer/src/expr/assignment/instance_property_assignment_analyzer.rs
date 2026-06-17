@@ -1841,17 +1841,14 @@ fn has_mixed_array_key_property_coercion(
 }
 
 fn get_array_key_value_union(atomic: &TAtomic) -> Option<(&TUnion, &TUnion)> {
-    match atomic {
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => Some((key_type.as_ref(), value_type.as_ref())),
-        _ => None,
+    // The pre-unification version matched only generic `array`/`non-empty-array`
+    // (old `TArray`/`TNonEmptyArray`) — non-list arrays with typed params and no
+    // known entries — so lists and keyed shapes are excluded here to preserve
+    // behaviour exactly.
+    if atomic.array_is_list() || !atomic.is_generic_array() {
+        return None;
     }
+    atomic.array_params()
 }
 
 fn is_broad_array_key_union(key_type: &TUnion) -> bool {

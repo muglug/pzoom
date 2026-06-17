@@ -110,27 +110,23 @@ pub fn analyze(
 
 /// Infer the result type of addition.
 fn infer_addition_type(left: Option<&TUnion>, right: Option<&TUnion>) -> TUnion {
+    // TODO(unify-array): the pre-unification check matched only the generic
+    // non-list array atomics (old `TArray`/`TNonEmptyArray`), not lists or
+    // keyed-array shapes. `is_generic_non_list_array` reproduces that exactly;
+    // the richer array-union path lives in non_comparison_op_analyzer's
+    // `union_is_array_like` (all array sorts).
+    let is_generic_non_list_array =
+        |a: &TAtomic| a.is_array() && !a.array_is_list() && a.is_generic_array();
     // Check if either operand is an array (array union)
-    let left_is_array = left.map_or(false, |t| {
-        t.types
-            .iter()
-            .any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
-    });
-    let right_is_array = right.map_or(false, |t| {
-        t.types
-            .iter()
-            .any(|a| matches!(a, TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. }))
-    });
+    let left_is_array = left.map_or(false, |t| t.types.iter().any(is_generic_non_list_array));
+    let right_is_array = right.map_or(false, |t| t.types.iter().any(is_generic_non_list_array));
 
     if left_is_array && right_is_array {
         // Array union - combine the arrays
         if let Some(lt) = left {
             lt.clone()
         } else {
-            TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            })
+            TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed()))
         }
     } else {
         infer_arithmetic_type(left, right)

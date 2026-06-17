@@ -1108,21 +1108,22 @@ fn union_mentions_fn_template(union: &TUnion) -> bool {
             type_params: Some(type_params),
             ..
         } => type_params.iter().any(union_mentions_fn_template),
+        // Only generic arrays/lists are inspected (old code matched the
+        // generic array variants, not TKeyedArray); a shape's known entries
+        // are not checked, preserving prior behaviour.
+        // TODO(unify-array): old code ignored shape properties here; a
+        // fn-template nested in an `array{...}` property is still not detected.
         TAtomic::TArray {
-            key_type,
-            value_type,
+            known_values,
+            params: Some(params),
+            ..
+        } if known_values.is_empty() => {
+            union_mentions_fn_template(&params.0) || union_mentions_fn_template(&params.1)
         }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => union_mentions_fn_template(key_type) || union_mentions_fn_template(value_type),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_mentions_fn_template(value_type)
-        }
         _ => false,
     })
 }
@@ -1335,10 +1336,7 @@ pub(crate) fn get_builtin_type_check_atomic(function_name: &str) -> Option<TAtom
         "is_int" | "is_integer" | "is_long" => TAtomic::TInt,
         "is_float" | "is_double" | "is_real" => TAtomic::TFloat,
         "is_bool" => TAtomic::TBool,
-        "is_array" => TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        },
+        "is_array" => TAtomic::array(TUnion::array_key(), TUnion::mixed()),
         "is_object" => TAtomic::TObject,
         "is_null" => TAtomic::TNull,
         "is_numeric" => TAtomic::TNumeric,
@@ -1432,24 +1430,18 @@ pub(crate) fn infer_string_transform_return_type(subject_type: &TUnion) -> Optio
     }
 
     if let Some(array_info) = extract_array_like_info_from_union(subject_type) {
-        let key_type = Box::new(normalize_array_key_union(&array_info.key_type));
-        let value_type = Box::new(TUnion::string());
+        let key_type = normalize_array_key_union(&array_info.key_type);
+        let value_type = TUnion::string();
         let array_atomic = if array_info.is_list {
             if array_info.is_non_empty {
-                TAtomic::TNonEmptyList { value_type }
+                TAtomic::non_empty_list(value_type)
             } else {
-                TAtomic::TList { value_type }
+                TAtomic::list(value_type)
             }
         } else if array_info.is_non_empty {
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
+            TAtomic::non_empty_array(key_type, value_type)
         } else {
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
+            TAtomic::array(key_type, value_type)
         };
 
         if !result_types.contains(&array_atomic) {
@@ -1485,63 +1477,52 @@ pub(crate) fn infer_array_filter_return_atomic(
     callback_is_default: bool,
 ) -> Option<TAtomic> {
     match atomic {
+        // A generic array/list (no known entries): old TArray / TNonEmptyArray
+        // / TList / TNonEmptyList.
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => Some(TAtomic::TArray {
-            key_type: key_type.clone(),
-            value_type: Box::new(if callback_is_default {
-                narrow_union_to_truthy(value_type)
-            } else {
-                (**value_type).clone()
-            }),
-        }),
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => {
+            known_values,
+            params: Some(params),
+            is_list,
+            is_nonempty,
+            ..
+        } if known_values.is_empty() => {
+            let value_type = &params.1;
             let filtered_value = if callback_is_default {
                 narrow_union_to_truthy(value_type)
             } else {
-                (**value_type).clone()
+                value_type.clone()
             };
 
-            // A custom callback can reject every element, so non-emptiness
-            // never survives (Psalm's ArrayFilterReturnTypeProvider always
-            // returns a plain array). The default callback keeps it only
-            // when every value is provably truthy.
-            if !callback_is_default || !(**value_type).is_always_truthy() {
-                Some(TAtomic::TArray {
-                    key_type: key_type.clone(),
-                    value_type: Box::new(filtered_value),
-                })
+            if *is_list {
+                // A list (old TList / TNonEmptyList) degrades to an int-keyed
+                // array (list-ness is not preserved by array_filter).
+                Some(TAtomic::array(TUnion::int(), filtered_value))
+            } else if *is_nonempty {
+                // A custom callback can reject every element, so non-emptiness
+                // never survives (Psalm's ArrayFilterReturnTypeProvider always
+                // returns a plain array). The default callback keeps it only
+                // when every value is provably truthy.
+                if !callback_is_default || !value_type.is_always_truthy() {
+                    Some(TAtomic::array(params.0.clone(), filtered_value))
+                } else {
+                    Some(TAtomic::non_empty_array(params.0.clone(), filtered_value))
+                }
             } else {
-                Some(TAtomic::TNonEmptyArray {
-                    key_type: key_type.clone(),
-                    value_type: Box::new(filtered_value),
-                })
+                Some(TAtomic::array(params.0.clone(), filtered_value))
             }
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            let filtered_value = if callback_is_default {
-                narrow_union_to_truthy(value_type)
-            } else {
-                (**value_type).clone()
-            };
-
-            Some(TAtomic::TArray {
-                key_type: Box::new(TUnion::int()),
-                value_type: Box::new(filtered_value),
-            })
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+        // A shape (old TKeyedArray), or the sealed empty array `[]`
+        // (params == None).
+        TAtomic::TArray {
+            known_values,
+            params,
             is_list,
-        } => {
-            let had_one = properties.len() == 1;
+            ..
+        } if !known_values.is_empty() || params.is_none() => {
+            let sealed = params.is_none();
+            let fallback_key_type = params.as_deref().map(|(key, _)| key);
+            let fallback_value_type = params.as_deref().map(|(_, value)| value);
+            let had_one = known_values.len() == 1;
             // Psalm's ArrayFilterReturnTypeProvider keeps per-property
             // precision only for the DEFAULT callback (the provider's keyed
             // path is gated on `!isset($call_args[1])`); a custom callback
@@ -1560,7 +1541,7 @@ pub(crate) fn infer_array_filter_return_atomic(
                         }
                     });
                 };
-                for (key, property_type) in properties.iter() {
+                for (key, (_possibly_undefined, property_type)) in known_values.iter() {
                     match key {
                         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                             add_key(TAtomic::TLiteralInt { value: *value })
@@ -1581,7 +1562,7 @@ pub(crate) fn infer_array_filter_return_atomic(
                 }
                 if let Some(fallback) = fallback_value_type {
                     value_union = Some(match value_union.take() {
-                        None => (**fallback).clone(),
+                        None => fallback.clone(),
                         Some(existing) => {
                             pzoom_code_info::combine_union_types(&existing, fallback, false)
                         }
@@ -1590,7 +1571,7 @@ pub(crate) fn infer_array_filter_return_atomic(
                 if let Some(fallback_key) = fallback_key_type {
                     let key = key_union.take();
                     key_union = Some(match key {
-                        None => (**fallback_key).clone(),
+                        None => fallback_key.clone(),
                         Some(existing) => {
                             pzoom_code_info::combine_union_types(&existing, fallback_key, false)
                         }
@@ -1598,37 +1579,40 @@ pub(crate) fn infer_array_filter_return_atomic(
                 }
                 let mut value_union = value_union.unwrap_or_else(TUnion::nothing);
                 value_union.possibly_undefined = false;
-                return Some(TAtomic::TArray {
-                    key_type: Box::new(key_union.unwrap_or_else(TUnion::array_key)),
-                    value_type: Box::new(value_union),
-                });
+                return Some(TAtomic::array(
+                    key_union.unwrap_or_else(TUnion::array_key),
+                    value_union,
+                ));
             }
 
-            let mut next_properties = rustc_hash::FxHashMap::default();
+            let mut next_known_values: rustc_hash::FxHashMap<
+                pzoom_code_info::t_atomic::ArrayKey,
+                (bool, TUnion),
+            > = rustc_hash::FxHashMap::default();
 
-            for (key, property_type) in properties.iter() {
+            for (key, (_possibly_undefined, property_type)) in known_values.iter() {
                 if property_type.is_always_falsy() {
                     continue;
                 }
 
-                let narrowed_type = narrow_union_to_truthy(property_type);
+                let mut narrowed_type = narrow_union_to_truthy(property_type);
 
-                if property_type.is_always_truthy() {
-                    next_properties.insert(key.clone(), narrowed_type);
-                } else {
-                    next_properties.insert(
-                        key.clone(),
-                        mark_union_as_possibly_undefined(&narrowed_type),
-                    );
-                }
+                // The entry's possibly-undefined flag moves onto the tuple bool
+                // (unified invariant): an always-truthy property keeps its own
+                // optionality; any other property is marked possibly-undefined
+                // (old `mark_union_as_possibly_undefined`).
+                let possibly_undefined =
+                    !property_type.is_always_truthy() || narrowed_type.possibly_undefined;
+                narrowed_type.possibly_undefined = false;
+                next_known_values.insert(key.clone(), (possibly_undefined, narrowed_type));
             }
 
-            let next_fallback_value = fallback_value_type.as_ref().map(|fallback| {
-                Box::new(if callback_is_default {
+            let next_fallback_value = fallback_value_type.map(|fallback| {
+                if callback_is_default {
                     narrow_union_to_truthy(fallback)
                 } else {
-                    (**fallback).clone()
-                })
+                    fallback.clone()
+                }
             });
 
             // Mirror Psalm's ArrayFilterReturnTypeProvider: list-ness is only
@@ -1636,13 +1620,13 @@ pub(crate) fn infer_array_filter_return_atomic(
             // (so removing it can't leave a gap in the integer key sequence).
             let next_is_list = *is_list && had_one;
 
-            Some(TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(next_properties),
-                is_list: next_is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.clone(),
-                fallback_value_type: next_fallback_value,
-            })
+            Some(TAtomic::keyed_array(
+                next_known_values,
+                next_is_list,
+                sealed,
+                fallback_key_type.cloned(),
+                next_fallback_value,
+            ))
         }
         TAtomic::TTemplateParam { as_type, .. } => {
             let mut inferred = Vec::new();
@@ -1661,24 +1645,14 @@ pub(crate) fn infer_array_filter_return_atomic(
             if inferred.is_empty() {
                 None
             } else {
-                Some(TAtomic::TArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(TUnion::from_types(inferred)),
-                })
+                Some(TAtomic::array(
+                    TUnion::array_key(),
+                    TUnion::from_types(inferred),
+                ))
             }
         }
         _ => None,
     }
-}
-
-fn mark_union_as_possibly_undefined(union: &TUnion) -> TUnion {
-    if union.possibly_undefined {
-        return union.clone();
-    }
-
-    let mut possibly_undefined = union.clone();
-    possibly_undefined.possibly_undefined = true;
-    possibly_undefined
 }
 
 pub(crate) fn extract_array_like_info_from_union(union: &TUnion) -> Option<ArrayLikeInfo> {
@@ -1719,56 +1693,47 @@ fn union_contains_stringish(union: &TUnion) -> bool {
 
 fn extract_array_like_info_from_atomic(atomic: &TAtomic) -> Option<ArrayLikeInfo> {
     match atomic {
+        // A shape (old TKeyedArray), or the sealed empty array `[]` (params
+        // None): generalize the known entries plus fallback into key/value.
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => Some(ArrayLikeInfo {
-            key_type: (**key_type).clone(),
-            value_type: (**value_type).clone(),
-            is_list: false,
-            is_non_empty: false,
-        }),
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => Some(ArrayLikeInfo {
-            key_type: (**key_type).clone(),
-            value_type: (**value_type).clone(),
-            is_list: false,
-            is_non_empty: true,
-        }),
-        TAtomic::TList { value_type } => Some(ArrayLikeInfo {
-            key_type: TUnion::int(),
-            value_type: (**value_type).clone(),
-            is_list: true,
-            is_non_empty: false,
-        }),
-        TAtomic::TNonEmptyList { value_type } => Some(ArrayLikeInfo {
-            key_type: TUnion::int(),
-            value_type: (**value_type).clone(),
-            is_list: true,
-            is_non_empty: true,
-        }),
-        TAtomic::TKeyedArray {
-            properties,
+            known_values,
+            params,
             is_list,
-            fallback_key_type,
-            fallback_value_type,
             ..
-        } => {
-            let key_type = extract_keyed_array_key_type(properties, fallback_key_type.as_deref());
-            let value_type = crate::template::standin_type_replacer::extract_keyed_array_value_type(
-                properties,
-                fallback_value_type.as_deref(),
-            );
+        } if !known_values.is_empty() || params.is_none() => {
+            let (key_type, value_type) =
+                crate::expr::array_analyzer::get_keyed_array_generic_params(
+                    known_values,
+                    params.as_deref().map(|(key, _)| key),
+                    params.as_deref().map(|(_, value)| value),
+                );
 
             Some(ArrayLikeInfo {
                 key_type,
                 value_type,
                 is_list: *is_list,
-                is_non_empty: !properties.is_empty(),
+                // Old TKeyedArray non-emptiness was `!properties.is_empty()`.
+                is_non_empty: !known_values.is_empty(),
             })
         }
+        // A generic array/list (old TArray / TNonEmptyArray / TList /
+        // TNonEmptyList): the typed fallback carries key/value; a list's key
+        // is int.
+        TAtomic::TArray {
+            params: Some(params),
+            is_list,
+            is_nonempty,
+            ..
+        } => Some(ArrayLikeInfo {
+            key_type: if *is_list {
+                TUnion::int()
+            } else {
+                params.0.clone()
+            },
+            value_type: params.1.clone(),
+            is_list: *is_list,
+            is_non_empty: *is_nonempty,
+        }),
         TAtomic::TTemplateParam { as_type, .. } => extract_array_like_info_from_union(as_type),
         _ => None,
     }
@@ -1867,39 +1832,6 @@ fn combine_array_like_info(left: ArrayLikeInfo, right: ArrayLikeInfo) -> ArrayLi
         value_type: combine_union_types(&left.value_type, &right.value_type, false),
         is_list: left.is_list && right.is_list,
         is_non_empty: left.is_non_empty && right.is_non_empty,
-    }
-}
-
-fn extract_keyed_array_key_type(
-    properties: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion>,
-    fallback_key_type: Option<&TUnion>,
-) -> TUnion {
-    let mut key_type = fallback_key_type.cloned().unwrap_or_else(TUnion::nothing);
-
-    for key in properties.keys() {
-        let literal_key_type = match key {
-            pzoom_code_info::ArrayKey::Int(value) => {
-                TUnion::new(TAtomic::TLiteralInt { value: *value })
-            }
-            pzoom_code_info::ArrayKey::String(value)
-            | pzoom_code_info::ArrayKey::ClassString(value) => {
-                TUnion::new(TAtomic::TLiteralString {
-                    value: value.clone(),
-                })
-            }
-        };
-
-        key_type = if key_type.is_nothing() {
-            literal_key_type
-        } else {
-            combine_union_types(&key_type, &literal_key_type, false)
-        };
-    }
-
-    if key_type.is_nothing() {
-        TUnion::array_key()
-    } else {
-        key_type
     }
 }
 
@@ -2521,21 +2453,19 @@ fn union_can_contain_object(union: &TUnion) -> bool {
         | TAtomic::TIterable { .. }
         | TAtomic::TClosure { .. }
         | TAtomic::TCallable { .. } => true,
-        TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
-            union_can_contain_object(value_type)
-        }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            union_can_contain_object(value_type)
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        // Any array: an object may hide in a known entry's value or the typed
+        // fallback value (a generic array carries its element type there).
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            properties.values().any(union_can_contain_object)
-                || fallback_value_type
-                    .as_ref()
-                    .is_some_and(|fallback| union_can_contain_object(fallback))
+            known_values
+                .values()
+                .any(|(_, value)| union_can_contain_object(value))
+                || params
+                    .as_deref()
+                    .is_some_and(|(_, value)| union_can_contain_object(value))
         }
         _ => false,
     })

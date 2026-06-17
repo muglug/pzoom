@@ -171,14 +171,9 @@ pub fn analyze(
             if info.is_variadic {
                 // Match Psalm: variadics accept named args unless explicitly disabled.
                 if no_named_arguments {
-                    TUnion::new(TAtomic::TList {
-                        value_type: Box::new(base_type),
-                    })
+                    TUnion::new(TAtomic::list(base_type))
                 } else {
-                    TUnion::new(TAtomic::TArray {
-                        key_type: Box::new(TUnion::array_key()),
-                        value_type: Box::new(base_type),
-                    })
+                    TUnion::new(TAtomic::array(TUnion::array_key(), base_type))
                 }
             } else {
                 base_type
@@ -1968,15 +1963,7 @@ fn inspect_atomic_for_docblock_refs(
                 );
             }
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
@@ -1997,23 +1984,12 @@ fn inspect_atomic_for_docblock_refs(
                 analysis_data,
             );
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            inspect_union_for_docblock_refs(
-                analyzer,
-                function_info,
-                value_type,
-                emitted_classes,
-                emitted_constants,
-                analysis_data,
-            );
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            for property_type in properties.values() {
+            for (_, property_type) in known_values.values() {
                 inspect_union_for_docblock_refs(
                     analyzer,
                     function_info,
@@ -2024,22 +2000,19 @@ fn inspect_atomic_for_docblock_refs(
                 );
             }
 
-            if let Some(fallback_key_type) = fallback_key_type {
+            if let Some(params) = params {
                 inspect_union_for_docblock_refs(
                     analyzer,
                     function_info,
-                    fallback_key_type,
+                    &params.0,
                     emitted_classes,
                     emitted_constants,
                     analysis_data,
                 );
-            }
-
-            if let Some(fallback_value_type) = fallback_value_type {
                 inspect_union_for_docblock_refs(
                     analyzer,
                     function_info,
-                    fallback_value_type,
+                    &params.1,
                     emitted_classes,
                     emitted_constants,
                     analysis_data,
@@ -2350,26 +2323,18 @@ fn union_has_callable_like(union: &TUnion) -> bool {
 }
 
 fn union_is_list_only(union: &TUnion) -> bool {
-    !union.types.is_empty()
-        && union.types.iter().all(|atomic| {
-            matches!(
-                atomic,
-                TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { is_list: true, .. }
-            )
-        })
+    !union.types.is_empty() && union.types.iter().all(|atomic| atomic.array_is_list())
 }
 
 fn union_has_non_list_array_like(union: &TUnion) -> bool {
-    union.types.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TKeyedArray { is_list: false, .. }
-        )
-    })
+    // TODO(unify-array): the empty-array literal is now a list (`is_list: true`)
+    // when built via `TAtomic::empty_array`; old pzoom modelled `[]` as a
+    // non-list `TArray{never,never}`. In-repo `[]` literals are still built as
+    // `TAtomic::array(never, never)` (is_list false), so this stays equivalent.
+    union
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TArray { is_list: false, .. }))
 }
 
 fn is_empty_array_default_for_array_like_param(default_type: &TUnion, param_type: &TUnion) -> bool {
@@ -2377,15 +2342,10 @@ fn is_empty_array_default_for_array_like_param(default_type: &TUnion, param_type
         return false;
     }
 
-    param_type.types.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TKeyedArray { .. }
-                | TAtomic::TIterable { .. }
-        )
-    })
+    param_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TArray { .. } | TAtomic::TIterable { .. }))
 }
 
 fn is_empty_array_type(union: &TUnion) -> bool {
@@ -2395,15 +2355,15 @@ fn is_empty_array_type(union: &TUnion) -> bool {
 
     match single {
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => key_type.is_nothing() && value_type.is_nothing(),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+            known_values,
+            params,
             ..
-        } => properties.is_empty() && fallback_key_type.is_none() && fallback_value_type.is_none(),
+        } => {
+            known_values.is_empty()
+                && params
+                    .as_deref()
+                    .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing())
+        }
         _ => false,
     }
 }

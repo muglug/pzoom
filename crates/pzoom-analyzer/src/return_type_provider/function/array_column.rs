@@ -100,24 +100,14 @@ fn infer_array_column_return_type(
 
     let atomic = if third_present && !key_column_is_null {
         if have_at_least_one_res {
-            TAtomic::TNonEmptyArray {
-                key_type: Box::new(result_key_type),
-                value_type: Box::new(element),
-            }
+            TAtomic::non_empty_array(result_key_type, element)
         } else {
-            TAtomic::TArray {
-                key_type: Box::new(result_key_type),
-                value_type: Box::new(element),
-            }
+            TAtomic::array(result_key_type, element)
         }
     } else if have_at_least_one_res {
-        TAtomic::TNonEmptyList {
-            value_type: Box::new(element),
-        }
+        TAtomic::non_empty_list(element)
     } else {
-        TAtomic::TList {
-            value_type: Box::new(element),
-        }
+        TAtomic::list(element)
     };
 
     Some(TUnion::new(atomic))
@@ -140,15 +130,26 @@ fn input_array_value_type(input: &TUnion) -> (Option<TUnion>, bool) {
     };
 
     match atomic {
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        // A generic array/list (former TArray/TNonEmptyArray/TList/TNonEmptyList):
+        // empty known_values with a typed fallback. The value type is the
+        // fallback value; non-emptiness comes from `is_nonempty`.
+        TAtomic::TArray {
+            known_values,
+            params: Some(params),
+            is_nonempty,
+            ..
+        } if known_values.is_empty() => (Some(params.1.clone()), *is_nonempty),
+        // A keyed-array shape (former TKeyedArray), including the empty array
+        // `[]`: combine the known entries' value types with the fallback.
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
             let mut combined: Option<TUnion> = None;
             let mut has_definite = false;
-            for value in properties.values() {
-                if !value.possibly_undefined {
+            for (possibly_undefined, value) in known_values.values() {
+                if !*possibly_undefined {
                     has_definite = true;
                 }
                 combined = Some(match combined {
@@ -156,18 +157,14 @@ fn input_array_value_type(input: &TUnion) -> (Option<TUnion>, bool) {
                     None => value.clone(),
                 });
             }
-            if let Some(fallback) = fallback_value_type {
+            if let Some((_, fallback)) = params.as_deref() {
                 combined = Some(match combined {
                     Some(existing) => combine_union_types(&existing, fallback, false),
-                    None => (**fallback).clone(),
+                    None => fallback.clone(),
                 });
             }
             (combined, has_definite)
         }
-        TAtomic::TArray { value_type, .. } => (Some((**value_type).clone()), false),
-        TAtomic::TNonEmptyArray { value_type, .. } => (Some((**value_type).clone()), true),
-        TAtomic::TList { value_type } => (Some((**value_type).clone()), false),
-        TAtomic::TNonEmptyList { value_type } => (Some((**value_type).clone()), true),
         _ => (None, false),
     }
 }
@@ -180,7 +177,27 @@ fn row_shape_properties(
     row: &TUnion,
 ) -> Option<FxHashMap<ArrayKey, TUnion>> {
     match row.get_single()? {
-        TAtomic::TKeyedArray { properties, .. } => Some((**properties).clone()),
+        // A keyed-array shape (former TKeyedArray), including the empty array
+        // `[]`. A *generic* array/list (empty known_values with a typed
+        // fallback) is not a shape and contributes no row shape, as before.
+        TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } if !known_values.is_empty() || params.is_none() => {
+            // Re-fold each entry's possibly-undefined flag into the value union
+            // so callers can read `value.possibly_undefined`.
+            Some(
+                known_values
+                    .iter()
+                    .map(|(key, (possibly_undefined, value))| {
+                        let mut value = value.clone();
+                        value.possibly_undefined = *possibly_undefined;
+                        (key.clone(), value)
+                    })
+                    .collect(),
+            )
+        }
         TAtomic::TObjectWithProperties { properties, .. } => Some(properties.clone()),
         TAtomic::TNamedObject { name, .. } => {
             let class_info = analyzer.codebase.get_class(*name)?;

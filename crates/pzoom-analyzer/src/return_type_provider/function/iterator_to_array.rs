@@ -37,12 +37,10 @@ fn infer_iterator_to_array_return_type(
         .and_then(|ty| fca::get_literal_bool_from_union(&ty));
 
     match preserve_keys {
-        Some(false) => Some(TUnion::new(TAtomic::TList {
-            value_type: Box::new(iterable_info.value_type),
-        })),
-        Some(true) | None => Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(fca::normalize_array_key_union(&iterable_info.key_type)),
-            value_type: Box::new(iterable_info.value_type),
-        })),
+        Some(false) => Some(TUnion::new(TAtomic::list(iterable_info.value_type))),
+        Some(true) | None => Some(TUnion::new(TAtomic::array(
+            fca::normalize_array_key_union(&iterable_info.key_type),
+            iterable_info.value_type,
+        ))),
     }
 }

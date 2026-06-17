@@ -172,6 +172,10 @@ fn combine_inner(
         ));
     }
 
+    // Emit any `callable-array` shapes kept discrete (a plain `callable`, if one
+    // was present, already cleared these).
+    new_types.append(&mut combination.callable_arrays);
+
     // Handle builtin type params (iterable, Traversable, etc.)
     for (generic_type, generic_type_params) in combination.builtin_type_params {
         if generic_type == "iterable" && generic_type_params.len() == 2 {
@@ -476,6 +480,22 @@ fn scrape_type_properties(
             None
         }
 
+        // A `callable-array` shape is kept discrete (Psalm's TCallableKeyedArray):
+        // a plain `callable` absorbs it, otherwise it stands on its own rather
+        // than folding into ordinary array shapes.
+        TAtomic::TArray {
+            is_callable: true, ..
+        } => {
+            if combination.value_types.contains_key("callable") {
+                // Already have a plain callable — it absorbs this callable-array.
+                return None;
+            }
+            if !combination.callable_arrays.contains(&atomic) {
+                combination.callable_arrays.push(atomic);
+            }
+            None
+        }
+
         // Handle the unified array type. Dispatch to the existing scrapers by
         // shape: a generic array/list (no known entries) feeds the array/list
         // params, while a shape feeds the keyed-array path.
@@ -485,6 +505,7 @@ fn scrape_type_properties(
             is_list,
             is_nonempty,
             is_sealed,
+            is_callable: _,
         } => {
             if known_values.is_empty() {
                 match params {
@@ -959,12 +980,14 @@ fn scrape_type_properties(
         // Handle callable
         TAtomic::TCallable { .. } => {
             // Absorb callable-string and callable arrays (Psalm's TypeCombiner
-            // drops a callable-string when a plain callable joins).
+            // drops a callable-string / callable-array when a plain callable
+            // joins).
             if combination.value_types.get("string").is_some_and(|t| {
                 matches!(t, TAtomic::TClassString { .. } | TAtomic::TCallableString)
             }) {
                 combination.value_types.remove("string");
             }
+            combination.callable_arrays.clear();
             combination
                 .value_types
                 .insert("callable".to_string(), atomic);

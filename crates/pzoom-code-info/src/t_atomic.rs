@@ -124,6 +124,12 @@ pub enum TAtomic {
         /// No keys beyond `known_values` are allowed (Psalm's sealed shape /
         /// `fallback_params === null`). Implies `params` is `None`.
         is_sealed: bool,
+        /// This array is known to be a valid `callable` (Psalm's
+        /// `TCallableKeyedArray` / `TCallableInterface`): a `callable-array`
+        /// shape `[class-string|object, non-empty-string]`. Lets the combiner
+        /// absorb it into `callable`, like Psalm.
+        #[serde(default)]
+        is_callable: bool,
     },
     /// `class-string-map<T as Foo, T>` — an array whose value type is a
     /// function of its `class-string` key (Psalm's `Type\Atomic\TClassStringMap`).
@@ -492,6 +498,7 @@ impl TAtomic {
             is_list: false,
             is_nonempty: false,
             is_sealed: false,
+            is_callable: false,
         }
     }
 
@@ -504,6 +511,7 @@ impl TAtomic {
             is_list: false,
             is_nonempty: true,
             is_sealed: false,
+            is_callable: false,
         }
     }
 
@@ -516,6 +524,7 @@ impl TAtomic {
             is_list: true,
             is_nonempty: false,
             is_sealed: false,
+            is_callable: false,
         }
     }
 
@@ -528,6 +537,7 @@ impl TAtomic {
             is_list: true,
             is_nonempty: true,
             is_sealed: false,
+            is_callable: false,
         }
     }
 
@@ -568,6 +578,7 @@ impl TAtomic {
             is_list,
             is_nonempty,
             is_sealed: sealed,
+            is_callable: false,
         }
     }
 
@@ -586,7 +597,58 @@ impl TAtomic {
             is_list,
             is_nonempty,
             is_sealed: sealed,
+            is_callable: false,
         }
+    }
+
+    /// Rebuild this `TArray` with new entries and fallback `params`, preserving
+    /// its classification flags (`is_list` / `is_nonempty` / `is_sealed` /
+    /// `is_callable`). For transforms — template replacement, type expansion —
+    /// that rewrite the nested unions but keep the shape's kind and so must NOT
+    /// re-normalise the flags (which would, e.g., drop `is_nonempty` from a
+    /// generic `non-empty-array<K, V>`). Returns `self.clone()` for a non-array
+    /// atomic.
+    #[inline]
+    pub fn rebuilt_array(
+        &self,
+        known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
+        params: Option<Box<(TUnion, TUnion)>>,
+    ) -> Self {
+        match self {
+            TAtomic::TArray {
+                is_list,
+                is_nonempty,
+                is_sealed,
+                is_callable,
+                ..
+            } => TAtomic::TArray {
+                known_values,
+                params,
+                is_list: *is_list,
+                is_nonempty: *is_nonempty,
+                is_sealed: *is_sealed,
+                is_callable: *is_callable,
+            },
+            _ => self.clone(),
+        }
+    }
+
+    /// A `callable-array` shape — Psalm's `TCallableKeyedArray`. Identical to
+    /// [`TAtomic::keyed_array`] but flags the result `is_callable` so the
+    /// combiner absorbs it into `callable`.
+    pub fn callable_array(
+        known_values: FxHashMap<ArrayKey, (bool, TUnion)>,
+        is_list: bool,
+        sealed: bool,
+        fallback_key: Option<TUnion>,
+        fallback_value: Option<TUnion>,
+    ) -> Self {
+        let mut atomic =
+            TAtomic::keyed_array(known_values, is_list, sealed, fallback_key, fallback_value);
+        if let TAtomic::TArray { is_callable, .. } = &mut atomic {
+            *is_callable = true;
+        }
+        atomic
     }
 
     // ---- Unified array accessors ----
@@ -951,6 +1013,7 @@ impl TAtomic {
                 is_list,
                 is_nonempty,
                 is_sealed: _,
+                is_callable: _,
             } => {
                 // Render every array sort like Psalm: `array<K, V>` /
                 // `non-empty-list<V>` for generic arrays, and

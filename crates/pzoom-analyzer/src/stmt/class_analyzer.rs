@@ -7942,9 +7942,7 @@ fn replace_extended_templates_in_atomic(
         TAtomic::TArray {
             known_values,
             params,
-            is_list,
-            is_nonempty,
-            is_sealed,
+            ..
         } => {
             let mut new_known_values = rustc_hash::FxHashMap::default();
             for (key, (possibly_undefined, value)) in known_values.iter() {
@@ -7964,13 +7962,7 @@ fn replace_extended_templates_in_atomic(
                 ))
             });
 
-            TAtomic::TArray {
-                known_values: std::sync::Arc::new(new_known_values),
-                params: new_params,
-                is_list: *is_list,
-                is_nonempty: *is_nonempty,
-                is_sealed: *is_sealed,
-            }
+            atomic_type.rebuilt_array(std::sync::Arc::new(new_known_values), new_params)
         }
         TAtomic::TNamedObject {
             name, type_params, ..

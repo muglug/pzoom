@@ -2056,7 +2056,7 @@ fn build_named_atomic(
                 pzoom_code_info::t_atomic::ArrayKey::Int(1),
                 (false, TUnion::new(TAtomic::TNonEmptyString)),
             );
-            TAtomic::keyed_array(known_values, true, true, None, None)
+            TAtomic::callable_array(known_values, true, true, None, None)
         }
         "callable" => TAtomic::TCallable {
             params: None,

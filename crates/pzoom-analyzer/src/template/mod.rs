@@ -137,15 +137,12 @@ fn resolve_type_variables_in_atomic_deep(
         },
         // The unified array atomic: deep-resolve type variables in every
         // known-entry value and the typed fallback `params`, preserving the
-        // flags and each entry's possibly-undefined bool. A direct struct
-        // literal avoids re-normalising the flags (which would drop
-        // `is_nonempty` from a generic `non-empty-array<K, V>`).
+        // shape's flags and each entry's possibly-undefined bool
+        // (`rebuilt_array` keeps them without re-normalising).
         TAtomic::TArray {
             known_values,
             params,
-            is_list,
-            is_nonempty,
-            is_sealed,
+            ..
         } => {
             let mut new_known_values = rustc_hash::FxHashMap::default();
             for (key, (possibly_undefined, value)) in known_values.iter() {
@@ -157,18 +154,15 @@ fn resolve_type_variables_in_atomic_deep(
                     ),
                 );
             }
-            TAtomic::TArray {
-                known_values: std::sync::Arc::new(new_known_values),
-                params: params.as_ref().map(|params| {
+            atomic.rebuilt_array(
+                std::sync::Arc::new(new_known_values),
+                params.as_ref().map(|params| {
                     Box::new((
                         resolve_type_variables_in_union_deep(&params.0, type_variable_bounds),
                         resolve_type_variables_in_union_deep(&params.1, type_variable_bounds),
                     ))
                 }),
-                is_list: *is_list,
-                is_nonempty: *is_nonempty,
-                is_sealed: *is_sealed,
-            }
+            )
         }
         _ => atomic.clone(),
     }

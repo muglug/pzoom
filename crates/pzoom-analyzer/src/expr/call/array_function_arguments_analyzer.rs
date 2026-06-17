@@ -215,6 +215,7 @@ pub(crate) fn handle_by_ref_array_adjustment(
                 is_list,
                 is_nonempty: true,
                 is_sealed,
+                is_callable,
             } if known_values.is_empty() => {
                 new_atomics.push(TAtomic::TArray {
                     known_values,
@@ -222,6 +223,7 @@ pub(crate) fn handle_by_ref_array_adjustment(
                     is_list,
                     is_nonempty: false,
                     is_sealed,
+                    is_callable,
                 });
             }
             other => new_atomics.push(other),

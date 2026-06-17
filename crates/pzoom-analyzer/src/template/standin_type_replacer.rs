@@ -330,16 +330,13 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
             value_type: Box::new(substitute_templates_in_union(value_type, template_result)),
         },
         // The unified array atomic: substitute templates in every known-entry
-        // value and the typed fallback `params`, preserving the flags and each
-        // entry's possibly-undefined bool. A direct struct literal avoids
-        // re-normalising the flags (which would drop `is_nonempty` from a
-        // generic `non-empty-array<K, V>` / `non-empty-list<V>`).
+        // value and the typed fallback `params`, preserving the shape's flags and
+        // each entry's possibly-undefined bool (`rebuilt_array` keeps them
+        // without re-normalising).
         TAtomic::TArray {
             known_values,
             params,
-            is_list,
-            is_nonempty,
-            is_sealed,
+            ..
         } => {
             let mut new_known_values = rustc_hash::FxHashMap::default();
             for (key, (possibly_undefined, value)) in known_values.iter() {
@@ -351,18 +348,15 @@ fn substitute_templates_in_atomic(atomic: &TAtomic, template_result: &TemplateRe
                     ),
                 );
             }
-            TAtomic::TArray {
-                known_values: std::sync::Arc::new(new_known_values),
-                params: params.as_ref().map(|params| {
+            atomic.rebuilt_array(
+                std::sync::Arc::new(new_known_values),
+                params.as_ref().map(|params| {
                     Box::new((
                         substitute_templates_in_union(&params.0, template_result),
                         substitute_templates_in_union(&params.1, template_result),
                     ))
                 }),
-                is_list: *is_list,
-                is_nonempty: *is_nonempty,
-                is_sealed: *is_sealed,
-            }
+            )
         }
         TAtomic::TNamedObject {
             name,
@@ -1684,21 +1678,16 @@ fn dissolve_nested_template_params(union: &TUnion) -> TUnion {
                 TAtomic::TArray {
                     known_values,
                     params,
-                    is_list,
-                    is_nonempty,
-                    is_sealed,
-                } if known_values.is_empty() => out.push(TAtomic::TArray {
-                    known_values: known_values.clone(),
-                    params: params.as_ref().map(|params| {
+                    ..
+                } if known_values.is_empty() => out.push(atomic.rebuilt_array(
+                    known_values.clone(),
+                    params.as_ref().map(|params| {
                         Box::new((
                             dissolve_union(&params.0, depth + 1),
                             dissolve_union(&params.1, depth + 1),
                         ))
                     }),
-                    is_list: *is_list,
-                    is_nonempty: *is_nonempty,
-                    is_sealed: *is_sealed,
-                }),
+                )),
                 TAtomic::TIterable {
                     key_type,
                     value_type,

@@ -1144,9 +1144,7 @@ fn atomic_cast_stringable_to_string(
         TAtomic::TArray {
             known_values,
             params,
-            is_list,
-            is_nonempty,
-            is_sealed,
+            ..
         } => {
             let mut changed = false;
             let mut new_known_values = (**known_values).clone();
@@ -1169,13 +1167,7 @@ fn atomic_cast_stringable_to_string(
             });
             if changed {
                 (
-                    TAtomic::TArray {
-                        known_values: std::sync::Arc::new(new_known_values),
-                        params: new_params,
-                        is_list: *is_list,
-                        is_nonempty: *is_nonempty,
-                        is_sealed: *is_sealed,
-                    },
+                    atomic.rebuilt_array(std::sync::Arc::new(new_known_values), new_params),
                     true,
                 )
             } else {

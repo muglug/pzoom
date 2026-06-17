@@ -6138,6 +6138,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 is_list,
                 is_nonempty,
                 is_sealed,
+                is_callable,
             } => {
                 let known_values = std::sync::Arc::new(
                     std::sync::Arc::try_unwrap(known_values)
@@ -6182,6 +6183,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     is_list,
                     is_nonempty,
                     is_sealed,
+                    is_callable,
                 }]
             }
             TAtomic::TNamedObject {

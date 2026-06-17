@@ -361,17 +361,13 @@ fn replace_atomic(
 ) -> TAtomic {
     match atomic {
         // The unified array atomic: substitute templates in every known-entry
-        // value and in the typed fallback `params`, preserving the flags
-        // (is_list / is_nonempty / is_sealed) and each entry's
-        // possibly-undefined bool. A direct struct literal is used rather than a
-        // smart constructor so the flags are not re-normalised (which would, for
-        // a generic `non-empty-array<K, V>`, drop `is_nonempty`).
+        // value and in the typed fallback `params`, preserving the shape's flags
+        // and each entry's possibly-undefined bool (`rebuilt_array` keeps them
+        // without re-normalising).
         TAtomic::TArray {
             known_values,
             params,
-            is_list,
-            is_nonempty,
-            is_sealed,
+            ..
         } => {
             let mut new_known_values = FxHashMap::default();
             for (key, (possibly_undefined, value)) in known_values.iter() {
@@ -384,18 +380,15 @@ fn replace_atomic(
                 );
             }
 
-            TAtomic::TArray {
-                known_values: std::sync::Arc::new(new_known_values),
-                params: params.as_ref().map(|params| {
+            atomic.rebuilt_array(
+                std::sync::Arc::new(new_known_values),
+                params.as_ref().map(|params| {
                     Box::new((
                         replace_union(codebase, &params.0, template_result, resolving_templates),
                         replace_union(codebase, &params.1, template_result, resolving_templates),
                     ))
                 }),
-                is_list: *is_list,
-                is_nonempty: *is_nonempty,
-                is_sealed: *is_sealed,
-            }
+            )
         }
         TAtomic::TNamedObject {
             name,

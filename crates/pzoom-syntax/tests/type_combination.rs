@@ -621,16 +621,8 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
         "arrayTraversableToIterable",
         "Traversable|array<array-key, mixed>",
     ),
-    (
-        "combineCallableAndCallableArray",
-        "callable|list{class-string|object, non-empty-string}",
-    ),
     ("combineCallableAndCallableList", "callable|callable-list"),
     ("combineCallableAndCallableObject", "callable|object"),
-    (
-        "combineCallableArrayAndCallable",
-        "callable|list{class-string|object, non-empty-string}",
-    ),
     ("combineCallableListAndCallable", "callable|callable-list"),
     ("combineCallableObjectAndCallable", "callable|object"),
     ("combineClassStringWithTraitString", "class-string"),

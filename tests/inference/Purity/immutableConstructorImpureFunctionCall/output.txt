@@ -1,0 +1,2 @@
+ImpureFunctionCall - input.php:11:26 - Cannot call an impure function file_get_contents from a mutation-free context
+ImpureFunctionCall - input.php:12:28 - Cannot call an impure function file_get_contents from a mutation-free context

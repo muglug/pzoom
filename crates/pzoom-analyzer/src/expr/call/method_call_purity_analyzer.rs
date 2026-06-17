@@ -26,24 +26,13 @@ pub(crate) fn analyze(
     receiver_is_pure_compatible: bool,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    // An `@psalm-immutable` / `@psalm-external-mutation-free` class runs its
-    // constructor in Psalm's `external_mutation_free` context (FunctionLikeAnalyzer
-    // sets `$context->external_mutation_free` with no `__construct` exemption,
-    // unlike `mutation_free`). `is_mutation_free_context` exempts every
-    // constructor, so detect this case here: it enforces method-call purity but,
-    // per Psalm's external-mutation-free branch, allows calls to the class's own
-    // methods (`$method_id->fq_class_name !== $context->self`).
-    let external_mutation_free_constructor = analyzer.function_info.is_some_and(|fi| {
-        fi.name == StrId::CONSTRUCT
-            && !fi.is_static
-            && !fi.mutation_free_inferred
-            && fi
-                .declaring_class
-                .and_then(|class_id| analyzer.codebase.get_class(class_id))
-                .is_some_and(|class_info| {
-                    class_info.is_immutable || class_info.is_external_mutation_free
-                })
-    });
+    // An immutable / external-mutation-free constructor enforces method-call
+    // purity (Psalm's external-mutation-free context) even though
+    // `is_mutation_free_context` exempts constructors; per Psalm's
+    // external-mutation-free branch it allows calls to the class's own methods
+    // (`$method_id->fq_class_name !== $context->self`).
+    let external_mutation_free_constructor =
+        super::method_call_analyzer::is_external_mutation_free_constructor_context(analyzer);
 
     if !enforce_mutation_free && !external_mutation_free_constructor {
         return;

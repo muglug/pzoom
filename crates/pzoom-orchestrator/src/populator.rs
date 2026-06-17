@@ -573,7 +573,7 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                                     properties.insert(ArrayKey::Int(next_int_key), value);
                                     next_int_key += 1;
                                 }
-                                ArrayKey::String(_) => {
+                                ArrayKey::String(_) | ArrayKey::ClassString(_) => {
                                     is_list = false;
                                     properties.insert(key, value);
                                 }

@@ -3294,9 +3294,11 @@ fn get_array_assertion_from_union(union: &TUnion) -> Option<TAtomic> {
                 for (prop_key, prop_type) in properties.iter() {
                     let prop_key_type = match prop_key {
                         ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-                        ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-                            value: value.clone(),
-                        }),
+                        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                            TUnion::new(TAtomic::TLiteralString {
+                                value: value.clone(),
+                            })
+                        }
                     };
 
                     key_type = Some(match key_type {
@@ -3443,7 +3445,9 @@ fn add_array_key_exists_path_assertions(
 fn format_array_key_for_assertion_path(array_key: &ArrayKey) -> String {
     match array_key {
         ArrayKey::Int(value) => value.to_string(),
-        ArrayKey::String(value) => format!("'{}'", value.replace('\'', "\\'")),
+        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+            format!("'{}'", value.replace('\'', "\\'"))
+        }
     }
 }
 
@@ -3520,9 +3524,11 @@ fn extract_array_key_union_for_key_exists(array_union: &TUnion) -> Option<TUnion
                 for key in properties.keys() {
                     let key_atomic = match key {
                         ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
-                        ArrayKey::String(value) => TAtomic::TLiteralString {
-                            value: value.clone(),
-                        },
+                        ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                            TAtomic::TLiteralString {
+                                value: value.clone(),
+                            }
+                        }
                     };
                     add_loose_array_key_atomic(&mut key_types, &key_atomic);
                 }

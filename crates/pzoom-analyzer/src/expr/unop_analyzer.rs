@@ -153,18 +153,16 @@ pub fn analyze_prefix(
 
         // Pre-increment/decrement - returns the modified value
         UnaryPrefixOperator::PreIncrement(_) | UnaryPrefixOperator::PreDecrement(_) => {
+            let is_increment = matches!(unary.operator, UnaryPrefixOperator::PreIncrement(_));
             // Update the variable's type in context if this is a variable
             maybe_emit_increment_operand_issue(
                 analyzer,
                 operand_type.as_deref(),
                 pos,
+                is_increment,
                 analysis_data,
             );
-            let delta = if matches!(unary.operator, UnaryPrefixOperator::PreIncrement(_)) {
-                1
-            } else {
-                -1
-            };
+            let delta = if is_increment { 1 } else { -1 };
             let result_type = get_increment_result_type(
                 operand_type.as_deref(),
                 delta,
@@ -248,18 +246,21 @@ pub fn analyze_postfix(
         .map(|t| (**t).clone())
         .unwrap_or_else(TUnion::mixed);
 
-    maybe_emit_increment_operand_issue(analyzer, operand_type.as_deref(), pos, analysis_data);
+    let is_increment = matches!(
+        unary.operator,
+        mago_syntax::ast::ast::unary::UnaryPostfixOperator::PostIncrement(_)
+    );
+    maybe_emit_increment_operand_issue(
+        analyzer,
+        operand_type.as_deref(),
+        pos,
+        is_increment,
+        analysis_data,
+    );
     maybe_emit_undefined_increment_variable(analyzer, unary.operand, analysis_data, context);
 
     // Update the variable's type in context (the variable gets the incremented value)
-    let delta = if matches!(
-        unary.operator,
-        mago_syntax::ast::ast::unary::UnaryPostfixOperator::PostIncrement(_)
-    ) {
-        1
-    } else {
-        -1
-    };
+    let delta = if is_increment { 1 } else { -1 };
     let new_var_type = get_increment_result_type(
         operand_type.as_deref(),
         delta,
@@ -620,6 +621,7 @@ fn maybe_emit_increment_operand_issue(
     analyzer: &StatementsAnalyzer<'_>,
     operand_type: Option<&TUnion>,
     pos: Pos,
+    is_increment: bool,
     analysis_data: &mut FunctionAnalysisData,
 ) {
     let Some(operand_type) = operand_type else {
@@ -629,6 +631,10 @@ fn maybe_emit_increment_operand_issue(
     let mut saw_true_or_bool = false;
     let mut saw_false = false;
     let mut saw_string = false;
+    // A numeric operand (int/float/numeric string) is a valid arithmetic
+    // operand: its presence alongside a string makes a decrement only
+    // *possibly* invalid (Psalm's `has_valid_left_operand`).
+    let mut saw_numeric = false;
 
     for atomic in &operand_type.types {
         match atomic {
@@ -636,13 +642,19 @@ fn maybe_emit_increment_operand_issue(
             TAtomic::TFalse => saw_false = true,
             // Numeric strings increment to int|float — intended, no report
             // (Psalm's ArithmeticOpAnalyzer).
-            atomic if is_numericish_string_atomic(atomic) => {}
+            atomic if is_numericish_string_atomic(atomic) => saw_numeric = true,
             TAtomic::TString
             | TAtomic::TLiteralString { .. }
             | TAtomic::TNonEmptyString
             | TAtomic::TLowercaseString
             | TAtomic::TNonEmptyLowercaseString
             | TAtomic::TTruthyString => saw_string = true,
+            TAtomic::TInt
+            | TAtomic::TLiteralInt { .. }
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TLiteralFloat { .. }
+            | TAtomic::TNumeric => saw_numeric = true,
             _ => {}
         }
     }
@@ -660,10 +672,28 @@ fn maybe_emit_increment_operand_issue(
             IssueKind::FalseOperand,
             "Cannot increment false".to_string(),
         )
-    } else if saw_string {
+    } else if saw_string && is_increment {
+        // Psalm's IncDecExpressionAnalyzer routes `++` through the
+        // TString+TInt branch of ArithmeticOpAnalyzer: a non-numeric string
+        // increments to a non-empty-string and reports StringIncrement.
         (
             IssueKind::StringIncrement,
             "Possibly unintended string increment".to_string(),
+        )
+    } else if saw_string {
+        // `--` (and `+`/`-` generally) instead analyzes `$var - 1`, where a
+        // non-numeric string is an invalid numeric operand. It is only
+        // *possibly* invalid when a valid numeric member is also present.
+        (
+            if saw_numeric {
+                IssueKind::PossiblyInvalidOperand
+            } else {
+                IssueKind::InvalidOperand
+            },
+            format!(
+                "Cannot perform a numeric operation with a non-numeric type {}",
+                operand_type.get_id(Some(analyzer.interner))
+            ),
         )
     } else {
         return;

@@ -58,9 +58,12 @@ impl FunctionReturnTypeProvider for ArraySpliceReturnTypeProvider {
                         pzoom_code_info::ArrayKey::Int(value) => {
                             TAtomic::TLiteralInt { value: *value }
                         }
-                        pzoom_code_info::ArrayKey::String(value) => TAtomic::TLiteralString {
-                            value: value.clone(),
-                        },
+                        pzoom_code_info::ArrayKey::String(value)
+                        | pzoom_code_info::ArrayKey::ClassString(value) => {
+                            TAtomic::TLiteralString {
+                                value: value.clone(),
+                            }
+                        }
                     };
                     let key_union = TUnion::new(key_atomic);
                     key_type = Some(match key_type {

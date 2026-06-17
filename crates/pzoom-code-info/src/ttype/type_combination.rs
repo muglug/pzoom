@@ -142,17 +142,20 @@ impl TypeCombination {
                     },
                     _ => false,
                 }),
-                ArrayKey::String(s) => key_type.types.iter().any(|t| match t {
-                    TAtomic::TString => true,
-                    TAtomic::TLiteralString { value } => value == s,
-                    TAtomic::TArrayKey => true,
-                    TAtomic::TNonEmptyString
-                    | TAtomic::TNumericString
-                    | TAtomic::TTruthyString
-                    | TAtomic::TLowercaseString
-                    | TAtomic::TNonEmptyLowercaseString => true,
-                    _ => false,
-                }),
+                ArrayKey::String(s) | ArrayKey::ClassString(s) => {
+                    key_type.types.iter().any(|t| match t {
+                        TAtomic::TString => true,
+                        TAtomic::TLiteralString { value } => value == s,
+                        TAtomic::TArrayKey => true,
+                        TAtomic::TClassString { .. } => true,
+                        TAtomic::TNonEmptyString
+                        | TAtomic::TNumericString
+                        | TAtomic::TTruthyString
+                        | TAtomic::TLowercaseString
+                        | TAtomic::TNonEmptyLowercaseString => true,
+                        _ => false,
+                    })
+                }
             }
         } else {
             false

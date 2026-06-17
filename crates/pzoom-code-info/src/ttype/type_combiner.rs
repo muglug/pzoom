@@ -1065,10 +1065,10 @@ fn fallback_key_contains(objectlike_key_type: Option<&TUnion>, key: &ArrayKey) -
     key_type.types.iter().any(|atomic| match atomic {
         TAtomic::TArrayKey => true,
         TAtomic::TLiteralInt { value } => matches!(key, ArrayKey::Int(k) if k == value),
-        TAtomic::TLiteralString { value } => matches!(key, ArrayKey::String(k) if k == value),
+        TAtomic::TLiteralString { value } => key.as_str() == Some(value.as_str()),
         TAtomic::TIntRange { min, max } => match key {
             ArrayKey::Int(k) => min.is_none_or(|min| min <= *k) && max.is_none_or(|max| *k <= max),
-            ArrayKey::String(_) => false,
+            _ => false,
         },
         TAtomic::TString
         | TAtomic::TNonEmptyString
@@ -1078,7 +1078,7 @@ fn fallback_key_contains(objectlike_key_type: Option<&TUnion>, key: &ArrayKey) -
         | TAtomic::TNonEmptyLowercaseString
         | TAtomic::TTruthyString
         | TAtomic::TCallableString
-        | TAtomic::TClassString { .. } => matches!(key, ArrayKey::String(_)),
+        | TAtomic::TClassString { .. } => key.as_str().is_some(),
         TAtomic::TInt | TAtomic::TNonspecificLiteralInt => matches!(key, ArrayKey::Int(_)),
         _ => false,
     })
@@ -1727,6 +1727,8 @@ fn handle_keyed_array_entries(
             }
         };
 
+        // A `Foo::class` key keeps its class-string identity through the merge:
+        // it rides on the `ArrayKey::ClassString` variant in the entries map.
         new_types.push(TAtomic::TKeyedArray {
             properties: std::sync::Arc::new(
                 std::mem::take(&mut combination.objectlike_entries)
@@ -1771,6 +1773,9 @@ fn get_array_type_from_generic_params(
                 ArrayKey::Int(value) => TAtomic::TLiteralInt { value: *value },
                 ArrayKey::String(value) => TAtomic::TLiteralString {
                     value: value.clone(),
+                },
+                ArrayKey::ClassString(value) => TAtomic::TLiteralClassString {
+                    name: value.clone(),
                 },
             };
             if !objectlike_key_atoms.contains(&key_atomic) {

@@ -1565,7 +1565,8 @@ pub(crate) fn infer_array_filter_return_atomic(
                         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                             add_key(TAtomic::TLiteralInt { value: *value })
                         }
-                        pzoom_code_info::t_atomic::ArrayKey::String(value) => {
+                        pzoom_code_info::t_atomic::ArrayKey::String(value)
+                        | pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => {
                             add_key(TAtomic::TLiteralString {
                                 value: value.clone(),
                             })
@@ -1880,9 +1881,12 @@ fn extract_keyed_array_key_type(
             pzoom_code_info::ArrayKey::Int(value) => {
                 TUnion::new(TAtomic::TLiteralInt { value: *value })
             }
-            pzoom_code_info::ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-                value: value.clone(),
-            }),
+            pzoom_code_info::ArrayKey::String(value)
+            | pzoom_code_info::ArrayKey::ClassString(value) => {
+                TUnion::new(TAtomic::TLiteralString {
+                    value: value.clone(),
+                })
+            }
         };
 
         key_type = if key_type.is_nothing() {

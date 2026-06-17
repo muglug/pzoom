@@ -103,7 +103,8 @@ pub fn is_contained_by(
                 let mut all_types_contain = true;
                 for (key, container_property_type) in container_props {
                     let property_id = match key {
-                        pzoom_code_info::ArrayKey::String(property_name) => {
+                        pzoom_code_info::ArrayKey::String(property_name)
+                        | pzoom_code_info::ArrayKey::ClassString(property_name) => {
                             class_info.property_name_lookup.get(property_name).copied()
                         }
                         pzoom_code_info::ArrayKey::Int(_) => None,

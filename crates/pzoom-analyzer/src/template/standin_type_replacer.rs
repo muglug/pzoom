@@ -1446,7 +1446,8 @@ fn extract_array_like_key_value(arg_atomic: &TAtomic) -> Option<(TUnion, TUnion)
                     pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                         TUnion::new(TAtomic::TLiteralInt { value: *value })
                     }
-                    pzoom_code_info::t_atomic::ArrayKey::String(value) => {
+                    pzoom_code_info::t_atomic::ArrayKey::String(value)
+                    | pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => {
                         TUnion::new(TAtomic::TLiteralString {
                             value: value.clone(),
                         })

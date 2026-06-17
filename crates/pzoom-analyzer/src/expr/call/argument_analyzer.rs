@@ -532,10 +532,6 @@ pub fn verify_type(
         return;
     }
 
-    if callable_name.eq_ignore_ascii_case("ReflectionClass::__construct") && argument_offset == 0 {
-        return;
-    }
-
     // Psalm passes `ignore_null = true` and `ignore_false = !param_has_true`, then
     // checks null/false separately below.
     let param_has_true = param_type
@@ -587,27 +583,6 @@ pub fn verify_type(
         && argument_offset == 0
         && union_has_template_class_string_argument(arg_type)
         && union_is_specific_class_string_set(&param_type)
-    {
-        return;
-    }
-
-    // Psalm tolerates a plain string literal naming an existing class as a
-    // class-string argument (the comparator marks it as a coercion so return
-    // statements still flag LessSpecificReturnStatement).
-    if comparison_result.type_coerced.unwrap_or(false)
-        && expects_class_string_union(&param_type)
-        && arg_type.types.iter().all(|atomic| match atomic {
-            pzoom_code_info::TAtomic::TLiteralString { value } => {
-                analyzer.codebase.resolve_classlike_name(value).is_some()
-            }
-            pzoom_code_info::TAtomic::TLiteralClassString { .. }
-            | pzoom_code_info::TAtomic::TClassString { .. } => true,
-            _ => false,
-        })
-        && arg_type
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, pzoom_code_info::TAtomic::TLiteralString { .. }))
     {
         return;
     }

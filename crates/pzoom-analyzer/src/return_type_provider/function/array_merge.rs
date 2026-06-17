@@ -89,7 +89,7 @@ impl FunctionReturnTypeProvider for ArrayMergeReturnTypeProvider {
                                 any_nonempty = true;
                             }
                             match key {
-                                ArrayKey::String(_) => {
+                                ArrayKey::String(_) | ArrayKey::ClassString(_) => {
                                     all_int_offsets = false;
                                     set_or_combine(&mut generic, key.clone(), value);
                                 }

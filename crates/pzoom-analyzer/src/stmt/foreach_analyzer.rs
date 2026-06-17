@@ -1203,6 +1203,13 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
                         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                             key_types.push(TUnion::new(TAtomic::TLiteralInt { value: *value }));
                         }
+                        // A `Foo::class` key iterates as a class-string, not a
+                        // plain literal string (Psalm's TKeyedArray::$class_strings).
+                        pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => {
+                            key_types.push(TUnion::new(TAtomic::TLiteralClassString {
+                                name: value.clone(),
+                            }));
+                        }
                         pzoom_code_info::t_atomic::ArrayKey::String(value) => {
                             // Canonical int strings were already normalized to
                             // ArrayKey::Int at array creation; what remains

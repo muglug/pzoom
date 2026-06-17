@@ -316,10 +316,81 @@ pub struct ConditionalReturnType {
 }
 
 /// Key type for keyed arrays (shapes).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// `ClassString` is a string key that originated from a `Foo::class`
+/// expression (Psalm tracks this via `TKeyedArray::$class_strings`). It is the
+/// *same array key* as the plain string `"Foo"` — PHP coerces `Foo::class` to
+/// that string — so it hashes and compares equal to `String("Foo")`; the
+/// distinction only affects how the key is rendered and how it iterates (as a
+/// `class-string` rather than a literal string).
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ArrayKey {
     Int(i64),
     String(String),
+    ClassString(String),
+}
+
+impl ArrayKey {
+    /// The string value of a string/class-string key, or `None` for an int key.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            ArrayKey::Int(_) => None,
+            ArrayKey::String(value) | ArrayKey::ClassString(value) => Some(value),
+        }
+    }
+}
+
+impl PartialEq for ArrayKey {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ArrayKey::Int(a), ArrayKey::Int(b)) => a == b,
+            (
+                ArrayKey::String(a) | ArrayKey::ClassString(a),
+                ArrayKey::String(b) | ArrayKey::ClassString(b),
+            ) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ArrayKey {}
+
+impl std::hash::Hash for ArrayKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            ArrayKey::Int(value) => {
+                0u8.hash(state);
+                value.hash(state);
+            }
+            // A class-string key hashes as its plain string so it collides
+            // with `String(value)` in the property map.
+            ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                1u8.hash(state);
+                value.hash(state);
+            }
+        }
+    }
+}
+
+impl Ord for ArrayKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (ArrayKey::Int(a), ArrayKey::Int(b)) => a.cmp(b),
+            // Int keys sort before string keys (the previous derived order).
+            (ArrayKey::Int(_), _) => std::cmp::Ordering::Less,
+            (_, ArrayKey::Int(_)) => std::cmp::Ordering::Greater,
+            (
+                ArrayKey::String(a) | ArrayKey::ClassString(a),
+                ArrayKey::String(b) | ArrayKey::ClassString(b),
+            ) => a.cmp(b),
+        }
+    }
+}
+
+impl PartialOrd for ArrayKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 /// Parameter for callable/closure types.
@@ -677,11 +748,13 @@ impl TAtomic {
                 let has_fallback = !*sealed && fallback_value_type.is_some();
 
                 let mut int_entries: Vec<(i64, &TUnion)> = Vec::new();
-                let mut string_entries: Vec<(&str, &TUnion)> = Vec::new();
+                // (key, is_class_string, value)
+                let mut string_entries: Vec<(&str, bool, &TUnion)> = Vec::new();
                 for (key, value) in properties.iter() {
                     match key {
                         ArrayKey::Int(i) => int_entries.push((*i, value)),
-                        ArrayKey::String(s) => string_entries.push((s.as_str(), value)),
+                        ArrayKey::String(s) => string_entries.push((s.as_str(), false, value)),
+                        ArrayKey::ClassString(s) => string_entries.push((s.as_str(), true, value)),
                     }
                 }
                 int_entries.sort_by_key(|(i, _)| *i);
@@ -723,9 +796,25 @@ impl TAtomic {
                         let optional = if value.possibly_undefined { "?" } else { "" };
                         entries.push(format!("{}{}: {}", key, optional, value.get_id(interner)));
                     }
-                    for (key, value) in &string_entries {
+                    for (key, is_class_string, value) in &string_entries {
                         let optional = if value.possibly_undefined { "?" } else { "" };
-                        entries.push(format!("{}{}: {}", key, optional, value.get_id(interner)));
+                        // A class-string key renders as `Foo::class` (Psalm's
+                        // TKeyedArray::getId), not the bare class name.
+                        if *is_class_string {
+                            entries.push(format!(
+                                "{}::class{}: {}",
+                                key,
+                                optional,
+                                value.get_id(interner)
+                            ));
+                        } else {
+                            entries.push(format!(
+                                "{}{}: {}",
+                                key,
+                                optional,
+                                value.get_id(interner)
+                            ));
+                        }
                     }
                     // Psalm sorts non-list property strings for a stable id.
                     if !*is_list {
@@ -806,7 +895,7 @@ impl TAtomic {
                     .map(|(key, value_type)| {
                         let key_str = match key {
                             ArrayKey::Int(i) => i.to_string(),
-                            ArrayKey::String(s) => s.clone(),
+                            ArrayKey::String(s) | ArrayKey::ClassString(s) => s.clone(),
                         };
                         let optional = if value_type.possibly_undefined {
                             "?"

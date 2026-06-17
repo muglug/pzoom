@@ -622,7 +622,7 @@ pub fn is_contained_by_in_context(
                         ArrayKey::Int(i) => {
                             pzoom_code_info::TUnion::new(TAtomic::TLiteralInt { value: *i })
                         }
-                        ArrayKey::String(s) => {
+                        ArrayKey::String(s) | ArrayKey::ClassString(s) => {
                             pzoom_code_info::TUnion::new(TAtomic::TLiteralString {
                                 value: s.to_string(),
                             })
@@ -957,7 +957,9 @@ fn array_atomic_key_value_types(
             for (key, value) in properties.iter() {
                 let key_atomic = match key {
                     ArrayKey::Int(i) => TAtomic::TLiteralInt { value: *i },
-                    ArrayKey::String(s) => TAtomic::TLiteralString { value: s.clone() },
+                    ArrayKey::String(s) | ArrayKey::ClassString(s) => {
+                        TAtomic::TLiteralString { value: s.clone() }
+                    }
                 };
                 let key_t = TUnion::new(key_atomic);
                 key_union = Some(match key_union {

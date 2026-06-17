@@ -345,7 +345,8 @@ fn resolve_argument_param_indices(
                                 next_positional_param += 1;
                             }
                         }
-                        pzoom_code_info::ArrayKey::String(name) => {
+                        pzoom_code_info::ArrayKey::String(name)
+                        | pzoom_code_info::ArrayKey::ClassString(name) => {
                             let named_param_index = params
                                 .iter()
                                 .position(|param| matches_named_argument(analyzer, param, name));

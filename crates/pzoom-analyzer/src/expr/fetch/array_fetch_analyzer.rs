@@ -452,7 +452,7 @@ pub fn analyze(
                     let all_negative = is_list_atomic
                         && literal_index_keys.iter().all(|key| match key {
                             ArrayKey::Int(value) => *value < 0,
-                            ArrayKey::String(_) => false,
+                            ArrayKey::String(_) | ArrayKey::ClassString(_) => false,
                         });
                     if all_negative {
                         has_literal_index_miss = true;
@@ -708,7 +708,7 @@ pub fn analyze(
                             Some(len) => *value >= -len && *value < len,
                             None => true,
                         },
-                        ArrayKey::String(_) => false,
+                        ArrayKey::String(_) | ArrayKey::ClassString(_) => false,
                     })
                 {
                     has_literal_index_hit = true;
@@ -2503,9 +2503,11 @@ fn extract_keyed_array_key_type(
     for key in properties.keys() {
         let literal_key_type = match key {
             ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-            ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-                value: value.clone(),
-            }),
+            ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                TUnion::new(TAtomic::TLiteralString {
+                    value: value.clone(),
+                })
+            }
         };
 
         key_type = if key_type.is_nothing() {

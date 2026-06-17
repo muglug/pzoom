@@ -128,7 +128,7 @@ pub(crate) fn handle_by_ref_array_adjustment(
                     .iter()
                     .filter_map(|(key, value)| match key {
                         ArrayKey::Int(index) => Some((*index, value.clone())),
-                        ArrayKey::String(_) => None,
+                        ArrayKey::String(_) | ArrayKey::ClassString(_) => None,
                     })
                     .collect();
                 int_entries.sort_by_key(|(index, _)| *index);
@@ -434,7 +434,7 @@ pub(crate) fn handle_array_addition(
                     .iter()
                     .filter_map(|(key, value)| match key {
                         ArrayKey::Int(index) => Some((*index, value.clone())),
-                        ArrayKey::String(_) => None,
+                        ArrayKey::String(_) | ArrayKey::ClassString(_) => None,
                     })
                     .collect();
                 entries.sort_by_key(|(index, _)| *index);

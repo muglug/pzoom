@@ -524,7 +524,8 @@ pub(crate) fn array_key_to_literal_union(key: &pzoom_code_info::t_atomic::ArrayK
         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
             TUnion::new(TAtomic::TLiteralInt { value: *value })
         }
-        pzoom_code_info::t_atomic::ArrayKey::String(value) => value
+        pzoom_code_info::t_atomic::ArrayKey::String(value)
+        | pzoom_code_info::t_atomic::ArrayKey::ClassString(value) => value
             .parse::<i64>()
             .map(|parsed_int| TUnion::new(TAtomic::TLiteralInt { value: parsed_int }))
             .unwrap_or_else(|_| {

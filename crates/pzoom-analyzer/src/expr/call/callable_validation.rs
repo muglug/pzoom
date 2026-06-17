@@ -285,9 +285,11 @@ pub(crate) fn get_unpacked_iterable_key_type(
             for key in properties.keys() {
                 let key_union = match key {
                     ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-                    ArrayKey::String(value) => TUnion::new(TAtomic::TLiteralString {
-                        value: value.clone(),
-                    }),
+                    ArrayKey::String(value) | ArrayKey::ClassString(value) => {
+                        TUnion::new(TAtomic::TLiteralString {
+                            value: value.clone(),
+                        })
+                    }
                 };
 
                 key_type = if key_type.is_nothing() {

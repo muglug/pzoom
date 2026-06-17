@@ -443,7 +443,8 @@ fn extract_iterable_key_value(
                         pzoom_code_info::ArrayKey::Int(value) => {
                             TUnion::new(TAtomic::TLiteralInt { value: *value })
                         }
-                        pzoom_code_info::ArrayKey::String(value) => {
+                        pzoom_code_info::ArrayKey::String(value)
+                        | pzoom_code_info::ArrayKey::ClassString(value) => {
                             TUnion::new(TAtomic::TLiteralString {
                                 value: value.clone(),
                             })

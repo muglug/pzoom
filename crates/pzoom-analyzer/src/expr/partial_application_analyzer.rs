@@ -170,7 +170,7 @@ pub fn analyze(
 
             match (object_type, method_name) {
                 (Some(object_type), Some(method_name)) => {
-                    let resolved = object_type
+                    let resolved_with_class = object_type
                         .types
                         .iter()
                         .find_map(|atomic| {
@@ -188,9 +188,28 @@ pub fn analyze(
                                 &method_name,
                                 Some(&analysis_data.type_variable_bounds),
                             )
-                            .map(|(_, _, method_info)| (method_info, class_info, type_params.clone()))
-                        })
-                        .map(|(mut method_info, class_info, type_params)| {
+                            .map(|(_, _, method_info)| (*name, method_info, class_info, type_params.clone()))
+                        });
+
+                    // A first-class callable `$obj->method(...)` *uses* the
+                    // method, so record it for find_unused_code (Psalm records
+                    // the reference through Methods::isMethodUsed regardless of
+                    // whether the closure is ever invoked).
+                    if analyzer.config.find_unused_code
+                        && let Some((receiver_id, method_info, _, _)) = resolved_with_class.as_ref()
+                    {
+                        crate::expr::call::atomic_method_call_analyzer::record_method_reference(
+                            analyzer,
+                            *receiver_id,
+                            method_info.declaring_class,
+                            &method_name,
+                            context,
+                            analysis_data,
+                        );
+                    }
+
+                    let resolved = resolved_with_class
+                        .map(|(_, mut method_info, class_info, type_params)| {
                             // Localize the declaring class's templates through
                             // the receiver's type params, so the resulting
                             // closure signature carries the receiver's bindings
@@ -384,6 +403,22 @@ pub fn analyze(
                             .map(|(_, _, method_info)| method_info)
                         })
                     });
+
+                    // A first-class callable `Class::method(...)` *uses* the
+                    // method, so record it for find_unused_code (mirrors the
+                    // instance-method branch above and Psalm's behavior).
+                    if analyzer.config.find_unused_code
+                        && let Some(method_info) = resolved.as_ref()
+                    {
+                        crate::expr::call::atomic_method_call_analyzer::record_method_reference(
+                            analyzer,
+                            class_id,
+                            method_info.declaring_class,
+                            &method_name,
+                            context,
+                            analysis_data,
+                        );
+                    }
 
                     // Psalm reports UndefinedMethod for a first-class callable
                     // of a static method the known class lacks.

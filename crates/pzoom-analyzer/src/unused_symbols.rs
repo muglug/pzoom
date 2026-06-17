@@ -243,6 +243,20 @@ fn report_unused_declarations(
         }
         let class_referenced = referenced.contains(class_id);
 
+        // A class whose parent/interface/trait never resolved has its body
+        // skipped during analysis (ClassAnalyzer bails on
+        // `invalid_dependencies`, mirroring Psalm's `if ($storage->
+        // invalid_dependencies) return;`). With the body un-analyzed, no
+        // references were recorded from inside it, and its real inheritance
+        // chain is unknown — so its members (overrides of the unresolved
+        // parent, and privates only ever called from the skipped body) all
+        // look unused. Reporting them would be pure noise, so skip the
+        // member checks, just as Psalm cannot reason about such a class.
+        let class_has_unresolved_deps = class_info
+            .invalid_dependencies
+            .iter()
+            .any(|dependency| codebase.get_class(*dependency).is_none());
+
         let mut emit = |kind: IssueKind, message: String, start: u32, end: u32| {
             let (line, col) = line_column(line_starts, start);
             new_issues.push(Issue::new(kind, message, file_path, start, end, line, col));
@@ -261,6 +275,9 @@ fn report_unused_declarations(
                 name_start,
                 name_end,
             );
+        } else if class_has_unresolved_deps {
+            // Members of a class with unresolved dependencies are not checked
+            // (see the comment on `class_has_unresolved_deps`).
         } else {
             // Methods (Psalm checkMethodReferences) — appearing in this class:
             // declared here or supplied by a used trait.
@@ -321,13 +338,28 @@ fn report_unused_declarations(
                         .get(method_name_id)
                         .is_some_and(|parents| {
                             parents.iter().any(|parent_id| {
+                                let parent_class = codebase.get_class(*parent_id);
+                                // A parent declared in a stub or a scanned-only
+                                // dependency (vendor) is one whose callers pzoom
+                                // never sees, so an override of it might well be
+                                // called externally — Psalm keeps it alive via
+                                // `!canReportIssues(parent)` and Hakana via the
+                                // non-`user_defined` parent check.
+                                if parent_class
+                                    .and_then(|parent| parent.methods.get(method_name_id))
+                                    .map(|parent_method| parent_method.file_path)
+                                    .or_else(|| parent_class.map(|parent| parent.file_path))
+                                    .and_then(|file_path| codebase.files.get(&file_path))
+                                    .is_some_and(|file| !file.is_in_project_dirs || file.is_stub)
+                                {
+                                    return true;
+                                }
                                 let parent_referenced =
                                     referenced_class_members.contains(&(*parent_id, method_lc));
-                                let parent_abstract = codebase
-                                    .get_class(*parent_id)
+                                let parent_abstract = parent_class
                                     .and_then(|parent| parent.methods.get(method_name_id))
                                     .is_some_and(|parent_method| parent_method.is_abstract)
-                                    || codebase.get_class(*parent_id).is_some_and(|parent| {
+                                    || parent_class.is_some_and(|parent| {
                                         parent.kind == ClassLikeKind::Interface
                                     });
                                 !parent_abstract || parent_referenced
@@ -427,12 +459,21 @@ fn report_unused_declarations(
                 if prop_referenced {
                     continue;
                 }
-                // An overriding property defers to its parent's verdict.
-                let overrides_parent = class_info.parent_class.is_some_and(|parent_id| {
-                    codebase
-                        .get_class(parent_id)
-                        .is_some_and(|parent| parent.properties.contains_key(prop_name_id))
-                });
+                // An overriding property defers to its parent's verdict
+                // (Psalm's `overridden_property_ids`): a property that
+                // redeclares one from any ancestor — including ancestors
+                // declared in a stub or a scanned-only dependency (vendor),
+                // whose accesses pzoom never analyzes — stays alive, mirroring
+                // the non-reportable-parent handling for methods above.
+                let overrides_parent = class_info
+                    .parent_class
+                    .iter()
+                    .chain(class_info.all_parent_classes.iter())
+                    .any(|parent_id| {
+                        codebase
+                            .get_class(*parent_id)
+                            .is_some_and(|parent| parent.properties.contains_key(prop_name_id))
+                    });
                 if overrides_parent {
                     continue;
                 }

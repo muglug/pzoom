@@ -1,0 +1,2 @@
+MissingDependency - input.php:20:1 - MyVisitor depends on class or interface ExternalVisitorBase that does not exist
+UndefinedClass - input.php:3:13 - Class ExternalVisitorBase does not exist

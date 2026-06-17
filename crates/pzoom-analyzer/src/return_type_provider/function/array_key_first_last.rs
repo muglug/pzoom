@@ -30,7 +30,14 @@ fn infer_array_key_first_last_return_type(
     let array_info = fca::extract_array_like_info_from_union(&array_type)?;
 
     let key_type = fca::normalize_array_key_union(&array_info.key_type);
-    if array_info.is_non_empty {
+    // Psalm's stub return is
+    //   (TArray is array<never, never> ? null
+    //      : (TArray is non-empty-array ? key-of<TArray> : key-of<TArray>|null))
+    // A list/array whose value type is `never` is effectively the empty
+    // `array<never, never>`, so the leading null branch stays reachable even
+    // when the array is otherwise non-empty (e.g. a `non-empty-list<never>`
+    // produced by a truthy narrowing yields `int<0, max>|null`).
+    if array_info.is_non_empty && !array_info.value_type.is_nothing() {
         return Some(key_type);
     }
 

@@ -1805,11 +1805,11 @@ fn check_array_offset(
             &normalized_index_type,
             expected_offset_type,
         ) {
-            if suppress_possible_issue {
-                return false;
-            }
             // A null possibility among otherwise-fitting offsets is Psalm's
             // PossiblyNullArrayOffset, not the generic possibly-invalid kind.
+            // Psalm reports the null/possibly-null offset before any
+            // isset()/empty() handling, so it is not silenced inside those
+            // guards (getArrayAccessTypeGivenOffset).
             if normalized_index_type
                 .types
                 .iter()
@@ -1829,6 +1829,9 @@ fn check_array_offset(
                 ));
                 return true;
             }
+            if suppress_possible_issue {
+                return false;
+            }
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyInvalidArrayOffset,
                 format!(
@@ -1843,10 +1846,8 @@ fn check_array_offset(
             ));
             return true;
         } else {
-            if suppress_possible_issue {
-                return false;
-            }
-            // A definitely-null offset is Psalm's NullArrayOffset.
+            // A definitely-null offset is Psalm's NullArrayOffset, likewise
+            // reported regardless of isset()/empty() context.
             if normalized_index_type.is_null() {
                 analysis_data.add_issue(Issue::new(
                     IssueKind::NullArrayOffset,
@@ -1858,6 +1859,9 @@ fn check_array_offset(
                     0,
                 ));
                 return true;
+            }
+            if suppress_possible_issue {
+                return false;
             }
             analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArrayOffset,
@@ -1938,9 +1942,9 @@ fn check_array_offset(
     if has_null_offset && !has_invalid_offset {
         let span = access.index.span();
         let start_line = get_line_number(analyzer.source, span.start.offset);
-        if suppress_possible_issue {
-            return false;
-        }
+        // Psalm reports Null/PossiblyNullArrayOffset regardless of
+        // isset()/empty() context, so do not silence it under
+        // `suppress_possible_issue`.
         if has_valid_offset {
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyNullArrayOffset,
@@ -2145,8 +2149,53 @@ fn check_array_offset_against_expected_branches(
         return true;
     }
 
-    if !has_invalid_branch {
+    let index_has_null = normalized_index_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TNull));
+
+    // A null offset is never silenced: an isset()/empty() guard accepts a
+    // reverse-fitting branch (`has_valid_branch` without `has_invalid_branch`),
+    // but Psalm still reports the null part. Keep going whenever the offset is
+    // null-tainted so the dedicated Null/PossiblyNullArrayOffset report below
+    // fires regardless.
+    if !has_invalid_branch && !index_has_null {
         return false;
+    }
+
+    let span = access.index.span();
+    let start_line = get_line_number(analyzer.source, span.start.offset);
+
+    // Psalm's getArrayAccessTypeGivenOffset reports Null/PossiblyNullArrayOffset
+    // up front, before any isset()/empty() handling, so a null (or possibly-null)
+    // offset is flagged even inside those guards — unlike the invalid /
+    // possibly-invalid offset reports below, which stay silenced there.
+    if normalized_index_type.is_null() {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::NullArrayOffset,
+            "Cannot access value using null offset".to_string(),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        return true;
+    }
+    if has_valid_branch && index_has_null {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyNullArrayOffset,
+            format!(
+                "Cannot access value using possibly null offset {}",
+                normalized_index_type.get_id(Some(analyzer.interner))
+            ),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        return true;
     }
 
     if suppress_possible_issue
@@ -2164,26 +2213,7 @@ fn check_array_offset_against_expected_branches(
         return false;
     }
 
-    let span = access.index.span();
-    let start_line = get_line_number(analyzer.source, span.start.offset);
-    let index_has_null = normalized_index_type
-        .types
-        .iter()
-        .any(|atomic| matches!(atomic, TAtomic::TNull));
-    let (kind, message) = if normalized_index_type.is_null() {
-        (
-            IssueKind::NullArrayOffset,
-            "Cannot access value using null offset".to_string(),
-        )
-    } else if has_valid_branch && index_has_null {
-        (
-            IssueKind::PossiblyNullArrayOffset,
-            format!(
-                "Cannot access value using possibly null offset {}",
-                normalized_index_type.get_id(Some(analyzer.interner))
-            ),
-        )
-    } else if has_valid_branch {
+    let (kind, message) = if has_valid_branch {
         (
             IssueKind::PossiblyInvalidArrayOffset,
             format!(

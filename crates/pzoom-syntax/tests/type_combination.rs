@@ -613,6 +613,10 @@ const CASES: &[Case] = &[
 ///   param-less `Traversable` with an array into `iterable`; the combiner has
 ///   no per-atomic docblock provenance to make that call;
 const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
+    // Psalm only recombines a *docblock* param-less `Traversable` with an array
+    // into `iterable`; pzoom has no per-atomic docblock provenance, and a bare
+    // `Traversable` narrowed from `instanceof` must stay separate
+    // (tests/inference/TypeCombination/ArrayAndTraversableNotIterable).
     (
         "arrayTraversableToIterable",
         "Traversable|array<array-key, mixed>",

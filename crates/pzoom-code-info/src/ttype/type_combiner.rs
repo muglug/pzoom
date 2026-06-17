@@ -107,8 +107,9 @@ fn combine_inner(
     // array|Traversable recombines into iterable (Psalm TypeCombiner): the
     // generic array params merge element-wise with Traversable's. Psalm also
     // recombines a param-less docblock `Traversable`; pzoom has no per-atomic
-    // docblock provenance inside the combiner, so only the
-    // parameterised form is handled.
+    // docblock provenance inside the combiner, so only the parameterised form is
+    // handled (a bare `Traversable` narrowed from `instanceof` must stay separate
+    // — see tests/inference/TypeCombination/ArrayAndTraversableNotIterable).
     if combination.array_type_params.is_some()
         && combination.builtin_type_params.contains_key("Traversable")
         && combination.extra_types.is_empty()

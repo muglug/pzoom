@@ -1419,7 +1419,11 @@ pub(crate) fn get_method_return_type(
             TAtomic::TObject => {
                 // Generic object - can't look up method, just return mixed
             }
-            TAtomic::TMixed => {
+            // Psalm models `non-empty-mixed` as a TMixed subclass, so a method
+            // call on it is a MixedMethodCall ("cannot determine the type") just
+            // like plain `mixed` — not an InvalidMethodCall. This is the type a
+            // truthy-narrowed mixed receiver carries, e.g. `$x && $x->foo()`.
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
                 if matches!(object_expr.unparenthesized(), Expression::ArrayAccess(_)) {
                     continue;
                 }

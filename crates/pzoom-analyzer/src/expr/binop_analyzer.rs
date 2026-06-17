@@ -806,6 +806,12 @@ fn is_get_class_call(expr: &Expression<'_>) -> bool {
 }
 
 fn has_deterministic_strict_identity(atomic: &TAtomic) -> bool {
+    // The non-specific `literal-string` sentinel is a `TLiteralString` but stands
+    // for *any* literal string (including `""`), so it carries no determined
+    // value — a `literal-string === ""` must stay `bool`, not fold to a verdict.
+    if let TAtomic::TLiteralString { value } = atomic {
+        return value != pzoom_code_info::t_atomic::NON_SPECIFIC_LITERAL_STRING_VALUE;
+    }
     matches!(
         atomic,
         TAtomic::TNull
@@ -813,7 +819,6 @@ fn has_deterministic_strict_identity(atomic: &TAtomic) -> bool {
             | TAtomic::TFalse
             | TAtomic::TLiteralInt { .. }
             | TAtomic::TLiteralFloat { .. }
-            | TAtomic::TLiteralString { .. }
             | TAtomic::TLiteralClassString { .. }
     )
 }

@@ -7,7 +7,7 @@ use mago_syntax::ast::ast::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
-use pzoom_code_info::{Assertion, TUnion};
+use pzoom_code_info::TUnion;
 use rustc_hash::FxHashSet;
 
 use crate::assertion_finder;
@@ -63,7 +63,6 @@ pub fn analyze(
     // The right side executes only when the left side is falsy.
     let mut right_context = context.clone();
     right_context.inside_conditional = context.inside_conditional;
-    let assertions = assertion_finder::get_assertions(analyzer, left, analysis_data);
 
     // Psalm's IfAnalyzer::addConditionallyAssignedVarsToContext: when the ored
     // left operand assigned vars, replay its disjuncts in order against the
@@ -170,7 +169,6 @@ pub fn analyze(
             Some(&active_negated_assertions),
         );
         analysis_data.current_reconcile_pos = previous_reconcile_pos;
-        promote_asserted_vars_to_assigned(&assertions.if_false, &mut right_context);
 
         // Mirror Hakana: variables whose type the left-negation narrowed have their
         // now-stale clauses dropped before the right operand is analyzed, and the
@@ -482,46 +480,5 @@ pub(crate) fn apply_recorded_assignments(
             apply_recorded_assignments(unary.operand, analysis_data, replay_context);
         }
         _ => {}
-    }
-}
-
-fn promote_asserted_vars_to_assigned(
-    assertions: &std::collections::BTreeMap<VarName, Vec<Vec<Assertion>>>,
-    context: &mut BlockContext,
-) {
-    for var_name in assertions.keys() {
-        if var_name.contains('[')
-            || var_name.contains("->")
-            || var_name.contains("::")
-            || var_name.contains('(')
-        {
-            continue;
-        }
-
-        let mut candidates = vec![var_name.as_str()];
-        if let Some(stripped) = var_name.strip_prefix('$') {
-            candidates.push(stripped);
-        } else {
-            // Keep both `$x` and `x` spellings in sync.
-            let with_dollar = VarName::from(format!("${var_name}"));
-            if context.locals.contains_key(&with_dollar) {
-                *context
-                    .assigned_var_ids
-                    .entry(with_dollar.clone())
-                    .or_insert(0) += 1;
-                context.possibly_assigned_var_ids.remove(&with_dollar);
-            }
-        }
-
-        for candidate in candidates {
-            let candidate = VarName::new(candidate);
-            if context.locals.contains_key(&candidate) {
-                *context
-                    .assigned_var_ids
-                    .entry(candidate.clone())
-                    .or_insert(0) += 1;
-                context.possibly_assigned_var_ids.remove(&candidate);
-            }
-        }
     }
 }

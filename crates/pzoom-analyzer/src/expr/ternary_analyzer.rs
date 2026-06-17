@@ -75,6 +75,18 @@ pub fn analyze(
     context.inside_conditional = was_inside_conditional;
     context.if_body_context = enclosing_if_body_context;
 
+    // Psalm runs the ternary condition through IfConditionalAnalyzer, which flags an
+    // always-truthy/always-falsy/risky condition (RedundantCondition,
+    // TypeDoesNotContainType, RiskyTruthyFalsyComparison) just like a plain `if`.
+    crate::stmt::if_conditional_analyzer::handle_paradoxical_condition(
+        analyzer,
+        cond.condition,
+        cond_pos,
+        analysis_data,
+        true,
+        Some(context),
+    );
+
     // Get the condition type for later use
     let stmt_cond_type = analysis_data.expr_types.get(&cond_pos).cloned();
 

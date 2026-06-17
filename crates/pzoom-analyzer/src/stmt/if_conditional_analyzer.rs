@@ -11,7 +11,7 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion};
+use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarName};
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
@@ -47,7 +47,14 @@ pub fn analyze(
     // context immutably, so work on a clone that becomes post_if_context.
     let mut outer_working = outer_context.clone();
     outer_working.if_body_context = None;
+    // Psalm's IfConditionalAnalyzer resets `assigned_var_ids` to empty before each
+    // condition pass and reads the vars assigned in that pass by their PRESENCE
+    // afterwards, then restores. This detects a reassignment of an already-defined
+    // variable (`if (rand() && ($pos = $str))`) even though the per-operand
+    // analyzers reset their clones' counts, which a count-vs-outer-baseline
+    // comparison would miss.
     let pre_condition_assigned = outer_context.assigned_var_ids.clone();
+    outer_working.assigned_var_ids.clear();
 
     // Psalm clones `$if_context` BEFORE the externally-applied analysis when the
     // internally- and externally-applied expressions differ: scope entries the
@@ -73,6 +80,14 @@ pub fn analyze(
     );
     outer_working.inside_conditional = was_inside_conditional;
 
+    // Vars assigned by the definitely-evaluated sub-expression (presence, from the
+    // empty baseline), then restore the real counts (pre + this pass).
+    let first_cond_assigned: FxHashSet<VarName> =
+        outer_working.assigned_var_ids.keys().cloned().collect();
+    let external_assigned = std::mem::take(&mut outer_working.assigned_var_ids);
+    outer_working.assigned_var_ids = pre_condition_assigned.clone();
+    outer_working.assigned_var_ids.extend(external_assigned);
+
     let if_context = early_if_context
         .take()
         .unwrap_or_else(|| outer_working.clone());
@@ -88,13 +103,21 @@ pub fn analyze(
     let post_if_context = outer_working.clone();
 
     let cond_unparenthesized = cond.unparenthesized();
+    let mut more_cond_assigned: FxHashSet<VarName> = FxHashSet::default();
     if !std::ptr::eq(internally_applied_if_cond_expr, cond_unparenthesized)
         || !std::ptr::eq(externally_applied_if_cond_expr, cond_unparenthesized)
     {
+        // Reset before the full-condition pass; the vars it assigns are then its
+        // post-pass keys (presence). Restore (pre + external + full) afterwards.
+        let baseline_assigned = std::mem::take(&mut if_conditional_context.assigned_var_ids);
         let was_inside_conditional = if_conditional_context.inside_conditional;
         if_conditional_context.inside_conditional = true;
         expression_analyzer::analyze(analyzer, cond, analysis_data, &mut if_conditional_context);
         if_conditional_context.inside_conditional = was_inside_conditional;
+        more_cond_assigned = if_conditional_context.assigned_var_ids.keys().cloned().collect();
+        let full_cond_assigned = std::mem::take(&mut if_conditional_context.assigned_var_ids);
+        if_conditional_context.assigned_var_ids = baseline_assigned;
+        if_conditional_context.assigned_var_ids.extend(full_cond_assigned);
     }
 
     add_branch_dataflow(analyzer, cond, analysis_data);
@@ -122,21 +145,11 @@ pub fn analyze(
         .reconciled_expression_clauses
         .extend(if_conditional_context.reconciled_expression_clauses);
 
-    // Psalm's assigned_in_conditional_var_ids: vars whose assignment count grew
-    // while analyzing the condition — in the externally-applied pass, the full
-    // condition pass, or an operator's merge into the shared body context.
-    let mut assigned_in_conditional_var_ids = FxHashSet::default();
-    for assigned in [
-        &outer_working.assigned_var_ids,
-        &if_conditional_context.assigned_var_ids,
-        &if_body_context.assigned_var_ids,
-    ] {
-        for (var_id, count) in assigned {
-            if pre_condition_assigned.get(var_id).copied().unwrap_or(0) < *count {
-                assigned_in_conditional_var_ids.insert(var_id.clone());
-            }
-        }
-    }
+    // Psalm's `assigned_in_conditional_var_ids`: the union of the vars assigned in
+    // the externally-applied pass and the full-condition pass (each captured by
+    // presence from a reset baseline).
+    let mut assigned_in_conditional_var_ids = first_cond_assigned;
+    assigned_in_conditional_var_ids.extend(more_cond_assigned);
 
     IfConditionalScope {
         if_body_context,
@@ -362,12 +375,23 @@ pub fn handle_paradoxical_condition(
 
     // Psalm: otherwise flag a risky truthy/falsy comparison
     // (`ExpressionAnalyzer::checkRiskyTruthyFalsyComparison`), skipped for the
-    // `===` / `!==` / `!` forms that already compare explicitly.
-    if !is_assignment_or_negated_assignment(expr)
-        && should_check_risky_truthy_falsy(expr, analyzer)
-        && get_truthy_falsy_target_union(expr, expr_type.clone(), analysis_data)
-            .is_some_and(|target_union| is_risky_truthy_falsy_union(&target_union))
-    {
+    // `===` / `!==` / `!` forms that already compare explicitly. A `??` condition
+    // is checked directly (Psalm runs checkRiskyTruthyFalsyComparison on the
+    // coalesce result), with the full algorithm rather than the narrower
+    // nullable-array-like heuristic used for the param/call allowlist.
+    let is_coalesce_condition = matches!(
+        expr.unparenthesized(),
+        Expression::Binary(binary) if matches!(binary.operator, BinaryOperator::NullCoalesce(_))
+    );
+    let is_risky = if is_coalesce_condition {
+        is_risky_truthy_falsy_coalesce_union(&expr_type)
+    } else {
+        !is_assignment_or_negated_assignment(expr)
+            && should_check_risky_truthy_falsy(expr, analyzer)
+            && get_truthy_falsy_target_union(expr, expr_type.clone(), analysis_data)
+                .is_some_and(|target_union| is_risky_truthy_falsy_union(&target_union))
+    };
+    if is_risky {
         let (line, col) = analyzer.get_line_column(expr_pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::RiskyTruthyFalsyComparison,
@@ -397,28 +421,28 @@ fn is_risky_truthy_falsy_union(union: &TUnion) -> bool {
     union.types.iter().any(is_ambiguous_array_like_atomic)
 }
 
-fn get_truthy_falsy_target_union(
-    expr: &Expression<'_>,
-    expr_type: TUnion,
-    analysis_data: &FunctionAnalysisData,
-) -> Option<TUnion> {
-    let Expression::UnaryPrefix(unary) = expr.unparenthesized() else {
-        return Some(expr_type);
-    };
-
-    if !matches!(unary.operator, UnaryPrefixOperator::Not(_)) {
-        return Some(expr_type);
+/// Psalm's `checkRiskyTruthyFalsyComparison` algorithm: more than one atomic
+/// where, after dropping every exclusively-truthy/exclusively-falsy/`bool`
+/// atomic, an ambiguous atomic (one that can be both truthy and falsy, e.g.
+/// `mixed`/`string`) remains and at least one exclusive atomic was dropped. Used
+/// for a `??` condition (`$obj->prop ?? default` => `bool|mixed`, etc.), where
+/// the narrower nullable-array-like heuristic above does not apply.
+fn is_risky_truthy_falsy_coalesce_union(union: &TUnion) -> bool {
+    if union.types.len() <= 1 {
+        return false;
     }
 
-    analysis_data
-        .expr_types
-        .get(&(
-            unary.operand.start_offset() as u32,
-            unary.operand.end_offset() as u32,
-        ))
-        .cloned()
-        .map(|union| (*union).clone())
-        .or(Some(expr_type))
+    let mut dropped_exclusive = false;
+    let mut has_ambiguous = false;
+    for atomic in &union.types {
+        if atomic.is_truthy() || atomic.is_falsy() || matches!(atomic, TAtomic::TBool) {
+            dropped_exclusive = true;
+        } else {
+            has_ambiguous = true;
+        }
+    }
+
+    dropped_exclusive && has_ambiguous
 }
 
 fn is_array_like_atomic(atomic: &TAtomic) -> bool {
@@ -449,6 +473,29 @@ fn is_ambiguous_array_like_atomic(atomic: &TAtomic) -> bool {
         _ => true,
     }
 }
+
+fn get_truthy_falsy_target_union(
+    expr: &Expression<'_>,
+    expr_type: TUnion,
+    analysis_data: &FunctionAnalysisData,
+) -> Option<TUnion> {
+    let Expression::UnaryPrefix(unary) = expr.unparenthesized() else {
+        return Some(expr_type);
+    };
+
+    if !matches!(unary.operator, UnaryPrefixOperator::Not(_)) {
+        return Some(expr_type);
+    }
+
+    analysis_data
+        .expr_types.get(&(
+            unary.operand.start_offset() as u32,
+            unary.operand.end_offset() as u32,
+        )).cloned()
+        .map(|union| (*union).clone())
+        .or(Some(expr_type))
+}
+
 
 fn is_assignment_or_negated_assignment(expr: &Expression<'_>) -> bool {
     match expr.unparenthesized() {

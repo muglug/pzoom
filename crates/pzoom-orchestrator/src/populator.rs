@@ -696,6 +696,21 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                         Some(sum) => TUnion::new(TAtomic::TLiteralInt { value: sum }),
                         None => TUnion::mixed(),
                     },
+                    // Float arithmetic (mirroring Psalm's ConstantTypeResolver,
+                    // which evaluates `1.0 + 1.0` to a literal float rather than
+                    // bailing to mixed). A float operand makes the result a float.
+                    (
+                        Some(TAtomic::TLiteralFloat { value: lhs_value }),
+                        Some(TAtomic::TLiteralFloat { value: rhs_value }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat { value: lhs_value + rhs_value }),
+                    (
+                        Some(TAtomic::TLiteralInt { value: lhs_value }),
+                        Some(TAtomic::TLiteralFloat { value: rhs_value }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat { value: *lhs_value as f64 + rhs_value }),
+                    (
+                        Some(TAtomic::TLiteralFloat { value: lhs_value }),
+                        Some(TAtomic::TLiteralInt { value: rhs_value }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat { value: lhs_value + *rhs_value as f64 }),
                     _ => TUnion::mixed(),
                 }
             }

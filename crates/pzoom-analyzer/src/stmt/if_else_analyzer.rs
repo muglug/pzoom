@@ -232,7 +232,6 @@ pub fn analyze(
         Some(&omit_report_vars),
         true,
     );
-    promote_asserted_vars_to_assigned(&assertion_result.if_true, &mut if_context);
     promote_guaranteed_true_condition_assignments(analyzer, if_stmt.condition, &mut if_context);
 
     // The if context as it stands after condition narrowing but before the body —
@@ -795,7 +794,6 @@ pub fn analyze(
                 crate::reconciler::EmissionMode::Silent,
                 None,
             );
-            promote_asserted_vars_to_assigned(&assertion_result.if_false, context);
         }
     }
 
@@ -1106,46 +1104,6 @@ pub(crate) fn update_if_scope(
                         vacant.insert(ty);
                     }
                 }
-            }
-        }
-    }
-}
-
-pub(crate) fn promote_asserted_vars_to_assigned(
-    assertions: &BTreeMap<VarName, Vec<Vec<Assertion>>>,
-    context: &mut BlockContext,
-) {
-    for var_name in assertions.keys() {
-        if var_name.contains('[')
-            || var_name.contains("->")
-            || var_name.contains("::")
-            || var_name.contains('(')
-        {
-            continue;
-        }
-
-        let mut candidates = vec![var_name.as_str()];
-        if let Some(stripped) = var_name.strip_prefix('$') {
-            candidates.push(stripped);
-        } else {
-            let with_dollar = VarName::from(format!("${var_name}"));
-            if context.locals.contains_key(&with_dollar) {
-                *context
-                    .assigned_var_ids
-                    .entry(with_dollar.clone())
-                    .or_insert(0) += 1;
-                context.possibly_assigned_var_ids.remove(&with_dollar);
-            }
-        }
-
-        for candidate in candidates {
-            let candidate = VarName::new(candidate);
-            if context.locals.contains_key(&candidate) {
-                *context
-                    .assigned_var_ids
-                    .entry(candidate.clone())
-                    .or_insert(0) += 1;
-                context.possibly_assigned_var_ids.remove(&candidate);
             }
         }
     }

@@ -77,15 +77,22 @@ pub fn analyze(
     // Analyze the expression - the result type is discarded
     let pos = expression_analyzer::analyze(analyzer, expr_stmt.expression, analysis_data, context);
 
-    // A statement-level expression of type `never` ends control flow — except
-    // a bare `yield;`, whose type is `never` (the unused send() value, as in
-    // Psalm's YieldAnalyzer) while the generator plainly resumes after it.
-    if !matches!(expr_stmt.expression.unparenthesized(), Expression::Yield(_))
-        && analysis_data
-            .expr_types
-            .get(&pos)
-            .cloned()
-            .is_some_and(|t| t.is_nothing())
+    // A statement-level `never` ends control flow only when it originates from a
+    // never-returning call or `exit`/`die` — mirroring Psalm, where
+    // `$context->has_returned` is set by FunctionCall/MethodCallAnalyzer and
+    // ExitAnalyzer, not by an assignment or a bare arithmetic expression. In
+    // particular, a modulo-by-zero (`$x = 3 % 0`) yields `never` but does NOT
+    // make the following statements unreachable, so each such site still gets its
+    // own NoValue. (`throw` is handled in throw_analyzer; a bare `yield;` keeps
+    // resuming, as in Psalm's YieldAnalyzer.)
+    if matches!(
+        expr_stmt.expression.unparenthesized(),
+        Expression::Call(_) | Expression::Construct(_)
+    ) && analysis_data
+        .expr_types
+        .get(&pos)
+        .cloned()
+        .is_some_and(|t| t.is_nothing())
     {
         context.has_returned = true;
     }

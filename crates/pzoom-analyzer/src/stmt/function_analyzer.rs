@@ -234,6 +234,8 @@ pub fn analyze(
                 name: param_name.to_string(),
                 span: (param_span.start.offset, param_span.end.offset),
                 method_param_meta: None,
+                method_class_id: None,
+                method_name_id: None,
             });
         param_type.parent_nodes.push(parent_node);
 

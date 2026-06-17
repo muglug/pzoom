@@ -7147,6 +7147,8 @@ pub(crate) fn analyze_method(
                             .is_some_and(|ids| !ids.is_empty())
                     }),
                 )),
+                method_class_id: class_info.map(|ci| ci.name),
+                method_name_id: Some(method_name_id),
             });
         param_type.parent_nodes.push(parent_node);
 

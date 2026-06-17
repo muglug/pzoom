@@ -37,6 +37,33 @@ pub struct ParamSourceInfo {
     /// drives PossiblyUnusedParam/UnusedParam under find_unused_code
     /// (Psalm's checkMethodParamReferences). None for functions/closures.
     pub method_param_meta: Option<(bool, bool, bool)>,
+    /// The declaring class id for a method param (None for functions/closures).
+    /// Used to build the codebase-wide `(class, method, offset)` param-use keys
+    /// that mirror Psalm's `method_param_uses`.
+    pub method_class_id: Option<StrId>,
+    /// The method name id for a method param (None for functions/closures).
+    pub method_name_id: Option<StrId>,
+}
+
+/// A non-private method parameter that is unreferenced in its own body, deferred
+/// to the codebase-wide unused pass. Psalm's `checkMethodParamReferences` only
+/// reports such a param once every overriding implementation has also been seen
+/// (a child that uses the param marks the parent's param used via
+/// `addMethodParamUse`), so the verdict cannot be reached during single-file
+/// analysis.
+#[derive(Debug, Clone)]
+pub struct ParamUnusedCandidate {
+    pub file_path: StrId,
+    pub class_id: StrId,
+    /// Lowercased method-name key, matching `used_method_params`.
+    pub method_lc: StrId,
+    pub offset: usize,
+    /// Psalm reports a final method's param as `UnusedParam`, otherwise
+    /// `PossiblyUnusedParam`.
+    pub is_final: bool,
+    pub span: (u32, u32),
+    pub line: u32,
+    pub col: u32,
 }
 
 /// Central state container for analyzing a function or method.
@@ -101,6 +128,17 @@ pub struct FunctionAnalysisData {
     /// Parameter source-node metadata for Psalm's `checkParamReferences`
     /// (UnusedParam/UnusedClosureParam with the trailing-params-only rule).
     pub param_sources: Vec<ParamSourceInfo>,
+
+    /// `(class, lowercase method, offset)` triples whose parameter is referenced
+    /// somewhere — either in the method's own body or, propagated up the
+    /// override chain, in a child implementation. Mirrors Psalm's
+    /// `FileReferenceProvider::$method_param_uses` (populated by
+    /// `addMethodParamUse`, including the parent-propagation loop in
+    /// `FunctionLikeAnalyzer`).
+    pub used_method_params: rustc_hash::FxHashSet<(pzoom_str::StrId, pzoom_str::StrId, usize)>,
+    /// Non-private method params that are unused in their own body, deferred to
+    /// the codebase-wide pass (Psalm's `checkMethodParamReferences`).
+    pub param_unused_candidates: Vec<ParamUnusedCandidate>,
 
     /// Classes referenced from outside themselves (new/static-call/extends/
     /// implements/signature types) — Psalm's isClassReferenced, for

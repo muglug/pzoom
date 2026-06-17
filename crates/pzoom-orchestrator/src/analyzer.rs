@@ -149,6 +149,8 @@ impl<'a> Analyzer<'a> {
                 &refs.symbol_references,
                 &refs.referenced_properties,
                 &refs.method_returns_used,
+                &refs.used_method_params,
+                &refs.param_unused_candidates,
             ));
         }
         issues
@@ -162,6 +164,8 @@ struct ReferenceAccumulator {
     symbol_references: SymbolReferences,
     referenced_properties: FxHashSet<(StrId, StrId)>,
     method_returns_used: FxHashSet<(StrId, StrId)>,
+    used_method_params: FxHashSet<(StrId, StrId, usize)>,
+    param_unused_candidates: Vec<pzoom_analyzer::function_analysis_data::ParamUnusedCandidate>,
 }
 
 impl ReferenceAccumulator {
@@ -170,6 +174,9 @@ impl ReferenceAccumulator {
         self.referenced_properties
             .extend(data.referenced_properties);
         self.method_returns_used.extend(data.method_returns_used);
+        self.used_method_params.extend(data.used_method_params);
+        self.param_unused_candidates
+            .extend(data.param_unused_candidates);
     }
 
     fn merge_accumulator(&mut self, other: ReferenceAccumulator) {
@@ -177,5 +184,8 @@ impl ReferenceAccumulator {
         self.referenced_properties
             .extend(other.referenced_properties);
         self.method_returns_used.extend(other.method_returns_used);
+        self.used_method_params.extend(other.used_method_params);
+        self.param_unused_candidates
+            .extend(other.param_unused_candidates);
     }
 }

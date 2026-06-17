@@ -36,9 +36,7 @@ fn infer_array_values_return_type(
     // Psalm's NamedFunctionCallHandler tests `isContainedBy($arg, Type::getList())`
     // rather than a structural is-list flag, so an empty array (`array<never,never>`,
     // the type of `[]`) — which is contained by `list<mixed>` — is redundant too.
-    let list_container = TUnion::new(TAtomic::TList {
-        value_type: Box::new(TUnion::mixed()),
-    });
+    let list_container = TUnion::new(TAtomic::list(TUnion::mixed()));
     let mut comparison_result = TypeComparisonResult::new();
     let is_contained_by_list = union_type_comparator::is_contained_by(
         analyzer.codebase,

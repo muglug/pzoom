@@ -6674,10 +6674,16 @@ fn analyze_methods_from_trait(
         )?;
     }
 
-    if stricter_override_methods.is_empty() {
-        return Ok(());
-    }
-
+    // Re-parse the trait's source so its method ASTs can be analysed in this
+    // using class's context. Psalm analyses trait method bodies once per using
+    // class (with `$this` bound to the class), which is how a trait method's
+    // `$this->property` resolves to the class's property type and how its calls
+    // and override relationships are attributed. pzoom collects that here into a
+    // throwaway `FunctionAnalysisData`: the body's own diagnostics are already
+    // emitted by the trait's file pass, but the references and param usage
+    // discovered with the class's real types feed the codebase-wide unused
+    // passes (otherwise e.g. `$this->prop->method()` resolves through `mixed`
+    // and the called method looks unused).
     let Some(trait_file_info) = analyzer.codebase.files.get(&trait_info.file_path) else {
         return Ok(());
     };
@@ -6707,12 +6713,16 @@ fn analyze_methods_from_trait(
     )
     .with_arena(&arena);
 
+    let mut trait_data = FunctionAnalysisData::new();
+
     for member in trait_stmt.members.iter() {
         let ClassLikeMember::Method(method) = member else {
             continue;
         };
 
         let method_name_id = analyzer.interner.intern(method.name.value);
+        // A method the class redeclares is analysed as the class's own method;
+        // don't analyse the trait's copy on top of it.
         if class_info
             .methods
             .get(&method_name_id)
@@ -6721,33 +6731,59 @@ fn analyze_methods_from_trait(
             continue;
         }
 
-        let issue_count_before = analysis_data.issues.len();
         analyze_method(
             &trait_analyzer,
             method,
             class_name_id,
             Some(class_info),
             trait_namespace,
-            analysis_data,
+            &mut trait_data,
         )?;
-
-        if analysis_data.issues.len() == issue_count_before {
-            continue;
-        }
-
-        let new_issues = analysis_data.issues.split_off(issue_count_before);
-        let filtered_issues: Vec<_> = new_issues
-            .into_iter()
-            .filter(|issue| {
-                issue.kind == IssueKind::TooFewArguments
-                    && too_few_argument_needles
-                        .iter()
-                        .any(|needle| issue.message.contains(needle))
-            })
-            .collect();
-
-        analysis_data.issues.extend(filtered_issues);
     }
+
+    // Param / unused-variable verdicts (Psalm's checkParamReferences) over the
+    // class-context trait bodies, so a trait method's param candidates carry the
+    // using class's override relationships rather than the bare trait's.
+    if analyzer.config.report_unused {
+        crate::file_analyzer::report_unused_variables(
+            &mut trait_data,
+            trait_info.file_path,
+            &trait_analyzer,
+            analyzer.interner,
+        );
+    }
+
+    // Surface the stricter-override TooFewArguments diagnostics (the only body
+    // issue this pass owns; everything else belongs to the trait's file pass).
+    if !stricter_override_methods.is_empty() {
+        for issue in &trait_data.issues {
+            if issue.kind == IssueKind::TooFewArguments
+                && too_few_argument_needles
+                    .iter()
+                    .any(|needle| issue.message.contains(needle))
+            {
+                analysis_data.add_issue(issue.clone());
+            }
+        }
+    }
+
+    // Fold the discovered references and param data into this file's
+    // contribution to the codebase-wide unused passes.
+    analysis_data
+        .symbol_references
+        .extend(trait_data.symbol_references);
+    analysis_data
+        .referenced_properties
+        .extend(trait_data.referenced_properties);
+    analysis_data
+        .method_returns_used
+        .extend(trait_data.method_returns_used);
+    analysis_data
+        .used_method_params
+        .extend(trait_data.used_method_params);
+    analysis_data
+        .param_unused_candidates
+        .extend(trait_data.param_unused_candidates);
 
     Ok(())
 }

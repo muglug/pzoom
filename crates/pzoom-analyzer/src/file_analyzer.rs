@@ -611,7 +611,7 @@ fn report_complex_functions(
 /// grouped per function-like, only the trailing run of unused parameters
 /// reports (an unused param before a used one is required positionally), and
 /// only for plain functions, closures and private methods.
-fn report_unused_variables(
+pub(crate) fn report_unused_variables(
     analysis_data: &mut crate::function_analysis_data::FunctionAnalysisData,
     file_path: StrId,
     stmt_analyzer: &StatementsAnalyzer<'_>,
@@ -754,7 +754,20 @@ fn report_unused_variables(
                     // overrides an ancestor (`empty(overridden_method_ids)`) and
                     // promoted-constructor params. The remaining ones become
                     // candidates, resolved once every override has been seen.
-                    if _has_overrides || param.is_promoted {
+                    //
+                    // A trait method's own `overridden_method_ids` reflect the
+                    // trait, not the using class (where the method may well
+                    // override a parent). Psalm checks each param in the context
+                    // of the using class, so candidates for trait methods are
+                    // produced there (class_analyzer::analyze_methods_from_trait),
+                    // not here against the bare trait.
+                    let class_is_trait = stmt_analyzer.codebase.get_class(class_id).is_some_and(
+                        |class_info| {
+                            class_info.kind
+                                == pzoom_code_info::class_like_info::ClassLikeKind::Trait
+                        },
+                    );
+                    if _has_overrides || param.is_promoted || class_is_trait {
                         continue;
                     }
                     let (line, col) = stmt_analyzer.get_line_column(param.span.0);

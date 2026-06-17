@@ -319,7 +319,9 @@ fn emit_invalid_dynamic_method_name_issues(
 
     for atomic in &obj_type.types {
         match atomic {
-            TAtomic::TMixed => {
+            // `non-empty-mixed` (a truthy-narrowed mixed) is a TMixed subtype in
+            // Psalm, so a dynamic-name call on it is a MixedMethodCall too.
+            TAtomic::TMixed | TAtomic::TNonEmptyMixed => {
                 if emitted_mixed || analyzer.config.is_issue_suppressed("MixedMethodCall") {
                     continue;
                 }

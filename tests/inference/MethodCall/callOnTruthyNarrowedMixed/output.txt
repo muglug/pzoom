@@ -1,0 +1,4 @@
+MixedMethodCall - input.php:13:15 - Cannot determine the type of $x when calling method bar
+    input.php:12:18 - Consider improving the type here
+MixedMethodCall - input.php:8:13 - Cannot determine the type of $x when calling method foo
+    input.php:6:18 - Consider improving the type here

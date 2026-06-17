@@ -182,88 +182,90 @@ fn demote_array_type_after_unset(existing_type: &TUnion, unset_key: Option<&Arra
 
     for atomic in &existing_type.types {
         match atomic {
-            TAtomic::TKeyedArray {
-                properties,
+            // Shapes (keyed arrays with known entries).
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
+                is_sealed,
+                ..
+            } if !known_values.is_empty() => {
+                let (fallback_key_type, fallback_value_type) = match params.as_deref() {
+                    Some((key, value)) => (Some(key.clone()), Some(value.clone())),
+                    None => (None, None),
+                };
+
                 if let Some(unset_key) = unset_key {
-                    let mut next_properties = (**properties).clone();
+                    let mut next_known_values = (**known_values).clone();
 
                     // Removing a non-last entry from a list (or any entry of an
                     // unsealed list) breaks contiguity (Psalm's UnsetAnalyzer).
                     let mut next_is_list = *is_list;
                     if fallback_value_type.is_some() {
                         next_is_list = false;
-                    } else if next_properties.contains_key(unset_key)
-                        && *unset_key != ArrayKey::Int(next_properties.len() as i64 - 1)
+                    } else if next_known_values.contains_key(unset_key)
+                        && *unset_key != ArrayKey::Int(next_known_values.len() as i64 - 1)
                     {
                         next_is_list = false;
                     }
-                    next_properties.remove(unset_key);
+                    next_known_values.remove(unset_key);
 
-                    if next_properties.is_empty() {
+                    if next_known_values.is_empty() {
                         // No known entries left: an unsealed shape degrades to
                         // its fallback array, a sealed one to the empty array.
                         if let (Some(fallback_key), Some(fallback_value)) =
                             (fallback_key_type, fallback_value_type)
                         {
-                            updated_types.push(TAtomic::TArray {
-                                key_type: fallback_key.clone(),
-                                value_type: fallback_value.clone(),
-                            });
+                            updated_types.push(TAtomic::array(fallback_key, fallback_value));
                         } else {
-                            updated_types.push(TAtomic::TArray {
-                                key_type: Box::new(TUnion::nothing()),
-                                value_type: Box::new(TUnion::nothing()),
-                            });
+                            updated_types
+                                .push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
                         }
                     } else {
-                        updated_types.push(TAtomic::TKeyedArray {
-                            properties: std::sync::Arc::new(next_properties),
-                            is_list: next_is_list,
-                            sealed: *sealed,
-                            fallback_key_type: fallback_key_type.clone(),
-                            fallback_value_type: fallback_value_type.clone(),
-                        });
+                        updated_types.push(TAtomic::keyed_array(
+                            next_known_values,
+                            next_is_list,
+                            *is_sealed,
+                            fallback_key_type,
+                            fallback_value_type,
+                        ));
                     }
                 } else {
                     // Unknown offset: every known entry may have been the one
                     // removed — Psalm marks them all possibly-undefined and the
                     // shape stops being a list.
-                    let mut next_properties = (**properties).clone();
-                    for property_type in next_properties.values_mut() {
-                        property_type.possibly_undefined = true;
+                    let mut next_known_values = (**known_values).clone();
+                    for (possibly_undefined, _) in next_known_values.values_mut() {
+                        *possibly_undefined = true;
                     }
 
-                    updated_types.push(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(next_properties),
-                        is_list: false,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    });
+                    updated_types.push(TAtomic::keyed_array(
+                        next_known_values,
+                        false,
+                        *is_sealed,
+                        fallback_key_type,
+                        fallback_value_type,
+                    ));
                 }
             }
-            // Non-emptiness never survives an unset of an arbitrary offset.
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
+            // Generic arrays/lists (no known entries). Non-emptiness and list
+            // contiguity never survive an unset of an arbitrary offset, so a
+            // non-empty array becomes possibly-empty and a list degrades to an
+            // int-keyed array (Psalm sets is_list = false).
+            TAtomic::TArray {
+                params: Some(params),
+                is_list,
+                ..
             } => {
-                updated_types.push(TAtomic::TArray {
-                    key_type: key_type.clone(),
-                    value_type: value_type.clone(),
-                });
-            }
-            TAtomic::TNonEmptyList { value_type } | TAtomic::TList { value_type } => {
-                // Unsetting an offset breaks list contiguity (Psalm sets
-                // is_list = false), so degrade to an int-keyed array.
-                updated_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::new(TAtomic::TInt)),
-                    value_type: value_type.clone(),
-                });
+                let (key_type, value_type) = (&params.0, &params.1);
+                if *is_list {
+                    updated_types.push(TAtomic::array(
+                        TUnion::new(TAtomic::TInt),
+                        value_type.clone(),
+                    ));
+                } else {
+                    updated_types.push(TAtomic::array(key_type.clone(), value_type.clone()));
+                }
             }
             TAtomic::TNonEmptyMixed => updated_types.push(TAtomic::TMixed),
             _ => updated_types.push(atomic.clone()),

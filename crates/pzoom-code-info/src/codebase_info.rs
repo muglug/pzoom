@@ -907,38 +907,24 @@ fn remap_atomic_template_names(atomic: &mut TAtomic, remap: &FxHashMap<StrId, St
             remap_union_template_names(&mut conditional.if_true_type, remap);
             remap_union_template_names(&mut conditional.if_false_type, remap);
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
             remap_union_template_names(key_type, remap);
             remap_union_template_names(value_type, remap);
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            remap_union_template_names(value_type, remap);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            for property_type in std::sync::Arc::make_mut(properties).values_mut() {
-                remap_union_template_names(property_type, remap);
+            for (_, value) in std::sync::Arc::make_mut(known_values).values_mut() {
+                remap_union_template_names(value, remap);
             }
-            if let Some(fallback_key_type) = fallback_key_type.as_mut() {
-                remap_union_template_names(fallback_key_type, remap);
-            }
-            if let Some(fallback_value_type) = fallback_value_type.as_mut() {
-                remap_union_template_names(fallback_value_type, remap);
+            if let Some(params) = params.as_mut() {
+                remap_union_template_names(&mut params.0, remap);
+                remap_union_template_names(&mut params.1, remap);
             }
         }
         TAtomic::TNamedObject {

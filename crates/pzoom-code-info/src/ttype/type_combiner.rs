@@ -335,23 +335,25 @@ fn combine_inner(
 fn absorb_object_subtypes_deep(types: &mut Vec<TAtomic>, codebase: &crate::CodebaseInfo) {
     for atomic in types.iter_mut() {
         match atomic {
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => {
                 absorb_object_subtypes_deep(&mut key_type.types, codebase);
                 absorb_object_subtypes_deep(&mut value_type.types, codebase);
             }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                absorb_object_subtypes_deep(&mut value_type.types, codebase);
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } => {
+                for (_, value) in std::sync::Arc::make_mut(known_values).values_mut() {
+                    absorb_object_subtypes_deep(&mut value.types, codebase);
+                }
+                if let Some(params) = params.as_mut() {
+                    absorb_object_subtypes_deep(&mut params.0.types, codebase);
+                    absorb_object_subtypes_deep(&mut params.1.types, codebase);
+                }
             }
             _ => {}
         }
@@ -473,63 +475,69 @@ fn scrape_type_properties(
             None
         }
 
-        // Handle array types
+        // Handle the unified array type. Dispatch to the existing scrapers by
+        // shape: a generic array/list (no known entries) feeds the array/list
+        // params, while a shape feeds the keyed-array path.
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => {
-            scrape_array_properties(
-                combination,
-                *key_type,
-                *value_type,
-                false,
-                overwrite_empty_array,
-            );
-            None
-        }
-
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => {
-            scrape_array_properties(
-                combination,
-                *key_type,
-                *value_type,
-                true,
-                overwrite_empty_array,
-            );
-            combination.array_sometimes_filled = true;
-            None
-        }
-
-        TAtomic::TList { value_type } => {
-            scrape_list_properties(combination, *value_type, false, overwrite_empty_array);
-            None
-        }
-
-        TAtomic::TNonEmptyList { value_type } => {
-            scrape_list_properties(combination, *value_type, true, overwrite_empty_array);
-            combination.array_sometimes_filled = true;
-            None
-        }
-
-        TAtomic::TKeyedArray {
-            properties,
+            known_values,
+            params,
             is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            is_nonempty,
+            is_sealed,
         } => {
-            scrape_keyed_array_properties(
-                combination,
-                properties,
-                is_list,
-                sealed,
-                fallback_key_type.map(|b| *b),
-                fallback_value_type.map(|b| *b),
-                overwrite_empty_array,
-            );
+            if known_values.is_empty() {
+                match params {
+                    Some(params) => {
+                        let (key_type, value_type) = *params;
+                        if is_list {
+                            scrape_list_properties(
+                                combination,
+                                value_type,
+                                is_nonempty,
+                                overwrite_empty_array,
+                            );
+                        } else {
+                            scrape_array_properties(
+                                combination,
+                                key_type,
+                                value_type,
+                                is_nonempty,
+                                overwrite_empty_array,
+                            );
+                        }
+                        if is_nonempty {
+                            combination.array_sometimes_filled = true;
+                        }
+                    }
+                    None => {
+                        // The empty array `[]` (`array<never, never>`).
+                        scrape_array_properties(
+                            combination,
+                            TUnion::new(TAtomic::TNothing),
+                            TUnion::new(TAtomic::TNothing),
+                            false,
+                            overwrite_empty_array,
+                        );
+                    }
+                }
+            } else {
+                let (fallback_key_type, fallback_value_type) = match params {
+                    Some(params) => {
+                        let (key_type, value_type) = *params;
+                        (Some(key_type), Some(value_type))
+                    }
+                    None => (None, None),
+                };
+                scrape_keyed_array_properties(
+                    combination,
+                    known_values_to_unions(&known_values),
+                    is_list,
+                    is_sealed,
+                    fallback_key_type,
+                    fallback_value_type,
+                    overwrite_empty_array,
+                );
+            }
             None
         }
 
@@ -1031,6 +1039,25 @@ fn scrape_array_properties(
         combination.all_arrays_lists = false;
     }
     combination.all_arrays_callable = false;
+}
+
+/// Convert the unified array's `known_values` (whose possibly-undefined flag is
+/// a tuple bool) into the combiner's internal `properties` map (where the flag
+/// rides on each `TUnion`). The keyed-array scrapers read `possibly_undefined`
+/// off the union, so it is synced from the tuple bool here.
+fn known_values_to_unions(
+    known_values: &std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
+) -> std::sync::Arc<FxHashMap<ArrayKey, TUnion>> {
+    std::sync::Arc::new(
+        known_values
+            .iter()
+            .map(|(key, (possibly_undefined, value))| {
+                let mut value = value.clone();
+                value.possibly_undefined = *possibly_undefined;
+                (key.clone(), value)
+            })
+            .collect(),
+    )
 }
 
 fn scrape_list_properties(
@@ -1655,11 +1682,10 @@ fn generic_list_atomic(
 
     let mut value_type = fallback_value.clone();
     value_type.possibly_undefined = false;
-    let value_type = Box::new(value_type);
     Some(if entry.possibly_undefined {
-        TAtomic::TList { value_type }
+        TAtomic::list(value_type)
     } else {
-        TAtomic::TNonEmptyList { value_type }
+        TAtomic::non_empty_list(value_type)
     })
 }
 
@@ -1761,17 +1787,24 @@ fn handle_keyed_array_entries(
         } else {
             // A `Foo::class` key keeps its class-string identity through the
             // merge: it rides on the `ArrayKey::ClassString` variant in the map.
-            new_types.push(TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(
-                    std::mem::take(&mut combination.objectlike_entries)
-                        .into_iter()
-                        .collect(),
-                ),
-                is_list: combination.all_arrays_lists,
-                sealed: combination.objectlike_sealed,
-                fallback_key_type: fallback.as_ref().map(|(k, _)| k.clone()),
-                fallback_value_type: fallback.map(|(_, v)| v),
-            });
+            // Move the combiner's per-union possibly-undefined flag onto the
+            // unified shape's tuple bool.
+            let known_values: FxHashMap<ArrayKey, (bool, TUnion)> =
+                std::mem::take(&mut combination.objectlike_entries)
+                    .into_iter()
+                    .map(|(key, mut value)| {
+                        let possibly_undefined = value.possibly_undefined;
+                        value.possibly_undefined = false;
+                        (key, (possibly_undefined, value))
+                    })
+                    .collect();
+            let params = fallback.map(|(key_type, value_type)| Box::new((*key_type, *value_type)));
+            new_types.push(TAtomic::keyed_array_arc(
+                std::sync::Arc::new(known_values),
+                combination.all_arrays_lists,
+                combination.objectlike_sealed,
+                params,
+            ));
         }
     }
 
@@ -1843,13 +1876,10 @@ fn get_array_type_from_generic_params(
     // A definitely-empty result is the empty array, never a list — Psalm
     // renders the combination of empty arrays as `array<never, never>`.
     if value_type.is_nothing() {
-        return TAtomic::TArray {
-            key_type: Box::new(key_type),
-            value_type: Box::new(value_type),
-        };
+        return TAtomic::array(key_type, value_type);
     }
 
-    if combination.array_always_filled
+    let non_empty = combination.array_always_filled
         || (combination.array_sometimes_filled && overwrite_empty_array)
         || (had_objectlike_entries
             && combination.objectlike_sealed
@@ -1857,27 +1887,13 @@ fn get_array_type_from_generic_params(
             && combination
                 .array_min_counts
                 .as_ref()
-                .is_none_or(|counts| !counts.contains(&0)))
-    {
-        if combination.all_arrays_lists {
-            TAtomic::TNonEmptyList {
-                value_type: Box::new(value_type),
-            }
-        } else {
-            TAtomic::TNonEmptyArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(value_type),
-            }
-        }
-    } else if combination.all_arrays_lists {
-        TAtomic::TList {
-            value_type: Box::new(value_type),
-        }
-    } else {
-        TAtomic::TArray {
-            key_type: Box::new(key_type),
-            value_type: Box::new(value_type),
-        }
+                .is_none_or(|counts| !counts.contains(&0)));
+
+    match (combination.all_arrays_lists, non_empty) {
+        (true, true) => TAtomic::non_empty_list(value_type),
+        (true, false) => TAtomic::list(value_type),
+        (false, true) => TAtomic::non_empty_array(key_type, value_type),
+        (false, false) => TAtomic::array(key_type, value_type),
     }
 }
 
@@ -2066,18 +2082,12 @@ mod tests {
     #[test]
     fn test_combine_arrays() {
         let types = vec![
-            TAtomic::TArray {
-                key_type: Box::new(TUnion::new(TAtomic::TInt)),
-                value_type: Box::new(TUnion::new(TAtomic::TString)),
-            },
-            TAtomic::TArray {
-                key_type: Box::new(TUnion::new(TAtomic::TInt)),
-                value_type: Box::new(TUnion::new(TAtomic::TInt)),
-            },
+            TAtomic::array(TUnion::new(TAtomic::TInt), TUnion::new(TAtomic::TString)),
+            TAtomic::array(TUnion::new(TAtomic::TInt), TUnion::new(TAtomic::TInt)),
         ];
         let result = combine(types, false);
         assert_eq!(result.len(), 1);
-        if let TAtomic::TArray { value_type, .. } = &result[0] {
+        if let Some((_, value_type)) = result[0].array_params() {
             assert_eq!(value_type.types.len(), 2);
         } else {
             panic!("Expected TArray");
@@ -2150,12 +2160,8 @@ fn combiner_param_key(param: &TUnion) -> String {
         .types
         .iter()
         .map(|atomic| match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TKeyedArray { is_list: false, .. } => "array".to_string(),
-            TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { is_list: true, .. } => "list".to_string(),
+            TAtomic::TArray { is_list: true, .. } => "list".to_string(),
+            TAtomic::TArray { is_list: false, .. } => "array".to_string(),
             other => other.get_id(None),
         })
         .collect::<Vec<_>>()

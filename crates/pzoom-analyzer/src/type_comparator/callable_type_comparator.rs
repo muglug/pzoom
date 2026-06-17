@@ -189,14 +189,7 @@ pub fn is_contained_by(
         }
 
         // Arrays can be callable ([class, method] or [object, method])
-        if matches!(
-            input_type_part,
-            TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
-        ) {
+        if input_type_part.is_array() {
             // Only accept if container has no param requirements
             if container_params.is_none() {
                 return true;

@@ -56,25 +56,15 @@ fn infer_array_fill_return_type(
         });
     if starts_at_zero {
         return Some(TUnion::new(if is_non_empty {
-            TAtomic::TNonEmptyList {
-                value_type: Box::new(value_type),
-            }
+            TAtomic::non_empty_list(value_type)
         } else {
-            TAtomic::TList {
-                value_type: Box::new(value_type),
-            }
+            TAtomic::list(value_type)
         }));
     }
 
     Some(TUnion::new(if is_non_empty {
-        TAtomic::TNonEmptyArray {
-            key_type: Box::new(TUnion::int()),
-            value_type: Box::new(value_type),
-        }
+        TAtomic::non_empty_array(TUnion::int(), value_type)
     } else {
-        TAtomic::TArray {
-            key_type: Box::new(TUnion::int()),
-            value_type: Box::new(value_type),
-        }
+        TAtomic::array(TUnion::int(), value_type)
     }))
 }

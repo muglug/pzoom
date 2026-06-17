@@ -166,14 +166,10 @@ pub fn analyze_array(
     context: &mut BlockContext,
 ) {
     if array.elements.is_empty() {
-        // Empty array
-        analysis_data.expr_types.insert(
-            pos,
-            Rc::new(TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::nothing()),
-                value_type: Box::new(TUnion::nothing()),
-            })),
-        );
+        // Empty array `[]`
+        analysis_data
+            .expr_types
+            .insert(pos, Rc::new(TUnion::new(TAtomic::empty_array())));
         return;
     }
 
@@ -201,52 +197,48 @@ pub fn analyze_array(
     let parent_nodes = std::mem::take(&mut info.parent_nodes);
 
     let mut expr_type = if !info.property_types.is_empty() {
-        let fallback = if info.can_create_objectlike {
+        // `can_create_objectlike` ⇒ a sealed shape (no fallback); otherwise the
+        // shape carries the combined key/value as its fallback params.
+        let (fallback_key, fallback_value, sealed) = if info.can_create_objectlike {
             (None, None, true)
         } else {
             (
-                Some(Box::new(
-                    item_key_type.clone().unwrap_or_else(TUnion::array_key),
-                )),
-                Some(Box::new(
-                    item_value_type.clone().unwrap_or_else(TUnion::mixed),
-                )),
+                Some(item_key_type.clone().unwrap_or_else(TUnion::array_key)),
+                Some(item_value_type.clone().unwrap_or_else(TUnion::mixed)),
                 false,
             )
         };
 
-        TUnion::new(TAtomic::TKeyedArray {
-            properties: std::sync::Arc::new(info.property_types),
-            is_list: info.all_list,
-            sealed: fallback.2,
-            fallback_key_type: fallback.0,
-            fallback_value_type: fallback.1,
-        })
+        // Old `properties` carried `possibly_undefined` on each value union;
+        // the unified shape stores it as the entry's `bool`.
+        let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = info
+            .property_types
+            .into_iter()
+            .map(|(key, value)| (key, (value.possibly_undefined, value)))
+            .collect();
+
+        TUnion::new(TAtomic::keyed_array(
+            known_values,
+            info.all_list,
+            sealed,
+            fallback_key,
+            fallback_value,
+        ))
     } else if info.all_list {
         let value_type = item_value_type.unwrap_or_else(TUnion::mixed);
         if info.can_be_empty {
-            TUnion::new(TAtomic::TList {
-                value_type: Box::new(value_type),
-            })
+            TUnion::new(TAtomic::list(value_type))
         } else {
-            TUnion::new(TAtomic::TNonEmptyList {
-                value_type: Box::new(value_type),
-            })
+            TUnion::new(TAtomic::non_empty_list(value_type))
         }
     } else {
         let key_type = item_key_type.unwrap_or_else(TUnion::array_key);
         let value_type = item_value_type.unwrap_or_else(TUnion::mixed);
 
         if info.can_be_empty {
-            TUnion::new(TAtomic::TArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(value_type),
-            })
+            TUnion::new(TAtomic::array(key_type, value_type))
         } else {
-            TUnion::new(TAtomic::TNonEmptyArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(value_type),
-            })
+            TUnion::new(TAtomic::non_empty_array(key_type, value_type))
         }
     };
 
@@ -497,17 +489,16 @@ fn handle_unpacked_array(
             all_non_empty = false;
         }
 
-        if let TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        if let TAtomic::TArray {
+            known_values,
+            params,
             ..
         } = unpacked_atomic_type
         {
             let mut had_optional = false;
 
-            for (key, property_value) in properties.iter() {
-                if property_value.possibly_undefined {
+            for (key, (possibly_undefined, property_value)) in known_values.iter() {
+                if *possibly_undefined {
                     had_optional = true;
                     continue;
                 }
@@ -548,7 +539,15 @@ fn handle_unpacked_array(
                 );
             }
 
-            if !had_optional && fallback_key_type.is_none() && fallback_value_type.is_none() {
+            // No fallback params ⇒ a fully-known shape: every entry was emitted
+            // above, so there is nothing left to spread generically.
+            // TODO(unify-array): the empty array `[]` is now `empty_array()`
+            // (known_values empty, params None) and so reaches this `continue`,
+            // whereas it used to be the generic `TArray{nothing,nothing}` that
+            // fell through to `extract_unpacked_iterable_params`. Spreading an
+            // empty array (`[...[]]`) now contributes nothing instead of
+            // pushing `never` key/value atoms — the closer-to-correct behaviour.
+            if !had_optional && params.is_none() {
                 continue;
             }
         }
@@ -621,10 +620,23 @@ fn handle_unpacked_array(
 
 fn is_definitely_non_empty_iterable(atomic: &TAtomic) -> bool {
     match atomic {
-        TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => true,
-        TAtomic::TKeyedArray { properties, .. } => properties
-            .values()
-            .any(|property_type| !property_type.possibly_undefined),
+        TAtomic::TArray {
+            known_values,
+            is_nonempty,
+            ..
+        } => {
+            if known_values.is_empty() {
+                // Generic array/list: rely on the non-empty flag (old
+                // `TNonEmptyArray`/`TNonEmptyList`).
+                *is_nonempty
+            } else {
+                // Shape: non-empty iff some entry is always-defined (old
+                // `TKeyedArray` predicate over `properties`).
+                known_values
+                    .values()
+                    .any(|(possibly_undefined, _)| !*possibly_undefined)
+            }
+        }
         _ => false,
     }
 }
@@ -634,31 +646,40 @@ fn extract_unpacked_iterable_params(
     atomic: &TAtomic,
 ) -> Option<(TUnion, TUnion)> {
     match atomic {
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => Some(((**key_type).clone(), (**value_type).clone())),
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            Some((TUnion::int(), (**value_type).clone()))
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        // Every array sort: generalize the known entries and typed fallback into
+        // (key, value). Generic arrays/lists have no known entries, so this is
+        // just their params (a list's key is `int`).
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
-        } => Some(get_keyed_array_generic_params(
-            properties,
-            fallback_key_type.as_deref(),
-            fallback_value_type.as_deref(),
-        )),
+        } => {
+            // A generic array/list (no known entries): its iterable params are
+            // exactly `params` (a list's key is `int`; the empty array is
+            // `never, never`). Return them directly — `get_keyed_array_generic_params`
+            // would otherwise apply its array-key/mixed default for a `never`
+            // value, wrongly widening the empty-array spread `[...[]]` to
+            // `list<mixed>`.
+            if known_values.is_empty() {
+                return Some(match params.as_deref() {
+                    Some((key_type, value_type)) => (key_type.clone(), value_type.clone()),
+                    None => (TUnion::nothing(), TUnion::nothing()),
+                });
+            }
+            let (fallback_key, fallback_value) = match params.as_deref() {
+                Some((key_type, value_type)) => (Some(key_type), Some(value_type)),
+                None => (None, None),
+            };
+            Some(get_keyed_array_generic_params(
+                known_values,
+                fallback_key,
+                fallback_value,
+            ))
+        }
         TAtomic::TNamedObject {
             name, type_params, ..
         } => {
@@ -814,15 +835,18 @@ fn extract_unpacked_iterable_params(
     }
 }
 
+/// Generic (key, value) params for a unified array's known entries plus its
+/// typed fallback `params`. `known_values`' `bool` (possibly-undefined) is
+/// irrelevant to the generalized key/value types, so it is ignored.
 pub(crate) fn get_keyed_array_generic_params(
-    properties: &FxHashMap<ArrayKey, TUnion>,
+    known_values: &FxHashMap<ArrayKey, (bool, TUnion)>,
     fallback_key_type: Option<&TUnion>,
     fallback_value_type: Option<&TUnion>,
 ) -> (TUnion, TUnion) {
     let mut key_type = fallback_key_type.cloned().unwrap_or_else(TUnion::nothing);
     let mut value_type = fallback_value_type.cloned().unwrap_or_else(TUnion::nothing);
 
-    for (key, property_type) in properties.iter() {
+    for (key, (_possibly_undefined, property_type)) in known_values.iter() {
         let literal_key_type = match key {
             ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
             ArrayKey::String(value) | ArrayKey::ClassString(value) => {

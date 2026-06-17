@@ -80,13 +80,9 @@ fn infer_array_values_return_type(
     }
 
     let atomic = if array_info.is_non_empty {
-        TAtomic::TNonEmptyList {
-            value_type: Box::new(array_info.value_type),
-        }
+        TAtomic::non_empty_list(array_info.value_type)
     } else {
-        TAtomic::TList {
-            value_type: Box::new(array_info.value_type),
-        }
+        TAtomic::list(array_info.value_type)
     };
 
     // Psalm has no array_values provider — the type comes from the stub's

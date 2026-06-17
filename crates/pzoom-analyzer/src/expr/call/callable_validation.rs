@@ -262,49 +262,27 @@ pub(crate) fn get_unpacked_iterable_key_type(
     atomic: &TAtomic,
 ) -> Option<TUnion> {
     match atomic {
-        TAtomic::TArray { key_type, .. }
-        | TAtomic::TNonEmptyArray { key_type, .. }
-        | TAtomic::TIterable { key_type, .. } => Some((**key_type).clone()),
-        TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => Some(TUnion::int()),
+        TAtomic::TIterable { key_type, .. } => Some((**key_type).clone()),
+        // Any array: the key type is the union of its known entries' literal
+        // keys and its typed fallback key (a list's fallback key is int).
+        TAtomic::TArray {
+            known_values,
+            params,
+            ..
+        } => {
+            let (key_type, _) = crate::expr::array_analyzer::get_keyed_array_generic_params(
+                known_values,
+                params.as_deref().map(|(key, _)| key),
+                params.as_deref().map(|(_, value)| value),
+            );
+            Some(key_type)
+        }
         // class-string-map iterates with class-string keys (Psalm's standin key param).
         TAtomic::TClassStringMap { .. } => Some(TUnion::new(
             atomic
                 .get_class_string_map_standin_key_param()
                 .expect("checked TClassStringMap above"),
         )),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            ..
-        } => {
-            let mut key_type = fallback_key_type
-                .as_deref()
-                .cloned()
-                .unwrap_or_else(TUnion::nothing);
-
-            for key in properties.keys() {
-                let key_union = match key {
-                    ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
-                    ArrayKey::String(value) | ArrayKey::ClassString(value) => {
-                        TUnion::new(TAtomic::TLiteralString {
-                            value: value.clone(),
-                        })
-                    }
-                };
-
-                key_type = if key_type.is_nothing() {
-                    key_union
-                } else {
-                    combine_union_types(&key_type, &key_union, false)
-                };
-            }
-
-            if key_type.is_nothing() {
-                Some(TUnion::array_key())
-            } else {
-                Some(key_type)
-            }
-        }
         TAtomic::TNamedObject {
             name, type_params, ..
         } => {
@@ -421,19 +399,19 @@ fn atomic_contains_class_string(atomic: &TAtomic) -> bool {
         TAtomic::TClassString { .. }
         | TAtomic::TLiteralClassString { .. }
         | TAtomic::TTemplateParamClass { .. } => true,
-        TAtomic::TArray { value_type, .. }
-        | TAtomic::TNonEmptyArray { value_type, .. }
-        | TAtomic::TList { value_type }
-        | TAtomic::TNonEmptyList { value_type } => union_contains_class_string(value_type),
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        // Any array: a class-string may sit in a known entry's value or the
+        // typed fallback value.
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            properties.values().any(union_contains_class_string)
-                || fallback_value_type
-                    .as_ref()
-                    .is_some_and(|fallback| union_contains_class_string(fallback))
+            known_values
+                .values()
+                .any(|(_, value)| union_contains_class_string(value))
+                || params
+                    .as_deref()
+                    .is_some_and(|(_, value)| union_contains_class_string(value))
         }
         TAtomic::TTemplateParam { as_type, .. } => union_contains_class_string(as_type),
         TAtomic::TObjectIntersection { types } => types.iter().any(atomic_contains_class_string),
@@ -735,22 +713,23 @@ fn collect_own_callable_templates(
                     collect_own_callable_templates(type_param, template_result);
                 }
             }
+            // Only generic arrays/lists are descended into (old code matched
+            // the generic array variants, not TKeyedArray); a shape's known
+            // entries are not inspected, preserving prior behaviour.
+            // TODO(unify-array): old code ignored shape properties here.
             TAtomic::TArray {
-                key_type,
-                value_type,
+                known_values,
+                params: Some(params),
+                ..
+            } if known_values.is_empty() => {
+                collect_own_callable_templates(&params.0, template_result);
+                collect_own_callable_templates(&params.1, template_result);
             }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => {
                 collect_own_callable_templates(key_type, template_result);
-                collect_own_callable_templates(value_type, template_result);
-            }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
                 collect_own_callable_templates(value_type, template_result);
             }
             _ => {}
@@ -1244,10 +1223,12 @@ fn resolve_candidate_from_union(
                     return Some(candidate);
                 }
             }
-            TAtomic::TKeyedArray { properties, .. } => {
+            // A `[$class_or_obj, "method"]` callable is a known-shape array
+            // (old TKeyedArray); a generic array is not resolved here.
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
                 if let Some(candidate) = resolve_array_callable(
                     analyzer,
-                    properties,
+                    known_values,
                     arg_pos,
                     analysis_data,
                     context,
@@ -1265,13 +1246,13 @@ fn resolve_candidate_from_union(
 
 fn resolve_array_callable(
     analyzer: &StatementsAnalyzer<'_>,
-    properties: &rustc_hash::FxHashMap<ArrayKey, TUnion>,
+    known_values: &rustc_hash::FxHashMap<ArrayKey, (bool, TUnion)>,
     arg_pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
     callee_context: CalleeContext,
 ) -> Option<TAtomic> {
-    if properties.len() != 2 {
+    if known_values.len() != 2 {
         add_issue(
             analyzer,
             analysis_data,
@@ -1282,7 +1263,7 @@ fn resolve_array_callable(
         return None;
     }
 
-    let Some(first) = properties.get(&ArrayKey::Int(0)) else {
+    let Some((_, first)) = known_values.get(&ArrayKey::Int(0)) else {
         add_issue(
             analyzer,
             analysis_data,
@@ -1293,7 +1274,7 @@ fn resolve_array_callable(
         return None;
     };
 
-    let Some(second) = properties.get(&ArrayKey::Int(1)) else {
+    let Some((_, second)) = known_values.get(&ArrayKey::Int(1)) else {
         add_issue(
             analyzer,
             analysis_data,
@@ -2046,11 +2027,7 @@ pub(crate) fn callable_allows_unknown_runtime_class(callable_name: &str) -> bool
 pub(crate) fn union_is_array_like(union: &TUnion) -> bool {
     !union.types.is_empty()
         && union.types.iter().all(|atomic| match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. } => true,
+            TAtomic::TArray { .. } => true,
             TAtomic::TTemplateParam { as_type, .. } => union_is_array_like(as_type),
             _ => false,
         })
@@ -2059,8 +2036,7 @@ pub(crate) fn union_is_array_like(union: &TUnion) -> bool {
 pub(crate) fn union_is_list_like(union: &TUnion) -> bool {
     !union.types.is_empty()
         && union.types.iter().all(|atomic| match atomic {
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => true,
-            TAtomic::TKeyedArray { is_list, .. } => *is_list,
+            TAtomic::TArray { is_list, .. } => *is_list,
             TAtomic::TTemplateParam { as_type, .. } => union_is_list_like(as_type),
             _ => false,
         })
@@ -2611,30 +2587,33 @@ fn find_undefined_class_string_literal_in_argument_for_atomic(
                 Some(literal)
             }
         }
-        TAtomic::TArray { value_type, .. }
-        | TAtomic::TNonEmptyArray { value_type, .. }
-        | TAtomic::TList { value_type }
-        | TAtomic::TNonEmptyList { value_type } => {
-            find_undefined_class_string_literal_in_array_argument(
-                analyzer, expr, value_type, context,
-            )
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        // A generic array/list (old TArray / TNonEmptyArray / TList /
+        // TNonEmptyList): the element type is the typed fallback value.
+        TAtomic::TArray {
+            known_values,
+            params: Some(params),
+            ..
+        } if known_values.is_empty() => find_undefined_class_string_literal_in_array_argument(
+            analyzer, expr, &params.1, context,
+        ),
+        // A shape (old TKeyedArray), or the sealed empty array `[]`
+        // (params None).
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            let all_properties_expect_class_string =
-                !properties.is_empty() && properties.values().all(union_contains_class_string);
-            let fallback_expects_class_string = fallback_value_type
-                .as_ref()
-                .is_some_and(|fallback| union_contains_class_string(fallback));
+            let fallback_value_type = params.as_deref().map(|(_, value)| value);
+            let all_properties_expect_class_string = !known_values.is_empty()
+                && known_values
+                    .values()
+                    .all(|(_, value)| union_contains_class_string(value));
+            let fallback_expects_class_string =
+                fallback_value_type.is_some_and(|fallback| union_contains_class_string(fallback));
 
             if all_properties_expect_class_string || fallback_expects_class_string {
                 let value_type = fallback_value_type
-                    .as_ref()
-                    .map(|fallback| fallback.as_ref())
-                    .or_else(|| properties.values().next())?;
+                    .or_else(|| known_values.values().next().map(|(_, value)| value))?;
 
                 return find_undefined_class_string_literal_in_array_argument(
                     analyzer, expr, value_type, context,
@@ -3292,15 +3271,16 @@ pub(crate) fn infer_array_map_callable_return_type(
                 function_call_analyzer::resolve_function(analyzer, value, is_fq, None, context)
                     .and_then(|f| resolve_callable_return_type(analyzer, f, callback_input_types))
             }
-            TAtomic::TKeyedArray { properties, .. } => {
-                resolve_array_callable_method(analyzer, properties, context)
+            // A `[$class_or_obj, "method"]` callable (old TKeyedArray shape).
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
+                resolve_array_callable_method(analyzer, known_values, context)
                     .and_then(|m| resolve_callable_return_type(analyzer, m, callback_input_types))
                     .map(|callable_return| {
                         // `static` through a templated class element resolves
                         // to the template, not the concrete class (same
                         // late-binding as resolve_array_callable).
-                        if let Some(class_union) =
-                            properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                        if let Some((_, class_union)) =
+                            known_values.get(&pzoom_code_info::ArrayKey::Int(0))
                             && let Some(class_id) =
                                 get_callable_class_from_union(analyzer, class_union, context)
                         {
@@ -3315,7 +3295,7 @@ pub(crate) fn infer_array_map_callable_return_type(
                             // ([CriterionId::class, 'fromString'] returns
                             // CriterionId even when declared on Id).
                             if let Some(method_info) =
-                                resolve_array_callable_method(analyzer, properties, context)
+                                resolve_array_callable_method(analyzer, known_values, context)
                                 && method_info.get_return_type().is_some_and(|return_type| {
                                     super::atomic_method_call_analyzer::
                                             union_contains_static_reference(return_type)
@@ -3351,8 +3331,8 @@ pub(crate) fn infer_array_map_callable_return_type(
                         // the declaring class's templates through the
                         // instance's type params (Container<stdClass>::get
                         // returns stdClass).
-                        if let Some(class_union) =
-                            properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                        if let Some((_, class_union)) =
+                            known_values.get(&pzoom_code_info::ArrayKey::Int(0))
                             && let Some(TAtomic::TNamedObject {
                                 name,
                                 type_params: Some(object_params),
@@ -3372,7 +3352,7 @@ pub(crate) fn infer_array_map_callable_return_type(
                                 );
                             if !crate::template::template_result_is_empty(&template_result)
                                 && let Some(method_info) =
-                                    resolve_array_callable_method(analyzer, properties, context)
+                                    resolve_array_callable_method(analyzer, known_values, context)
                                 && let Some(raw_return) = method_info.get_return_type()
                             {
                                 return crate::template::inferred_type_replacer::replace(
@@ -3681,11 +3661,11 @@ fn resolve_callable_return_type(
 
 fn resolve_array_callable_method<'a>(
     analyzer: &'a StatementsAnalyzer<'_>,
-    properties: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion>,
+    known_values: &rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, (bool, TUnion)>,
     context: &BlockContext,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let first = properties.get(&pzoom_code_info::ArrayKey::Int(0))?;
-    let second = properties.get(&pzoom_code_info::ArrayKey::Int(1))?;
+    let (_, first) = known_values.get(&pzoom_code_info::ArrayKey::Int(0))?;
+    let (_, second) = known_values.get(&pzoom_code_info::ArrayKey::Int(1))?;
 
     let method_name = get_literal_string_from_union(second)?;
     let class_id = get_callable_class_from_union(analyzer, first, context)?;
@@ -3807,13 +3787,15 @@ pub(crate) fn resolve_callable_union_for_template_inference(
             TAtomic::TNamedObject {
                 name, type_params, ..
             } => resolve_invokable_object_callable(analyzer, *name, type_params.as_deref()),
-            TAtomic::TKeyedArray { properties, .. } => {
-                resolve_array_callable_method(analyzer, properties, context).map(|method_info| {
+            // A `[$class_or_obj, "method"]` callable (old TKeyedArray shape).
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
+                resolve_array_callable_method(analyzer, known_values, context).map(|method_info| {
                     let mut callable = functionlike_to_callable_atomic(method_info);
                     // Late-bind `static` returns to the template a
                     // `class-string<T1>` element names (same as
                     // resolve_array_callable).
-                    if let Some(class_union) = properties.get(&pzoom_code_info::ArrayKey::Int(0))
+                    if let Some((_, class_union)) =
+                        known_values.get(&pzoom_code_info::ArrayKey::Int(0))
                         && let Some(static_binding) =
                             template_static_binding_from_union(class_union)
                         && let Some(class_id) =
@@ -4142,10 +4124,6 @@ fn check_callable_union_invocability(
             | TAtomic::TClassString { .. }
             | TAtomic::TLiteralClassString { .. }
             | TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TObject
             | TAtomic::TTemplateParam { .. }
             | TAtomic::TTemplateParamClass { .. } => Some(true),

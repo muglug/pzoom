@@ -83,10 +83,10 @@ impl FunctionParamsProvider for ArrayUArrayParamsProvider {
         let key_callback = make_callback_param("$key_compare_func");
         let array_param = ParamInfo {
             name: StrId::ARRAY_VAR,
-            signature_type: Some(TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            })),
+            signature_type: Some(TUnion::new(TAtomic::array(
+                TUnion::array_key(),
+                TUnion::mixed(),
+            ))),
             ..Default::default()
         };
 

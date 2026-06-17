@@ -435,16 +435,15 @@ pub fn analyze(
                 has_null = true;
             }
 
-            // Array types - valid access
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
+            // Generic array/list (no known entries) — valid access.
+            TAtomic::TArray {
+                known_values,
+                params,
+                is_list,
+                ..
+            } if known_values.is_empty() => {
                 has_valid_access = true;
-                let is_list_atomic = matches!(
-                    atomic,
-                    TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. }
-                );
+                let is_list_atomic = *is_list;
                 if !literal_index_keys.is_empty() {
                     // List keys are non-negative (Psalm types them
                     // int<0, max>): a provably-negative literal offset is a
@@ -460,15 +459,23 @@ pub fn analyze(
                         has_literal_index_hit = true;
                     }
                 }
-                let key_type = match atomic {
-                    TAtomic::TArray { key_type, .. } | TAtomic::TNonEmptyArray { key_type, .. } => {
-                        (**key_type).clone()
-                    }
-                    _ => TUnion::int(),
+                // The element value is the fallback `params` value (a list's key
+                // is `int`); a fallback-less empty array contributes `nothing`.
+                let value_type = params
+                    .as_deref()
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_else(TUnion::nothing);
+                let key_type = if is_list_atomic {
+                    TUnion::int()
+                } else {
+                    params
+                        .as_deref()
+                        .map(|(k, _)| k.clone())
+                        .unwrap_or_else(TUnion::nothing)
                 };
                 merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
                 // Psalm checks literal int/string offsets only on generic
-                // `array<K,V>` here (TKeyedArray/list go through their own path);
+                // `array<K,V>` here (shapes/lists go through their own path);
                 // a literal offset contained in the key type but with no proven
                 // entry is PossiblyUndefined{Int,String}ArrayOffset.
                 if !is_list_atomic && !literal_index_keys.is_empty() {
@@ -502,29 +509,28 @@ pub fn analyze(
                 }
             }
 
-            // Keyed array - check specific key or use fallback
-            TAtomic::TKeyedArray {
-                properties,
+            // Keyed array (shape, with known entries) - check specific key or use fallback
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                fallback_key_type,
-                fallback_value_type,
                 ..
             } => {
                 has_valid_access = true;
-                let keyed_key_type = extract_keyed_array_key_type(
-                    properties,
-                    *is_list,
-                    fallback_key_type.as_deref(),
-                );
+                let fallback_key_type = params.as_deref().map(|(k, _)| k);
+                let fallback_value_type = params.as_deref().map(|(_, v)| v);
+                let keyed_key_type =
+                    extract_keyed_array_key_type(known_values, *is_list, fallback_key_type);
                 merge_expected_offset_type(&mut expected_offset_type, keyed_key_type.clone());
                 atomic_expected_offset_types.push(keyed_key_type);
                 if !literal_index_keys.is_empty() {
                     for index_key in &literal_index_keys {
-                        if let Some(value_type) = properties.get(index_key) {
+                        if let Some((possibly_undefined, value_type)) = known_values.get(index_key)
+                        {
                             has_literal_index_hit = true;
                             result_ignore_nullable |= value_type.ignore_nullable_issues;
                             result_ignore_falsable |= value_type.ignore_falsable_issues;
-                            if value_type.possibly_undefined {
+                            if *possibly_undefined {
                                 // A key that names a possibly-undefined property
                                 // yields a possibly-undefined offset even when the
                                 // shape has `...<K,V>` fallback params: Psalm's
@@ -565,16 +571,17 @@ pub fn analyze(
                     // A plain-mixed contributor swallows the others (Psalm's
                     // combineUnionTypes collapses X|mixed to mixed), so a
                     // shape's known keys don't leak past a mixed fallback.
-                    let has_plain_mixed = properties
+                    let has_plain_mixed = known_values
                         .values()
-                        .chain(fallback_value_type.as_deref())
+                        .map(|(_, value)| value)
+                        .chain(fallback_value_type)
                         .any(|value| value.types.iter().any(|t| matches!(t, TAtomic::TMixed)));
                     if has_plain_mixed {
                         if !result_types.contains(&TAtomic::TMixed) {
                             result_types.push(TAtomic::TMixed);
                         }
                     } else {
-                        for value in properties.values() {
+                        for (_, value) in known_values.values() {
                             for t in &value.types {
                                 if !result_types.contains(t) {
                                     result_types.push(t.clone());
@@ -1892,8 +1899,6 @@ fn check_array_offset(
 
             // Invalid offset types
             TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TObject
             | TAtomic::TFloat
             | TAtomic::TLiteralFloat { .. }
@@ -2495,13 +2500,13 @@ fn union_contains_class_string_like(union: &TUnion) -> bool {
 }
 
 fn extract_keyed_array_key_type(
-    properties: &rustc_hash::FxHashMap<ArrayKey, TUnion>,
+    known_values: &rustc_hash::FxHashMap<ArrayKey, (bool, TUnion)>,
     is_list: bool,
     fallback_key_type: Option<&TUnion>,
 ) -> TUnion {
     let mut key_type = fallback_key_type.cloned().unwrap_or_else(TUnion::nothing);
 
-    for key in properties.keys() {
+    for key in known_values.keys() {
         let literal_key_type = match key {
             ArrayKey::Int(value) => TUnion::new(TAtomic::TLiteralInt { value: *value }),
             ArrayKey::String(value) | ArrayKey::ClassString(value) => {
@@ -2538,12 +2543,7 @@ fn is_unresolved_expected_offset_atomic(
     analyzer: &StatementsAnalyzer<'_>,
 ) -> bool {
     match atomic {
-        TAtomic::TArray { .. }
-        | TAtomic::TNonEmptyArray { .. }
-        | TAtomic::TList { .. }
-        | TAtomic::TNonEmptyList { .. }
-        | TAtomic::TKeyedArray { .. }
-        | TAtomic::TObject => true,
+        TAtomic::TArray { .. } | TAtomic::TObject => true,
         TAtomic::TNamedObject { name, .. } => {
             // A known class as the expected offset is a legitimate object key
             // (e.g. WeakMap<Throwable, int>); only unresolvable names count

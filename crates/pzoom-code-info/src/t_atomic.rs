@@ -90,19 +90,40 @@ pub enum TAtomic {
     },
 
     // Array types (key difference from Hakana - supports PHP autovivification)
+    /// Unified array type. A single variant models every array sort that Psalm
+    /// splits across `TArray`/`TNonEmptyArray`/`TList`/`TNonEmptyList`/`TKeyedArray`:
+    ///
+    /// - `array<K, V>`           — `known_values` empty, `params` `Some((K, V))`, `is_list` false, `is_nonempty` false
+    /// - `non-empty-array<K, V>` — as above with `is_nonempty` true
+    /// - `list<V>`               — `known_values` empty, `params` `Some((int, V))`, `is_list` true, `is_nonempty` false
+    /// - `non-empty-list<V>`     — as above with `is_nonempty` true
+    /// - `array{foo: T, bar?: U}`— `known_values` populated, `params` `None` (sealed)
+    /// - `list{T, U}`            — `known_values` keyed `0..n`, `is_list` true
+    /// - `[]` (empty array)      — `known_values` empty, `params` `None`, `is_nonempty` false
+    ///
+    /// `params` is the typed fallback for keys outside `known_values`. `is_sealed`
+    /// records whether additional keys are forbidden — these are independent:
+    /// a sealed shape has no `params`, but an *unsealed* shape may also have no
+    /// typed `params` (extra keys allowed, type unknown), matching pzoom's prior
+    /// `TKeyedArray { sealed, fallback_* }`. Each known entry carries its own
+    /// possibly-undefined flag (Hakana's dict `known_items`). Construct via
+    /// [`TAtomic::array`], [`TAtomic::non_empty_array`], [`TAtomic::list`],
+    /// [`TAtomic::non_empty_list`] or [`TAtomic::keyed_array`], which normalise
+    /// `is_list`/`is_nonempty`.
     TArray {
-        key_type: Box<TUnion>,
-        value_type: Box<TUnion>,
-    },
-    TNonEmptyArray {
-        key_type: Box<TUnion>,
-        value_type: Box<TUnion>,
-    },
-    TList {
-        value_type: Box<TUnion>,
-    },
-    TNonEmptyList {
-        value_type: Box<TUnion>,
+        /// Known entries; `bool` is `possibly_undefined`. Behind `Arc` so cloning
+        /// a shape is a refcount bump (copy-on-write via `Arc::make_mut`).
+        known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
+        /// Typed fallback `(key, value)` params for keys outside `known_values`,
+        /// or `None` when there is no typed fallback.
+        params: Option<Box<(TUnion, TUnion)>>,
+        /// Sequential integer keys from 0 (Psalm's `TKeyedArray::$is_list`).
+        is_list: bool,
+        /// Guaranteed to hold at least one element.
+        is_nonempty: bool,
+        /// No keys beyond `known_values` are allowed (Psalm's sealed shape /
+        /// `fallback_params === null`). Implies `params` is `None`.
+        is_sealed: bool,
     },
     /// `class-string-map<T as Foo, T>` — an array whose value type is a
     /// function of its `class-string` key (Psalm's `Type\Atomic\TClassStringMap`).
@@ -114,20 +135,6 @@ pub enum TAtomic {
         param_name: StrId,
         as_type: Option<Box<TAtomic>>,
         value_param: Box<TUnion>,
-    },
-    /// Keyed array / shape type - array with known keys and value types
-    TKeyedArray {
-        /// Shape fields. Behind `Arc` so cloning a shape is a refcount bump;
-        /// mutation sites use `Arc::make_mut` (copy-on-write). Ported from
-        /// Hakana's dict known_items (slackhq/hakana@8f9f1a4).
-        properties: std::sync::Arc<FxHashMap<ArrayKey, TUnion>>,
-        /// If true, this is a list (sequential integer keys starting from 0)
-        is_list: bool,
-        /// Whether the shape is sealed (no additional keys allowed)
-        sealed: bool,
-        /// Fallback type for unknown keys when not sealed
-        fallback_key_type: Option<Box<TUnion>>,
-        fallback_value_type: Option<Box<TUnion>>,
     },
 
     // Object types
@@ -315,6 +322,33 @@ pub struct ConditionalReturnType {
     pub if_false_type: TUnion,
 }
 
+/// Whether `known_values` form a valid list: integer keys `0..n` with a
+/// possibly-undefined "tail" (once one entry is possibly-undefined, every later
+/// one is too). Mirrors the invariant Psalm enforces in `TKeyedArray`.
+pub fn known_values_form_list(known_values: &FxHashMap<ArrayKey, (bool, TUnion)>) -> bool {
+    let mut had_possibly_undefined = false;
+    for index in 0..known_values.len() as i64 {
+        let Some((possibly_undefined, _)) = known_values.get(&ArrayKey::Int(index)) else {
+            return false;
+        };
+        if had_possibly_undefined && !*possibly_undefined {
+            return false;
+        }
+        if *possibly_undefined {
+            had_possibly_undefined = true;
+        }
+    }
+    true
+}
+
+/// Whether a shape's known entries guarantee at least one element (some entry is
+/// always-defined and not `never`).
+pub fn array_known_values_nonempty(known_values: &FxHashMap<ArrayKey, (bool, TUnion)>) -> bool {
+    known_values
+        .values()
+        .any(|(possibly_undefined, value)| !*possibly_undefined && !value.is_nothing())
+}
+
 /// Key type for keyed arrays (shapes).
 ///
 /// `ClassString` is a string key that originated from a `Foo::class`
@@ -447,6 +481,179 @@ impl TAtomic {
         }
     }
 
+    // ---- Unified array constructors (normalise `is_list` / `is_nonempty`) ----
+
+    /// `array<K, V>` — a possibly-empty generic array.
+    #[inline]
+    pub fn array(key_type: TUnion, value_type: TUnion) -> Self {
+        TAtomic::TArray {
+            known_values: std::sync::Arc::new(FxHashMap::default()),
+            params: Some(Box::new((key_type, value_type))),
+            is_list: false,
+            is_nonempty: false,
+            is_sealed: false,
+        }
+    }
+
+    /// `non-empty-array<K, V>`.
+    #[inline]
+    pub fn non_empty_array(key_type: TUnion, value_type: TUnion) -> Self {
+        TAtomic::TArray {
+            known_values: std::sync::Arc::new(FxHashMap::default()),
+            params: Some(Box::new((key_type, value_type))),
+            is_list: false,
+            is_nonempty: true,
+            is_sealed: false,
+        }
+    }
+
+    /// `list<V>` — a possibly-empty list (integer keys from 0).
+    #[inline]
+    pub fn list(value_type: TUnion) -> Self {
+        TAtomic::TArray {
+            known_values: std::sync::Arc::new(FxHashMap::default()),
+            params: Some(Box::new((TUnion::new(TAtomic::TInt), value_type))),
+            is_list: true,
+            is_nonempty: false,
+            is_sealed: false,
+        }
+    }
+
+    /// `non-empty-list<V>`.
+    #[inline]
+    pub fn non_empty_list(value_type: TUnion) -> Self {
+        TAtomic::TArray {
+            known_values: std::sync::Arc::new(FxHashMap::default()),
+            params: Some(Box::new((TUnion::new(TAtomic::TInt), value_type))),
+            is_list: true,
+            is_nonempty: true,
+            is_sealed: false,
+        }
+    }
+
+    /// The empty array literal `[]` — pzoom models it as `array<never, never>`
+    /// (matching the previous `TArray { never, never }`), not a list.
+    #[inline]
+    pub fn empty_array() -> Self {
+        TAtomic::array(
+            TUnion::new(TAtomic::TNothing),
+            TUnion::new(TAtomic::TNothing),
+        )
+    }
+
+    /// General shape constructor. `sealed` drops the fallback; otherwise
+    /// `fallback_key`/`fallback_value` (when both present) become `params`.
+    /// Normalises `is_list` (sequential int keys + possibly-undefined tail) and
+    /// `is_nonempty` (any always-defined entry), like Psalm's `TKeyedArray`.
+    pub fn keyed_array(
+        known_values: FxHashMap<ArrayKey, (bool, TUnion)>,
+        is_list: bool,
+        sealed: bool,
+        fallback_key: Option<TUnion>,
+        fallback_value: Option<TUnion>,
+    ) -> Self {
+        let params = if sealed {
+            None
+        } else {
+            match (fallback_key, fallback_value) {
+                (Some(k), Some(v)) => Some(Box::new((k, v))),
+                _ => None,
+            }
+        };
+        let is_list = is_list && known_values_form_list(&known_values);
+        let is_nonempty = array_known_values_nonempty(&known_values);
+        TAtomic::TArray {
+            known_values: std::sync::Arc::new(known_values),
+            params,
+            is_list,
+            is_nonempty,
+            is_sealed: sealed,
+        }
+    }
+
+    /// Build a shape from an already-built `Arc`, normalising the flags.
+    pub fn keyed_array_arc(
+        known_values: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
+        is_list: bool,
+        sealed: bool,
+        params: Option<Box<(TUnion, TUnion)>>,
+    ) -> Self {
+        let is_list = is_list && known_values_form_list(&known_values);
+        let is_nonempty = array_known_values_nonempty(&known_values);
+        TAtomic::TArray {
+            known_values,
+            params,
+            is_list,
+            is_nonempty,
+            is_sealed: sealed,
+        }
+    }
+
+    // ---- Unified array accessors ----
+
+    /// True for the unified array atomic (every array sort).
+    #[inline]
+    pub fn is_array(&self) -> bool {
+        matches!(self, TAtomic::TArray { .. })
+    }
+
+    /// The fallback `(key, value)` params, or `None` when sealed / not an array.
+    #[inline]
+    pub fn array_params(&self) -> Option<(&TUnion, &TUnion)> {
+        match self {
+            TAtomic::TArray { params, .. } => params.as_deref().map(|(k, v)| (k, v)),
+            _ => None,
+        }
+    }
+
+    /// The known entries map (`bool` is possibly-undefined), or `None`.
+    #[inline]
+    pub fn array_known_values(
+        &self,
+    ) -> Option<&std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>> {
+        match self {
+            TAtomic::TArray { known_values, .. } => Some(known_values),
+            _ => None,
+        }
+    }
+
+    /// Whether this array is a list (sequential int keys from 0).
+    #[inline]
+    pub fn array_is_list(&self) -> bool {
+        matches!(self, TAtomic::TArray { is_list: true, .. })
+    }
+
+    /// Whether this array is guaranteed to hold at least one element.
+    #[inline]
+    pub fn array_is_nonempty(&self) -> bool {
+        matches!(
+            self,
+            TAtomic::TArray {
+                is_nonempty: true,
+                ..
+            }
+        )
+    }
+
+    /// Whether this array is sealed (no keys allowed beyond `known_values`).
+    #[inline]
+    pub fn array_is_sealed(&self) -> bool {
+        matches!(
+            self,
+            TAtomic::TArray {
+                is_sealed: true,
+                ..
+            }
+        )
+    }
+
+    /// True when this is a *generic* array/list — an array with no known entries
+    /// (just fallback params), e.g. `array<K,V>` or `list<V>`.
+    #[inline]
+    pub fn is_generic_array(&self) -> bool {
+        matches!(self, TAtomic::TArray { known_values, .. } if known_values.is_empty())
+    }
+
     /// The guaranteed minimum number of entries for a keyed array, mirroring
     /// Psalm's `TKeyedArray::getMinCount()`. Returns `None` for atomics that are
     /// not keyed arrays.
@@ -455,8 +662,8 @@ impl TAtomic {
     /// for a shape it is the count of properties that are neither possibly-undefined
     /// nor `never`.
     pub fn get_min_count(&self) -> Option<usize> {
-        let TAtomic::TKeyedArray {
-            properties,
+        let TAtomic::TArray {
+            known_values,
             is_list,
             ..
         } = self
@@ -464,10 +671,17 @@ impl TAtomic {
             return None;
         };
 
+        // A generic array/list (no known entries) has no statically-known min.
+        if known_values.is_empty() {
+            return None;
+        }
+
         if *is_list {
             let mut min_count = 0usize;
-            while let Some(property) = properties.get(&ArrayKey::Int(min_count as i64)) {
-                if property.possibly_undefined || property.is_nothing() {
+            while let Some((possibly_undefined, value)) =
+                known_values.get(&ArrayKey::Int(min_count as i64))
+            {
+                if *possibly_undefined || value.is_nothing() {
                     break;
                 }
                 min_count += 1;
@@ -476,9 +690,9 @@ impl TAtomic {
         }
 
         Some(
-            properties
+            known_values
                 .values()
-                .filter(|property| !property.possibly_undefined && !property.is_nothing())
+                .filter(|(possibly_undefined, value)| !*possibly_undefined && !value.is_nothing())
                 .count(),
         )
     }
@@ -487,25 +701,24 @@ impl TAtomic {
     /// `TKeyedArray::getMaxCount()`. Returns `None` when the shape is unsealed (can
     /// hold extra keys) or when the atomic is not a keyed array.
     pub fn get_max_count(&self) -> Option<usize> {
-        let TAtomic::TKeyedArray {
-            properties,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+        let TAtomic::TArray {
+            known_values,
+            is_sealed,
             ..
         } = self
         else {
             return None;
         };
 
-        if !*sealed || fallback_key_type.is_some() || fallback_value_type.is_some() {
+        // Generic (no known entries) or unsealed shapes have no statically-known max.
+        if known_values.is_empty() || !*is_sealed {
             return None;
         }
 
         Some(
-            properties
+            known_values
                 .values()
-                .filter(|property| !property.is_nothing())
+                .filter(|(_, value)| !value.is_nothing())
                 .count(),
         )
     }
@@ -568,13 +781,13 @@ impl TAtomic {
             return None;
         };
 
-        Some(TAtomic::TArray {
-            key_type: Box::new(TUnion::new(
+        Some(TAtomic::array(
+            TUnion::new(
                 self.get_class_string_map_standin_key_param()
                     .expect("checked TClassStringMap above"),
-            )),
-            value_type: value_param.clone(),
-        })
+            ),
+            (**value_param).clone(),
+        ))
     }
 
     /// For the dependent `get_class`/`gettype` atomics (Psalm's `TDependentGetClass`
@@ -647,7 +860,6 @@ impl TAtomic {
             | TAtomic::TLiteralClassString { .. }
             | TAtomic::TDependentGetClass { .. }
             | TAtomic::TTemplateParamClass { .. } => true,
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => true,
             TAtomic::TNonEmptyMixed => true,
             TAtomic::TLiteralInt { value } => *value != 0,
             TAtomic::TLiteralFloat { value } => *value != 0.0,
@@ -666,9 +878,16 @@ impl TAtomic {
             TAtomic::TObjectIntersection { .. } => true,
             TAtomic::TResource => true,
             TAtomic::TCallable { .. } | TAtomic::TClosure { .. } => true,
-            TAtomic::TKeyedArray { properties, .. } => properties
-                .values()
-                .any(|value_type| !value_type.possibly_undefined),
+            TAtomic::TArray {
+                known_values,
+                is_nonempty,
+                ..
+            } => {
+                *is_nonempty
+                    || known_values
+                        .values()
+                        .any(|(possibly_undefined, _)| !*possibly_undefined)
+            }
             _ => false,
         }
     }
@@ -727,77 +946,81 @@ impl TAtomic {
             TAtomic::TNothing => "never".to_string(),
             TAtomic::TVoid => "void".to_string(),
             TAtomic::TArray {
-                key_type,
-                value_type,
-            } => format!(
-                "array<{}, {}>",
-                key_type.get_id(interner),
-                value_type.get_id(interner)
-            ),
-            TAtomic::TKeyedArray {
-                properties,
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
+                is_nonempty,
+                is_sealed: _,
             } => {
-                // Render the shape like Psalm's `TKeyedArray::getId`:
-                // `array{foo: int, bar?: string}` / `list{int, string}`, with an
-                // unsealed fallback as `, ...<K, V>` (`, ...<V>` for lists) inside
-                // the braces.
-                let has_fallback = !*sealed && fallback_value_type.is_some();
-
-                let mut int_entries: Vec<(i64, &TUnion)> = Vec::new();
-                // (key, is_class_string, value)
-                let mut string_entries: Vec<(&str, bool, &TUnion)> = Vec::new();
-                for (key, value) in properties.iter() {
-                    match key {
-                        ArrayKey::Int(i) => int_entries.push((*i, value)),
-                        ArrayKey::String(s) => string_entries.push((s.as_str(), false, value)),
-                        ArrayKey::ClassString(s) => string_entries.push((s.as_str(), true, value)),
-                    }
-                }
-                int_entries.sort_by_key(|(i, _)| *i);
-
-                if properties.is_empty() {
+                // Render every array sort like Psalm: `array<K, V>` /
+                // `non-empty-list<V>` for generic arrays, and
+                // `array{foo: int, bar?: string}` / `list{int, string}` for
+                // shapes, with an unsealed fallback as `, ...<K, V>` (`, ...<V>`
+                // for lists) inside the braces.
+                if known_values.is_empty() {
                     // No known items: a generic list/array, or the empty array.
-                    if let Some(fallback_value) =
-                        fallback_value_type.as_ref().filter(|_| has_fallback)
-                    {
-                        return if *is_list {
-                            format!("list<{}>", fallback_value.get_id(interner))
-                        } else {
-                            let fallback_key = fallback_key_type
-                                .as_ref()
-                                .map(|k| k.get_id(interner))
-                                .unwrap_or_else(|| "array-key".to_string());
-                            format!(
-                                "array<{}, {}>",
-                                fallback_key,
-                                fallback_value.get_id(interner)
-                            )
-                        };
-                    }
-                    return "array<never, never>".to_string();
+                    return match params.as_deref() {
+                        Some((key, value)) => {
+                            if *is_list {
+                                let prefix = if *is_nonempty {
+                                    "non-empty-list"
+                                } else {
+                                    "list"
+                                };
+                                format!("{}<{}>", prefix, value.get_id(interner))
+                            } else {
+                                let prefix = if *is_nonempty {
+                                    "non-empty-array"
+                                } else {
+                                    "array"
+                                };
+                                format!(
+                                    "{}<{}, {}>",
+                                    prefix,
+                                    key.get_id(interner),
+                                    value.get_id(interner)
+                                )
+                            }
+                        }
+                        None => "array<never, never>".to_string(),
+                    };
                 }
+
+                let mut int_entries: Vec<(i64, bool, &TUnion)> = Vec::new();
+                // (key, is_class_string, possibly_undefined, value)
+                let mut string_entries: Vec<(&str, bool, bool, &TUnion)> = Vec::new();
+                for (key, (possibly_undefined, value)) in known_values.iter() {
+                    match key {
+                        ArrayKey::Int(i) => int_entries.push((*i, *possibly_undefined, value)),
+                        ArrayKey::String(s) => {
+                            string_entries.push((s.as_str(), false, *possibly_undefined, value))
+                        }
+                        ArrayKey::ClassString(s) => {
+                            string_entries.push((s.as_str(), true, *possibly_undefined, value))
+                        }
+                    }
+                }
+                int_entries.sort_by_key(|(i, _, _)| *i);
 
                 // Psalm uses positional list syntax (`list{int, string}`) only when
                 // every element is required; an optional element forces explicit keys.
-                let all_required = properties.values().all(|value| !value.possibly_undefined);
+                let all_required = known_values
+                    .values()
+                    .all(|(possibly_undefined, _)| !*possibly_undefined);
                 let use_list_syntax = *is_list && all_required;
 
                 let mut entries: Vec<String> = Vec::new();
                 if use_list_syntax {
-                    for (_, value) in &int_entries {
+                    for (_, _, value) in &int_entries {
                         entries.push(value.get_id(interner));
                     }
                 } else {
-                    for (key, value) in &int_entries {
-                        let optional = if value.possibly_undefined { "?" } else { "" };
+                    for (key, possibly_undefined, value) in &int_entries {
+                        let optional = if *possibly_undefined { "?" } else { "" };
                         entries.push(format!("{}{}: {}", key, optional, value.get_id(interner)));
                     }
-                    for (key, is_class_string, value) in &string_entries {
-                        let optional = if value.possibly_undefined { "?" } else { "" };
+                    for (key, is_class_string, possibly_undefined, value) in &string_entries {
+                        let optional = if *possibly_undefined { "?" } else { "" };
                         // A class-string key renders as `Foo::class` (Psalm's
                         // TKeyedArray::getId), not the bare class name.
                         if *is_class_string {
@@ -822,19 +1045,19 @@ impl TAtomic {
                     }
                 }
 
-                let params_part = if has_fallback {
-                    let fallback_value = fallback_value_type.as_ref().unwrap().get_id(interner);
-                    if *is_list {
-                        format!(", ...<{}>", fallback_value)
-                    } else {
-                        let fallback_key = fallback_key_type
-                            .as_ref()
-                            .map(|k| k.get_id(interner))
-                            .unwrap_or_else(|| "array-key".to_string());
-                        format!(", ...<{}, {}>", fallback_key, fallback_value)
+                let params_part = match params.as_deref() {
+                    Some((key, value)) => {
+                        if *is_list {
+                            format!(", ...<{}>", value.get_id(interner))
+                        } else {
+                            format!(
+                                ", ...<{}, {}>",
+                                key.get_id(interner),
+                                value.get_id(interner)
+                            )
+                        }
                     }
-                } else {
-                    String::new()
+                    None => String::new(),
                 };
 
                 let prefix = if *is_list { "list" } else { "array" };
@@ -1023,14 +1246,6 @@ impl TAtomic {
             ),
             TAtomic::TResource => "resource".to_string(),
             TAtomic::TClosedResource => "closed-resource".to_string(),
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } => format!(
-                "non-empty-array<{}, {}>",
-                key_type.get_id(interner),
-                value_type.get_id(interner)
-            ),
             TAtomic::TClassStringMap {
                 param_name,
                 as_type,
@@ -1047,12 +1262,6 @@ impl TAtomic {
                         .unwrap_or_else(|| "object".to_string()),
                     value_param.get_id(interner)
                 )
-            }
-            TAtomic::TList { value_type } => {
-                format!("list<{}>", value_type.get_id(interner))
-            }
-            TAtomic::TNonEmptyList { value_type } => {
-                format!("non-empty-list<{}>", value_type.get_id(interner))
             }
             TAtomic::TTemplateParam {
                 name,

@@ -265,11 +265,7 @@ fn yield_from_expression_type(analyzer: &StatementsAnalyzer<'_>, iter_type: &TUn
                 {
                     yield_from_type = Some(type_params[3].clone());
                 }
-                TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TKeyedArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. } => {
+                TAtomic::TArray { .. } => {
                     yield_from_type = Some(TUnion::null());
                 }
                 _ => {}
@@ -294,12 +290,7 @@ fn emit_yield_from_iterator_issue_if_needed(
 
     for atomic in &iter_type.types {
         match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
-            | TAtomic::TIterable { .. } => {
+            TAtomic::TArray { .. } | TAtomic::TIterable { .. } => {
                 has_valid_iterable = true;
             }
             TAtomic::TNamedObject { name, .. } => {
@@ -408,37 +399,40 @@ fn extract_iterable_key_value(
                     mapped.get(1).cloned().unwrap_or_else(TUnion::mixed),
                 )
             }
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TIterable {
+            TAtomic::TIterable {
                 key_type,
                 value_type,
             } => ((**key_type).clone(), (**value_type).clone()),
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                (TUnion::int(), (**value_type).clone())
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
-                fallback_value_type,
+            // A generic array/list (no known entries) yields its fallback params
+            // directly (old `TArray`/`TList`); `[]` (no params) yields nothing —
+            // matching the old generic-array behaviour, with no array-key/mixed
+            // defaulting.
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } if known_values.is_empty() => match params.as_deref() {
+                Some((key_type, value_type)) => (key_type.clone(), value_type.clone()),
+                None => (TUnion::nothing(), TUnion::nothing()),
+            },
+            // A shape (known entries): combine the entries' literal keys/values
+            // with the typed fallback `params`, defaulting empties to
+            // array-key/mixed (old `TKeyedArray`).
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                let mut combined_key = fallback_key_type
-                    .as_ref()
-                    .map(|k| (**k).clone())
+                let mut combined_key = params
+                    .as_deref()
+                    .map(|(k, _)| k.clone())
                     .unwrap_or_else(TUnion::nothing);
-                let mut combined_value = fallback_value_type
-                    .as_ref()
-                    .map(|v| (**v).clone())
+                let mut combined_value = params
+                    .as_deref()
+                    .map(|(_, v)| v.clone())
                     .unwrap_or_else(TUnion::nothing);
 
-                for (key, value) in properties.iter() {
+                for (key, (_possibly_undefined, value)) in known_values.iter() {
                     let literal_key = match key {
                         pzoom_code_info::ArrayKey::Int(value) => {
                             TUnion::new(TAtomic::TLiteralInt { value: *value })

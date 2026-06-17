@@ -813,14 +813,15 @@ fn analyze_extract_call(
         && let Some(array_type) = analysis_data.expr_types.get(&*array_pos).cloned()
         && array_type.types.len() == 1
     {
-        if let Some(TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        if let Some(TAtomic::TArray {
+            known_values,
+            is_sealed,
             ..
         }) = array_type.get_single()
+            // Only a shape (old TKeyedArray) defines named variables.
+            && !known_values.is_empty()
         {
-            for (key, value_type) in properties.iter() {
+            for (key, (_possibly_undefined, value_type)) in known_values.iter() {
                 let pzoom_code_info::t_atomic::ArrayKey::String(key) = key else {
                     continue;
                 };
@@ -845,7 +846,7 @@ fn analyze_extract_call(
                 context.locals.insert(var_id, assigned_type);
             }
 
-            if fallback_key_type.is_none() && fallback_value_type.is_none() {
+            if *is_sealed {
                 is_unsealed = false;
             }
         }
@@ -910,7 +911,10 @@ fn analyze_compact_call(
             .or_else(|| context.locals.get(format!("${}", var_name).as_str()));
 
         if let Some(var_type) = var_type {
-            properties.insert(ArrayKey::String(var_name.to_string()), var_type.clone());
+            properties.insert(
+                ArrayKey::String(var_name.to_string()),
+                (var_type.possibly_undefined, var_type.clone()),
+            );
         } else {
             let span = arg.span();
             let (line, col) = analyzer.get_line_column(span.start.offset);
@@ -927,17 +931,13 @@ fn analyze_compact_call(
     }
 
     if properties.is_empty() {
-        return Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::string()),
-            value_type: Box::new(TUnion::mixed()),
-        }));
+        return Some(TUnion::new(TAtomic::array(
+            TUnion::string(),
+            TUnion::mixed(),
+        )));
     }
 
-    Some(TUnion::new(TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: false,
-        sealed: true,
-        fallback_key_type: None,
-        fallback_value_type: None,
-    }))
+    Some(TUnion::new(TAtomic::keyed_array(
+        properties, false, true, None, None,
+    )))
 }

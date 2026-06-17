@@ -38,13 +38,11 @@ fn iterable_always_non_empty(iterable_type: &TUnion) -> bool {
                 atomic
             };
 
-            match atomic {
-                TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. } => true,
-                TAtomic::TKeyedArray { properties, .. } => properties
-                    .values()
-                    .any(|property_type| !property_type.possibly_undefined),
-                _ => false,
-            }
+            // TODO(unify-array): the old keyed-array check was
+            // `properties.any(|p| !p.possibly_undefined)`; `is_nonempty` also
+            // requires the entry not be `never` (`array_known_values_nonempty`),
+            // so a required `never` entry no longer counts as non-empty.
+            atomic.array_is_nonempty()
         })
 }
 
@@ -55,22 +53,22 @@ fn iterable_always_non_empty(iterable_type: &TUnion) -> bool {
 fn iterable_is_all_empty_arrays(iterable_type: &TUnion) -> bool {
     !iterable_type.types.is_empty()
         && iterable_type.types.iter().all(|atomic| match atomic {
+            // `array<never, never>` (old `TArray{never,never}`): empty, with a
+            // never-typed fallback. `list<never>` keeps its `never` values
+            // flowing, so a list (`params.0` is `int`, not `never`) is excluded.
             TAtomic::TArray {
-                key_type,
-                value_type,
-            } => key_type.is_nothing() && value_type.is_nothing(),
-            TAtomic::TKeyedArray {
-                properties,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
+                known_values,
+                params: Some(params),
                 ..
-            } => {
-                properties.is_empty()
-                    && *sealed
-                    && fallback_key_type.is_none()
-                    && fallback_value_type.is_none()
-            }
+            } => known_values.is_empty() && params.0.is_nothing() && params.1.is_nothing(),
+            // The empty sealed shape (`array{}` / `[]` / old empty sealed
+            // `TKeyedArray`): no known entries and no fallback params.
+            TAtomic::TArray {
+                known_values,
+                params: None,
+                is_sealed,
+                ..
+            } => known_values.is_empty() && *is_sealed,
             _ => false,
         })
 }
@@ -624,14 +622,10 @@ pub fn analyze(
                 kv_target.key.unparenthesized()
             {
                 let iterable_is_list = iterable_type.as_ref().is_some_and(|iter_type| {
-                    iter_type.types.iter().any(|atomic| {
-                        matches!(
-                            atomic,
-                            TAtomic::TList { .. }
-                                | TAtomic::TNonEmptyList { .. }
-                                | TAtomic::TKeyedArray { is_list: true, .. }
-                        )
-                    })
+                    iter_type
+                        .types
+                        .iter()
+                        .any(|atomic| matches!(atomic, TAtomic::TArray { is_list: true, .. }))
                 });
                 if iterable_is_list {
                     if let Some(iterable_var_key) =
@@ -811,10 +805,6 @@ fn check_iterator_type(
             // Arrays, `iterable`, and anything whose runtime value could be a
             // Traversable (`object`, a template parameter, `mixed`) are accepted.
             TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TIterable { .. }
             | TAtomic::TObject
             | TAtomic::TTemplateParam { .. }
@@ -1073,21 +1063,17 @@ fn extract_iterable_value_type(iter_type: &TUnion, _analyzer: &StatementsAnalyze
             // union like `array<never, never>|mixed` (from `$m ?? []`) would
             // collapse to `never` and wrongly skip the loop body.
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => value_types.push(TUnion::mixed()),
-            TAtomic::TArray { value_type, .. } => value_types.push((**value_type).clone()),
-            TAtomic::TNonEmptyArray { value_type, .. } => value_types.push((**value_type).clone()),
-            TAtomic::TList { value_type, .. } => value_types.push((**value_type).clone()),
-            TAtomic::TNonEmptyList { value_type, .. } => value_types.push((**value_type).clone()),
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                // Union of all property types
-                for prop_type in properties.values() {
+                // Union of all known entry types plus the typed fallback value.
+                for (_, prop_type) in known_values.values() {
                     value_types.push(prop_type.clone());
                 }
-                if let Some(fallback) = fallback_value_type {
-                    value_types.push((**fallback).clone());
+                if let Some(params) = params {
+                    value_types.push(params.1.clone());
                 }
             }
             TAtomic::TIterable { value_type, .. } => value_types.push((**value_type).clone()),
@@ -1189,16 +1175,13 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
         match atomic {
             // Iterating mixed yields mixed keys (Psalm).
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => key_types.push(TUnion::mixed()),
-            TAtomic::TArray { key_type, .. } => key_types.push((**key_type).clone()),
-            TAtomic::TNonEmptyArray { key_type, .. } => key_types.push((**key_type).clone()),
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => key_types.push(TUnion::int()),
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_key_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                // Union of all property key types
-                for key in properties.keys() {
+                // Union of all known key types (a list's fallback key is `int`).
+                for key in known_values.keys() {
                     match key {
                         pzoom_code_info::t_atomic::ArrayKey::Int(value) => {
                             key_types.push(TUnion::new(TAtomic::TLiteralInt { value: *value }));
@@ -1220,8 +1203,8 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
                         }
                     }
                 }
-                if let Some(fallback) = fallback_key_type {
-                    key_types.push((**fallback).clone());
+                if let Some(params) = params {
+                    key_types.push(params.0.clone());
                 }
             }
             TAtomic::TIterable { key_type, .. } => key_types.push((**key_type).clone()),
@@ -1384,21 +1367,29 @@ fn infer_destructured_value_type(
 
     for atomic in &source_type.types {
         match atomic {
-            TAtomic::TArray { value_type, .. }
-            | TAtomic::TNonEmptyArray { value_type, .. }
-            | TAtomic::TList { value_type }
-            | TAtomic::TNonEmptyList { value_type } => {
+            // Generic array/list (no known entries): the value type applies to
+            // every offset, so it is added regardless of the lookup key.
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } if known_values.is_empty() => {
                 saw_destructurable_type = true;
-                add_inferred_union(&mut inferred_type, value_type);
+                if let Some(params) = params {
+                    add_inferred_union(&mut inferred_type, &params.1);
+                }
             }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            // Shape (known entries): pick the looked-up entry, else the typed
+            // fallback, else the union of every entry.
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
                 saw_destructurable_type = true;
+                let fallback_value_type = params.as_ref().map(|params| &params.1);
                 if let Some(array_key) = lookup_key_to_array_key(lookup_key) {
-                    if let Some(property_type) = properties.get(&array_key) {
+                    if let Some((_, property_type)) = known_values.get(&array_key) {
                         add_inferred_union(&mut inferred_type, property_type);
                     } else if let Some(fallback_value_type) = fallback_value_type {
                         add_inferred_union(&mut inferred_type, fallback_value_type);
@@ -1406,7 +1397,7 @@ fn infer_destructured_value_type(
                 } else if let Some(fallback_value_type) = fallback_value_type {
                     add_inferred_union(&mut inferred_type, fallback_value_type);
                 } else {
-                    for property_type in properties.values() {
+                    for (_, property_type) in known_values.values() {
                         add_inferred_union(&mut inferred_type, property_type);
                     }
                 }

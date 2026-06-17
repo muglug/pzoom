@@ -992,19 +992,13 @@ fn union_array_like_value_type(union: &TUnion) -> Option<TUnion> {
 
     let atomic = union.types.first()?;
     match atomic {
-        TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
-            Some((**value_type).clone())
-        }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            Some((**value_type).clone())
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_value_type,
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
             let mut combined: Option<TUnion> = None;
-            for property_type in properties.values() {
+            for (_, property_type) in known_values.values() {
                 combined = Some(if let Some(existing) = combined {
                     combine_union_types(&existing, property_type, false)
                 } else {
@@ -1012,11 +1006,11 @@ fn union_array_like_value_type(union: &TUnion) -> Option<TUnion> {
                 });
             }
 
-            if let Some(fallback_value_type) = fallback_value_type {
+            if let Some(params) = params {
                 combined = Some(if let Some(existing) = combined {
-                    combine_union_types(&existing, fallback_value_type, false)
+                    combine_union_types(&existing, &params.1, false)
                 } else {
-                    (**fallback_value_type).clone()
+                    params.1.clone()
                 });
             }
 
@@ -1083,26 +1077,12 @@ fn collect_unknown_class_string_literals_from_union(
                     unknown_classes.insert(value.clone());
                 }
             }
-            TAtomic::TArray { value_type, .. } | TAtomic::TNonEmptyArray { value_type, .. } => {
-                collect_unknown_class_string_literals_from_union(
-                    analyzer,
-                    value_type,
-                    unknown_classes,
-                );
-            }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-                collect_unknown_class_string_literals_from_union(
-                    analyzer,
-                    value_type,
-                    unknown_classes,
-                );
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                fallback_value_type,
+            TAtomic::TArray {
+                known_values,
+                params,
                 ..
             } => {
-                for property_type in properties.values() {
+                for (_, property_type) in known_values.values() {
                     collect_unknown_class_string_literals_from_union(
                         analyzer,
                         property_type,
@@ -1110,10 +1090,10 @@ fn collect_unknown_class_string_literals_from_union(
                     );
                 }
 
-                if let Some(fallback_value_type) = fallback_value_type {
+                if let Some(params) = params {
                     collect_unknown_class_string_literals_from_union(
                         analyzer,
-                        fallback_value_type,
+                        &params.1,
                         unknown_classes,
                     );
                 }
@@ -1161,94 +1141,40 @@ fn atomic_cast_stringable_to_string(
         {
             (TAtomic::TString, true)
         }
-        TAtomic::TList { value_type } => {
-            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
-                (
-                    TAtomic::TList {
-                        value_type: Box::new(new_value),
-                    },
-                    true,
-                )
-            } else {
-                (atomic.clone(), false)
-            }
-        }
-        TAtomic::TNonEmptyList { value_type } => {
-            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
-                (
-                    TAtomic::TNonEmptyList {
-                        value_type: Box::new(new_value),
-                    },
-                    true,
-                )
-            } else {
-                (atomic.clone(), false)
-            }
-        }
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => {
-            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
-                (
-                    TAtomic::TArray {
-                        key_type: key_type.clone(),
-                        value_type: Box::new(new_value),
-                    },
-                    true,
-                )
-            } else {
-                (atomic.clone(), false)
-            }
-        }
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => {
-            if let Some(new_value) = union_cast_stringable_to_string(analyzer, value_type) {
-                (
-                    TAtomic::TNonEmptyArray {
-                        key_type: key_type.clone(),
-                        value_type: Box::new(new_value),
-                    },
-                    true,
-                )
-            } else {
-                (atomic.clone(), false)
-            }
-        }
-        TAtomic::TKeyedArray {
-            properties,
+            known_values,
+            params,
             is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            is_nonempty,
+            is_sealed,
         } => {
             let mut changed = false;
-            let mut new_properties = (**properties).clone();
-            for value in new_properties.values_mut() {
+            let mut new_known_values = (**known_values).clone();
+            for (_, value) in new_known_values.values_mut() {
                 if let Some(new_value) = union_cast_stringable_to_string(analyzer, value) {
                     *value = new_value;
                     changed = true;
                 }
             }
-            let new_fallback_value = fallback_value_type.as_ref().map(|fv| {
-                match union_cast_stringable_to_string(analyzer, fv) {
+            let new_params = params.as_ref().map(|params| {
+                let key = params.0.clone();
+                let value = match union_cast_stringable_to_string(analyzer, &params.1) {
                     Some(new_value) => {
                         changed = true;
-                        Box::new(new_value)
+                        new_value
                     }
-                    None => fv.clone(),
-                }
+                    None => params.1.clone(),
+                };
+                Box::new((key, value))
             });
             if changed {
                 (
-                    TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(new_properties),
+                    TAtomic::TArray {
+                        known_values: std::sync::Arc::new(new_known_values),
+                        params: new_params,
                         is_list: *is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: new_fallback_value,
+                        is_nonempty: *is_nonempty,
+                        is_sealed: *is_sealed,
                     },
                     true,
                 )

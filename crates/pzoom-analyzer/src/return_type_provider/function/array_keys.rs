@@ -31,13 +31,9 @@ fn infer_array_keys_return_type(
 
     let key_type = fca::normalize_array_key_union(&array_info.key_type);
     let atomic = if array_info.is_non_empty {
-        TAtomic::TNonEmptyList {
-            value_type: Box::new(key_type),
-        }
+        TAtomic::non_empty_list(key_type)
     } else {
-        TAtomic::TList {
-            value_type: Box::new(key_type),
-        }
+        TAtomic::list(key_type)
     };
 
     Some(TUnion::new(atomic))

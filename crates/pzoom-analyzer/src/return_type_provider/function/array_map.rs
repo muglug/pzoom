@@ -47,10 +47,10 @@ fn infer_array_map_return_type(
     // arguments; everything else — including spreads — returns the plain
     // possibly-empty array (Type::getArray()).
     if callback_type.is_null() {
-        return Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        }));
+        return Some(TUnion::new(TAtomic::array(
+            TUnion::array_key(),
+            TUnion::mixed(),
+        )));
     }
 
     let mut input_array_infos = Vec::new();
@@ -86,37 +86,42 @@ fn infer_array_map_return_type(
     // property's type through the callback return type.
     if args.len() == 2 {
         if let Some(first_array_type) = &first_array_type {
-            if let Some(TAtomic::TKeyedArray {
-                properties,
+            // A known keyed-array shape (former TKeyedArray): non-empty
+            // known_values, or the empty array `[]` (empty known_values with no
+            // typed fallback). A *generic* `array<...>`/`list<...>` (empty
+            // known_values with a typed fallback) is not a shape and is handled
+            // by the generic-array path below.
+            if let Some(TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
+                is_sealed,
+                ..
             }) = first_array_type.get_single()
+                && (!known_values.is_empty() || params.is_none())
             {
-                let mut new_properties: FxHashMap<_, TUnion> = FxHashMap::default();
-                for (key, prop) in properties.iter() {
-                    let mut mapped = callback_return_type.clone();
-                    mapped.possibly_undefined = prop.possibly_undefined;
-                    new_properties.insert(key.clone(), mapped);
+                let mut new_known_values: FxHashMap<_, (bool, TUnion)> = FxHashMap::default();
+                for (key, (possibly_undefined, _prop)) in known_values.iter() {
+                    new_known_values.insert(
+                        key.clone(),
+                        (*possibly_undefined, callback_return_type.clone()),
+                    );
                 }
 
-                let (new_fallback_key, new_fallback_value) =
-                    match (fallback_key_type, fallback_value_type) {
-                        (Some(fk), Some(_)) => (
-                            Some(fk.clone()),
-                            Some(Box::new(callback_return_type.clone())),
-                        ),
-                        _ => (None, None),
-                    };
+                // Map the fallback value through the callback, preserving the
+                // fallback key, only when a typed fallback is present.
+                let (new_fallback_key, new_fallback_value) = match params.as_deref() {
+                    Some((fk, _)) => (Some(fk.clone()), Some(callback_return_type.clone())),
+                    None => (None, None),
+                };
 
-                return Some(TUnion::new(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(new_properties),
-                    is_list: *is_list,
-                    sealed: *sealed,
-                    fallback_key_type: new_fallback_key,
-                    fallback_value_type: new_fallback_value,
-                }));
+                return Some(TUnion::new(TAtomic::keyed_array(
+                    new_known_values,
+                    *is_list,
+                    *is_sealed,
+                    new_fallback_key,
+                    new_fallback_value,
+                )));
             }
         }
     }
@@ -124,13 +129,9 @@ fn infer_array_map_return_type(
     if args.len() == 2 {
         if first_info.is_list {
             let atomic = if first_info.is_non_empty {
-                TAtomic::TNonEmptyList {
-                    value_type: Box::new(callback_return_type),
-                }
+                TAtomic::non_empty_list(callback_return_type)
             } else {
-                TAtomic::TList {
-                    value_type: Box::new(callback_return_type),
-                }
+                TAtomic::list(callback_return_type)
             };
             return Some(TUnion::new(atomic));
         }
@@ -141,28 +142,18 @@ fn infer_array_map_return_type(
             first_info.key_type.clone()
         };
         let atomic = if first_info.is_non_empty {
-            TAtomic::TNonEmptyArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(callback_return_type),
-            }
+            TAtomic::non_empty_array(key_type, callback_return_type)
         } else {
-            TAtomic::TArray {
-                key_type: Box::new(key_type),
-                value_type: Box::new(callback_return_type),
-            }
+            TAtomic::array(key_type, callback_return_type)
         };
         return Some(TUnion::new(atomic));
     }
 
     let all_non_empty = input_array_infos.iter().all(|info| info.is_non_empty);
     let atomic = if all_non_empty {
-        TAtomic::TNonEmptyList {
-            value_type: Box::new(callback_return_type),
-        }
+        TAtomic::non_empty_list(callback_return_type)
     } else {
-        TAtomic::TList {
-            value_type: Box::new(callback_return_type),
-        }
+        TAtomic::list(callback_return_type)
     };
 
     Some(TUnion::new(atomic))

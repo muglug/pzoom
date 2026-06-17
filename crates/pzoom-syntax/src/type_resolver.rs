@@ -23,10 +23,7 @@ pub fn resolve_hint(
         Hint::Null(_) => TUnion::null(),
         Hint::True(_) => TUnion::new(TAtomic::TTrue),
         Hint::False(_) => TUnion::new(TAtomic::TFalse),
-        Hint::Array(_) => TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        }),
+        Hint::Array(_) => TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed())),
         Hint::Callable(_) => TUnion::new(TAtomic::TCallable {
             params: None,
             return_type: None,
@@ -213,10 +210,7 @@ fn resolve_identifier_hint(
         "float" => TUnion::float(),
         "string" => TUnion::string(),
         "bool" => TUnion::bool(),
-        "array" => TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        }),
+        "array" => TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed())),
         "object" => TUnion::new(TAtomic::TObject),
         "mixed" => TUnion::mixed(),
         "void" => TUnion::void(),

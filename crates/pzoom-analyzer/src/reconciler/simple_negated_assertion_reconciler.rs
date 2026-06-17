@@ -92,24 +92,37 @@ pub fn reconcile(
             // Only the *general* array/list assertion (`!is_array($x)`)
             // removes every array; a negated specific array
             // (`@psalm-assert-if-false array<string, string>` negated on the
-            // true path) subtracts just the matching atomics downstream.
+            // true path) subtracts just the matching atomics downstream. A
+            // shape (known entries) is never general, so it falls through.
+            //
+            // A general *list* assertion (`is_list`). A missing fallback (the
+            // empty array `[]`) counts as general (its `never` value is
+            // vacuously general).
             TAtomic::TArray {
-                key_type,
-                value_type,
-            }
-            | TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            } if negated_array_param_is_general(value_type)
-                && (matches!(key_type.get_single(), Some(TAtomic::TArrayKey) | None)
-                    || negated_array_param_is_general(key_type)) =>
-            {
-                return Some(subtract_array(existing_var_type));
-            }
-            TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type }
-                if negated_array_param_is_general(value_type) =>
+                known_values,
+                params,
+                is_list: true,
+                ..
+            } if known_values.is_empty()
+                && params
+                    .as_deref()
+                    .is_none_or(|(_, value)| negated_array_param_is_general(value)) =>
             {
                 return Some(subtract_list(existing_var_type));
+            }
+            // A general *array* assertion (not a list).
+            TAtomic::TArray {
+                known_values,
+                params,
+                ..
+            } if known_values.is_empty()
+                && params.as_deref().is_none_or(|(key, value)| {
+                    negated_array_param_is_general(value)
+                        && (matches!(key.get_single(), Some(TAtomic::TArrayKey) | None)
+                            || negated_array_param_is_general(key))
+                }) =>
+            {
+                return Some(subtract_array(existing_var_type));
             }
             _ => {}
         }
@@ -175,10 +188,7 @@ fn subtract_object(existing_var_type: &TUnion) -> TUnion {
                 // callable-string or a callable-array. Narrow to those rather
                 // than removing the type entirely. Matches Psalm reconcileObject.
                 acceptable_types.push(TAtomic::TCallableString);
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(TUnion::mixed()),
-                });
+                acceptable_types.push(TAtomic::array(TUnion::array_key(), TUnion::mixed()));
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
@@ -579,10 +589,7 @@ fn subtract_string(existing_var_type: &TUnion) -> TUnion {
             }
             TAtomic::TCallable { .. } => {
                 // callable - string => array|object
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(TUnion::mixed()),
-                });
+                acceptable_types.push(TAtomic::array(TUnion::array_key(), TUnion::mixed()));
                 acceptable_types.push(TAtomic::TObject);
             }
             TAtomic::TScalar => {
@@ -774,11 +781,7 @@ fn subtract_array(existing_var_type: &TUnion) -> TUnion {
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. } => {
+            TAtomic::TArray { .. } => {
                 // Remove array types
             }
             TAtomic::TCallable {
@@ -850,12 +853,8 @@ fn subtract_list(existing_var_type: &TUnion) -> TUnion {
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } => {
-                // Remove list types
-            }
-            TAtomic::TKeyedArray { is_list: true, .. } => {
-                // Remove list-shaped keyed arrays
-            }
+            // Remove every list (generic lists and list-shaped keyed arrays).
+            TAtomic::TArray { is_list: true, .. } => {}
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
                     let subtracted = subtract_list(as_type);
@@ -949,29 +948,20 @@ fn reconcile_falsy(existing_var_type: &TUnion) -> TUnion {
                     acceptable_types.push(TAtomic::TLiteralInt { value: 0 });
                 }
             }
-            TAtomic::TArray { .. } => {
-                // Could be empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TList { .. } => {
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TKeyedArray { properties, .. } => {
-                // A keyed array is falsy only when empty; if it can be empty (no
-                // required keys), narrow to the empty array. Matches Psalm.
-                let has_required = properties.values().any(|v| !v.possibly_undefined);
+            // A *shape* (known entries present) is falsy only when empty; if it
+            // can be empty (no required keys), narrow to the empty array.
+            // Matches Psalm.
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
+                let has_required = known_values
+                    .values()
+                    .any(|(possibly_undefined, _)| !*possibly_undefined);
                 if !has_required {
-                    acceptable_types.push(TAtomic::TArray {
-                        key_type: Box::new(TUnion::nothing()),
-                        value_type: Box::new(TUnion::nothing()),
-                    });
+                    acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
                 }
+            }
+            // A generic array/list — could be the empty array.
+            TAtomic::TArray { .. } => {
+                acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
             }
             TAtomic::TMixed => {
                 // Mixed could be any falsy value
@@ -1078,56 +1068,37 @@ fn reconcile_empty_countable(existing_var_type: &TUnion) -> TUnion {
 
     for atomic in &existing_var_type.types {
         match atomic {
+            // A *shape* (known entries present). All-optional properties mean the
+            // shape may be empty (Psalm's reconcileNotNonEmptyCountable:
+            // !isNonEmpty() → empty array); a required property means it can't.
+            // TODO(unify-array): the old code kept an *empty-properties* keyed
+            // array verbatim; under unification that case is a generic/empty
+            // array and is normalised to `array<never, never>` (same meaning).
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
+                if known_values
+                    .values()
+                    .all(|(possibly_undefined, _)| *possibly_undefined)
+                {
+                    acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
+                }
+                // else: has a required property, can't be empty — skip.
+            }
+            // A generic non-empty LIST can't be empty, skip (Psalm's keyed-list
+            // branch removes the type and reports the impossibility).
+            TAtomic::TArray {
+                is_list: true,
+                is_nonempty: true,
+                ..
+            } => {}
+            // Every other generic array/list narrows to the empty array. Psalm's
+            // reconcileNotNonEmptyCountable TArray branch covers non-empty arrays
+            // too: it silently substitutes array<never, never>.
             TAtomic::TArray { .. } => {
-                // Narrow to empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TList { .. } => {
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            // Psalm's reconcileNotNonEmptyCountable TArray branch covers
-            // TNonEmptyArray too: it silently substitutes array<never, never>
-            // (`$redundant = false`), so `$nonEmptyArray === []` never
-            // reports. Only keyed shapes/lists take the remove-and-report
-            // path.
-            TAtomic::TNonEmptyArray { .. } => {
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TNonEmptyList { .. } => {
-                // Non-empty list can't be empty, skip (Psalm's keyed-list
-                // branch removes the type and reports the impossibility).
-            }
-            TAtomic::TKeyedArray { properties, .. } if properties.is_empty() => {
-                acceptable_types.push(atomic.clone());
-            }
-            // All-optional properties mean the shape may be empty (Psalm's
-            // reconcileNotNonEmptyCountable: !isNonEmpty() → empty array).
-            TAtomic::TKeyedArray { properties, .. }
-                if properties.values().all(|prop| prop.possibly_undefined) =>
-            {
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
-            }
-            TAtomic::TKeyedArray { .. } => {
-                // Has a required property, can't be empty
+                acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
             }
             TAtomic::TMixed => {
                 // Could be empty array
-                acceptable_types.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::nothing()),
-                    value_type: Box::new(TUnion::nothing()),
-                });
+                acceptable_types.push(TAtomic::array(TUnion::nothing(), TUnion::nothing()));
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 if !as_type.is_mixed() {
@@ -1163,7 +1134,8 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray { .. } => {
+            // A *shape* (known entries present).
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
                 // Mirror Psalm's reconcileNotNonEmptyCountable: a shape whose
                 // getMinCount() already meets the bound can never be shorter.
                 let prop_min_count = atomic.get_min_count().unwrap_or(0);
@@ -1180,7 +1152,12 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
             // Psalm reshapes a generic list under count($a) < N into a sealed
             // sized shape: the first element keeps its definedness, the rest
             // become possibly-undefined (list{0: T, 1?: T} for N = 3).
-            TAtomic::TNonEmptyList { value_type } | TAtomic::TList { value_type } => {
+            TAtomic::TArray {
+                params,
+                is_list: true,
+                is_nonempty,
+                ..
+            } => {
                 // The reshape is capped: a guard like `count($a) > 60_000`
                 // would produce a shape with 60k properties that every
                 // downstream operation re-walks (Psalm's own simplifyCNF
@@ -1191,21 +1168,23 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
                     continue;
                 }
                 did_remove_type = true;
-                let mut properties: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion> =
-                    rustc_hash::FxHashMap::default();
-                let first_defined = matches!(atomic, TAtomic::TNonEmptyList { .. });
+                let value_type = params
+                    .as_deref()
+                    .map(|(_, value)| value.clone())
+                    .unwrap_or_else(TUnion::nothing);
+                let mut known_values: rustc_hash::FxHashMap<
+                    pzoom_code_info::ArrayKey,
+                    (bool, TUnion),
+                > = rustc_hash::FxHashMap::default();
+                let first_defined = *is_nonempty;
                 for index in 0..(count - 1) {
-                    let mut property_type = (**value_type).clone();
-                    property_type.possibly_undefined = index > 0 || !first_defined;
-                    properties.insert(pzoom_code_info::ArrayKey::Int(index as i64), property_type);
+                    let possibly_undefined = index > 0 || !first_defined;
+                    known_values.insert(
+                        pzoom_code_info::ArrayKey::Int(index as i64),
+                        (possibly_undefined, value_type.clone()),
+                    );
                 }
-                acceptable_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: true,
-                    sealed: true,
-                    fallback_key_type: None,
-                    fallback_value_type: None,
-                });
+                acceptable_types.push(TAtomic::keyed_array(known_values, true, true, None, None));
             }
             _ => {
                 acceptable_types.push(atomic.clone());
@@ -1230,24 +1209,23 @@ fn reconcile_no_array_key(existing_var_type: &TUnion, key: &pzoom_code_info::Arr
 
     for atomic in &existing_var_type.types {
         match atomic {
-            TAtomic::TKeyedArray {
-                properties,
+            // A *shape* (known entries present).
+            TAtomic::TArray {
+                known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
-            } => {
+                ..
+            } if !known_values.is_empty() => {
                 // Remove the key from known items if it exists
-                let mut new_properties = (**properties).clone();
-                new_properties.remove(key);
+                let mut new_known_values = (**known_values).clone();
+                new_known_values.remove(key);
 
-                result_types.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(new_properties),
-                    is_list: *is_list,
-                    sealed: *sealed,
-                    fallback_key_type: fallback_key_type.clone(),
-                    fallback_value_type: fallback_value_type.clone(),
-                });
+                result_types.push(TAtomic::keyed_array_arc(
+                    std::sync::Arc::new(new_known_values),
+                    *is_list,
+                    atomic.array_is_sealed(),
+                    params.clone(),
+                ));
             }
             TAtomic::TTemplateParam { as_type, .. } => {
                 let subtracted = reconcile_no_array_key(as_type, key);

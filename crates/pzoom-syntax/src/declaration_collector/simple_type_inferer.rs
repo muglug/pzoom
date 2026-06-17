@@ -225,33 +225,36 @@ pub(crate) fn infer_with_context(
                 // PHP's `+` on arrays keeps the left operand's keys.
                 if matches!(binary.operator, BinaryOperator::Addition(_))
                     && let (
-                        Some(TAtomic::TKeyedArray {
-                            properties: lhs_properties,
+                        Some(TAtomic::TArray {
+                            known_values: lhs_known,
                             is_list: lhs_is_list,
-                            sealed,
-                            fallback_key_type,
-                            fallback_value_type,
+                            is_sealed,
+                            params,
+                            ..
                         }),
-                        Some(TAtomic::TKeyedArray {
-                            properties: rhs_properties,
+                        Some(TAtomic::TArray {
+                            known_values: rhs_known,
                             is_list: rhs_is_list,
                             ..
                         }),
                     ) = (lhs_type.get_single(), rhs_type.get_single())
+                    // Only fold actual shapes (known entries) — the old code only
+                    // matched `TKeyedArray`, never a generic array/list.
+                    && !lhs_known.is_empty()
+                    && !rhs_known.is_empty()
                 {
-                    let mut properties = (**lhs_properties).clone();
-                    for (key, value) in rhs_properties.iter() {
-                        properties
+                    let mut known_values = (**lhs_known).clone();
+                    for (key, value) in rhs_known.iter() {
+                        known_values
                             .entry(key.clone())
                             .or_insert_with(|| value.clone());
                     }
-                    return Some(TUnion::new(TAtomic::TKeyedArray {
-                        properties: std::sync::Arc::new(properties),
-                        is_list: *lhs_is_list && *rhs_is_list,
-                        sealed: *sealed,
-                        fallback_key_type: fallback_key_type.clone(),
-                        fallback_value_type: fallback_value_type.clone(),
-                    }));
+                    return Some(TUnion::new(TAtomic::keyed_array_arc(
+                        std::sync::Arc::new(known_values),
+                        *lhs_is_list && *rhs_is_list,
+                        *is_sealed,
+                        params.clone(),
+                    )));
                 }
                 if let Some(TAtomic::TLiteralInt { value: lhs }) = lhs_type.get_single()
                     && let Some(TAtomic::TLiteralInt { value: rhs }) = rhs_type.get_single()
@@ -499,19 +502,23 @@ fn infer_simple_array_type<'a>(
     }
 
     if properties.is_empty() {
-        return Some(TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::nothing()),
-            value_type: Box::new(TUnion::nothing()),
-        }));
+        return Some(TUnion::new(TAtomic::array(
+            TUnion::nothing(),
+            TUnion::nothing(),
+        )));
     }
 
-    Some(TUnion::new(TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
+    let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = properties
+        .into_iter()
+        .map(|(key, value)| (key, (false, value)))
+        .collect();
+    Some(TUnion::new(TAtomic::keyed_array(
+        known_values,
         is_list,
-        sealed: true,
-        fallback_key_type: None,
-        fallback_value_type: None,
-    }))
+        true,
+        None,
+        None,
+    )))
 }
 
 /// Build Psalm's `UnresolvedConstantComponent` analog for a constant

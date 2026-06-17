@@ -85,11 +85,7 @@ pub fn analyze(
         let mut risky_cast: Option<String> = None;
         for atomic in &inner_union.types {
             match atomic {
-                TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. } => {
+                TAtomic::TArray { .. } => {
                     if risky_cast.is_none() {
                         risky_cast = Some(atomic.get_id(Some(analyzer.interner)));
                     }
@@ -319,11 +315,21 @@ fn infer_object_cast_type(inner_type: &TUnion) -> TUnion {
 
     for atomic in &inner_type.types {
         match atomic {
-            TAtomic::TKeyedArray { properties, .. } => {
+            // A shape (keyed array) with known entries — a generic array/list has
+            // no known entries and falls through to the plain-object fallback.
+            // TODO(unify-array): an empty *sealed* shape `array{}` (old empty
+            // TKeyedArray) now also has empty known_values and so falls through to
+            // plain `object` instead of `object{}`; the old code only ever saw
+            // non-empty shapes here (`[]` was the generic empty `TArray`).
+            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
                 permissible_atomics.push(TAtomic::TObjectWithProperties {
-                    properties: properties
+                    properties: known_values
                         .iter()
-                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .map(|(key, (possibly_undefined, value))| {
+                            let mut value = value.clone();
+                            value.possibly_undefined = *possibly_undefined;
+                            (key.clone(), value)
+                        })
                         .collect(),
                     is_stringable: false,
                     is_invokable: false,
@@ -365,42 +371,25 @@ fn infer_object_cast_type(inner_type: &TUnion) -> TUnion {
 
 fn infer_array_cast_type(inner_type: &TUnion) -> TUnion {
     if inner_type.is_mixed() {
-        return TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        });
+        return TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed()));
     }
 
     let mut casted = Vec::new();
 
     for atomic in &inner_type.types {
         match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. } => casted.push(atomic.clone()),
-            TAtomic::TNull => casted.push(TAtomic::TArray {
-                key_type: Box::new(TUnion::nothing()),
-                value_type: Box::new(TUnion::nothing()),
-            }),
+            TAtomic::TArray { .. } => casted.push(atomic.clone()),
+            // (array) null is the empty array `[]`.
+            TAtomic::TNull => casted.push(TAtomic::empty_array()),
             TAtomic::TMixed | TAtomic::TMixedFromLoopIsset | TAtomic::TNonEmptyMixed => {
-                casted.push(TAtomic::TArray {
-                    key_type: Box::new(TUnion::array_key()),
-                    value_type: Box::new(TUnion::mixed()),
-                });
+                casted.push(TAtomic::array(TUnion::array_key(), TUnion::mixed()));
             }
-            _ => casted.push(TAtomic::TNonEmptyList {
-                value_type: Box::new(TUnion::new(atomic.clone())),
-            }),
+            _ => casted.push(TAtomic::non_empty_list(TUnion::new(atomic.clone()))),
         }
     }
 
     if casted.is_empty() {
-        TUnion::new(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(TUnion::mixed()),
-        })
+        TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed()))
     } else {
         TUnion::from_types(type_combiner::combine(casted, false))
     }
@@ -516,12 +505,7 @@ pub(crate) fn maybe_emit_invalid_string_cast(
     let mut invalid_cast: Option<String> = None;
     for atomic in &inner_type.types {
         let valid = match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
-            | TAtomic::TObject => false,
+            TAtomic::TArray { .. } | TAtomic::TObject => false,
             TAtomic::TObjectWithProperties { is_stringable, .. } => *is_stringable,
             TAtomic::TNamedObject { name, .. } => {
                 !should_emit_invalid_cast_for_named_object(analyzer, *name)
@@ -725,14 +709,7 @@ fn is_redundant_cast(op: &UnaryPrefixOperator, inner_type: &TUnion) -> bool {
         }
 
         UnaryPrefixOperator::ArrayCast(_, _) => {
-            matches!(
-                inner,
-                TAtomic::TArray { .. }
-                    | TAtomic::TNonEmptyArray { .. }
-                    | TAtomic::TList { .. }
-                    | TAtomic::TNonEmptyList { .. }
-                    | TAtomic::TKeyedArray { .. }
-            )
+            matches!(inner, TAtomic::TArray { .. })
         }
 
         UnaryPrefixOperator::ObjectCast(_, _) => {

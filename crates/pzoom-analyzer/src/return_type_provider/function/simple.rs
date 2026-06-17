@@ -70,10 +70,7 @@ impl FunctionReturnTypeProvider for FilterInputArrayReturnTypeProvider {
         _analysis_data: &mut FunctionAnalysisData,
     ) -> Option<TUnion> {
         Some(TUnion::from_types(vec![
-            TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(TUnion::mixed()),
-            },
+            TAtomic::array(TUnion::array_key(), TUnion::mixed()),
             TAtomic::TNull,
         ]))
     }

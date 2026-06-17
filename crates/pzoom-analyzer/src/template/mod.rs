@@ -122,32 +122,6 @@ fn resolve_type_variables_in_atomic_deep(
             is_static: *is_static,
             remapped_params: *remapped_params,
         },
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        } => TAtomic::TArray {
-            key_type: Box::new(resolve_type_variables_in_union_deep(
-                key_type,
-                type_variable_bounds,
-            )),
-            value_type: Box::new(resolve_type_variables_in_union_deep(
-                value_type,
-                type_variable_bounds,
-            )),
-        },
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(resolve_type_variables_in_union_deep(
-                key_type,
-                type_variable_bounds,
-            )),
-            value_type: Box::new(resolve_type_variables_in_union_deep(
-                value_type,
-                type_variable_bounds,
-            )),
-        },
         TAtomic::TIterable {
             key_type,
             value_type,
@@ -161,48 +135,39 @@ fn resolve_type_variables_in_atomic_deep(
                 type_variable_bounds,
             )),
         },
-        TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(resolve_type_variables_in_union_deep(
-                value_type,
-                type_variable_bounds,
-            )),
-        },
-        TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(resolve_type_variables_in_union_deep(
-                value_type,
-                type_variable_bounds,
-            )),
-        },
-        TAtomic::TKeyedArray {
-            properties,
+        // The unified array atomic: deep-resolve type variables in every
+        // known-entry value and the typed fallback `params`, preserving the
+        // flags and each entry's possibly-undefined bool. A direct struct
+        // literal avoids re-normalising the flags (which would drop
+        // `is_nonempty` from a generic `non-empty-array<K, V>`).
+        TAtomic::TArray {
+            known_values,
+            params,
             is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            is_nonempty,
+            is_sealed,
         } => {
-            let mut new_properties = rustc_hash::FxHashMap::default();
-            for (key, value) in properties.iter() {
-                new_properties.insert(
+            let mut new_known_values = rustc_hash::FxHashMap::default();
+            for (key, (possibly_undefined, value)) in known_values.iter() {
+                new_known_values.insert(
                     key.clone(),
-                    resolve_type_variables_in_union_deep(value, type_variable_bounds),
+                    (
+                        *possibly_undefined,
+                        resolve_type_variables_in_union_deep(value, type_variable_bounds),
+                    ),
                 );
             }
-            pzoom_code_info::TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(new_properties),
+            TAtomic::TArray {
+                known_values: std::sync::Arc::new(new_known_values),
+                params: params.as_ref().map(|params| {
+                    Box::new((
+                        resolve_type_variables_in_union_deep(&params.0, type_variable_bounds),
+                        resolve_type_variables_in_union_deep(&params.1, type_variable_bounds),
+                    ))
+                }),
                 is_list: *is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.as_ref().map(|key_type| {
-                    Box::new(resolve_type_variables_in_union_deep(
-                        key_type,
-                        type_variable_bounds,
-                    ))
-                }),
-                fallback_value_type: fallback_value_type.as_ref().map(|value_type| {
-                    Box::new(resolve_type_variables_in_union_deep(
-                        value_type,
-                        type_variable_bounds,
-                    ))
-                }),
+                is_nonempty: *is_nonempty,
+                is_sealed: *is_sealed,
             }
         }
         _ => atomic.clone(),
@@ -509,38 +474,24 @@ fn collect_template_params_in_atomic(
                 collect_template_params_in_atomic(nested, referenced, depth + 1);
             }
         }
-        TAtomic::TArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        }
-        | TAtomic::TIterable {
+        TAtomic::TIterable {
             key_type,
             value_type,
         } => {
             recurse_union(key_type, referenced);
             recurse_union(value_type, referenced);
         }
-        TAtomic::TList { value_type } | TAtomic::TNonEmptyList { value_type } => {
-            recurse_union(value_type, referenced);
-        }
-        TAtomic::TKeyedArray {
-            properties,
-            fallback_key_type,
-            fallback_value_type,
+        TAtomic::TArray {
+            known_values,
+            params,
             ..
         } => {
-            for value_type in properties.values() {
+            for (_possibly_undefined, value_type) in known_values.values() {
                 recurse_union(value_type, referenced);
             }
-            if let Some(fallback_key_type) = fallback_key_type {
-                recurse_union(fallback_key_type, referenced);
-            }
-            if let Some(fallback_value_type) = fallback_value_type {
-                recurse_union(fallback_value_type, referenced);
+            if let Some(params) = params {
+                recurse_union(&params.0, referenced);
+                recurse_union(&params.1, referenced);
             }
         }
         TAtomic::TClosure {

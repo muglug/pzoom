@@ -360,91 +360,41 @@ fn replace_atomic(
     resolving_templates: &mut FxHashSet<StrId>,
 ) -> TAtomic {
     match atomic {
+        // The unified array atomic: substitute templates in every known-entry
+        // value and in the typed fallback `params`, preserving the flags
+        // (is_list / is_nonempty / is_sealed) and each entry's
+        // possibly-undefined bool. A direct struct literal is used rather than a
+        // smart constructor so the flags are not re-normalised (which would, for
+        // a generic `non-empty-array<K, V>`, drop `is_nonempty`).
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => TAtomic::TArray {
-            key_type: Box::new(replace_union(
-                codebase,
-                key_type,
-                template_result,
-                resolving_templates,
-            )),
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TNonEmptyArray {
-            key_type,
-            value_type,
-        } => TAtomic::TNonEmptyArray {
-            key_type: Box::new(replace_union(
-                codebase,
-                key_type,
-                template_result,
-                resolving_templates,
-            )),
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TList { value_type } => TAtomic::TList {
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TNonEmptyList { value_type } => TAtomic::TNonEmptyList {
-            value_type: Box::new(replace_union(
-                codebase,
-                value_type,
-                template_result,
-                resolving_templates,
-            )),
-        },
-        TAtomic::TKeyedArray {
-            properties,
+            known_values,
+            params,
             is_list,
-            sealed,
-            fallback_key_type,
-            fallback_value_type,
+            is_nonempty,
+            is_sealed,
         } => {
-            let mut new_properties = FxHashMap::default();
-            for (key, value) in properties.iter() {
-                new_properties.insert(
+            let mut new_known_values = FxHashMap::default();
+            for (key, (possibly_undefined, value)) in known_values.iter() {
+                new_known_values.insert(
                     key.clone(),
-                    replace_union(codebase, value, template_result, resolving_templates),
+                    (
+                        *possibly_undefined,
+                        replace_union(codebase, value, template_result, resolving_templates),
+                    ),
                 );
             }
 
-            TAtomic::TKeyedArray {
-                properties: std::sync::Arc::new(new_properties),
+            TAtomic::TArray {
+                known_values: std::sync::Arc::new(new_known_values),
+                params: params.as_ref().map(|params| {
+                    Box::new((
+                        replace_union(codebase, &params.0, template_result, resolving_templates),
+                        replace_union(codebase, &params.1, template_result, resolving_templates),
+                    ))
+                }),
                 is_list: *is_list,
-                sealed: *sealed,
-                fallback_key_type: fallback_key_type.as_ref().map(|fallback_key| {
-                    Box::new(replace_union(
-                        codebase,
-                        fallback_key,
-                        template_result,
-                        resolving_templates,
-                    ))
-                }),
-                fallback_value_type: fallback_value_type.as_ref().map(|fallback_value| {
-                    Box::new(replace_union(
-                        codebase,
-                        fallback_value,
-                        template_result,
-                        resolving_templates,
-                    ))
-                }),
+                is_nonempty: *is_nonempty,
+                is_sealed: *is_sealed,
             }
         }
         TAtomic::TNamedObject {

@@ -98,10 +98,11 @@ pub fn intersect_union_with_atomic(
     // absorb the asserted properties (sequential @psalm-assert shape calls
     // intersect: array{foo} + assert array{bar} = array{foo, bar}), and
     // they alone form the result.
-    if let TAtomic::TKeyedArray {
-        properties: assertion_properties,
+    if let TAtomic::TArray {
+        known_values: assertion_known_values,
         ..
     } = assertion_atomic
+        && !assertion_known_values.is_empty()
     {
         // Only when NO member shares keys with the assertion (the
         // sequential-assert case); a member sharing keys means a
@@ -109,8 +110,9 @@ pub fn intersect_union_with_atomic(
         let any_member_shares_keys = existing_var_type.types.iter().any(|atomic| {
             matches!(
                 atomic,
-                TAtomic::TKeyedArray { properties, .. }
-                    if properties.keys().any(|key| assertion_properties.contains_key(key))
+                TAtomic::TArray { known_values, .. }
+                    if !known_values.is_empty()
+                        && known_values.keys().any(|key| assertion_known_values.contains_key(key))
             )
         });
         let mut merged_members = Vec::new();
@@ -118,28 +120,27 @@ pub fn intersect_union_with_atomic(
             if any_member_shares_keys {
                 break;
             }
-            if let TAtomic::TKeyedArray {
-                properties: existing_properties,
+            if let TAtomic::TArray {
+                known_values: existing_known_values,
+                params,
                 is_list,
-                sealed,
-                fallback_key_type,
-                fallback_value_type,
+                ..
             } = atomic
-                && !existing_properties
+                && !existing_known_values.is_empty()
+                && !existing_known_values
                     .keys()
-                    .any(|key| assertion_properties.contains_key(key))
+                    .any(|key| assertion_known_values.contains_key(key))
             {
-                let mut properties = (**existing_properties).clone();
-                for (key, value) in assertion_properties.iter() {
-                    properties.insert(key.clone(), value.clone());
+                let mut known_values = (**existing_known_values).clone();
+                for (key, value) in assertion_known_values.iter() {
+                    known_values.insert(key.clone(), value.clone());
                 }
-                merged_members.push(TAtomic::TKeyedArray {
-                    properties: std::sync::Arc::new(properties),
-                    is_list: *is_list,
-                    sealed: *sealed,
-                    fallback_key_type: fallback_key_type.clone(),
-                    fallback_value_type: fallback_value_type.clone(),
-                });
+                merged_members.push(TAtomic::keyed_array_arc(
+                    std::sync::Arc::new(known_values),
+                    *is_list,
+                    atomic.array_is_sealed(),
+                    params.clone(),
+                ));
             }
         }
         if !merged_members.is_empty() {
@@ -199,26 +200,23 @@ fn intersect_array_value_unions(existing: &TUnion, assertion: &TUnion) -> TUnion
 
 /// Psalm's `callable-array{0: class-string|object, 1: non-empty-string}`.
 fn callable_array_shape() -> TAtomic {
-    let mut properties: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion> =
+    let mut known_values: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, (bool, TUnion)> =
         rustc_hash::FxHashMap::default();
-    properties.insert(
+    known_values.insert(
         pzoom_code_info::ArrayKey::Int(0),
-        TUnion::from_types(vec![
-            TAtomic::TClassString { as_type: None },
-            TAtomic::TObject,
-        ]),
+        (
+            false,
+            TUnion::from_types(vec![
+                TAtomic::TClassString { as_type: None },
+                TAtomic::TObject,
+            ]),
+        ),
     );
-    properties.insert(
+    known_values.insert(
         pzoom_code_info::ArrayKey::Int(1),
-        TUnion::new(TAtomic::TNonEmptyString),
+        (false, TUnion::new(TAtomic::TNonEmptyString)),
     );
-    TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: true,
-        sealed: true,
-        fallback_key_type: None,
-        fallback_value_type: None,
-    }
+    TAtomic::keyed_array(known_values, true, true, None, None)
 }
 
 /// Whether an array key union could hold int keys (so the array could be a
@@ -361,10 +359,7 @@ fn intersect_atomic_with_atomic_inner(
         // `is_array` on a callable narrows to Psalm's callable-array shape
         // `{0: class-string|object, 1: non-empty-string}` — a sealed
         // two-element list (so `count()` knows it is exactly 2).
-        if matches!(
-            assertion_atomic,
-            TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. } | TAtomic::TList { .. }
-        ) {
+        if matches!(assertion_atomic, TAtomic::TArray { .. }) {
             return Some(callable_array_shape());
         }
         // `is_string` on a callable narrows to callable-string (Psalm's
@@ -408,15 +403,26 @@ fn intersect_atomic_with_atomic_inner(
     // else branch for a non-empty bound in conditional return types).
     let is_empty_array_atomic = |atomic: &TAtomic| match atomic {
         TAtomic::TArray {
-            key_type,
-            value_type,
-        } => key_type.is_nothing() && value_type.is_nothing(),
+            known_values,
+            params,
+            is_nonempty,
+            ..
+        } => {
+            known_values.is_empty()
+                && !*is_nonempty
+                && params
+                    .as_deref()
+                    .is_none_or(|(key, value)| key.is_nothing() && value.is_nothing())
+        }
         _ => false,
     };
+    // Only a *generic* non-empty array/list (no known entries), matching the old
+    // `TNonEmptyArray`/`TNonEmptyList` variants — keyed shapes have their own
+    // intersection arms below.
     let is_non_empty_array_like = |atomic: &TAtomic| {
         matches!(
             atomic,
-            TAtomic::TNonEmptyArray { .. } | TAtomic::TNonEmptyList { .. }
+            TAtomic::TArray { known_values, is_nonempty: true, .. } if known_values.is_empty()
         )
     };
     if (is_empty_array_atomic(existing_atomic) && is_non_empty_array_like(assertion_atomic))
@@ -993,344 +999,252 @@ fn intersect_atomic_with_atomic_inner(
             }
         }
 
-        // array types: intersect the generic params (Psalm's
-        // filterTypeWithAnotherType narrows non-empty-array<string, Atomic>
-        // by an asserted array<array-key, TLiteral...> to
-        // non-empty-array<string, TLiteral...>).
+        // array/list/keyed-array intersections. The unified `TArray` covers
+        // every old array sort, so this single arm reproduces Psalm's
+        // filterTypeWithAnotherType matrix, dispatching on whether each side is
+        // a shape (known entries), a list, and whether it is non-empty.
         (
             TAtomic::TArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
+                known_values: e_known,
+                params: e_params,
+                is_list: e_is_list,
+                is_nonempty: e_nonempty,
+                ..
             },
             TAtomic::TArray {
-                key_type,
-                value_type,
-            },
-        )
-        | (
-            TAtomic::TArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            },
-        )
-        | (
-            TAtomic::TNonEmptyArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            },
-        )
-        | (
-            TAtomic::TNonEmptyArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
+                known_values: a_known,
+                params: a_params,
+                is_list: a_is_list,
+                is_nonempty: a_nonempty,
+                ..
             },
         ) => {
-            // Disjoint params mean the arrays can't intersect at all (Psalm's
-            // filterTypeWithAnotherType drops the atomic); the more-specific
-            // fallback only covers mixed-vs-concrete pairs the param
-            // intersection can't express.
-            // A missing param intersection falls back to the more-specific
-            // side UNLESS the params are provably disjoint (no containment in
-            // either direction) — then the arrays can't intersect at all and
-            // Psalm's filterTypeWithAnotherType drops the atomic.
-            let params_disjoint = |a: &TUnion, b: &TUnion| {
-                if a.is_mixed()
-                    || b.is_mixed()
-                    || a.types
-                        .iter()
-                        .chain(b.types.iter())
-                        .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
-                {
-                    return false;
-                }
-                let Some(codebase) = codebase else {
-                    return false;
+            let e_shape = !e_known.is_empty();
+            let a_shape = !a_known.is_empty();
+
+            // Shapes: the union-level pre-step (the keyed-array merge above)
+            // covers Psalm's disjoint shape-merge; a member sharing keys with
+            // the assertion narrows to the assertion shape. A shape paired with
+            // a *generic list* assertion had no old arm, so it stays disjoint.
+            if e_shape && a_shape {
+                // Two shapes: narrow to the assertion shape.
+                return Some(assertion_atomic.clone());
+            }
+            if e_shape {
+                // Existing shape ∩ generic array → keep the shape; ∩ generic
+                // list → no old arm (disjoint).
+                return if *a_is_list {
+                    None
+                } else {
+                    Some(existing_atomic.clone())
                 };
-                !crate::type_comparator::union_type_comparator::can_be_contained_by(
-                    codebase, a, b,
-                ) && !crate::type_comparator::union_type_comparator::can_be_contained_by(
-                    codebase, b, a,
-                )
-            };
-            let intersected_key = match intersect_union_with_union_with_codebase(
-                existing_key_type,
-                key_type,
-                codebase,
-            ) {
-                Some(intersected) => intersected,
-                None if params_disjoint(existing_key_type, key_type) => return None,
-                None => pick_more_specific_union(existing_key_type, key_type),
-            };
-            let intersected_value = match intersect_union_with_union_with_codebase(
-                existing_value_type,
-                value_type,
-                codebase,
-            ) {
-                Some(intersected) => intersected,
-                None if params_disjoint(existing_value_type, value_type) => return None,
-                None => pick_more_specific_union(existing_value_type, value_type),
-            };
-            if matches!(existing_atomic, TAtomic::TNonEmptyArray { .. })
-                || matches!(assertion_atomic, TAtomic::TNonEmptyArray { .. })
-            {
-                Some(TAtomic::TNonEmptyArray {
-                    key_type: Box::new(intersected_key),
-                    value_type: Box::new(intersected_value),
-                })
-            } else {
-                Some(TAtomic::TArray {
-                    key_type: Box::new(intersected_key),
-                    value_type: Box::new(intersected_value),
-                })
             }
-        }
-        (
-            TAtomic::TList {
-                value_type: existing_value_type,
-            },
-            TAtomic::TArray { key_type, value_type },
-        ) => {
-            // A non-empty list has int keys: an assertion to a string-keyed
-            // array is disjoint (the empty list is the only overlap).
-            if !array_key_union_allows_int(key_type) {
-                return None;
+            if a_shape {
+                // Generic array ∩ assertion shape → narrow to the shape; generic
+                // list ∩ shape → no old arm (disjoint).
+                return if *e_is_list {
+                    None
+                } else {
+                    Some(assertion_atomic.clone())
+                };
             }
-            Some(TAtomic::TList {
-                value_type: Box::new(
-                    intersect_union_with_union_with_codebase(
-                        existing_value_type,
-                        value_type,
-                        codebase,
-                    )
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-                ),
-            })
-        }
-        (
-            TAtomic::TNonEmptyList {
-                value_type: existing_value_type,
-            },
-            TAtomic::TArray {
-                key_type,
-                value_type,
-            },
-        )
-        | (
-            TAtomic::TList {
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            },
-        )
-        | (
-            TAtomic::TNonEmptyList {
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyArray {
-                key_type,
-                value_type,
-            },
-        ) => {
-            if !array_key_union_allows_int(key_type) {
-                return None;
+
+            // Both sides are generic (no known entries). Param key/value, with
+            // a missing fallback treated as `never` (the empty array).
+            let never = TUnion::nothing();
+            let e_key = e_params.as_deref().map(|(key, _)| key).unwrap_or(&never);
+            let e_value = e_params
+                .as_deref()
+                .map(|(_, value)| value)
+                .unwrap_or(&never);
+            let a_key = a_params.as_deref().map(|(key, _)| key).unwrap_or(&never);
+            let a_value = a_params
+                .as_deref()
+                .map(|(_, value)| value)
+                .unwrap_or(&never);
+            let result_nonempty = *e_nonempty || *a_nonempty;
+
+            match (*e_is_list, *a_is_list) {
+                // array ∩ array — intersect both params, dropping the atomic
+                // when a param is provably disjoint (Psalm's
+                // filterTypeWithAnotherType).
+                (false, false) => {
+                    // A missing param intersection falls back to the
+                    // more-specific side UNLESS the params are provably disjoint
+                    // (no containment in either direction) — then the arrays
+                    // can't intersect at all.
+                    let params_disjoint = |a: &TUnion, b: &TUnion| {
+                        if a.is_mixed()
+                            || b.is_mixed()
+                            || a.types
+                                .iter()
+                                .chain(b.types.iter())
+                                .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+                        {
+                            return false;
+                        }
+                        let Some(codebase) = codebase else {
+                            return false;
+                        };
+                        !crate::type_comparator::union_type_comparator::can_be_contained_by(
+                            codebase, a, b,
+                        ) && !crate::type_comparator::union_type_comparator::can_be_contained_by(
+                            codebase, b, a,
+                        )
+                    };
+                    let intersected_key =
+                        match intersect_union_with_union_with_codebase(e_key, a_key, codebase) {
+                            Some(intersected) => intersected,
+                            None if params_disjoint(e_key, a_key) => return None,
+                            None => pick_more_specific_union(e_key, a_key),
+                        };
+                    let intersected_value =
+                        match intersect_union_with_union_with_codebase(e_value, a_value, codebase)
+                        {
+                            Some(intersected) => intersected,
+                            None if params_disjoint(e_value, a_value) => return None,
+                            None => pick_more_specific_union(e_value, a_value),
+                        };
+                    if result_nonempty {
+                        Some(TAtomic::non_empty_array(intersected_key, intersected_value))
+                    } else {
+                        Some(TAtomic::array(intersected_key, intersected_value))
+                    }
+                }
+                // list ∩ array — a list has int keys, so a string-only-keyed
+                // array assertion is disjoint. Result is a list.
+                (true, false) => {
+                    if !array_key_union_allows_int(a_key) {
+                        return None;
+                    }
+                    let value = intersect_union_with_union_with_codebase(e_value, a_value, codebase)
+                        .unwrap_or_else(|| pick_more_specific_union(e_value, a_value));
+                    if result_nonempty {
+                        Some(TAtomic::non_empty_list(value))
+                    } else {
+                        Some(TAtomic::list(value))
+                    }
+                }
+                // array ∩ list — narrow to a list when the existing key type
+                // allows int keys. NB: a possibly-empty array asserted
+                // `non-empty-list` is intentionally disjoint (pzoom models
+                // `!== []` through a list, and a string-keyed array must not
+                // collapse to int keys there).
+                (false, true) => {
+                    if *a_nonempty && !*e_nonempty {
+                        return None;
+                    }
+                    if !array_key_union_allows_int(e_key) {
+                        return None;
+                    }
+                    let value = intersect_union_with_union_with_codebase(e_value, a_value, codebase)
+                        .unwrap_or_else(|| pick_more_specific_union(e_value, a_value));
+                    if result_nonempty {
+                        Some(TAtomic::non_empty_list(value))
+                    } else {
+                        Some(TAtomic::list(value))
+                    }
+                }
+                // list ∩ list — the value type is the intersection of both
+                // sides. NB: two *non-empty* generic lists with differing value
+                // types had no old arm, so they stay disjoint here (identical
+                // atomics were already handled above).
+                // TODO(unify-array): the absent (non-empty-list, non-empty-list)
+                // arm looks like a latent gap in the pre-unification matrix;
+                // preserved verbatim.
+                (true, true) => {
+                    if *e_nonempty && *a_nonempty {
+                        return None;
+                    }
+                    let value = intersect_array_value_unions(e_value, a_value);
+                    if result_nonempty {
+                        Some(TAtomic::non_empty_list(value))
+                    } else {
+                        Some(TAtomic::list(value))
+                    }
+                }
             }
-            Some(TAtomic::TNonEmptyList {
-                value_type: Box::new(
-                    intersect_union_with_union_with_codebase(
-                        existing_value_type,
-                        value_type,
-                        codebase,
-                    )
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-                ),
-            })
         }
 
-        // An array asserted to be a list (array_is_list) intersects into a
-        // list of the intersected value type when its key type allows int
-        // keys; a string-only-keyed array is disjoint from list (None).
-        // Non-emptiness is preserved.
-        (
-            TAtomic::TArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TList { value_type },
-        ) => {
-            if !array_key_union_allows_int(existing_key_type) {
-                return None;
-            }
-            Some(TAtomic::TList {
-                value_type: Box::new(
-                    intersect_union_with_union_with_codebase(
-                        existing_value_type,
-                        value_type,
-                        codebase,
-                    )
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-                ),
-            })
-        }
-        // NB: (TArray, TNonEmptyList) intentionally absent — pzoom models
-        // the `!== []` non-empty assertion through a list type, and a
-        // string-keyed array must not collapse to int keys there.
-        (
-            TAtomic::TNonEmptyArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TList { value_type },
-        )
-        | (
-            TAtomic::TNonEmptyArray {
-                key_type: existing_key_type,
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyList { value_type },
-        ) => {
-            if !array_key_union_allows_int(existing_key_type) {
-                return None;
-            }
-            Some(TAtomic::TNonEmptyList {
-                value_type: Box::new(
-                    intersect_union_with_union_with_codebase(
-                        existing_value_type,
-                        value_type,
-                        codebase,
-                    )
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-                ),
-            })
-        }
-
-        // list types — the value type is the intersection of both sides
-        // (asserting `non-empty-list` against `list<string>` keeps string,
-        // Psalm's filterTypeWithAnother).
-        (
-            TAtomic::TList {
-                value_type: existing_value,
-            },
-            TAtomic::TList {
-                value_type: assertion_value,
-            },
-        ) => Some(TAtomic::TList {
-            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
-        }),
-        (
-            TAtomic::TList {
-                value_type: existing_value,
-            },
-            TAtomic::TNonEmptyList {
-                value_type: assertion_value,
-            },
-        ) => Some(TAtomic::TNonEmptyList {
-            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
-        }),
-        (
-            TAtomic::TNonEmptyList {
-                value_type: existing_value,
-            },
-            TAtomic::TList {
-                value_type: assertion_value,
-            },
-        ) => Some(TAtomic::TNonEmptyList {
-            value_type: Box::new(intersect_array_value_unions(existing_value, assertion_value)),
-        }),
-
-        // keyed array types
-        (TAtomic::TKeyedArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. }) => {
-            // The union-level pre-step (`merge_disjoint_keyed_assertion`)
-            // covers Psalm's shape-merge; a member sharing keys with the
-            // assertion narrows to the assertion shape.
-            Some(assertion_keyed.clone())
-        }
-        (TAtomic::TArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. })
-        | (TAtomic::TNonEmptyArray { .. }, assertion_keyed @ TAtomic::TKeyedArray { .. }) => {
-            Some(assertion_keyed.clone())
-        }
-        (existing_keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TArray { .. })
-        | (existing_keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TNonEmptyArray { .. }) => {
-            Some(existing_keyed.clone())
-        }
-
-        // iterable types
+        // iterable types — the assertion/existing array side is the unified
+        // `TArray`, so dispatch on shape / list / non-empty internally.
         (
             TAtomic::TIterable {
                 key_type: existing_key_type,
                 value_type: existing_value_type,
             },
             TAtomic::TArray {
-                key_type,
-                value_type,
+                known_values: a_known,
+                params: a_params,
+                is_list: a_is_list,
+                is_nonempty: a_nonempty,
+                ..
             },
-        ) => Some(TAtomic::TArray {
-            key_type: Box::new(
-                intersect_union_with_union_with_codebase(existing_key_type, key_type, codebase)
-                    .unwrap_or_else(|| pick_more_specific_union(existing_key_type, key_type)),
-            ),
-            value_type: Box::new(
-                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-            ),
-        }),
+        ) => {
+            if !a_known.is_empty() {
+                // iterable ∩ shape → the shape.
+                return Some(assertion_atomic.clone());
+            }
+            let never = TUnion::nothing();
+            let a_key = a_params.as_deref().map(|(key, _)| key).unwrap_or(&never);
+            let a_value = a_params
+                .as_deref()
+                .map(|(_, value)| value)
+                .unwrap_or(&never);
+            if *a_is_list {
+                let value =
+                    intersect_union_with_union_with_codebase(existing_value_type, a_value, codebase)
+                        .unwrap_or_else(|| pick_more_specific_union(existing_value_type, a_value));
+                if *a_nonempty {
+                    Some(TAtomic::non_empty_list(value))
+                } else {
+                    Some(TAtomic::list(value))
+                }
+            } else if *a_nonempty {
+                // No old `(TIterable, TNonEmptyArray)` arm — disjoint.
+                None
+            } else {
+                Some(TAtomic::array(
+                    intersect_union_with_union_with_codebase(existing_key_type, a_key, codebase)
+                        .unwrap_or_else(|| pick_more_specific_union(existing_key_type, a_key)),
+                    intersect_union_with_union_with_codebase(existing_value_type, a_value, codebase)
+                        .unwrap_or_else(|| pick_more_specific_union(existing_value_type, a_value)),
+                ))
+            }
+        }
         (
             TAtomic::TArray {
-                key_type,
-                value_type,
+                known_values: e_known,
+                params: e_params,
+                is_list: e_is_list,
+                is_nonempty: e_nonempty,
+                ..
             },
             TAtomic::TIterable { .. },
-        ) => Some(TAtomic::TArray {
-            key_type: key_type.clone(),
-            value_type: value_type.clone(),
-        }),
-        (
-            TAtomic::TIterable {
-                key_type: _,
-                value_type: existing_value_type,
-            },
-            TAtomic::TList { value_type },
-        ) => Some(TAtomic::TList {
-            value_type: Box::new(
-                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-            ),
-        }),
-        (
-            TAtomic::TIterable {
-                key_type: _,
-                value_type: existing_value_type,
-            },
-            TAtomic::TNonEmptyList { value_type },
-        ) => Some(TAtomic::TNonEmptyList {
-            value_type: Box::new(
-                intersect_union_with_union_with_codebase(existing_value_type, value_type, codebase)
-                    .unwrap_or_else(|| pick_more_specific_union(existing_value_type, value_type)),
-            ),
-        }),
-        (TAtomic::TList { value_type }, TAtomic::TIterable { .. }) => Some(TAtomic::TList {
-            value_type: value_type.clone(),
-        }),
-        (TAtomic::TNonEmptyList { value_type }, TAtomic::TIterable { .. }) => {
-            Some(TAtomic::TNonEmptyList {
-                value_type: value_type.clone(),
-            })
+        ) => {
+            if !e_known.is_empty() {
+                // shape ∩ iterable → the shape.
+                return Some(existing_atomic.clone());
+            }
+            let never = TUnion::nothing();
+            let e_value = e_params
+                .as_deref()
+                .map(|(_, value)| value)
+                .unwrap_or(&never);
+            if *e_is_list {
+                if *e_nonempty {
+                    Some(TAtomic::non_empty_list(e_value.clone()))
+                } else {
+                    Some(TAtomic::list(e_value.clone()))
+                }
+            } else if *e_nonempty {
+                // No old `(TNonEmptyArray, TIterable)` arm — disjoint.
+                None
+            } else {
+                let e_key = e_params.as_deref().map(|(key, _)| key).unwrap_or(&never);
+                Some(TAtomic::array(e_key.clone(), e_value.clone()))
+            }
         }
-        (TAtomic::TIterable { .. }, keyed @ TAtomic::TKeyedArray { .. }) => Some(keyed.clone()),
-        (keyed @ TAtomic::TKeyedArray { .. }, TAtomic::TIterable { .. }) => Some(keyed.clone()),
         (
             TAtomic::TIterable {
                 key_type: existing_key_type,
@@ -1628,10 +1542,6 @@ fn atomic_can_be_callable_representation(atomic: &TAtomic) -> bool {
         TAtomic::TCallable { .. }
             | TAtomic::TClosure { .. }
             | TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. }
             | TAtomic::TString
             | TAtomic::TNonEmptyString
             | TAtomic::TLiteralString { .. }

@@ -36,17 +36,8 @@ impl MethodReturnTypeProvider for PdoStatementReturnTypeProvider {
             })?;
 
         let scalar_or_null = || TUnion::from_types(vec![TAtomic::TScalar, TAtomic::TNull]);
-        let list_of = |value: TUnion| {
-            TUnion::new(TAtomic::TList {
-                value_type: Box::new(value),
-            })
-        };
-        let array_of = |key: TUnion, value: TUnion| {
-            TUnion::new(TAtomic::TArray {
-                key_type: Box::new(key),
-                value_type: Box::new(value),
-            })
-        };
+        let list_of = |value: TUnion| TUnion::new(TAtomic::list(value));
+        let array_of = |key: TUnion, value: TUnion| TUnion::new(TAtomic::array(key, value));
 
         let result = match mode {
             // FETCH_ASSOC
@@ -73,9 +64,7 @@ impl MethodReturnTypeProvider for PdoStatementReturnTypeProvider {
                 let inner = TUnion::from_types(vec![
                     TAtomic::TScalar,
                     TAtomic::TNull,
-                    TAtomic::TList {
-                        value_type: Box::new(scalar_or_null()),
-                    },
+                    TAtomic::list(scalar_or_null()),
                 ]);
                 list_of(array_of(TUnion::string(), inner))
             }
@@ -107,31 +96,18 @@ fn handle_fetch(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option<TUnion>
     }
 
     let scalar_or_null = || TUnion::from_types(vec![TAtomic::TScalar, TAtomic::TNull]);
-    let array_of = |key: TUnion, value: TUnion| {
-        TUnion::new(TAtomic::TArray {
-            key_type: Box::new(key),
-            value_type: Box::new(value),
-        })
-    };
+    let array_of = |key: TUnion, value: TUnion| TUnion::new(TAtomic::array(key, value));
     let or_false = |atomic: TAtomic| TUnion::from_types(vec![atomic, TAtomic::TFalse]);
 
     let result = match fetch_mode {
         // FETCH_LAZY
         1 => or_false(TAtomic::TObject),
         // FETCH_ASSOC
-        2 => or_false(TAtomic::TArray {
-            key_type: Box::new(TUnion::string()),
-            value_type: Box::new(scalar_or_null()),
-        }),
+        2 => or_false(TAtomic::array(TUnion::string(), scalar_or_null())),
         // FETCH_NUM
-        3 => or_false(TAtomic::TList {
-            value_type: Box::new(scalar_or_null()),
-        }),
+        3 => or_false(TAtomic::list(scalar_or_null())),
         // FETCH_BOTH
-        4 => or_false(TAtomic::TArray {
-            key_type: Box::new(TUnion::array_key()),
-            value_type: Box::new(scalar_or_null()),
-        }),
+        4 => or_false(TAtomic::array(TUnion::array_key(), scalar_or_null())),
         // FETCH_OBJ
         5 => or_false(TAtomic::named_object(StrId::STDCLASS)),
         // FETCH_BOUND
@@ -141,16 +117,14 @@ fn handle_fetch(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option<TUnion>
         // FETCH_CLASS
         8 => or_false(TAtomic::TObject),
         // FETCH_NAMED
-        11 => or_false(TAtomic::TArray {
-            key_type: Box::new(TUnion::string()),
-            value_type: Box::new(TUnion::from_types(vec![
+        11 => or_false(TAtomic::array(
+            TUnion::string(),
+            TUnion::from_types(vec![
                 TAtomic::TScalar,
                 TAtomic::TNull,
-                TAtomic::TList {
-                    value_type: Box::new(scalar_or_null()),
-                },
-            ])),
-        }),
+                TAtomic::list(scalar_or_null()),
+            ]),
+        )),
         // FETCH_KEY_PAIR
         12 => array_of(TUnion::array_key(), scalar_or_null()),
         _ => return None,

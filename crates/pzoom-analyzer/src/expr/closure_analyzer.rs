@@ -221,10 +221,7 @@ pub fn analyze(
         // A variadic param collects its arguments (Psalm wraps in
         // array<array-key, T> since variadics accept named arguments).
         if param_info.is_variadic {
-            param_type = TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(param_type),
-            });
+            param_type = TUnion::new(TAtomic::array(TUnion::array_key(), param_type));
         }
         let param_span = param.variable.span();
         let parent_node = crate::data_flow::add_param_dataflow_node(
@@ -647,10 +644,7 @@ pub fn analyze_arrow_function(
         // A variadic param collects its arguments (Psalm wraps in
         // array<array-key, T> since variadics accept named arguments).
         if param_info.is_variadic {
-            param_type = TUnion::new(TAtomic::TArray {
-                key_type: Box::new(TUnion::array_key()),
-                value_type: Box::new(param_type),
-            });
+            param_type = TUnion::new(TAtomic::array(TUnion::array_key(), param_type));
         }
         let param_span = param.variable.span();
         let parent_node = crate::data_flow::add_param_dataflow_node(
@@ -1162,21 +1156,15 @@ fn union_contains_mixed(union: &TUnion) -> bool {
 
 fn union_allows_implicit_yield_return(union: &TUnion) -> bool {
     union.types.iter().any(|atomic| {
-        matches!(
-            atomic,
-            TAtomic::TIterable { .. }
-                | TAtomic::TArray { .. }
-                | TAtomic::TNonEmptyArray { .. }
-                | TAtomic::TList { .. }
-                | TAtomic::TNonEmptyList { .. }
-                | TAtomic::TKeyedArray { .. }
-        ) || matches!(
-            atomic,
-            TAtomic::TNamedObject { name, .. }
-                if *name == StrId::GENERATOR
-                    || *name == StrId::TRAVERSABLE
-                    || *name == StrId::ITERATOR
-                    || *name == StrId::ITERATOR_AGGREGATE
-        )
+        atomic.is_array()
+            || matches!(atomic, TAtomic::TIterable { .. })
+            || matches!(
+                atomic,
+                TAtomic::TNamedObject { name, .. }
+                    if *name == StrId::GENERATOR
+                        || *name == StrId::TRAVERSABLE
+                        || *name == StrId::ITERATOR
+                        || *name == StrId::ITERATOR_AGGREGATE
+            )
     })
 }

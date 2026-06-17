@@ -31,17 +31,25 @@ impl FunctionReturnTypeProvider for MinMaxReturnTypeProvider {
             let mut value_types: Vec<TAtomic> = Vec::new();
             for atomic in &arg_type.types {
                 let value_union = match atomic {
-                    TAtomic::TArray { value_type, .. }
-                    | TAtomic::TNonEmptyArray { value_type, .. }
-                    | TAtomic::TList { value_type }
-                    | TAtomic::TNonEmptyList { value_type } => (**value_type).clone(),
-                    TAtomic::TKeyedArray {
-                        properties,
-                        fallback_value_type,
+                    // A generic array/list (former TArray/TNonEmptyArray/TList/
+                    // TNonEmptyList): empty known_values with a typed fallback —
+                    // the value type is the fallback value.
+                    TAtomic::TArray {
+                        known_values,
+                        params: Some(params),
+                        ..
+                    } if known_values.is_empty() => params.1.clone(),
+                    // A keyed-array shape (former TKeyedArray), including the
+                    // empty array `[]`: combine the known entries' value types
+                    // with the fallback. An empty shape yields no value type, so
+                    // `combined?` defers to the call map, as before.
+                    TAtomic::TArray {
+                        known_values,
+                        params,
                         ..
                     } => {
                         let mut combined: Option<TUnion> = None;
-                        for property in properties.values() {
+                        for (_possibly_undefined, property) in known_values.values() {
                             combined = Some(match combined {
                                 None => property.clone(),
                                 Some(existing) => {
@@ -49,9 +57,9 @@ impl FunctionReturnTypeProvider for MinMaxReturnTypeProvider {
                                 }
                             });
                         }
-                        if let Some(fallback) = fallback_value_type {
+                        if let Some((_, fallback)) = params.as_deref() {
                             combined = Some(match combined {
-                                None => (**fallback).clone(),
+                                None => fallback.clone(),
                                 Some(existing) => {
                                     pzoom_code_info::combine_union_types(&existing, fallback, false)
                                 }

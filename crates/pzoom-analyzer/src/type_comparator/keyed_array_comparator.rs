@@ -17,27 +17,38 @@ pub(crate) fn is_contained_by(
     container_type_part: &TAtomic,
     atomic_comparison_result: &mut TypeComparisonResult,
 ) -> Option<bool> {
-    let TAtomic::TKeyedArray {
-        properties: container_props,
+    let TAtomic::TArray {
+        known_values: container_props,
+        params: container_params,
         is_list: container_is_list,
-        sealed: container_sealed,
-        fallback_key_type: container_fallback_key,
-        fallback_value_type: container_fallback_value,
+        is_sealed: container_sealed,
+        ..
     } = container_type_part
     else {
         return None;
     };
 
-    let TAtomic::TKeyedArray {
-        properties: input_props,
+    let TAtomic::TArray {
+        known_values: input_props,
+        params: input_params,
         is_list: input_is_list,
-        sealed: input_sealed,
-        fallback_value_type: input_fallback_value,
+        is_sealed: input_sealed,
         ..
     } = input_type_part
     else {
         return None;
     };
+
+    // Only shape-vs-shape comparisons belong here (Psalm's KeyedArrayComparator);
+    // a generic array (no known entries) is handled by the caller. The fallback
+    // `params` carry the unsealed extra-key key/value, replacing the old
+    // `fallback_key_type` / `fallback_value_type`.
+    if container_props.is_empty() || input_props.is_empty() {
+        return None;
+    }
+    let container_fallback_key = container_params.as_deref().map(|(key, _)| key);
+    let container_fallback_value = container_params.as_deref().map(|(_, value)| value);
+    let input_fallback_value = input_params.as_deref().map(|(_, value)| value);
 
     // A sealed container forbids extra keys; an *unsealed* input may carry
     // arbitrary ones, so it is not contained (Psalm reports a plain
@@ -58,13 +69,13 @@ pub(crate) fn is_contained_by(
     // overwrite-style so the final coercion verdict reflects the whole shape.
     let mut all_types_contain = true;
 
-    for (key, container_value_type) in container_props.iter() {
-        if let Some(input_value_type) = input_props.get(key) {
+    for (key, (container_possibly_undefined, container_value_type)) in container_props.iter() {
+        if let Some((input_possibly_undefined, input_value_type)) = input_props.get(key) {
             // A possibly-undefined input key against a required container key
             // is a plain mismatch — Psalm sets no coercion flag, so this
             // reports InvalidArgument/InvalidReturnStatement rather than the
             // less-specific variants.
-            if input_value_type.possibly_undefined && !container_value_type.possibly_undefined {
+            if *input_possibly_undefined && !*container_possibly_undefined {
                 all_types_contain = false;
                 continue;
             }
@@ -121,7 +132,7 @@ pub(crate) fn is_contained_by(
 
                 all_types_contain = false;
             }
-        } else if !container_value_type.possibly_undefined {
+        } else if !*container_possibly_undefined {
             // Input is missing a required key
             all_types_contain = false;
         }
@@ -134,7 +145,7 @@ pub(crate) fn is_contained_by(
     // Handle input keys not declared in the container shape. A sealed container
     // forbids extra keys; an unsealed container with fallback params requires the
     // extra keys/values to satisfy them. Matches Psalm.
-    for (key, input_value_type) in input_props.iter() {
+    for (key, (_input_possibly_undefined, input_value_type)) in input_props.iter() {
         if container_props.contains_key(key) {
             continue;
         }

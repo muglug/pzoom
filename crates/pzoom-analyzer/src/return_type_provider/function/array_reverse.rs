@@ -46,47 +46,56 @@ impl FunctionReturnTypeProvider for ArrayReverseReturnTypeProvider {
         };
 
         match first_arg_type.types.first()? {
-            // Psalm returns the input type unchanged for generic arrays,
-            // whatever the key-preservation flag.
-            TAtomic::TArray { .. } | TAtomic::TNonEmptyArray { .. } => {
-                Some((*first_arg_type).clone())
-            }
-            TAtomic::TList { .. } | TAtomic::TNonEmptyList { .. } if preserve_keys_is_false => {
-                Some((*first_arg_type).clone())
-            }
-            TAtomic::TKeyedArray {
-                properties,
-                is_list: true,
-                fallback_value_type,
+            // Psalm returns the input type unchanged for generic arrays (former
+            // TArray/TNonEmptyArray): empty known_values, typed fallback, not a
+            // list — whatever the key-preservation flag.
+            TAtomic::TArray {
+                known_values,
+                params: Some(_),
+                is_list: false,
                 ..
-            } if preserve_keys_is_false => {
+            } if known_values.is_empty() => Some((*first_arg_type).clone()),
+            // A generic list (former TList/TNonEmptyList): empty known_values,
+            // typed fallback, list — returned unchanged when keys aren't kept.
+            TAtomic::TArray {
+                known_values,
+                params: Some(_),
+                is_list: true,
+                ..
+            } if known_values.is_empty() && preserve_keys_is_false => {
+                Some((*first_arg_type).clone())
+            }
+            // A keyed list shape (former TKeyedArray with is_list): simplify to
+            // its generic list form when keys aren't kept.
+            TAtomic::TArray {
+                known_values,
+                params,
+                is_list: true,
+                ..
+            } if !known_values.is_empty() && preserve_keys_is_false => {
                 let mut value_type: Option<TUnion> = None;
-                for property_type in properties.values() {
+                for (_possibly_undefined, property_type) in known_values.values() {
                     value_type = Some(match value_type {
                         Some(existing) => combine_union_types(&existing, property_type, false),
                         None => property_type.clone(),
                     });
                 }
-                if let Some(fallback) = fallback_value_type {
+                if let Some((_, fallback)) = params.as_deref() {
                     value_type = Some(match value_type {
                         Some(existing) => combine_union_types(&existing, fallback, false),
-                        None => (**fallback).clone(),
+                        None => fallback.clone(),
                     });
                 }
                 let value_type = value_type?;
 
-                let non_empty = properties
+                let non_empty = known_values
                     .values()
-                    .any(|property_type| !property_type.possibly_undefined);
+                    .any(|(possibly_undefined, _)| !*possibly_undefined);
 
                 Some(TUnion::new(if non_empty {
-                    TAtomic::TNonEmptyList {
-                        value_type: Box::new(value_type),
-                    }
+                    TAtomic::non_empty_list(value_type)
                 } else {
-                    TAtomic::TList {
-                        value_type: Box::new(value_type),
-                    }
+                    TAtomic::list(value_type)
                 }))
             }
             _ => None,

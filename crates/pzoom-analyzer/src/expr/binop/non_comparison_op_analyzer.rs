@@ -146,10 +146,9 @@ pub fn analyze(
                     }
                     (Some(lt), None) => lt.clone(),
                     (None, Some(rt)) => rt.clone(),
-                    (None, None) => TUnion::new(TAtomic::TArray {
-                        key_type: Box::new(TUnion::array_key()),
-                        value_type: Box::new(TUnion::mixed()),
-                    }),
+                    (None, None) => {
+                        TUnion::new(TAtomic::array(TUnion::array_key(), TUnion::mixed()))
+                    }
                 }
             } else {
                 arithmetic_op_analyzer::infer_arithmetic_type(left_type, right_type)
@@ -226,14 +225,12 @@ pub fn analyze(
 fn union_is_array_like(t: &TUnion) -> bool {
     let mut has_array = false;
     for atomic in &t.types {
-        match atomic {
-            TAtomic::TArray { .. }
-            | TAtomic::TNonEmptyArray { .. }
-            | TAtomic::TList { .. }
-            | TAtomic::TNonEmptyList { .. }
-            | TAtomic::TKeyedArray { .. } => has_array = true,
-            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing => {}
-            _ => return false,
+        if atomic.is_array() {
+            has_array = true;
+        } else if matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing) {
+            // null/false/never operands only feed the Possibly* operand checks.
+        } else {
+            return false;
         }
     }
     has_array
@@ -247,67 +244,78 @@ fn union_is_array_like(t: &TUnion) -> bool {
 /// defined on the right combines both types and takes the right's
 /// definedness.
 fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
+    // TODO(unify-array): the pre-unification version fired only when both
+    // operands were `TKeyedArray` (shapes), routing generic `array`/`list`
+    // operands to `combine_union_types`. Under the unified model every array is
+    // a `TArray`, so this now also handles generic-array pairs through the same
+    // known_values/params merge — which agrees with `combine_union_types` for
+    // those cases (identical operands clone; generic + generic re-combines the
+    // params).
     let (
-        TAtomic::TKeyedArray {
-            properties: left_properties,
+        TAtomic::TArray {
+            known_values: left_known,
+            params: left_params,
             is_list: left_is_list,
-            sealed: left_sealed,
-            fallback_key_type: left_fallback_key,
-            fallback_value_type: left_fallback_value,
+            is_sealed: left_sealed,
+            ..
         },
-        TAtomic::TKeyedArray {
-            properties: right_properties,
+        TAtomic::TArray {
+            known_values: right_known,
+            params: right_params,
             is_list: right_is_list,
-            sealed: right_sealed,
-            fallback_key_type: right_fallback_key,
-            fallback_value_type: right_fallback_value,
+            is_sealed: right_sealed,
+            ..
         },
     ) = (left.get_single()?, right.get_single()?)
     else {
         return None;
     };
 
-    let mut properties = (**left_properties).clone();
-    for (key, right_property) in right_properties.iter() {
-        match properties.get(key) {
+    let mut known_values = (**left_known).clone();
+    for (key, (right_undefined, right_value)) in right_known.iter() {
+        match known_values.get(key) {
             None => {
                 // A left side with fallback params may already hold the key
                 // with any value, so a right-only key combines with mixed
-                // (Psalm's definitely_existing_mixed_right_properties).
-                if left_fallback_value.is_some() {
-                    properties.insert(
-                        key.clone(),
-                        combine_union_types(&TUnion::mixed(), right_property, false),
-                    );
+                // (Psalm's definitely_existing_mixed_right_properties). The
+                // entry keeps the right side's possibly-undefined flag.
+                if left_params.is_some() {
+                    let mut combined = combine_union_types(&TUnion::mixed(), right_value, false);
+                    combined.possibly_undefined = *right_undefined;
+                    known_values.insert(key.clone(), (*right_undefined, combined));
                 } else {
-                    properties.insert(key.clone(), right_property.clone());
+                    let mut value = right_value.clone();
+                    value.possibly_undefined = *right_undefined;
+                    known_values.insert(key.clone(), (*right_undefined, value));
                 }
             }
-            Some(left_property) if left_property.possibly_undefined => {
-                let mut combined = combine_union_types(left_property, right_property, false);
-                combined.possibly_undefined = right_property.possibly_undefined;
-                properties.insert(key.clone(), combined);
+            Some((left_undefined, left_value)) if *left_undefined => {
+                let mut combined = combine_union_types(left_value, right_value, false);
+                combined.possibly_undefined = *right_undefined;
+                known_values.insert(key.clone(), (*right_undefined, combined));
             }
             _ => {}
         }
     }
 
-    let combine_fallback =
-        |left_fb: &Option<Box<TUnion>>, right_fb: &Option<Box<TUnion>>| match (left_fb, right_fb) {
-            (None, None) => None,
-            (Some(left_fb), Some(right_fb)) => {
-                Some(Box::new(combine_union_types(left_fb, right_fb, false)))
-            }
-            (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
-        };
+    // Old `fallback_key_type`/`fallback_value_type` travelled separately; in the
+    // unified model the key/value fallback is a single `params` pair (both
+    // present or neither), so combining is symmetric across the pair.
+    let combined_params = match (left_params, right_params) {
+        (None, None) => None,
+        (Some(left_fb), Some(right_fb)) => Some(Box::new((
+            combine_union_types(&left_fb.0, &right_fb.0, false),
+            combine_union_types(&left_fb.1, &right_fb.1, false),
+        ))),
+        (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
+    };
 
-    Some(TUnion::new(TAtomic::TKeyedArray {
-        properties: std::sync::Arc::new(properties),
-        is_list: *left_is_list && *right_is_list,
-        sealed: *left_sealed && *right_sealed,
-        fallback_key_type: combine_fallback(left_fallback_key, right_fallback_key),
-        fallback_value_type: combine_fallback(left_fallback_value, right_fallback_value),
-    }))
+    Some(TUnion::new(TAtomic::keyed_array_arc(
+        std::sync::Arc::new(known_values),
+        *left_is_list && *right_is_list,
+        *left_sealed && *right_sealed,
+        combined_params,
+    )))
 }
 
 fn array_union_operand(t: &TUnion) -> TUnion {

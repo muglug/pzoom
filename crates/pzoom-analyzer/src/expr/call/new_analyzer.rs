@@ -1371,15 +1371,15 @@ fn verify_constructor_arguments(
             match spread_type.as_deref().map(|t| t.types.as_slice()) {
                 Some(
                     [
-                        TAtomic::TKeyedArray {
-                            properties,
-                            fallback_value_type: None,
+                        TAtomic::TArray {
+                            known_values,
+                            params: None,
                             ..
                         },
                     ],
                 ) => {
-                    for (key, property_type) in properties.iter() {
-                        if property_type.possibly_undefined {
+                    for (key, (possibly_undefined, _property_type)) in known_values.iter() {
+                        if *possibly_undefined {
                             continue;
                         }
                         match key {

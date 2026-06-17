@@ -372,6 +372,10 @@ pub fn analyze(
     // docblock-defined. The combiner below rebuilds the union from atomics,
     // so the value unions' flags are OR-accumulated here.
     let mut result_from_docblock = array_type.from_docblock;
+    // Psalm's ArrayFetchAnalyzer skips the null-base reports entirely when the
+    // base union carries `ignore_nullable_issues` (e.g. a
+    // `@psalm-ignore-nullable-return` value): `if ($array_type->ignore_nullable_issues) continue`.
+    let base_ignore_nullable = array_type.ignore_nullable_issues;
     // Psalm's ArrayFetchAnalyzer recurses into a template parameter's bound
     // for array access (`DATA[$k]` where DATA as array<string, V> fetches V) —
     // except when the offset is itself a template (`DATA[K]` with K as
@@ -911,12 +915,14 @@ pub fn analyze(
     let span = access.array.span();
     let start_line = get_line_number(analyzer.source, span.start.offset);
 
-    // Pure null access
+    // Pure null access. Psalm's ArrayFetchAnalyzer reports this whenever the
+    // base is null and not inside isset()/empty() — including in if/loop/ternary
+    // conditions (where any null-narrowing has already removed the null).
     if has_null
         && !has_valid_access
         && !has_invalid_access
         && !context.inside_isset
-        && !context.inside_conditional
+        && !base_ignore_nullable
     {
         analysis_data.add_issue(Issue::new(
             IssueKind::NullArrayAccess,
@@ -939,11 +945,12 @@ pub fn analyze(
         return;
     }
 
-    // Possibly null access
+    // Possibly null access — likewise reported inside conditions (Psalm gates it
+    // only on isset()/empty() and nullsafe access, not on conditional context).
     if has_null
         && (has_valid_access || has_invalid_access)
         && !context.inside_isset
-        && !context.inside_conditional
+        && !base_ignore_nullable
     {
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyNullArrayAccess,

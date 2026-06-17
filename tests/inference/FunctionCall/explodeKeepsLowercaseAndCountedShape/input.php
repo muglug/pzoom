@@ -6,7 +6,6 @@ final class MethodId4 {
 
 function mk(string $value): MethodId4 {
     $parts = explode('::', strtolower($value));
-    /** @psalm-suppress PossiblyUndefinedIntArrayOffset */
     return new MethodId4($parts[0], $parts[1]);
 }
 

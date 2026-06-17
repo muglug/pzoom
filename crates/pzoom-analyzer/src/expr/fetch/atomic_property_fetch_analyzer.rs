@@ -594,6 +594,27 @@ fn get_property_type_inner(
                 name, type_params, ..
             } => {
                 let Some(class_info) = analyzer.codebase.get_class(*name) else {
+                    // Psalm's AtomicPropertyFetchAnalyzer reports a property
+                    // fetch on an undefined class (UndefinedDocblockClass when
+                    // the receiver type came from a docblock, UndefinedClass
+                    // otherwise). The `class_exists()`-guarded case stays silent.
+                    if !context.inside_class_exists {
+                        let (line, col) = analyzer.get_line_column(pos.0);
+                        let class_label = analyzer.interner.lookup(*name);
+                        analysis_data.add_issue(Issue::new(
+                            if obj_type.from_docblock {
+                                IssueKind::UndefinedDocblockClass
+                            } else {
+                                IssueKind::UndefinedClass
+                            },
+                            format!("Cannot get properties of undefined class {class_label}"),
+                            analyzer.file_path,
+                            pos.0,
+                            pos.1,
+                            line,
+                            col,
+                        ));
+                    }
                     continue;
                 };
                 if let Some(prop_info) = class_info

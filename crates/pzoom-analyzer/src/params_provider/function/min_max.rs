@@ -27,15 +27,29 @@ impl FunctionParamsProvider for MinMaxParamsProvider {
         }
 
         // Psalm picks the matching CallMap variant: a single NON-array
-        // argument falls back to `min($value, ...$values)` (reported as
-        // TooFewArguments, not InvalidArgument).
+        // argument selects the variadic `min'1`/`max'1` variant
+        // (`min($value, $value2, ...$rest)`), which needs at least two
+        // arguments — so a lone scalar is TooFewArguments, not InvalidArgument.
         if let Some(arg_pos) = event.arg_positions.first().copied()
             && let Some(arg_type) = analysis_data.expr_types.get(&arg_pos).cloned()
             && !arg_type.types.iter().any(|atomic| {
                 atomic.is_array() || matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed)
             })
         {
-            return None;
+            let mixed = TUnion::mixed();
+            let value_param = |variadic: bool| ParamInfo {
+                name: StrId::VALUE,
+                param_type: Some(mixed.clone()),
+                signature_type: Some(mixed.clone()),
+                is_optional: variadic,
+                is_variadic: variadic,
+                ..ParamInfo::default()
+            };
+            return Some(FunctionParamsProviderResult::Params(vec![
+                value_param(false),
+                value_param(false),
+                value_param(true),
+            ]));
         }
 
         let non_empty_array = TUnion::new(TAtomic::non_empty_array(

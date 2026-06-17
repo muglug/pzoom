@@ -9,9 +9,6 @@ class TraceNode {
 function getIssueTrace(TraceNode $source): array
 {
     $out = [];
-    /**
-     * @psalm-suppress UnnecessaryVarAnnotation
-     */
     do {
         /** @var TraceNode $source */
         $previous_source = $source->previous;

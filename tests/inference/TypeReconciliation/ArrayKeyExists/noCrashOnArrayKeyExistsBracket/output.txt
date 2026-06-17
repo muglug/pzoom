@@ -1,0 +1,1 @@
+PossiblyNullArrayAccess - input.php:15:0 - Cannot access array offset on possibly null value

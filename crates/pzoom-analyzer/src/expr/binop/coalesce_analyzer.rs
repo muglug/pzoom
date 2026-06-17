@@ -256,27 +256,38 @@ fn maybe_emit_undefined_root_variable_for_coalesce_left(
         VarName::from(format!("${}", root_var_name))
     };
 
+    // Definitely in scope (assigned on every path): the `??` base exists, so no
+    // diagnostic.
     if context.locals.contains_key(&var_id)
         || context.assigned_var_ids.contains_key(&var_id)
-        || context.possibly_assigned_var_ids.contains(&var_id)
         || context.locals.contains_key(&alt_var_id)
         || context.assigned_var_ids.contains_key(&alt_var_id)
-        || context.possibly_assigned_var_ids.contains(&alt_var_id)
     {
         return;
     }
 
+    // Assigned on some-but-not-all paths: Psalm reports the *possibly* undefined
+    // variant for the `??` base (unlike isset(), the coalesce base is still
+    // flagged). A never-assigned root stays the definite Undefined* kind.
+    let possibly_assigned = context.possibly_assigned_var_ids.contains(&var_id)
+        || context.possibly_assigned_var_ids.contains(&alt_var_id)
+        || context.vars_possibly_in_scope.contains(&var_id)
+        || context.vars_possibly_in_scope.contains(&alt_var_id);
+
     let pos = (left.start_offset() as u32, left.end_offset() as u32);
     let (line, col) = analyzer.get_line_column(pos.0);
-    let issue_kind = if analyzer.function_info.is_none() {
-        IssueKind::UndefinedGlobalVariable
-    } else {
-        IssueKind::UndefinedVariable
+    let in_global_scope = analyzer.function_info.is_none();
+    let issue_kind = match (possibly_assigned, in_global_scope) {
+        (true, true) => IssueKind::PossiblyUndefinedGlobalVariable,
+        (true, false) => IssueKind::PossiblyUndefinedVariable,
+        (false, true) => IssueKind::UndefinedGlobalVariable,
+        (false, false) => IssueKind::UndefinedVariable,
     };
-    let message = if analyzer.function_info.is_none() {
-        format!("Undefined global variable ${}", normalized_var)
-    } else {
-        format!("Undefined variable ${}", normalized_var)
+    let message = match (possibly_assigned, in_global_scope) {
+        (true, true) => format!("Possibly undefined global variable ${}", normalized_var),
+        (true, false) => format!("Possibly undefined variable ${}", normalized_var),
+        (false, true) => format!("Undefined global variable ${}", normalized_var),
+        (false, false) => format!("Undefined variable ${}", normalized_var),
     };
 
     analysis_data.add_issue(Issue::new(

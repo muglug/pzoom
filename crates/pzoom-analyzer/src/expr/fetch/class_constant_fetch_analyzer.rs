@@ -224,19 +224,11 @@ pub fn analyze(
                         ));
                     }
 
-                    if !can_access_internal(analyzer, &class_info.internal, Some(context)) {
-                        let scope_phrase =
-                            format_internal_scope_phrase(analyzer, &class_info.internal);
-                        analysis_data.add_issue(Issue::new(
-                            IssueKind::InternalClass,
-                            format!("{} is internal to {}", class_name, scope_phrase),
-                            analyzer.file_path,
-                            pos.0,
-                            pos.1,
-                            line,
-                            col,
-                        ));
-                    }
+                    // Note: Psalm's ClassConstAnalyzer returns early for the
+                    // `::class` pseudo-constant after only checking for a
+                    // deprecated class — it does *not* emit InternalClass for
+                    // `Foo::class`. The internal-access check only applies to
+                    // real class-constant fetches (handled below).
                 }
 
                 // Psalm's ClassConstAnalyzer types a resolved `Foo::class` as a

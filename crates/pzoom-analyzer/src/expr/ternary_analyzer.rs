@@ -62,17 +62,32 @@ pub fn analyze(
 
     let mut if_scope = IfScope::default();
 
-    // Analyze the condition expression. Psalm routes ternary conditions through
-    // IfConditionalAnalyzer, which analyzes them with inside_conditional set —
-    // the &&/|| analyzers gate their assigned-vars merge on it. Psalm also
-    // gives the ternary condition its own if-body context, so a nested `&&`
-    // boils its narrowing over into the ternary's true branch — never into an
-    // enclosing if's body context.
-    let was_inside_conditional = context.inside_conditional;
-    let enclosing_if_body_context = context.if_body_context.take();
-    context.inside_conditional = true;
-    let cond_pos = expression_analyzer::analyze(analyzer, cond.condition, analysis_data, context);
-    context.inside_conditional = was_inside_conditional;
+    let cond_pos = (
+        cond.condition.start_offset() as u32,
+        cond.condition.end_offset() as u32,
+    );
+
+    // Psalm routes ternary conditions through IfConditionalAnalyzer — the same
+    // path a plain `if` uses. The condition is analyzed with a shared if-body
+    // context the &&/|| operators narrow into, so a nested `&&` boils its
+    // right-operand assignments into the true branch: in
+    // `$x && ($t = f()) && $t->m()` the `$t` assigned by the middle operand is
+    // typed for the `->m()` call (and for the true branch below) rather than
+    // being discarded by the inner `&&`'s fallthrough merge — which would leave
+    // it `mixed` and mis-report InvalidMethodCall/MixedAssignment. The returned
+    // post_if_context is the fallthrough base used for the false branch, so the
+    // condition-only narrowing never leaks there.
+    let enclosing_if_body_context = context.if_body_context.clone();
+    let if_conditional_scope = crate::stmt::if_conditional_analyzer::analyze(
+        analyzer,
+        cond.condition,
+        analysis_data,
+        context,
+    );
+    let cond_if_body_context = if_conditional_scope.if_body_context;
+    *context = if_conditional_scope.post_if_context;
+    // Restore the enclosing if-body context (Psalm keeps a ternary nested in an
+    // outer `&&`/`if` condition tied to that condition's body context).
     context.if_body_context = enclosing_if_body_context;
 
     // Psalm runs the ternary condition through IfConditionalAnalyzer, which flags an
@@ -170,6 +185,16 @@ pub fn analyze(
     let mut if_context = context.child();
     if_context.inside_conditional = true;
     if_context.clauses = if_scope.reasonable_clauses.clone();
+    // Seed the true branch from the operator-narrowed conditional scope (matching
+    // IfElseAnalyzer), so a var assigned inside a nested `&&` in the condition is
+    // typed in the true branch before clause-based reconciliation narrows further.
+    if_context.locals = cond_if_body_context.locals.clone();
+    for (var_id, count) in &cond_if_body_context.assigned_var_ids {
+        if_context
+            .assigned_var_ids
+            .entry(var_id.clone())
+            .or_insert(*count);
+    }
 
     // Apply type reconciliation to the if-branch context
     if !reconcilable_if_types.is_empty() {

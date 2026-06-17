@@ -372,6 +372,10 @@ pub fn analyze(
     // docblock-defined. The combiner below rebuilds the union from atomics,
     // so the value unions' flags are OR-accumulated here.
     let mut result_from_docblock = array_type.from_docblock;
+    // Psalm's ArrayFetchAnalyzer skips the null-base reports entirely when the
+    // base union carries `ignore_nullable_issues` (e.g. a
+    // `@psalm-ignore-nullable-return` value): `if ($array_type->ignore_nullable_issues) continue`.
+    let base_ignore_nullable = array_type.ignore_nullable_issues;
     // Psalm's ArrayFetchAnalyzer recurses into a template parameter's bound
     // for array access (`DATA[$k]` where DATA as array<string, V> fetches V) —
     // except when the offset is itself a template (`DATA[K]` with K as
@@ -440,10 +444,12 @@ pub fn analyze(
                 known_values,
                 params,
                 is_list,
+                is_nonempty,
                 ..
             } if known_values.is_empty() => {
                 has_valid_access = true;
                 let is_list_atomic = *is_list;
+                let is_nonempty_list = *is_nonempty;
                 if !literal_index_keys.is_empty() {
                     // List keys are non-negative (Psalm types them
                     // int<0, max>): a provably-negative literal offset is a
@@ -474,11 +480,22 @@ pub fn analyze(
                         .unwrap_or_else(TUnion::nothing)
                 };
                 merge_expected_offset_type(&mut expected_offset_type, key_type.clone());
-                // Psalm checks literal int/string offsets only on generic
-                // `array<K,V>` here (shapes/lists go through their own path);
-                // a literal offset contained in the key type but with no proven
-                // entry is PossiblyUndefined{Int,String}ArrayOffset.
-                if !is_list_atomic && !literal_index_keys.is_empty() {
+                // A literal offset within the key type but with no proven entry
+                // is PossiblyUndefined{Int,String}ArrayOffset (ensureArray*OffsetsExist).
+                // Psalm runs this for both generic `array<K,V>` and lists: a list
+                // guarantees only its leading element, so index 0 of a non-empty
+                // list is proven present and every other non-negative literal
+                // index falls through to checkLiteralIntArrayOffset.
+                if is_list_atomic && !literal_index_keys.is_empty() {
+                    for key in &literal_index_keys {
+                        if let ArrayKey::Int(value) = key {
+                            let proven_present = is_nonempty_list && *value == 0;
+                            if *value >= 0 && !proven_present {
+                                tarray_int_offset_unproven = true;
+                            }
+                        }
+                    }
+                } else if !literal_index_keys.is_empty() {
                     let key_accepts = |is_int: bool| {
                         (if is_int {
                             key_type.has_int()
@@ -911,12 +928,14 @@ pub fn analyze(
     let span = access.array.span();
     let start_line = get_line_number(analyzer.source, span.start.offset);
 
-    // Pure null access
+    // Pure null access. Psalm's ArrayFetchAnalyzer reports this whenever the
+    // base is null and not inside isset()/empty() — including in if/loop/ternary
+    // conditions (where any null-narrowing has already removed the null).
     if has_null
         && !has_valid_access
         && !has_invalid_access
         && !context.inside_isset
-        && !context.inside_conditional
+        && !base_ignore_nullable
     {
         analysis_data.add_issue(Issue::new(
             IssueKind::NullArrayAccess,
@@ -939,11 +958,12 @@ pub fn analyze(
         return;
     }
 
-    // Possibly null access
+    // Possibly null access — likewise reported inside conditions (Psalm gates it
+    // only on isset()/empty() and nullsafe access, not on conditional context).
     if has_null
         && (has_valid_access || has_invalid_access)
         && !context.inside_isset
-        && !context.inside_conditional
+        && !base_ignore_nullable
     {
         analysis_data.add_issue(Issue::new(
             IssueKind::PossiblyNullArrayAccess,
@@ -1805,11 +1825,11 @@ fn check_array_offset(
             &normalized_index_type,
             expected_offset_type,
         ) {
-            if suppress_possible_issue {
-                return false;
-            }
             // A null possibility among otherwise-fitting offsets is Psalm's
             // PossiblyNullArrayOffset, not the generic possibly-invalid kind.
+            // Psalm reports the null/possibly-null offset before any
+            // isset()/empty() handling, so it is not silenced inside those
+            // guards (getArrayAccessTypeGivenOffset).
             if normalized_index_type
                 .types
                 .iter()
@@ -1829,6 +1849,9 @@ fn check_array_offset(
                 ));
                 return true;
             }
+            if suppress_possible_issue {
+                return false;
+            }
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyInvalidArrayOffset,
                 format!(
@@ -1843,10 +1866,8 @@ fn check_array_offset(
             ));
             return true;
         } else {
-            if suppress_possible_issue {
-                return false;
-            }
-            // A definitely-null offset is Psalm's NullArrayOffset.
+            // A definitely-null offset is Psalm's NullArrayOffset, likewise
+            // reported regardless of isset()/empty() context.
             if normalized_index_type.is_null() {
                 analysis_data.add_issue(Issue::new(
                     IssueKind::NullArrayOffset,
@@ -1858,6 +1879,9 @@ fn check_array_offset(
                     0,
                 ));
                 return true;
+            }
+            if suppress_possible_issue {
+                return false;
             }
             analysis_data.add_issue(Issue::new(
                 IssueKind::InvalidArrayOffset,
@@ -1938,9 +1962,9 @@ fn check_array_offset(
     if has_null_offset && !has_invalid_offset {
         let span = access.index.span();
         let start_line = get_line_number(analyzer.source, span.start.offset);
-        if suppress_possible_issue {
-            return false;
-        }
+        // Psalm reports Null/PossiblyNullArrayOffset regardless of
+        // isset()/empty() context, so do not silence it under
+        // `suppress_possible_issue`.
         if has_valid_offset {
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyNullArrayOffset,
@@ -2145,8 +2169,53 @@ fn check_array_offset_against_expected_branches(
         return true;
     }
 
-    if !has_invalid_branch {
+    let index_has_null = normalized_index_type
+        .types
+        .iter()
+        .any(|atomic| matches!(atomic, TAtomic::TNull));
+
+    // A null offset is never silenced: an isset()/empty() guard accepts a
+    // reverse-fitting branch (`has_valid_branch` without `has_invalid_branch`),
+    // but Psalm still reports the null part. Keep going whenever the offset is
+    // null-tainted so the dedicated Null/PossiblyNullArrayOffset report below
+    // fires regardless.
+    if !has_invalid_branch && !index_has_null {
         return false;
+    }
+
+    let span = access.index.span();
+    let start_line = get_line_number(analyzer.source, span.start.offset);
+
+    // Psalm's getArrayAccessTypeGivenOffset reports Null/PossiblyNullArrayOffset
+    // up front, before any isset()/empty() handling, so a null (or possibly-null)
+    // offset is flagged even inside those guards — unlike the invalid /
+    // possibly-invalid offset reports below, which stay silenced there.
+    if normalized_index_type.is_null() {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::NullArrayOffset,
+            "Cannot access value using null offset".to_string(),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        return true;
+    }
+    if has_valid_branch && index_has_null {
+        analysis_data.add_issue(Issue::new(
+            IssueKind::PossiblyNullArrayOffset,
+            format!(
+                "Cannot access value using possibly null offset {}",
+                normalized_index_type.get_id(Some(analyzer.interner))
+            ),
+            analyzer.file_path,
+            span.start.offset,
+            span.end.offset,
+            start_line,
+            0,
+        ));
+        return true;
     }
 
     if suppress_possible_issue
@@ -2164,26 +2233,7 @@ fn check_array_offset_against_expected_branches(
         return false;
     }
 
-    let span = access.index.span();
-    let start_line = get_line_number(analyzer.source, span.start.offset);
-    let index_has_null = normalized_index_type
-        .types
-        .iter()
-        .any(|atomic| matches!(atomic, TAtomic::TNull));
-    let (kind, message) = if normalized_index_type.is_null() {
-        (
-            IssueKind::NullArrayOffset,
-            "Cannot access value using null offset".to_string(),
-        )
-    } else if has_valid_branch && index_has_null {
-        (
-            IssueKind::PossiblyNullArrayOffset,
-            format!(
-                "Cannot access value using possibly null offset {}",
-                normalized_index_type.get_id(Some(analyzer.interner))
-            ),
-        )
-    } else if has_valid_branch {
+    let (kind, message) = if has_valid_branch {
         (
             IssueKind::PossiblyInvalidArrayOffset,
             format!(

@@ -4,7 +4,7 @@ function test(): void {
     /** @psalm-suppress RedundantFunctionCall */
     $a = array_values($a);
 
-    /** @psalm-suppress RedundantConditionGivenDocblockType, NoValue, NullArrayOffset, PossiblyNullArrayOffset */
+    /** @psalm-suppress RedundantConditionGivenDocblockType, PossiblyNullArrayOffset */
     if (empty($a)
         || count($a) > 1
         || empty($a[array_key_first($a)])

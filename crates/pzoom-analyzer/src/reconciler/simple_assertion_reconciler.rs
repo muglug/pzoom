@@ -830,17 +830,22 @@ fn reconcile_truthy(
                 params,
                 is_list: true,
                 ..
-            } => {
-                let value_type = params.as_deref().map(|(_, value)| value);
-                if value_type.is_none_or(|value| value.is_nothing()) {
-                    // A definitely-empty list is never truthy — drop it.
-                    did_remove_type = true;
-                    continue;
+            } => match params.as_deref() {
+                // Psalm's reconcileTruthyOrNonEmpty converts a generic
+                // (possibly-empty) list to its non-empty form even when the
+                // value type is `never`: a `list<never>` narrows to
+                // `non-empty-list<never>` rather than being treated as an
+                // impossible assertion (unlike a generic `array<never, never>`,
+                // which collapses to `never` in the arm below).
+                Some((_, value_type)) => {
+                    acceptable_types.push(TAtomic::non_empty_list(value_type.clone()));
                 }
-                acceptable_types.push(TAtomic::non_empty_list(
-                    value_type.expect("checked Some above").clone(),
-                ));
-            }
+                // A sealed/empty list shape (`array{}` / `list{}`) has no
+                // fallback element type and is never truthy — drop it.
+                None => {
+                    did_remove_type = true;
+                }
+            },
             // A generic ARRAY (no known entries, not a list).
             TAtomic::TArray { params, .. } => {
                 let value_type = params.as_deref().map(|(_, value)| value);

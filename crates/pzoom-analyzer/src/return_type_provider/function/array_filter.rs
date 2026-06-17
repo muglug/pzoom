@@ -1,6 +1,6 @@
 //! `"array_filter"` return-type provider.
 
-use pzoom_code_info::{TAtomic, TUnion, VarName};
+use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, VarName};
 
 use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
 use crate::expr::call::function_call_analyzer as fca;
@@ -40,6 +40,36 @@ fn infer_array_filter_return_type(
     let array_type = analysis_data.expr_types.get(&array_pos).cloned()?;
     let callback_is_default =
         fca::is_default_array_filter_callback(args, arg_positions, analysis_data);
+
+    // Psalm validates the filter callback against the array's element type;
+    // resolving that element on a `mixed` array reports MixedArrayAccess on the
+    // array argument (ArrayFunctionArgumentsAnalyzer). A bare
+    // `array_filter($mixed)` with the default callback does not access elements.
+    if !callback_is_default
+        && array_type
+            .types
+            .iter()
+            .any(|atomic| matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed))
+    {
+        let (start, end) = array_pos;
+        let (line, column) = analyzer.get_line_column(start);
+        let message = match args
+            .first()
+            .and_then(|arg| crate::expression_identifier::get_expression_var_key(arg.value()))
+        {
+            Some(var) => format!("Cannot access array value on mixed variable {var}"),
+            None => "Cannot access array value on mixed type".to_string(),
+        };
+        analysis_data.add_issue(Issue::new(
+            IssueKind::MixedArrayAccess,
+            message,
+            analyzer.file_path,
+            start,
+            end,
+            line,
+            column,
+        ));
+    }
 
     let callback_assertions = if callback_is_default {
         None

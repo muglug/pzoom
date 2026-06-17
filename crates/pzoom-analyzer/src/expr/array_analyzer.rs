@@ -875,9 +875,14 @@ pub(crate) fn get_keyed_array_generic_params(
         } else {
             key_type
         },
-        if value_type.is_nothing() {
+        if value_type.is_nothing() && known_values.is_empty() {
+            // No entries and no typed fallback: an element type cannot be
+            // derived, so default to mixed (a generic array's element type).
             TUnion::mixed()
         } else {
+            // A non-empty shape keeps its combined value type even when every
+            // entry is `never` — a `list{never}` has value-of `never`, not
+            // `mixed`, so `array_key_first()` still sees the empty-ish element.
             value_type
         },
     )

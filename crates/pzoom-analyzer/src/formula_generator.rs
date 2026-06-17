@@ -148,10 +148,22 @@ pub fn get_formula(
 
     // Leaf (atomic) condition. pzoom's assertion scraper already produces clause
     // form for atomic conditions, so reuse it.
-    let leaf_clauses =
+    let mut leaf_clauses =
         assertion_finder::get_assertions(analyzer, conditional, analysis_data).if_true_clauses;
 
     if !leaf_clauses.is_empty() {
+        // The scraper keys each clause to the leaf expression's own span. Re-tag it
+        // to the conditional that owns this formula (Psalm's `$conditional_object_id`,
+        // threaded unchanged through `&&`/`||`/`!`): `creating_conditional_id` is the
+        // offset-tuple analogue of Psalm's `spl_object_id`, and active-assertion
+        // gating (get_truths_from_formula) matches on it. Without this a negated
+        // operand like `!is_float($foo)` — whose leaf is the inner `is_float($foo)`
+        // at a different span — never registers as active for its conditional, so its
+        // contradiction is never reported (while positive `is_float($foo)` is). The
+        // per-expression identity is preserved in `creating_object_id`.
+        for clause in &mut leaf_clauses {
+            clause.creating_conditional_id = conditional_object_id;
+        }
         return Ok(leaf_clauses);
     }
 

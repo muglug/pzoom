@@ -324,8 +324,7 @@ pub(crate) fn handle_array_addition(
             let combined_value = known_values
                 .values()
                 .fold(None::<TUnion>, |acc, (_, value)| {
-                    let mut value = value.clone();
-                    value.possibly_undefined = false;
+                    let value = value.clone();
                     Some(match acc {
                         None => value,
                         Some(existing) => combine_union_types(&existing, &value, false),
@@ -447,7 +446,7 @@ pub(crate) fn handle_array_addition(
                     .map(|(_, possibly_undefined, value)| (possibly_undefined, value))
                     .collect()
             };
-            let inserted = (arg_value_type.possibly_undefined, arg_value_type);
+            let inserted = (false, arg_value_type);
             if is_unshift {
                 int_entries.insert(0, inserted);
             } else {

@@ -263,7 +263,7 @@ pub fn analyze(
         // outright; pzoom applies the gate at the return site until shape
         // optional-property comparisons are calibrated for it).
         else if has_return_value
-            && return_type.possibly_undefined
+            && return_type.possibly_undefined_from_try
             && !expected_type.is_mixed()
             && !expected_type.is_void()
         {
@@ -758,7 +758,7 @@ pub fn analyze(
                 finally_scope.vars_in_scope.insert(var_id.clone(), combined);
             } else {
                 let mut possibly_undefined = var_type.clone();
-                possibly_undefined.possibly_undefined = true;
+                possibly_undefined.possibly_undefined_from_try = true;
                 finally_scope
                     .vars_in_scope
                     .insert(var_id.clone(), possibly_undefined);

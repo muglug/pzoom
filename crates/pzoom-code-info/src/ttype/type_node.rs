@@ -64,9 +64,10 @@ impl TAtomic {
                 }
                 nodes
             }
-            TAtomic::TObjectWithProperties { properties, .. } => {
-                properties.values().map(TypeNode::Union).collect()
-            }
+            TAtomic::TObjectWithProperties { properties, .. } => properties
+                .values()
+                .map(|(_, value)| TypeNode::Union(value))
+                .collect(),
             TAtomic::TClassStringMap {
                 as_type,
                 value_param,

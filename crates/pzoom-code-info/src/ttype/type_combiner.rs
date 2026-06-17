@@ -552,7 +552,7 @@ fn scrape_type_properties(
                 };
                 scrape_keyed_array_properties(
                     combination,
-                    known_values_to_unions(&known_values),
+                    known_values,
                     is_list,
                     is_sealed,
                     fallback_key_type,
@@ -1065,25 +1065,6 @@ fn scrape_array_properties(
     combination.all_arrays_callable = false;
 }
 
-/// Convert the unified array's `known_values` (whose possibly-undefined flag is
-/// a tuple bool) into the combiner's internal `properties` map (where the flag
-/// rides on each `TUnion`). The keyed-array scrapers read `possibly_undefined`
-/// off the union, so it is synced from the tuple bool here.
-fn known_values_to_unions(
-    known_values: &std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
-) -> std::sync::Arc<FxHashMap<ArrayKey, TUnion>> {
-    std::sync::Arc::new(
-        known_values
-            .iter()
-            .map(|(key, (possibly_undefined, value))| {
-                let mut value = value.clone();
-                value.possibly_undefined = *possibly_undefined;
-                (key.clone(), value)
-            })
-            .collect(),
-    )
-}
-
 fn scrape_list_properties(
     combination: &mut TypeCombination,
     value_type: TUnion,
@@ -1100,10 +1081,8 @@ fn scrape_list_properties(
     // TypeCombiner does — its value rides on `objectlike_value_type` instead of
     // `array_type_params`. A pure generic list is re-canonicalised back to
     // `TList`/`TNonEmptyList` when the shape is built (see `generic_list_atomic`).
-    let mut entry = value_type.clone();
-    entry.possibly_undefined = !non_empty;
     let mut properties = FxHashMap::default();
-    properties.insert(ArrayKey::Int(0), entry);
+    properties.insert(ArrayKey::Int(0), (!non_empty, value_type.clone()));
 
     scrape_keyed_array_properties(
         combination,
@@ -1150,7 +1129,7 @@ fn fallback_key_contains(objectlike_key_type: Option<&TUnion>, key: &ArrayKey) -
 
 fn scrape_keyed_array_properties(
     combination: &mut TypeCombination,
-    properties: std::sync::Arc<FxHashMap<ArrayKey, TUnion>>,
+    properties: std::sync::Arc<FxHashMap<ArrayKey, (bool, TUnion)>>,
     is_list: bool,
     _sealed: bool,
     fallback_key_type: Option<TUnion>,
@@ -1169,15 +1148,16 @@ fn scrape_keyed_array_properties(
 
     let mut has_defined_keys = false;
 
-    for (key, value_type) in
+    for (key, (entry_possibly_undefined, value_type)) in
         std::sync::Arc::try_unwrap(properties).unwrap_or_else(|shared| (*shared).clone())
     {
         let mut entry_value_type = value_type;
-        let candidate_possibly_undefined = entry_value_type.possibly_undefined;
+        let mut entry_possibly_undefined = entry_possibly_undefined;
+        let candidate_possibly_undefined = entry_possibly_undefined;
         let prior_entry_possibly_undefined = combination
             .objectlike_entries
             .get(&key)
-            .map(|entry_type| entry_type.possibly_undefined);
+            .map(|(possibly_undefined, _)| *possibly_undefined);
 
         // If this key only appears in one branch, mark it as possibly undefined.
         if !combination.objectlike_entries.contains_key(&key) && existing_entries {
@@ -1192,18 +1172,24 @@ fn scrape_keyed_array_properties(
                     );
                 }
             } else {
-                entry_value_type.possibly_undefined = true;
+                entry_possibly_undefined = true;
             }
         }
 
-        if let Some(existing_type) = combination.objectlike_entries.get(&key) {
+        if let Some((existing_possibly_undefined, existing_type)) =
+            combination.objectlike_entries.get(&key)
+        {
             let combined =
                 combine_union_types(existing_type, &entry_value_type, overwrite_empty_array);
-            combination.objectlike_entries.insert(key.clone(), combined);
+            let combined_possibly_undefined =
+                *existing_possibly_undefined || entry_possibly_undefined;
+            combination
+                .objectlike_entries
+                .insert(key.clone(), (combined_possibly_undefined, combined));
         } else {
             combination
                 .objectlike_entries
-                .insert(key.clone(), entry_value_type);
+                .insert(key.clone(), (entry_possibly_undefined, entry_value_type));
         }
 
         // Psalm's TypeCombiner: a key that's possibly undefined on either side
@@ -1213,10 +1199,14 @@ fn scrape_keyed_array_properties(
         if (candidate_possibly_undefined || prior_entry_possibly_undefined.unwrap_or(true))
             && fallback_key_contains(combination.objectlike_key_type.as_ref(), &key)
             && let Some(fallback_value) = combination.objectlike_value_type.clone()
-            && let Some(entry_type) = combination.objectlike_entries.get(&key)
+            && let Some((existing_possibly_undefined, entry_type)) =
+                combination.objectlike_entries.get(&key)
         {
             let combined = combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
-            combination.objectlike_entries.insert(key.clone(), combined);
+            let combined_possibly_undefined = *existing_possibly_undefined;
+            combination
+                .objectlike_entries
+                .insert(key.clone(), (combined_possibly_undefined, combined));
         }
 
         missing_entries.retain(|k| k != &key);
@@ -1224,7 +1214,7 @@ fn scrape_keyed_array_properties(
         let is_possibly_undefined = combination
             .objectlike_entries
             .get(&key)
-            .is_some_and(|entry_type| entry_type.possibly_undefined);
+            .is_some_and(|(possibly_undefined, _)| *possibly_undefined);
 
         if !is_possibly_undefined {
             has_defined_keys = true;
@@ -1258,18 +1248,22 @@ fn scrape_keyed_array_properties(
     // after this shape's fallback params are folded in).
     if !overwrite_empty_array {
         for missing_key in missing_entries {
-            if let Some(existing_type) = combination.objectlike_entries.get_mut(&missing_key) {
-                existing_type.possibly_undefined = true;
+            if let Some((possibly_undefined, _)) =
+                combination.objectlike_entries.get_mut(&missing_key)
+            {
+                *possibly_undefined = true;
             }
             if fallback_key_contains(combination.objectlike_key_type.as_ref(), &missing_key)
                 && let Some(fallback_value) = combination.objectlike_value_type.clone()
-                && let Some(entry_type) = combination.objectlike_entries.get(&missing_key)
+                && let Some((existing_possibly_undefined, entry_type)) =
+                    combination.objectlike_entries.get(&missing_key)
             {
                 let combined =
                     combine_union_types(entry_type, &fallback_value, overwrite_empty_array);
+                let combined_possibly_undefined = *existing_possibly_undefined;
                 combination
                     .objectlike_entries
-                    .insert(missing_key.clone(), combined);
+                    .insert(missing_key.clone(), (combined_possibly_undefined, combined));
             }
         }
     }
@@ -1685,13 +1679,13 @@ fn merge_string_types(existing: &TAtomic, new: &TAtomic) -> TAtomic {
 /// the possibly-empty (`TList`) vs. non-empty (`TNonEmptyList`) variant.
 fn generic_list_atomic(
     is_list: bool,
-    entries: &std::collections::BTreeMap<ArrayKey, TUnion>,
+    entries: &std::collections::BTreeMap<ArrayKey, (bool, TUnion)>,
     fallback_value_type: Option<&TUnion>,
 ) -> Option<TAtomic> {
     if !is_list || entries.len() != 1 {
         return None;
     }
-    let entry = entries.get(&ArrayKey::Int(0))?;
+    let (entry_possibly_undefined, entry) = entries.get(&ArrayKey::Int(0))?;
     let fallback_value = fallback_value_type?;
 
     // Compare the atomic members only, ignoring `possibly_undefined` and other
@@ -1704,9 +1698,8 @@ fn generic_list_atomic(
         return None;
     }
 
-    let mut value_type = fallback_value.clone();
-    value_type.possibly_undefined = false;
-    Some(if entry.possibly_undefined {
+    let value_type = fallback_value.clone();
+    Some(if *entry_possibly_undefined {
         TAtomic::list(value_type)
     } else {
         TAtomic::non_empty_list(value_type)
@@ -1733,7 +1726,7 @@ fn handle_keyed_array_entries(
             if let TAtomic::TLiteralString { value } = atomic {
                 combination
                     .objectlike_entries
-                    .insert(ArrayKey::String(value.clone()), generic_value_type.clone());
+                    .insert(ArrayKey::String(value.clone()), (false, generic_value_type.clone()));
             }
         }
         combination.array_type_params = None;
@@ -1760,8 +1753,8 @@ fn handle_keyed_array_entries(
     // Union with an *empty* generic array means every known key can be absent
     // (unless the caller asked to clobber empty arrays).
     if !overwrite_empty_array && combination.array_type_params.is_some() {
-        for entry_type in combination.objectlike_entries.values_mut() {
-            entry_type.possibly_undefined = true;
+        for (possibly_undefined, _) in combination.objectlike_entries.values_mut() {
+            *possibly_undefined = true;
         }
     }
 
@@ -1811,16 +1804,11 @@ fn handle_keyed_array_entries(
         } else {
             // A `Foo::class` key keeps its class-string identity through the
             // merge: it rides on the `ArrayKey::ClassString` variant in the map.
-            // Move the combiner's per-union possibly-undefined flag onto the
-            // unified shape's tuple bool.
+            // The combiner already tracks possibly-undefined as the entry tuple's
+            // bool, so the shape's `known_values` is the entries map verbatim.
             let known_values: FxHashMap<ArrayKey, (bool, TUnion)> =
                 std::mem::take(&mut combination.objectlike_entries)
                     .into_iter()
-                    .map(|(key, mut value)| {
-                        let possibly_undefined = value.possibly_undefined;
-                        value.possibly_undefined = false;
-                        (key, (possibly_undefined, value))
-                    })
                     .collect();
             let params = fallback.map(|(key_type, value_type)| Box::new((*key_type, *value_type)));
             new_types.push(TAtomic::keyed_array_arc(
@@ -1852,7 +1840,7 @@ fn get_array_type_from_generic_params(
     if had_objectlike_entries {
         let mut objectlike_generic_type: Option<TUnion> = None;
         let mut objectlike_key_atoms: Vec<TAtomic> = Vec::new();
-        for (property_name, property_type) in &combination.objectlike_entries {
+        for (property_name, (_, property_type)) in &combination.objectlike_entries {
             objectlike_generic_type = Some(match objectlike_generic_type {
                 Some(existing) => {
                     combine_union_types(&existing, property_type, overwrite_empty_array)
@@ -2003,7 +1991,6 @@ fn combine_union_types_inner(
         combined_type.docblock_bits_len = combined_type.types.len() as u8;
     }
     combined_type.from_calculation = type_1.from_calculation || type_2.from_calculation;
-    combined_type.possibly_undefined = type_1.possibly_undefined || type_2.possibly_undefined;
     combined_type.possibly_undefined_from_try =
         type_1.possibly_undefined_from_try || type_2.possibly_undefined_from_try;
     combined_type.ignore_nullable_issues =
@@ -2051,7 +2038,6 @@ pub fn add_union_type(
     // Update flags
     base_type.from_docblock |= other_type.from_docblock;
     base_type.from_calculation |= other_type.from_calculation;
-    base_type.possibly_undefined |= other_type.possibly_undefined;
     base_type.ignore_nullable_issues |= other_type.ignore_nullable_issues;
     base_type.ignore_falsable_issues |= other_type.ignore_falsable_issues;
     base_type.reference_free &= other_type.reference_free;

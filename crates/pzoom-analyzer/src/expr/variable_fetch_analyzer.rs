@@ -536,7 +536,7 @@ pub(crate) fn get_superglobal_default_type(var_name: &str) -> Option<TUnion> {
         "http_response_header" => {
             let mut header_list =
                 TUnion::new(TAtomic::non_empty_list(TUnion::new(TAtomic::TTruthyString)));
-            header_list.possibly_undefined = true;
+            header_list.possibly_undefined_from_try = true;
             Some(header_list)
         }
         _ => None,

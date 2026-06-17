@@ -3082,7 +3082,6 @@ fn get_isset_assertions_for_expr(
                 .cloned()
                 .is_some_and(|var_type| {
                     !var_type.is_mixed()
-                    && !var_type.possibly_undefined
                     // A var assigned inside a try (or catch) may be undefined
                     // here even though its type looks settled — Psalm keeps
                     // the `isset` assertion for those

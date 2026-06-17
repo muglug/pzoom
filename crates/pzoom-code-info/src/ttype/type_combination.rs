@@ -27,8 +27,9 @@ pub(crate) struct TypeCombination {
     pub array_counts: Option<FxHashSet<usize>>,
     pub array_min_counts: Option<FxHashSet<usize>>,
 
-    /// Keyed array (shape) entries
-    pub objectlike_entries: BTreeMap<ArrayKey, TUnion>,
+    /// Keyed array (shape) entries; `bool` is `possibly_undefined`, matching
+    /// `TArray::known_values`.
+    pub objectlike_entries: BTreeMap<ArrayKey, (bool, TUnion)>,
     pub objectlike_sealed: bool,
     pub objectlike_key_type: Option<TUnion>,
     pub objectlike_value_type: Option<TUnion>,

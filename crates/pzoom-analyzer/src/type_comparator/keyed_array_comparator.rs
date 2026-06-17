@@ -80,16 +80,11 @@ pub(crate) fn is_contained_by(
                 continue;
             }
 
-            let mut normalized_input_value = input_value_type.clone();
-            normalized_input_value.possibly_undefined = false;
-            let mut normalized_container_value = container_value_type.clone();
-            normalized_container_value.possibly_undefined = false;
-
             let mut property_type_comparison = TypeComparisonResult::new();
             if !union_type_comparator::is_contained_by(
                 codebase,
-                &normalized_input_value,
-                &normalized_container_value,
+                input_value_type,
+                container_value_type,
                 false,
                 false,
                 &mut property_type_comparison,
@@ -106,8 +101,8 @@ pub(crate) fn is_contained_by(
                     let mut inverse_property_type_comparison = TypeComparisonResult::new();
                     if union_type_comparator::is_contained_by(
                         codebase,
-                        &normalized_container_value,
-                        &normalized_input_value,
+                        container_value_type,
+                        input_value_type,
                         false,
                         false,
                         &mut inverse_property_type_comparison,
@@ -159,8 +154,6 @@ pub(crate) fn is_contained_by(
             (container_fallback_key, container_fallback_value)
         {
             let key_union = array_key_to_literal_union(key);
-            let mut normalized_input_value = input_value_type.clone();
-            normalized_input_value.possibly_undefined = false;
 
             if !union_type_comparator::is_contained_by(
                 codebase,
@@ -171,7 +164,7 @@ pub(crate) fn is_contained_by(
                 atomic_comparison_result,
             ) || !union_type_comparator::is_contained_by(
                 codebase,
-                &normalized_input_value,
+                input_value_type,
                 fallback_value,
                 false,
                 false,

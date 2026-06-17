@@ -169,7 +169,9 @@ pub enum TAtomic {
     /// array these are object instances, so they are assignable to `object` and
     /// only coercible from a bare `object`.
     TObjectWithProperties {
-        properties: FxHashMap<ArrayKey, TUnion>,
+        /// Known properties; `bool` is `possibly_undefined` (an optional
+        /// `foo?: int` property), mirroring `TArray::known_values`.
+        properties: FxHashMap<ArrayKey, (bool, TUnion)>,
         /// `stringable-object`: an object guaranteed to have `__toString`
         /// (Psalm models this as a methods-only TObjectWithProperties with
         /// `is_stringable_object_only`).
@@ -1218,16 +1220,12 @@ impl TAtomic {
             TAtomic::TObjectWithProperties { properties, .. } => {
                 let mut entries = properties
                     .iter()
-                    .map(|(key, value_type)| {
+                    .map(|(key, (possibly_undefined, value_type))| {
                         let key_str = match key {
                             ArrayKey::Int(i) => i.to_string(),
                             ArrayKey::String(s) | ArrayKey::ClassString(s) => s.clone(),
                         };
-                        let optional = if value_type.possibly_undefined {
-                            "?"
-                        } else {
-                            ""
-                        };
+                        let optional = if *possibly_undefined { "?" } else { "" };
                         format!("{}{}: {}", key_str, optional, value_type.get_id(interner))
                     })
                     .collect::<Vec<_>>();

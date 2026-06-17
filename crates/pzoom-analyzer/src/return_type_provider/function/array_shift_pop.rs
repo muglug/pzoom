@@ -67,9 +67,8 @@ fn infer_array_shift_pop_return(array_type: &TUnion, is_shift: bool) -> Option<T
                     Some(key) => {
                         let (possibly_undefined, value) = &known_values[*key];
                         let definite = !*possibly_undefined;
-                        let mut value = value.clone();
                         // The removed element is always present in the result.
-                        value.possibly_undefined = false;
+                        let value = value.clone();
                         if definite {
                             (value, false)
                         } else if let Some(fallback) = fallback_value {

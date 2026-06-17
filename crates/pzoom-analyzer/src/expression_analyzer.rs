@@ -611,7 +611,7 @@ fn analyze_legacy_array(
     let expr_type = if all_keys_known && !known_items.is_empty() {
         let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = known_items
             .into_iter()
-            .map(|(key, value)| (key, (value.possibly_undefined, value)))
+            .map(|(key, value)| (key, (false, value)))
             .collect();
         TUnion::new(TAtomic::keyed_array(
             known_values,

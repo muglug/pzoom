@@ -210,7 +210,7 @@ pub fn analyze(
                     .is_some_and(|base_type| base_type.is_nullable() || base_type.is_falsable());
 
                 let reusable = has_asserted_dim
-                    || !existing_type.possibly_undefined
+                    || !existing_type.possibly_undefined_from_try
                     || (context_asserts_isset_state(context, &full_key) == Some(true)
                         && !base_has_nullable_or_falsable_access);
 
@@ -327,7 +327,7 @@ pub fn analyze(
                     );
                     return;
                 }
-                if existing_type.possibly_undefined {
+                if existing_type.possibly_undefined_from_try {
                     if context_asserts_isset_state(context, &full_key) == Some(true) {
                         if !base_has_nullable_or_falsable_access {
                             set_fetch_type_with_dataflow(
@@ -1379,7 +1379,7 @@ pub fn analyze(
             let is_cacheable = !expr_type.is_mixed()
                 && !expr_type.is_nullable()
                 && !expr_type.is_falsable()
-                && !expr_type.possibly_undefined
+                && !expr_type.possibly_undefined_from_try
                 && !expr_type.is_nothing();
 
             if is_cacheable {
@@ -2318,7 +2318,7 @@ fn expand_template_union_bounds(union: &TUnion) -> TUnion {
         expanded_union.parent_nodes = union.parent_nodes.clone();
         expanded_union.ignore_falsable_issues = union.ignore_falsable_issues;
         expanded_union.ignore_nullable_issues = union.ignore_nullable_issues;
-        expanded_union.possibly_undefined = union.possibly_undefined;
+        expanded_union.possibly_undefined_from_try = union.possibly_undefined_from_try;
         expanded_union
     }
 }

@@ -60,8 +60,8 @@ pub fn is_contained_by(
                 properties: input_props,
                 ..
             } => {
-                for (key, container_value) in container_props {
-                    let Some(input_value) = input_props.get(key) else {
+                for (key, (_, container_value)) in container_props {
+                    let Some((_, input_value)) = input_props.get(key) else {
                         // A missing required property is a plain mismatch
                         // (Psalm reports InvalidReturnStatement, not the
                         // less-specific coercion variants).
@@ -101,7 +101,7 @@ pub fn is_contained_by(
                     return false;
                 };
                 let mut all_types_contain = true;
-                for (key, container_property_type) in container_props {
+                for (key, (_, container_property_type)) in container_props {
                     let property_id = match key {
                         pzoom_code_info::ArrayKey::String(property_name)
                         | pzoom_code_info::ArrayKey::ClassString(property_name) => {

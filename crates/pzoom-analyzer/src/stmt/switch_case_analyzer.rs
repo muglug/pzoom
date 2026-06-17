@@ -321,7 +321,7 @@ pub(crate) fn analyze(
                 case_context.merge(&fallthrough_context);
                 for (var_id, var_type) in case_context.locals.iter_mut() {
                     if !vars_before_fallthrough.contains(var_id) {
-                        var_type.possibly_undefined = true;
+                        var_type.possibly_undefined_from_try = true;
                     }
                 }
             }

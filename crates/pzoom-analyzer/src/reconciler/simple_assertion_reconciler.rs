@@ -342,7 +342,7 @@ pub fn reconcile(
                 TUnion::mixed()
             } else {
                 let mut existing = existing_var_type.clone();
-                existing.possibly_undefined = false;
+                existing.possibly_undefined_from_try = false;
                 existing
             }
         }
@@ -712,8 +712,7 @@ fn reconcile_truthy(
     // Psalm's reconcileTruthyOrVerifyTrue: a possibly-undefined type (incl.
     // from a try block whose assignment may not have run) is never a
     // redundant truthy check.
-    let mut did_remove_type =
-        existing_var_type.possibly_undefined || existing_var_type.possibly_undefined_from_try;
+    let mut did_remove_type = existing_var_type.possibly_undefined_from_try;
 
     for atomic in &existing_var_type.types {
         // Skip always-falsy types
@@ -1759,11 +1758,11 @@ fn reconcile_has_nonnull_entry_for_key(
                 ..
             } if !known_values.is_empty() => {
                 let sealed = atomic.array_is_sealed();
-                if let Some((entry_undefined, entry_value)) = known_values.get(array_key) {
-                    // Reconstruct the property union carrying its possibly-
-                    // undefined flag, then narrow it to non-null.
-                    let mut prop_type = entry_value.clone();
-                    prop_type.possibly_undefined = *entry_undefined;
+                if let Some((_entry_undefined, entry_value)) = known_values.get(array_key) {
+                    // Narrow the property union to non-null. The entry's
+                    // possibly-undefined flag lives on the tuple bool; this
+                    // narrowed entry is re-inserted as defined (tuple bool false).
+                    let prop_type = entry_value.clone();
                     let narrowed =
                         super::simple_negated_assertion_reconciler::subtract_null(&prop_type);
                     if narrowed != prop_type {

@@ -38,12 +38,15 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                 enum_name,
                 case_name,
             } => {
-                let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+                let mut properties: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 properties.insert(
                     ArrayKey::String("name".to_string()),
-                    TUnion::new(TAtomic::TLiteralString {
-                        value: event.analyzer.interner.lookup(*case_name).to_string(),
-                    }),
+                    (
+                        false,
+                        TUnion::new(TAtomic::TLiteralString {
+                            value: event.analyzer.interner.lookup(*case_name).to_string(),
+                        }),
+                    ),
                 );
                 if let Some(case_value) = event
                     .analyzer
@@ -52,7 +55,7 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                     .and_then(|class_info| class_info.constants.get(case_name))
                     .and_then(|const_info| const_info.enum_case_value.clone())
                 {
-                    properties.insert(ArrayKey::String("value".to_string()), case_value);
+                    properties.insert(ArrayKey::String("value".to_string()), (false, case_value));
                 }
                 Some(TUnion::new(TAtomic::keyed_array(
                     known_values_from_properties(properties),
@@ -81,7 +84,7 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                 }
                 let class_info = event.analyzer.codebase.get_class(*name)?;
 
-                let mut properties: FxHashMap<ArrayKey, TUnion> = FxHashMap::default();
+                let mut properties: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 for (prop_id, prop_info) in &class_info.properties {
                     if prop_info.is_static {
                         continue;
@@ -97,7 +100,10 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
                     let prop_name = event.analyzer.interner.lookup(*prop_id);
                     properties.insert(
                         ArrayKey::String(prop_name.trim_start_matches('$').to_string()),
-                        prop_info.get_type().cloned().unwrap_or_else(TUnion::mixed),
+                        (
+                            false,
+                            prop_info.get_type().cloned().unwrap_or_else(TUnion::mixed),
+                        ),
                     );
                 }
 
@@ -127,19 +133,12 @@ impl FunctionReturnTypeProvider for GetObjectVarsReturnTypeProvider {
     }
 }
 
-/// Convert a property map (each union carrying its own possibly-undefined flag)
-/// into the unified `known_values` shape map (`bool` = possibly_undefined).
+/// A property map (`bool` = possibly_undefined per entry) is already the unified
+/// `known_values` shape map; this is an identity pass kept for call-site clarity.
 fn known_values_from_properties(
-    properties: FxHashMap<ArrayKey, TUnion>,
+    properties: FxHashMap<ArrayKey, (bool, TUnion)>,
 ) -> FxHashMap<ArrayKey, (bool, TUnion)> {
     properties
-        .into_iter()
-        .map(|(key, mut value)| {
-            let possibly_undefined = value.possibly_undefined;
-            value.possibly_undefined = false;
-            (key, (possibly_undefined, value))
-        })
-        .collect()
 }
 
 /// Whether the property is visible from the analyzer's current class context

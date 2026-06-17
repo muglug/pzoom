@@ -209,12 +209,12 @@ pub fn analyze_array(
             )
         };
 
-        // Old `properties` carried `possibly_undefined` on each value union;
-        // the unified shape stores it as the entry's `bool`.
+        // Each array-literal entry is freshly built and definitely present, so
+        // its `possibly_undefined` flag in the unified shape is `false`.
         let known_values: FxHashMap<ArrayKey, (bool, TUnion)> = info
             .property_types
             .into_iter()
-            .map(|(key, value)| (key, (value.possibly_undefined, value)))
+            .map(|(key, value)| (key, (false, value)))
             .collect();
 
         TUnion::new(TAtomic::keyed_array(

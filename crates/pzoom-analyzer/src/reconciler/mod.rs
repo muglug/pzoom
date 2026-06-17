@@ -292,7 +292,7 @@ pub fn reconcile_keyed_types(
                     && !assertion.has_equality()
                     && !assertion.has_isset()
                     && !assertion.has_negation()
-                    && !current_type.possibly_undefined
+                    && !current_type.possibly_undefined_from_try
                     && should_emit_redundant_issue_for_unchanged_assertion(
                         assertion,
                         &current_type,
@@ -412,13 +412,13 @@ pub fn reconcile_keyed_types(
         let is_nested_key = var_name.contains('[') || var_name.contains("->");
         if is_nested_key {
             if has_inverted_isset {
-                current_type.possibly_undefined = true;
+                current_type.possibly_undefined_from_try = true;
             } else if has_isset {
-                current_type.possibly_undefined = false;
+                current_type.possibly_undefined_from_try = false;
             } else if has_positive_non_isset_assertion {
-                current_type.possibly_undefined = false;
+                current_type.possibly_undefined_from_try = false;
             } else if possibly_undefined {
-                current_type.possibly_undefined = true;
+                current_type.possibly_undefined_from_try = true;
             }
         }
 
@@ -1202,11 +1202,11 @@ fn apply_array_access_to_base_type(
                     if let Some((property_undefined, property_value)) =
                         lookup_property_type_by_runtime_key(known_values, &dict_key)
                     {
-                        // Reconstruct the value union carrying its own
-                        // possibly-undefined flag (the old properties map stored
-                        // it on the union).
+                        // Lift the shape entry into a standalone (offset-local)
+                        // union, carrying the entry tuple's possibly-undefined
+                        // bool as the union-level try flag.
                         let mut prop_type = property_value.clone();
-                        prop_type.possibly_undefined = *property_undefined;
+                        prop_type.possibly_undefined_from_try = *property_undefined;
                         Some(prop_type)
                     } else if let Some(fallback) = fallback_value_type {
                         *possibly_undefined = true;
@@ -1589,10 +1589,11 @@ fn resolve_keyed_array_value_for_variable_key(
         if let Some((property_undefined, property_value)) =
             lookup_property_type_by_runtime_key(known_values, &key)
         {
-            // Carry the entry's possibly-undefined flag on the union, as the old
-            // properties map did.
+            // Lift the shape entry into a standalone (offset-local) union,
+            // carrying the entry tuple's possibly-undefined bool as the
+            // union-level try flag.
             let mut property_type = property_value.clone();
-            property_type.possibly_undefined = *property_undefined;
+            property_type.possibly_undefined_from_try = *property_undefined;
             resolved = Some(match resolved {
                 Some(existing) => combine_union_types(&existing, &property_type, false),
                 None => property_type,
@@ -1947,7 +1948,7 @@ fn adjust_tkeyed_array_type(
     // The result is possibly-undefined when it can land on more than one offset.
     let mut result_type = result_type.clone();
     if array_key_offsets.len() > 1 {
-        result_type.possibly_undefined = true;
+        result_type.possibly_undefined_from_try = true;
     }
 
     let nested_path_id = VarName::from(format!("{}[{}]", base_key, array_key));
@@ -1995,9 +1996,9 @@ fn adjust_tkeyed_array_type(
                     ..
                 } if known_values.is_empty() && matches!(offset, ArrayKey::Int(_)) => {
                     let mut new_known_values = FxHashMap::default();
-                    let entry_undefined = result_type.possibly_undefined;
+                    let entry_undefined = result_type.possibly_undefined_from_try;
                     let mut entry_value = result_type.clone();
-                    entry_value.possibly_undefined = false;
+                    entry_value.possibly_undefined_from_try = false;
                     new_known_values.insert(offset.clone(), (entry_undefined, entry_value));
                     let fallback_value = params.as_deref().map(|(_, value)| value.clone());
                     Some(TAtomic::keyed_array(
@@ -2017,9 +2018,9 @@ fn adjust_tkeyed_array_type(
                     ..
                 } if known_values.is_empty() => {
                     let mut new_known_values = FxHashMap::default();
-                    let entry_undefined = result_type.possibly_undefined;
+                    let entry_undefined = result_type.possibly_undefined_from_try;
                     let mut entry_value = result_type.clone();
-                    entry_value.possibly_undefined = false;
+                    entry_value.possibly_undefined_from_try = false;
                     new_known_values.insert(offset.clone(), (entry_undefined, entry_value));
                     let fallback_key = params.as_deref().map(|(key, _)| key.clone());
                     let fallback_value = params.as_deref().map(|(_, value)| value.clone());
@@ -2088,9 +2089,9 @@ fn set_keyed_array_offset(
     let mut new_known_values = known_values.clone();
     // The known entry carries its possibly-undefined flag as the tuple bool; the
     // stored union has the flag cleared.
-    let entry_undefined = result_type.possibly_undefined;
+    let entry_undefined = result_type.possibly_undefined_from_try;
     let mut entry_value = result_type.clone();
-    entry_value.possibly_undefined = false;
+    entry_value.possibly_undefined_from_try = false;
     new_known_values.insert(offset.clone(), (entry_undefined, entry_value));
 
     let mut new_is_list = is_list;

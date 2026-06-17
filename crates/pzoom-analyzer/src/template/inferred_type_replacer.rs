@@ -198,9 +198,6 @@ fn replace_union(
     result.parent_nodes = union.parent_nodes.clone();
     result.ignore_nullable_issues = union.ignore_nullable_issues || bound_ignore_nullable;
     result.ignore_falsable_issues = union.ignore_falsable_issues || bound_ignore_falsable;
-    // Shape property unions pass through here: an optional key must stay
-    // optional after substitution.
-    result.possibly_undefined = union.possibly_undefined;
     result
 }
 

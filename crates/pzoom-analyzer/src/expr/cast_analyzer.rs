@@ -326,9 +326,7 @@ fn infer_object_cast_type(inner_type: &TUnion) -> TUnion {
                     properties: known_values
                         .iter()
                         .map(|(key, (possibly_undefined, value))| {
-                            let mut value = value.clone();
-                            value.possibly_undefined = *possibly_undefined;
-                            (key.clone(), value)
+                            (key.clone(), (*possibly_undefined, value.clone()))
                         })
                         .collect(),
                     is_stringable: false,
@@ -346,11 +344,13 @@ fn infer_object_cast_type(inner_type: &TUnion) -> TUnion {
             | TAtomic::TBool
             | TAtomic::TTrue
             | TAtomic::TFalse => {
-                let mut properties: rustc_hash::FxHashMap<pzoom_code_info::ArrayKey, TUnion> =
-                    rustc_hash::FxHashMap::default();
+                let mut properties: rustc_hash::FxHashMap<
+                    pzoom_code_info::ArrayKey,
+                    (bool, TUnion),
+                > = rustc_hash::FxHashMap::default();
                 properties.insert(
                     pzoom_code_info::ArrayKey::String("scalar".to_string()),
-                    TUnion::new(atomic.clone()),
+                    (false, TUnion::new(atomic.clone())),
                 );
                 permissible_atomics.push(TAtomic::TObjectWithProperties {
                     properties,

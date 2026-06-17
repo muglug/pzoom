@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use mago_span::HasSpan;
+use mago_syntax::ast::ast::access::Access;
 use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::ast::ast::variable::Variable;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::Assertion;
@@ -72,12 +74,26 @@ pub fn analyze(
             left.unparenthesized(),
             Expression::ArrayAccess(_) | Expression::Access(_)
         ) {
-            maybe_emit_undefined_root_variable_for_coalesce_left(
-                analyzer,
-                left,
-                analysis_data,
-                context,
-            );
+            // Psalm's CoalesceAnalyzer desugars `$base[...] ?? $r` into
+            // `isset($base[...]) ? $base[...] : $r` and analyzes the true-branch
+            // value outside isset(): the base variable's (possibly) undefined
+            // report is emitted by VariableFetchAnalyzer there, not by a
+            // coalesce-specific check. Analyze the walked root variable the same
+            // way to reproduce that report through the normal variable-fetch
+            // path, leaving the offset's existence to the isset probe below.
+            let mut root = left.unparenthesized();
+            loop {
+                match root {
+                    Expression::ArrayAccess(access) => root = access.array.unparenthesized(),
+                    Expression::Access(Access::Property(property)) => {
+                        root = property.object.unparenthesized();
+                    }
+                    _ => break,
+                }
+            }
+            if matches!(root, Expression::Variable(Variable::Direct(_))) {
+                expression_analyzer::analyze(analyzer, root, analysis_data, context);
+            }
         }
         context.inside_isset = true;
     }
@@ -228,98 +244,6 @@ pub fn analyze(
     };
 
     analysis_data.expr_types.insert(pos, Rc::new(result_type));
-}
-
-fn maybe_emit_undefined_root_variable_for_coalesce_left(
-    analyzer: &StatementsAnalyzer<'_>,
-    left: &Expression<'_>,
-    analysis_data: &mut FunctionAnalysisData,
-    context: &BlockContext,
-) {
-    if !context.check_variables {
-        return;
-    }
-
-    let Some(root_var_name) = extract_root_var_name_for_coalesce(left) else {
-        return;
-    };
-
-    let normalized_var = root_var_name.trim_start_matches('$');
-    if normalized_var.eq_ignore_ascii_case("this") || is_superglobal(normalized_var) {
-        return;
-    }
-
-    let var_id = VarName::new(&root_var_name);
-    let alt_var_id = if let Some(stripped) = root_var_name.strip_prefix('$') {
-        VarName::new(stripped)
-    } else {
-        VarName::from(format!("${}", root_var_name))
-    };
-
-    // Definitely in scope (assigned on every path): the `??` base exists, so no
-    // diagnostic.
-    if context.locals.contains_key(&var_id)
-        || context.assigned_var_ids.contains_key(&var_id)
-        || context.locals.contains_key(&alt_var_id)
-        || context.assigned_var_ids.contains_key(&alt_var_id)
-    {
-        return;
-    }
-
-    // Assigned on some-but-not-all paths: Psalm reports the *possibly* undefined
-    // variant for the `??` base (unlike isset(), the coalesce base is still
-    // flagged). A never-assigned root stays the definite Undefined* kind.
-    let possibly_assigned = context.possibly_assigned_var_ids.contains(&var_id)
-        || context.possibly_assigned_var_ids.contains(&alt_var_id)
-        || context.vars_possibly_in_scope.contains(&var_id)
-        || context.vars_possibly_in_scope.contains(&alt_var_id);
-
-    let pos = (left.start_offset() as u32, left.end_offset() as u32);
-    let (line, col) = analyzer.get_line_column(pos.0);
-    let in_global_scope = analyzer.function_info.is_none();
-    let issue_kind = match (possibly_assigned, in_global_scope) {
-        (true, true) => IssueKind::PossiblyUndefinedGlobalVariable,
-        (true, false) => IssueKind::PossiblyUndefinedVariable,
-        (false, true) => IssueKind::UndefinedGlobalVariable,
-        (false, false) => IssueKind::UndefinedVariable,
-    };
-    let message = match (possibly_assigned, in_global_scope) {
-        (true, true) => format!("Possibly undefined global variable ${}", normalized_var),
-        (true, false) => format!("Possibly undefined variable ${}", normalized_var),
-        (false, true) => format!("Undefined global variable ${}", normalized_var),
-        (false, false) => format!("Undefined variable ${}", normalized_var),
-    };
-
-    analysis_data.add_issue(Issue::new(
-        issue_kind,
-        message,
-        analyzer.file_path,
-        pos.0,
-        pos.1,
-        line,
-        col,
-    ));
-}
-
-fn extract_root_var_name_for_coalesce(expr: &Expression<'_>) -> Option<String> {
-    let var_key = expression_identifier::get_expression_var_key(expr)?;
-    // Split at the *earliest* access/offset delimiter so the root is the base
-    // variable (e.g. `$this->data[$x]` -> `$this`, not `$this->data`); a property
-    // or static access root is not an undefined-variable candidate.
-    let split_at = ["[", "->", "::"]
-        .iter()
-        .filter_map(|delim| var_key.find(delim))
-        .min();
-
-    match split_at {
-        Some(offset) if offset > 0 => {
-            let root = &var_key[..offset];
-            // Only `$variable` roots are undefined-variable candidates; a
-            // class-name root (`self::$prop`, `Foo::$prop`) is not.
-            root.starts_with('$').then(|| root.to_string())
-        }
-        _ => var_key.starts_with('$').then(|| var_key.to_string()),
-    }
 }
 
 fn is_superglobal(var_name: &str) -> bool {

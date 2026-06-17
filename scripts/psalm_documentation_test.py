@@ -96,12 +96,6 @@ DIVERGENT_EXPECTATIONS = {
 # Genuine pzoom gaps, discovered by this script. Each entry must keep
 # failing: when one starts to pass, the run fails until it is removed.
 KNOWN_FAILURES: dict[str, str] = {
-    # Reporting an unused @psalm-suppress needs issue-generation parity first:
-    # a suppression looks unused whenever pzoom fails to generate the issue
-    # Psalm would have suppressed, so blanket reporting false-positives (a
-    # corpus sweep found ~180 such gaps). Only `@psalm-suppress
-    # UnusedPsalmSuppress` by itself is reported today.
-    "UnusedPsalmSuppress": "needs issue-generation parity to avoid false positives",
     # mago recovers from parse errors AND mis-flags several valid constructs
     # (multiline double-quoted strings, `as final` trait aliases, multiline
     # docblock array shapes), so surfacing its diagnostics as ParseError

@@ -1,6 +1,6 @@
 # pzoom
 
-A fast PHP static analyzer written in Rust — a port of [Psalm](https://psalm.dev).
+A fast PHP static analyzer written in Rust — a port of [Psalm](https://github.com/vimeo/psalm).
 
 Read the backstory: [From Psalm to Pzoom](https://mattbrown.dev/articles/from-psalm-to-pzoom).
 

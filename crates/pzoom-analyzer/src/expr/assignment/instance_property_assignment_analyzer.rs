@@ -412,9 +412,31 @@ pub fn analyze_with_known_type(
 
                                 // Check if property is readonly. A
                                 // @psalm-immutable class implicitly marks all
-                                // its properties readonly (Psalm's scanner).
-                                if prop_info.is_readonly || class_info.is_immutable {
-                                    let class_name = analyzer.interner.lookup(*name);
+                                // its properties readonly (Psalm's scanner). When
+                                // the receiver class isn't itself restricted but a
+                                // trait scope is shared with an immutable user that
+                                // declares the property, police it for that user
+                                // too (Psalm analyses the trait per using class).
+                                let restricting = if prop_info.is_readonly || class_info.is_immutable
+                                {
+                                    Some((*name, prop_info.readonly_allow_private_mutation))
+                                } else {
+                                    crate::expr::fetch::atomic_property_fetch_analyzer::trait_restricting_property_owner(
+                                        analyzer, prop_id,
+                                    )
+                                    .map(|owner| {
+                                        let allow_private = analyzer
+                                            .codebase
+                                            .get_class(owner)
+                                            .and_then(|c| c.properties.get(&prop_id))
+                                            .is_some_and(|p| p.readonly_allow_private_mutation);
+                                        (owner, allow_private)
+                                    })
+                                };
+                                if let Some((restricting_class, readonly_allow_private_mutation)) =
+                                    restricting
+                                {
+                                    let class_name = analyzer.interner.lookup(restricting_class);
                                     // Psalm `InstancePropertyAssignmentAnalyzer::
                                     // can_set_readonly_property`: writing a
                                     // readonly / immutable-class property is only
@@ -434,16 +456,40 @@ pub fn analyze_with_known_type(
                                     // external param of an immutable type.
                                     let owns_class =
                                         crate::expr::fetch::atomic_property_fetch_analyzer::calling_context_owns_class(
-                                            analyzer, *name,
+                                            analyzer, restricting_class,
                                         );
                                     let property_var_pure_compatible =
                                         receiver_reference_free && receiver_allow_mutations;
                                     let can_write_restricted_property = owns_class
                                         && (is_special_write_method(analyzer)
-                                            || prop_info.readonly_allow_private_mutation
+                                            || readonly_allow_private_mutation
                                             || property_var_pure_compatible);
 
                                     if !can_write_restricted_property {
+                                        // Psalm runs the mutation-free check
+                                        // independently of the readonly one, so a
+                                        // restricted write from a mutation-free
+                                        // context is *both* InaccessibleProperty and
+                                        // ImpurePropertyAssignment. The readonly path
+                                        // returns early, so emit the impure
+                                        // diagnostic here too (the standalone per-
+                                        // atomic check below is skipped by the
+                                        // `continue`). Guarded so it never doubles a
+                                        // diagnostic already emitted upstream.
+                                        if impure_assignment_candidate && !impure_assignment_emitted
+                                        {
+                                            impure_assignment_emitted = true;
+                                            let (line, col) = analyzer.get_line_column(pos.0);
+                                            analysis_data.add_issue(Issue::new(
+                                                IssueKind::ImpurePropertyAssignment,
+                                                "Cannot assign to a property from a mutation-free context",
+                                                analyzer.file_path,
+                                                pos.0,
+                                                pos.1,
+                                                line,
+                                                col,
+                                            ));
+                                        }
                                         let (line, col) = analyzer.get_line_column(pos.0);
                                         let message = format!(
                                             "{}::${} is marked readonly",

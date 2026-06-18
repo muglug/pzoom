@@ -1,0 +1,2 @@
+InaccessibleProperty - input.php:5:9 - ImmutableNode::$cached_id is marked readonly
+MutableDependency - input.php:11:1 - ImmutableNode is marked @psalm-immutable but CacheIdTrait is not

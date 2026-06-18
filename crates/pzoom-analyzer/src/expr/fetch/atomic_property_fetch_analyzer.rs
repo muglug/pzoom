@@ -415,6 +415,45 @@ pub(crate) fn calling_context_owns_class(
             .is_some_and(|users| users.contains(&target_class))
 }
 
+/// When the calling scope is a trait, returns a using class under which
+/// `prop_id` is write-restricted — the declaring class is immutable, or it
+/// declares the property readonly. Psalm analyses a trait body once per using
+/// class and so emits the readonly violation for the immutable user even when a
+/// mutable user shares the trait; pzoom analyses the trait once, so it must look
+/// across the users to police the write the same way. Chosen deterministically
+/// by name. Returns `None` outside a trait scope or when no user restricts it.
+pub(crate) fn trait_restricting_property_owner(
+    analyzer: &StatementsAnalyzer<'_>,
+    prop_id: pzoom_str::StrId,
+) -> Option<pzoom_str::StrId> {
+    let self_class = analyzer.get_declaring_class()?;
+    if analyzer
+        .codebase
+        .get_class(self_class)
+        .is_none_or(|info| info.kind != ClassLikeKind::Trait)
+    {
+        return None;
+    }
+    let users = analyzer.codebase.all_classlike_descendants.get(&self_class)?;
+    users
+        .iter()
+        .filter(|user| {
+            analyzer.codebase.get_class(**user).is_some_and(|info| {
+                info.properties
+                    .get(&prop_id)
+                    .is_some_and(|prop| !prop.is_static && (info.is_immutable || prop.is_readonly))
+            })
+        })
+        .min_by(|a, b| {
+            analyzer
+                .interner
+                .lookup(**a)
+                .as_ref()
+                .cmp(analyzer.interner.lookup(**b).as_ref())
+        })
+        .copied()
+}
+
 /// The using class (or descendant) of `trait_id` that declares `prop_id`, chosen
 /// deterministically by name so the retarget is stable run-to-run. `all_classlike_descendants`
 /// already records trait users (and their subclasses).

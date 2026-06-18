@@ -134,6 +134,27 @@ pub fn analyze(
             let filtered_issues: Vec<_> = new_issues
                 .into_iter()
                 .filter_map(|mut issue| {
+                    // Purity and readonly/visibility diagnostics follow from the
+                    // method's own mutation-free contract and from local / `$this`
+                    // writes, not from the using class, so Psalm emits them while
+                    // analysing the trait and the trait file's @psalm-suppress
+                    // annotations apply here. Surface them directly (the
+                    // per-using-class reference pass discards its issue copies).
+                    if matches!(
+                        issue.kind,
+                        IssueKind::ImpureMethodCall
+                            | IssueKind::ImpureFunctionCall
+                            | IssueKind::ImpurePropertyAssignment
+                            | IssueKind::ImpurePropertyFetch
+                            | IssueKind::ImpureStaticProperty
+                            | IssueKind::ImpureStaticVariable
+                            | IssueKind::ImpureVariable
+                            | IssueKind::ImpureByReferenceAssignment
+                            | IssueKind::InaccessibleProperty
+                    ) {
+                        return Some(issue);
+                    }
+
                     if !should_emit_return_mismatch {
                         return None;
                     }

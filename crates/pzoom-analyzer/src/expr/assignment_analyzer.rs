@@ -259,7 +259,18 @@ pub fn analyze(
         // variable's dataflow parents feed the new assignment through a
         // composition node (this is what marks a param used by `$hue /= 360`
         // and earlier `$x = …` assignments used by `$x ??= $y`).
-        let mut compound_type = rhs_type;
+        //
+        // `??=` also keeps the *type* of the old value: Psalm desugars it to
+        // `$a = $a ?? $b`, whose result is `non_null($a) | $b`. The old value
+        // survives when it isn't null, so flags like `reference_free` /
+        // `allow_mutations` aren't laundered into a fresh `$b` (e.g. an
+        // immutable param assigned via `$a ??= clone $this` stays non-pure-
+        // compatible, matching Psalm's readonly diagnostics).
+        let mut compound_type = if matches!(assignment.operator, AssignmentOperator::Coalesce(_)) {
+            coalesce_assignment_type(assignment.lhs, &rhs_type, context)
+        } else {
+            rhs_type
+        };
         let decision_node =
             DataFlowNode::get_for_composition(make_data_flow_node_position(analyzer, pos));
         analysis_data
@@ -376,6 +387,45 @@ pub fn analyze(
 
     // The assignment expression itself has the type of the RHS
     analysis_data.expr_types.insert(pos, Rc::new(rhs_type));
+}
+
+/// Result type of `$a ??= $b`, mirroring Psalm's `$a = $a ?? $b`:
+/// `non_null($a) | $b`. The old value survives when it isn't null, so its
+/// union-level flags (`reference_free` / `allow_mutations`) are carried and
+/// combined with `$b` rather than replaced by it. Only direct variables are
+/// handled here — property / array-access targets are routed to their own
+/// assignment analyzers before this point — and the dataflow wiring is left to
+/// the caller, so the returned type keeps only `$b`'s parent nodes.
+fn coalesce_assignment_type(
+    lhs: &Expression<'_>,
+    rhs_type: &TUnion,
+    context: &BlockContext,
+) -> TUnion {
+    let Expression::Variable(Variable::Direct(direct_var)) = lhs else {
+        return rhs_type.clone();
+    };
+    let Some(old_type) = context.get_var_type(direct_var.name) else {
+        return rhs_type.clone();
+    };
+
+    let non_null: Vec<_> = old_type
+        .types
+        .iter()
+        .filter(|atomic| !matches!(atomic, TAtomic::TNull))
+        .cloned()
+        .collect();
+    if non_null.is_empty() {
+        // `$a` was only null, so the result is exactly `$b`.
+        return rhs_type.clone();
+    }
+
+    let mut left = TUnion::from_types(non_null);
+    left.reference_free = old_type.reference_free;
+    left.allow_mutations = old_type.allow_mutations;
+
+    let mut combined = combine_union_types(&left, rhs_type, false);
+    combined.parent_nodes = rhs_type.parent_nodes.clone();
+    combined
 }
 
 fn infer_concat_assignment_type(

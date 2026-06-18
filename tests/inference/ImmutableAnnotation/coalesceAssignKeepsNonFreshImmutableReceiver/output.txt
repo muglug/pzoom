@@ -1,0 +1,2 @@
+ImpurePropertyAssignment - input.php:9:9 - Cannot assign to a property from a mutation-free context
+InaccessibleProperty - input.php:9:9 - Box::$v is marked readonly

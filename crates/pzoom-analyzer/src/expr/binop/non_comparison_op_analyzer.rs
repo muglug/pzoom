@@ -227,7 +227,7 @@ fn union_is_array_like(t: &TUnion) -> bool {
     for atomic in &t.types {
         if atomic.is_array() {
             has_array = true;
-        } else if matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing) {
+        } else if matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNever) {
             // null/false/never operands only feed the Possibly* operand checks.
         } else {
             return false;
@@ -318,7 +318,7 @@ fn array_union_operand(t: &TUnion) -> TUnion {
     let arrays: Vec<TAtomic> = t
         .types
         .iter()
-        .filter(|atomic| !matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing))
+        .filter(|atomic| !matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNever))
         .cloned()
         .collect();
     if arrays.is_empty() {

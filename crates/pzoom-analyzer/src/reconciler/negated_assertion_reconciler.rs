@@ -526,7 +526,7 @@ pub fn subtract_type(
     // so callers' changed-var detection doesn't treat it as a real change.
     let mut result = existing_var_type.clone();
     if remaining_types.is_empty() {
-        result.types = vec![TAtomic::TNothing];
+        result.types = vec![TAtomic::TNever];
     } else if remaining_types.len() > 1 {
         result.types = type_combiner::combine(remaining_types, false);
     } else {
@@ -618,7 +618,7 @@ fn subtract_literal(
     // so an identity narrowing yields an equal TUnion (see subtract_type).
     let mut result = existing_var_type.clone();
     if remaining_types.is_empty() {
-        result.types = vec![TAtomic::TNothing];
+        result.types = vec![TAtomic::TNever];
     } else {
         result.types = remaining_types;
     }
@@ -766,7 +766,7 @@ fn handle_literal_negated_equality(
     let _ = did_remove_type;
 
     if acceptable_types.is_empty() {
-        new_var_type.types = vec![TAtomic::TNothing];
+        new_var_type.types = vec![TAtomic::TNever];
     } else {
         new_var_type.types = acceptable_types;
     }

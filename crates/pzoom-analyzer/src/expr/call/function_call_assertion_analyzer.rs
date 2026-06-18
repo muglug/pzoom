@@ -174,7 +174,7 @@ pub(crate) fn apply_post_call_assertions(
                                         argument.span().start.offset,
                                         argument.span().end.offset,
                                     );
-                                    orred_rules.push(Assertion::IsEqual(TAtomic::TNothing));
+                                    orred_rules.push(Assertion::IsEqual(TAtomic::TNever));
                                 }
                                 Some(intersection)
                                     if intersection.get_id(Some(analyzer.interner))
@@ -774,7 +774,7 @@ pub(crate) fn narrow_union_to_truthy(existing_type: &TUnion) -> TUnion {
 
     for atomic in &existing_type.types {
         match atomic {
-            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing => {}
+            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNever => {}
             TAtomic::TBool => filtered.push(TAtomic::TTrue),
             TAtomic::TLiteralInt { value } if *value == 0 => {}
             TAtomic::TLiteralFloat { value } if *value == 0.0 => {}

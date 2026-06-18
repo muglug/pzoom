@@ -159,8 +159,8 @@ pub(crate) fn handle_by_ref_array_adjustment(
                     new_atomics.push(match fallback_value_type {
                         Some(fallback_value) => TAtomic::list(fallback_value.clone()),
                         None => TAtomic::array(
-                            TUnion::new(TAtomic::TNothing),
-                            TUnion::new(TAtomic::TNothing),
+                            TUnion::new(TAtomic::TNever),
+                            TUnion::new(TAtomic::TNever),
                         ),
                     });
                 } else {

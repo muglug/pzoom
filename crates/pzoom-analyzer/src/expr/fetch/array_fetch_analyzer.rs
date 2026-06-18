@@ -774,7 +774,7 @@ pub fn analyze(
                 has_invalid_access = true;
                 invalid_type_name = atomic.get_id(Some(analyzer.interner));
             }
-            TAtomic::TNothing => {}
+            TAtomic::TNever => {}
 
             // An intersection (`Traversable&ArrayAccess<int, string>&...`,
             // e.g. arraylike-object) fetches through its ArrayAccess member.

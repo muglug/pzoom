@@ -218,7 +218,7 @@ pub(crate) fn emit_concat_operand_issue(
     let mut has_invalid = false;
 
     for atomic in &union.types {
-        if matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing) {
+        if matches!(atomic, TAtomic::TNull | TAtomic::TFalse | TAtomic::TNever) {
             continue;
         }
 

@@ -596,7 +596,7 @@ pub(crate) fn atomic_is_stringable(analyzer: &StatementsAnalyzer<'_>, atomic: &T
         | TAtomic::TTrue
         | TAtomic::TFalse
         | TAtomic::TNull
-        | TAtomic::TNothing
+        | TAtomic::TNever
         | TAtomic::TMixed
         | TAtomic::TMixedFromLoopIsset
         | TAtomic::TNonEmptyMixed

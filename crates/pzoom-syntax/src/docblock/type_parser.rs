@@ -1851,7 +1851,7 @@ fn build_named_atomic(
         },
         "resource" | "open-resource" => TAtomic::TResource,
         "closed-resource" => TAtomic::TClosedResource,
-        "never" | "no-return" | "never-return" | "never-returns" => TAtomic::TNothing,
+        "never" | "no-return" | "never-return" | "never-returns" => TAtomic::TNever,
 
         "array-key" => TAtomic::TArrayKey,
         "scalar" => TAtomic::TScalar,
@@ -2449,12 +2449,12 @@ mod tests {
         let interner = Interner::default();
 
         let never_return = parse_ty("never-return", &interner);
-        assert!(matches!(never_return.get_single(), Some(TAtomic::TNothing)));
+        assert!(matches!(never_return.get_single(), Some(TAtomic::TNever)));
 
         let never_returns = parse_ty("never-returns", &interner);
         assert!(matches!(
             never_returns.get_single(),
-            Some(TAtomic::TNothing)
+            Some(TAtomic::TNever)
         ));
     }
 

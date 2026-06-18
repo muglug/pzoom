@@ -208,7 +208,7 @@ pub enum TAtomic {
     /// combiner drops it when any concrete type is present — so loop-fixpoint
     /// placeholder mixeds don't pollute the converged type.
     TMixedFromLoopIsset,
-    TNothing, // Never/bottom type
+    TNever, // Never/bottom type
     TVoid,
     TIterable {
         key_type: Box<TUnion>,
@@ -585,8 +585,8 @@ impl TAtomic {
     #[inline]
     pub fn empty_array() -> Self {
         TAtomic::array(
-            TUnion::new(TAtomic::TNothing),
-            TUnion::new(TAtomic::TNothing),
+            TUnion::new(TAtomic::TNever),
+            TUnion::new(TAtomic::TNever),
         )
     }
 
@@ -1047,7 +1047,7 @@ impl TAtomic {
                 }
             }
             TAtomic::TMixed | TAtomic::TMixedFromLoopIsset => "mixed".to_string(),
-            TAtomic::TNothing => "never".to_string(),
+            TAtomic::TNever => "never".to_string(),
             TAtomic::TVoid => "void".to_string(),
             TAtomic::TArray {
                 known_values,

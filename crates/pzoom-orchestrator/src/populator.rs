@@ -2004,7 +2004,7 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
         | TAtomic::TFalse
         | TAtomic::TNull
         | TAtomic::TVoid
-        | TAtomic::TNothing
+        | TAtomic::TNever
         | TAtomic::TMixed
         | TAtomic::TNonEmptyMixed
         | TAtomic::TMixedFromLoopIsset

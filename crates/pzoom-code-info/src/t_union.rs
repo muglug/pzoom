@@ -330,7 +330,7 @@ impl TUnion {
 
     /// Check if this union is the nothing/never type.
     pub fn is_nothing(&self) -> bool {
-        self.types.iter().all(|t| matches!(t, TAtomic::TNothing))
+        self.types.iter().all(|t| matches!(t, TAtomic::TNever))
     }
 
     /// Check if this union is the void type.
@@ -481,7 +481,7 @@ impl TUnion {
     }
 
     pub fn nothing() -> Self {
-        Self::new(TAtomic::TNothing)
+        Self::new(TAtomic::TNever)
     }
 
     pub fn void() -> Self {

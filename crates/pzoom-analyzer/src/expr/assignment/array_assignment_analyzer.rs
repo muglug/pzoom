@@ -962,7 +962,7 @@ fn apply_assignment_to_container(
                 has_writable = true;
                 updated.push(create_autovivified_array_atomic(key_type, assigned_type));
             }
-            TAtomic::TNothing => {
+            TAtomic::TNever => {
                 has_writable = true;
                 updated.push(create_autovivified_array_atomic(key_type, assigned_type));
             }
@@ -1010,7 +1010,7 @@ fn apply_assignment_to_container(
                             | TAtomic::TLiteralClassString { .. }
                             | TAtomic::TNull
                             | TAtomic::TFalse
-                            | TAtomic::TNothing
+                            | TAtomic::TNever
                     )
                 }) || types.iter().any(|intersection_atomic| {
                     if let TAtomic::TNamedObject { name, .. } = intersection_atomic {
@@ -1948,7 +1948,7 @@ fn infer_child_type_for_dim(
                 }
             }
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => return TUnion::mixed(),
-            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNothing => {}
+            TAtomic::TNull | TAtomic::TFalse | TAtomic::TNever => {}
             TAtomic::TString
             | TAtomic::TNonEmptyString
             | TAtomic::TLiteralString { .. }

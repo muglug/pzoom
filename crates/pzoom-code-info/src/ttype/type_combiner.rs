@@ -296,7 +296,7 @@ fn combine_inner(
         .filter(|atomic| {
             !matches!(
                 atomic,
-                TAtomic::TMixed | TAtomic::TMixedFromLoopIsset | TAtomic::TNothing
+                TAtomic::TMixed | TAtomic::TMixedFromLoopIsset | TAtomic::TNever
             )
         })
         .count();
@@ -312,7 +312,7 @@ fn combine_inner(
         }
 
         // Skip never if we have other types
-        if matches!(&atomic, TAtomic::TNothing) && (!new_types.is_empty() || has_never) {
+        if matches!(&atomic, TAtomic::TNever) && (!new_types.is_empty() || has_never) {
             continue;
         }
 
@@ -320,7 +320,7 @@ fn combine_inner(
     }
 
     if new_types.is_empty() {
-        return vec![TAtomic::TNothing];
+        return vec![TAtomic::TNever];
     }
 
     // Object-subtype absorption (Psalm's `TypeCombiner`, only with a codebase):
@@ -418,10 +418,10 @@ fn scrape_type_properties(
     match atomic {
         // Handle never/nothing type - just track it, don't add to value_types
         // It will be filtered out later if there are other types
-        TAtomic::TNothing => {
+        TAtomic::TNever => {
             combination
                 .value_types
-                .insert("never".to_string(), TAtomic::TNothing);
+                .insert("never".to_string(), TAtomic::TNever);
             None
         }
 
@@ -535,8 +535,8 @@ fn scrape_type_properties(
                         // The empty array `[]` (`array<never, never>`).
                         scrape_array_properties(
                             combination,
-                            TUnion::new(TAtomic::TNothing),
-                            TUnion::new(TAtomic::TNothing),
+                            TUnion::new(TAtomic::TNever),
+                            TUnion::new(TAtomic::TNever),
                             false,
                             overwrite_empty_array,
                         );
@@ -2079,7 +2079,7 @@ mod tests {
 
     #[test]
     fn test_combine_mixed_never() {
-        let types = vec![TAtomic::TNothing, TAtomic::TMixed];
+        let types = vec![TAtomic::TNever, TAtomic::TMixed];
         let result = combine(types, false);
         assert_eq!(result.len(), 1);
         assert!(

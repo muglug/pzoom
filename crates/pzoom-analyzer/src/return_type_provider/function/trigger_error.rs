@@ -42,7 +42,7 @@ impl FunctionReturnTypeProvider for TriggerErrorReturnTypeProvider {
                     return_types.push(TAtomic::TTrue);
                 }
                 TAtomic::TLiteralInt { value } if *value == E_USER_ERROR => {
-                    return_types.push(TAtomic::TNothing);
+                    return_types.push(TAtomic::TNever);
                 }
                 TAtomic::TLiteralInt { .. } => {
                     return_types.push(TAtomic::TFalse);

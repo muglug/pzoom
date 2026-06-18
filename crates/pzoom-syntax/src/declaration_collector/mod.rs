@@ -8710,7 +8710,7 @@ fn union_is_valid_array_key(union: &TUnion) -> bool {
         | TAtomic::TLiteralString { .. }
         | TAtomic::TMixed
         | TAtomic::TNonEmptyMixed
-        | TAtomic::TNothing
+        | TAtomic::TNever
         | TAtomic::TTemplateParam { .. }
         | TAtomic::TTemplateParamClass { .. } => true,
         TAtomic::TNamedObject { .. } => true,

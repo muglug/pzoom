@@ -219,7 +219,7 @@ pub fn is_contained_by_in_context(
             return false;
         }
         // Psalm: `never` input is contained by anything.
-        if matches!(input_type_part, TAtomic::TNothing) {
+        if matches!(input_type_part, TAtomic::TNever) {
             return true;
         }
         // Psalm: `null` input is contained by a template with a nullable (or
@@ -385,7 +385,7 @@ pub fn is_contained_by_in_context(
     }
 
     // Nothing is contained by everything (never type)
-    if matches!(input_type_part, TAtomic::TNothing) {
+    if matches!(input_type_part, TAtomic::TNever) {
         return true;
     }
 

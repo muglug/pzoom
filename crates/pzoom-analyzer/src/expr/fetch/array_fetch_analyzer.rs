@@ -577,6 +577,27 @@ pub fn analyze(
                                     result_types.push(t.clone());
                                 }
                             }
+                            // A literal STRING key absent from the shape but
+                            // admitted by the non-sealed array's fallback key type
+                            // isn't proven present (ensureArrayStringOffsetsExist) —
+                            // Psalm flags it exactly as for a plain `array<K, V>`.
+                            // This is the `isset($a['x'])`-narrows-a-generic-array
+                            // case: the resulting shape keeps the `array-key`
+                            // fallback, so `$a['y']` is still risky. Int offsets are
+                            // left to the generic-array/list path, which models a
+                            // list's contiguous-from-0 guarantee.
+                            let fallback_admits_string = fallback_key_type.is_some_and(|key_type| {
+                                key_type.has_string()
+                                    || key_type.types.iter().any(|t| {
+                                        matches!(
+                                            t,
+                                            TAtomic::TArrayKey | TAtomic::TMixed | TAtomic::TScalar
+                                        )
+                                    })
+                            });
+                            if matches!(index_key, ArrayKey::String(_)) && fallback_admits_string {
+                                tarray_string_offset_unproven = true;
+                            }
                         } else {
                             has_literal_index_miss = true;
                             has_possibly_undefined_offset = true;
@@ -1189,6 +1210,9 @@ pub fn analyze(
              is risky given expected type '{expected_id}'. \
              Consider using isset beforehand."
         );
+        // Psalm anchors the issue at the array-access expression (Psalm points at
+        // `$a['x']`); use its real column rather than 0.
+        let (_, start_column) = analyzer.get_line_column(span.start.offset);
         if analyzer.config.ensure_array_int_offsets_exist
             && tarray_int_offset_unproven
             && !crate::issue_suppression::is_issue_suppressed_at(
@@ -1205,7 +1229,7 @@ pub fn analyze(
                 span.start.offset,
                 span.end.offset,
                 start_line,
-                0,
+                start_column,
             ));
         }
         if analyzer.config.ensure_array_string_offsets_exist
@@ -1224,7 +1248,7 @@ pub fn analyze(
                 span.start.offset,
                 span.end.offset,
                 start_line,
-                0,
+                start_column,
             ));
         }
     }

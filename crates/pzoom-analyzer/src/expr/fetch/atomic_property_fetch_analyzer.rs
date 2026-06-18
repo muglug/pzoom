@@ -352,6 +352,21 @@ pub(crate) fn retarget_property_class_for_context(
         return receiver_class;
     }
 
+    // A trait method's `$this->prop` resolves against the using class — the
+    // property is declared by the class that uses the trait, not the bare
+    // trait. Psalm analyses trait bodies per using class; pzoom analyses the
+    // trait once with `$this` typed as the trait, so retarget to a using class
+    // that declares the property (the readonly / mutation-free diagnostics, and
+    // the property type, then resolve as they would in the using class).
+    if analyzer
+        .codebase
+        .get_class(receiver_class)
+        .is_some_and(|class_info| class_info.kind == ClassLikeKind::Trait)
+        && let Some(user) = trait_user_declaring_property(analyzer, receiver_class, prop_id)
+    {
+        return user;
+    }
+
     let Some(self_class) = analyzer.get_declaring_class() else {
         return receiver_class;
     };
@@ -372,6 +387,59 @@ pub(crate) fn retarget_property_class_for_context(
     }
 
     receiver_class
+}
+
+/// Whether the code currently being analysed belongs to `target_class` for
+/// member-visibility purposes. True when the enclosing class *is* `target_class`,
+/// or when it is a trait used by `target_class` — a trait body is analysed with
+/// `$this` retargeted to a using class, and the trait's code is part of that
+/// class, so it may touch the class's private and protected members.
+pub(crate) fn calling_context_owns_class(
+    analyzer: &StatementsAnalyzer<'_>,
+    target_class: pzoom_str::StrId,
+) -> bool {
+    let Some(self_class) = analyzer.get_declaring_class() else {
+        return false;
+    };
+    if self_class == target_class {
+        return true;
+    }
+    analyzer
+        .codebase
+        .get_class(self_class)
+        .is_some_and(|info| info.kind == ClassLikeKind::Trait)
+        && analyzer
+            .codebase
+            .all_classlike_descendants
+            .get(&self_class)
+            .is_some_and(|users| users.contains(&target_class))
+}
+
+/// The using class (or descendant) of `trait_id` that declares `prop_id`, chosen
+/// deterministically by name so the retarget is stable run-to-run. `all_classlike_descendants`
+/// already records trait users (and their subclasses).
+fn trait_user_declaring_property(
+    analyzer: &StatementsAnalyzer<'_>,
+    trait_id: pzoom_str::StrId,
+    prop_id: pzoom_str::StrId,
+) -> Option<pzoom_str::StrId> {
+    let users = analyzer.codebase.all_classlike_descendants.get(&trait_id)?;
+    users
+        .iter()
+        .filter(|user| {
+            analyzer
+                .codebase
+                .get_class(**user)
+                .is_some_and(|user_info| user_info.properties.contains_key(&prop_id))
+        })
+        .min_by(|a, b| {
+            analyzer
+                .interner
+                .lookup(**a)
+                .as_ref()
+                .cmp(analyzer.interner.lookup(**b).as_ref())
+        })
+        .copied()
 }
 
 /// Look up the type of a property on a type.
@@ -728,9 +796,8 @@ fn get_property_type_inner(
         match visibility {
             Visibility::Public => {}
             Visibility::Private => {
-                let is_same_class = analyzer
-                    .get_declaring_class()
-                    .is_some_and(|calling_class| calling_class == visibility_scope_class_id);
+                let is_same_class =
+                    calling_context_owns_class(analyzer, visibility_scope_class_id);
 
                 if !is_same_class
                     && !receiver_allows_property_visibility_override(
@@ -877,9 +944,7 @@ fn get_property_type_inner(
                             Visibility::Public => {}
                             Visibility::Private => {
                                 let is_same_class =
-                                    analyzer.get_declaring_class().is_some_and(|calling_class| {
-                                        calling_class == visibility_scope_class_id
-                                    });
+                                    calling_context_owns_class(analyzer, visibility_scope_class_id);
 
                                 if !is_same_class
                                     && !receiver_allows_property_visibility_override(
@@ -1505,30 +1570,4 @@ pub(crate) fn can_access_protected_member_visibility(
             caller_class,
             analyzer.codebase,
         )
-}
-
-/// Whether the code currently being analysed belongs to `target_class` for
-/// member-visibility purposes. True when the enclosing class *is* `target_class`,
-/// or when it is a trait used by `target_class` — a trait body is analysed with
-/// `$this` retargeted to a using class, and the trait's code is part of that
-/// class, so it may touch the class's private and protected members.
-pub(crate) fn calling_context_owns_class(
-    analyzer: &StatementsAnalyzer<'_>,
-    target_class: pzoom_str::StrId,
-) -> bool {
-    let Some(self_class) = analyzer.get_declaring_class() else {
-        return false;
-    };
-    if self_class == target_class {
-        return true;
-    }
-    analyzer
-        .codebase
-        .get_class(self_class)
-        .is_some_and(|info| info.kind == ClassLikeKind::Trait)
-        && analyzer
-            .codebase
-            .all_classlike_descendants
-            .get(&self_class)
-            .is_some_and(|users| users.contains(&target_class))
 }

@@ -1,0 +1,1 @@
+InaccessibleProperty - input.php:7:9 - Property Foo::$bar is defined on an immutable class

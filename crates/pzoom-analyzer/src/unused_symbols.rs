@@ -17,7 +17,7 @@ use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::symbol_references::SymbolReferences;
 use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Issue kinds emitted by the codebase-wide unused-definition pass. Their
 /// `@psalm-suppress` annotations are owned by that pass (not the per-file
@@ -89,6 +89,7 @@ fn record_atomic_classes(atomic: &TAtomic, out: &mut FxHashSet<StrId>) {
 /// `referenced_properties` and `method_returns_used` are the merged per-file
 /// sets (reads-only property accesses / used return values, which the symbol
 /// graph does not distinguish).
+#[allow(clippy::too_many_arguments)]
 pub fn find_unused_definitions(
     codebase: &CodebaseInfo,
     interner: &Interner,
@@ -97,6 +98,8 @@ pub fn find_unused_definitions(
     symbol_references: &SymbolReferences,
     referenced_properties: &FxHashSet<(StrId, StrId)>,
     method_returns_used: &FxHashSet<(StrId, StrId)>,
+    used_method_params: &FxHashSet<(StrId, StrId, usize)>,
+    param_unused_candidates: &[crate::function_analysis_data::ParamUnusedCandidate],
 ) -> Vec<Issue> {
     let referenced = symbol_references.get_referenced_symbols_and_members();
     let referenced_overridden = symbol_references.get_referenced_overridden_class_members();
@@ -117,6 +120,23 @@ pub fn find_unused_definitions(
         .collect();
     referenced_class_members.extend(referenced_overridden);
 
+    // Group the deferred non-private param candidates (Psalm's
+    // checkMethodParamReferences) by file. A candidate is reported only if no
+    // implementation — its own body or any override that propagated up the
+    // chain — referenced the param (`!isMethodParamUsed`).
+    let mut param_candidates_by_file: FxHashMap<StrId, Vec<&crate::function_analysis_data::ParamUnusedCandidate>> =
+        FxHashMap::default();
+    for candidate in param_unused_candidates {
+        if used_method_params.contains(&(candidate.class_id, candidate.method_lc, candidate.offset))
+        {
+            continue;
+        }
+        param_candidates_by_file
+            .entry(candidate.file_path)
+            .or_default()
+            .push(candidate);
+    }
+
     let mut issues: Vec<Issue> = Vec::new();
 
     for file_path in files {
@@ -126,7 +146,7 @@ pub fn find_unused_definitions(
         let contents = &file_info.contents;
         let line_starts = line_start_offsets(contents);
 
-        let raw = report_unused_declarations(
+        let mut raw = report_unused_declarations(
             *file_path,
             file_info,
             &line_starts,
@@ -137,6 +157,31 @@ pub fn find_unused_definitions(
             referenced_properties,
             method_returns_used,
         );
+
+        // Psalm reports a final method's unused param as UnusedParam, every
+        // other as PossiblyUnusedParam. Append them here so they share the
+        // declaration-issue suppression filter below.
+        if let Some(candidates) = param_candidates_by_file.get(file_path) {
+            for candidate in candidates {
+                raw.push(Issue::new(
+                    if candidate.is_final {
+                        IssueKind::UnusedParam
+                    } else {
+                        IssueKind::PossiblyUnusedParam
+                    },
+                    format!(
+                        "Param #{} is never referenced in this method",
+                        candidate.offset + 1
+                    ),
+                    candidate.file_path,
+                    candidate.span.0,
+                    candidate.span.1,
+                    candidate.line,
+                    candidate.col,
+                ));
+            }
+        }
+
         if raw.is_empty() {
             continue;
         }
@@ -257,10 +302,28 @@ fn report_unused_declarations(
             .iter()
             .any(|dependency| codebase.get_class(*dependency).is_none());
 
-        let mut emit = |kind: IssueKind, message: String, start: u32, end: u32| {
-            let (line, col) = line_column(line_starts, start);
-            new_issues.push(Issue::new(kind, message, file_path, start, end, line, col));
-        };
+        // A method or property supplied by a trait is declared in the trait's
+        // file, so its stored offset indexes that file, not the using class's.
+        // Report it against its declaring file (Psalm uses the storage's own
+        // location), caching each foreign file's line table.
+        let mut foreign_line_starts: FxHashMap<StrId, Vec<usize>> = FxHashMap::default();
+        let mut emit =
+            |kind: IssueKind, message: String, start: u32, end: u32, decl_file: StrId| {
+                if decl_file == file_path {
+                    let (line, col) = line_column(line_starts, start);
+                    new_issues.push(Issue::new(kind, message, file_path, start, end, line, col));
+                } else {
+                    let starts = foreign_line_starts.entry(decl_file).or_insert_with(|| {
+                        codebase
+                            .files
+                            .get(&decl_file)
+                            .map(|file| line_start_offsets(&file.contents))
+                            .unwrap_or_default()
+                    });
+                    let (line, col) = line_column(starts, start);
+                    new_issues.push(Issue::new(kind, message, decl_file, start, end, line, col));
+                }
+            };
 
         if !class_info.is_public_api && !class_referenced {
             // Psalm anchors class-wide issues on the NAME token, not the start
@@ -274,6 +337,7 @@ fn report_unused_declarations(
                 format!("Class {} is never used", class_name),
                 name_start,
                 name_end,
+                file_path,
             );
         } else if class_has_unresolved_deps {
             // Members of a class with unresolved dependencies are not checked
@@ -356,12 +420,17 @@ fn report_unused_declarations(
                                 }
                                 let parent_referenced =
                                     referenced_class_members.contains(&(*parent_id, method_lc));
+                                // Psalm checks `!$parent_method_storage->abstract`.
+                                // Interface methods (and unmarked concrete
+                                // parents) have `abstract == false`, so a
+                                // concrete-or-interface parent keeps the override
+                                // alive unconditionally; only a genuinely abstract
+                                // parent method requires its own reference. This
+                                // mirrors PhpParser's `isAbstract()` being false
+                                // for interface method nodes.
                                 let parent_abstract = parent_class
                                     .and_then(|parent| parent.methods.get(method_name_id))
-                                    .is_some_and(|parent_method| parent_method.is_abstract)
-                                    || parent_class.is_some_and(|parent| {
-                                        parent.kind == ClassLikeKind::Interface
-                                    });
+                                    .is_some_and(|parent_method| parent_method.is_abstract);
                                 !parent_abstract || parent_referenced
                             })
                         });
@@ -381,6 +450,7 @@ fn report_unused_declarations(
                             format!("Cannot find any calls to private constructor {}", method_id),
                             name_start,
                             name_end,
+                            method_info.file_path,
                         );
                     } else if matches!(method_info.visibility, Visibility::Private) {
                         emit(
@@ -388,6 +458,7 @@ fn report_unused_declarations(
                             format!("Cannot find any calls to private method {}", method_id),
                             name_start,
                             name_end,
+                            method_info.file_path,
                         );
                     } else {
                         emit(
@@ -395,6 +466,7 @@ fn report_unused_declarations(
                             format!("Cannot find any calls to method {}", method_id),
                             name_start,
                             name_end,
+                            method_info.file_path,
                         );
                     }
                 } else if method_info.get_return_type().is_some_and(|return_type| {
@@ -428,6 +500,7 @@ fn report_unused_declarations(
                             "The return value for this private method is never used".to_string(),
                             start,
                             end,
+                            method_info.file_path,
                         );
                     } else {
                         emit(
@@ -435,6 +508,7 @@ fn report_unused_declarations(
                             "The return value for this method is never used".to_string(),
                             start,
                             end,
+                            method_info.file_path,
                         );
                     }
                 }
@@ -483,6 +557,10 @@ fn report_unused_declarations(
                 // whole `$name` token so the highlight matches the property name.
                 let name_start = prop_info.start_offset;
                 let name_end = name_start.saturating_add(1 + prop_name.len() as u32);
+                // A trait-supplied property is declared in the trait's file.
+                let prop_decl_file = codebase
+                    .get_class(prop_info.declaring_class)
+                    .map_or(file_path, |declaring| declaring.file_path);
                 if matches!(prop_info.visibility, Visibility::Private) {
                     emit(
                         IssueKind::UnusedProperty,
@@ -492,6 +570,7 @@ fn report_unused_declarations(
                         ),
                         name_start,
                         name_end,
+                        prop_decl_file,
                     );
                 } else {
                     emit(
@@ -499,6 +578,7 @@ fn report_unused_declarations(
                         format!("Cannot find any references to property {}", property_id),
                         name_start,
                         name_end,
+                        prop_decl_file,
                     );
                 }
             }
@@ -523,6 +603,7 @@ fn report_unused_declarations(
                 ),
                 class_info.start_offset,
                 class_info.start_offset.saturating_add(1),
+                file_path,
             );
         }
     }

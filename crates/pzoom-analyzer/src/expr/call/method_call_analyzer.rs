@@ -606,6 +606,29 @@ pub(crate) fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> boo
     false
 }
 
+/// An `@psalm-immutable` / `@psalm-external-mutation-free` class runs its
+/// constructor in Psalm's `external_mutation_free` context: FunctionLikeAnalyzer
+/// sets `$context->external_mutation_free` for such methods with no `__construct`
+/// exemption (unlike `mutation_free`). `is_mutation_free_context` exempts every
+/// constructor, so callers that want the external-mutation-free purity checks —
+/// impure method calls (with a same-class relaxation) and impure function calls —
+/// detect the case with this helper.
+pub(crate) fn is_external_mutation_free_constructor_context(
+    analyzer: &StatementsAnalyzer<'_>,
+) -> bool {
+    analyzer.function_info.is_some_and(|function_info| {
+        function_info.name == pzoom_str::StrId::CONSTRUCT
+            && !function_info.is_static
+            && !function_info.mutation_free_inferred
+            && function_info
+                .declaring_class
+                .and_then(|class_id| analyzer.codebase.get_class(class_id))
+                .is_some_and(|class_info| {
+                    class_info.is_immutable || class_info.is_external_mutation_free
+                })
+    })
+}
+
 /// Best-effort early resolution of an instance call's method storage (per
 /// receiver atomic, class hierarchy walk) so by-ref out-params can be
 /// predeclared before argument analysis.

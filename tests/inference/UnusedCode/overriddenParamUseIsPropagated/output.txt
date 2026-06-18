@@ -1,0 +1,2 @@
+PossiblyUnusedParam - input.php:6:31 - Param #1 is never referenced in this method
+PossiblyUnusedParam - input.php:8:32 - Param #1 is never referenced in this method

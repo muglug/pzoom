@@ -26,7 +26,15 @@ pub(crate) fn analyze(
     receiver_is_pure_compatible: bool,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    if !enforce_mutation_free {
+    // An immutable / external-mutation-free constructor enforces method-call
+    // purity (Psalm's external-mutation-free context) even though
+    // `is_mutation_free_context` exempts constructors; per Psalm's
+    // external-mutation-free branch it allows calls to the class's own methods
+    // (`$method_id->fq_class_name !== $context->self`).
+    let external_mutation_free_constructor =
+        super::method_call_analyzer::is_external_mutation_free_constructor_context(analyzer);
+
+    if !enforce_mutation_free && !external_mutation_free_constructor {
         return;
     }
 
@@ -38,6 +46,15 @@ pub(crate) fn analyze(
     // class's method on a reference-free receiver can't mutate external state,
     // so it's allowed even though the method itself isn't mutation-free.
     if method_info.is_external_mutation_free && receiver_is_pure_compatible {
+        return;
+    }
+
+    // External-mutation-free mode (here, the immutable constructor) permits
+    // mutating `$this`: a call to a method declared on the same class is fine.
+    if external_mutation_free_constructor
+        && !enforce_mutation_free
+        && method_info.declaring_class == analyzer.function_info.and_then(|fi| fi.declaring_class)
+    {
         return;
     }
 

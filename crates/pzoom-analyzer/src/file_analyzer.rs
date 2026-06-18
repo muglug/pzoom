@@ -250,6 +250,8 @@ impl<'a> FileAnalyzer<'a> {
             symbol_references: std::mem::take(&mut analysis_data.symbol_references),
             referenced_properties: std::mem::take(&mut analysis_data.referenced_properties),
             method_returns_used: std::mem::take(&mut analysis_data.method_returns_used),
+            used_method_params: std::mem::take(&mut analysis_data.used_method_params),
+            param_unused_candidates: std::mem::take(&mut analysis_data.param_unused_candidates),
         };
 
         // Psalm's findUnusedPsalmSuppress feature (always on in its test
@@ -432,6 +434,12 @@ pub struct FileReferenceData {
     /// symbol graph does not distinguish (it records writes too).
     pub referenced_properties: rustc_hash::FxHashSet<(StrId, StrId)>,
     pub method_returns_used: rustc_hash::FxHashSet<(StrId, StrId)>,
+    /// `(class, lowercase method, offset)` param-use triples (Psalm's
+    /// `method_param_uses`), already propagated up each override chain.
+    pub used_method_params: rustc_hash::FxHashSet<(StrId, StrId, usize)>,
+    /// Non-private method params unused in their own body, awaiting the
+    /// codebase-wide verdict.
+    pub param_unused_candidates: Vec<crate::function_analysis_data::ParamUnusedCandidate>,
 }
 
 /// Whether the graph holds an assignment source for `name` within the given
@@ -603,7 +611,7 @@ fn report_complex_functions(
 /// grouped per function-like, only the trailing run of unused parameters
 /// reports (an unused param before a used one is required positionally), and
 /// only for plain functions, closures and private methods.
-fn report_unused_variables(
+pub(crate) fn report_unused_variables(
     analysis_data: &mut crate::function_analysis_data::FunctionAnalysisData,
     file_path: StrId,
     stmt_analyzer: &StatementsAnalyzer<'_>,
@@ -677,6 +685,13 @@ fn report_unused_variables(
             .push(param_source);
     }
 
+    // Codebase-wide param-use bookkeeping (Psalm's method_param_uses) and the
+    // deferred unused-param candidates, drained into `analysis_data` once the
+    // immutable borrow held by `param_groups` ends.
+    let mut local_used_method_params: Vec<(StrId, StrId, usize)> = Vec::new();
+    let mut local_param_candidates: Vec<crate::function_analysis_data::ParamUnusedCandidate> =
+        Vec::new();
+
     for (_, mut params) in param_groups {
         params.sort_by_key(|param| param.param_index);
 
@@ -686,37 +701,88 @@ fn report_unused_variables(
             // PossiblyUnusedParam (UnusedParam when the method or class is
             // final), skipping interfaces, overriding methods and promoted
             // properties. No trailing-position rule applies.
+            //
+            // Unlike Psalm's single-file passes this verdict is codebase-wide:
+            // an override that uses the param marks the parent's param used
+            // (Psalm's addMethodParamUse parent-propagation), so the actual
+            // report is deferred to `find_unused_definitions`. Here we only
+            // record which params are used (with propagation) and stash the
+            // candidates.
             if stmt_analyzer.config.find_unused_code {
                 for param in &params {
-                    let Some((method_final, in_interface, has_overrides)) = param.method_param_meta
+                    let Some((method_final, in_interface, _has_overrides)) =
+                        param.method_param_meta
                     else {
                         continue;
                     };
-                    if in_interface
-                        || has_overrides
-                        || param.is_promoted
-                        || is_ignored_for_unused_param(&param.name)
-                        || !unused_ids.contains(&param.node_id)
-                    {
+                    let (Some(class_id), Some(method_name_id)) =
+                        (param.method_class_id, param.method_name_id)
+                    else {
+                        continue;
+                    };
+                    if in_interface {
+                        continue;
+                    }
+                    let method_lc_name = interner.lookup(method_name_id).to_lowercase();
+                    let method_lc = interner.intern(&method_lc_name);
+
+                    // A `$_`-prefixed param is treated as intentionally unused
+                    // (Psalm's isIgnoredForUnusedParam path marks it used), and
+                    // a param referenced in this body is used. Either way record
+                    // the use and propagate it up the override chain so the
+                    // ancestor declarations stay "used" too.
+                    let is_used = is_ignored_for_unused_param(&param.name)
+                        || !unused_ids.contains(&param.node_id);
+                    if is_used {
+                        local_used_method_params.push((class_id, method_lc, param.param_index));
+                        if let Some(class_info) = stmt_analyzer.codebase.get_class(class_id)
+                            && let Some(parents) =
+                                class_info.overridden_method_ids.get(&method_name_id)
+                        {
+                            for parent_id in parents {
+                                local_used_method_params.push((
+                                    *parent_id,
+                                    method_lc,
+                                    param.param_index,
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Locally unused. Psalm skips params of a method that
+                    // overrides an ancestor (`empty(overridden_method_ids)`) and
+                    // promoted-constructor params. The remaining ones become
+                    // candidates, resolved once every override has been seen.
+                    //
+                    // A trait method's own `overridden_method_ids` reflect the
+                    // trait, not the using class (where the method may well
+                    // override a parent). Psalm checks each param in the context
+                    // of the using class, so candidates for trait methods are
+                    // produced there (class_analyzer::analyze_methods_from_trait),
+                    // not here against the bare trait.
+                    let class_is_trait = stmt_analyzer.codebase.get_class(class_id).is_some_and(
+                        |class_info| {
+                            class_info.kind
+                                == pzoom_code_info::class_like_info::ClassLikeKind::Trait
+                        },
+                    );
+                    if _has_overrides || param.is_promoted || class_is_trait {
                         continue;
                     }
                     let (line, col) = stmt_analyzer.get_line_column(param.span.0);
-                    new_issues.push(Issue::new(
-                        if method_final {
-                            IssueKind::UnusedParam
-                        } else {
-                            IssueKind::PossiblyUnusedParam
+                    local_param_candidates.push(
+                        crate::function_analysis_data::ParamUnusedCandidate {
+                            file_path,
+                            class_id,
+                            method_lc,
+                            offset: param.param_index,
+                            is_final: method_final,
+                            span: (param.span.0, param.span.1),
+                            line,
+                            col,
                         },
-                        format!(
-                            "Param #{} is never referenced in this method",
-                            param.param_index + 1
-                        ),
-                        file_path,
-                        param.span.0,
-                        param.span.1,
-                        line,
-                        col,
-                    ));
+                    );
                 }
             }
             continue;
@@ -799,6 +865,13 @@ fn report_unused_variables(
     // Stable order for deterministic output.
     new_issues.sort_by_key(|issue| issue.location.start_offset);
     analysis_data.issues.extend(new_issues);
+
+    analysis_data
+        .used_method_params
+        .extend(local_used_method_params);
+    analysis_data
+        .param_unused_candidates
+        .extend(local_param_candidates);
 }
 
 /// Byte offset of the suppression token that suppresses `issue`, if any.

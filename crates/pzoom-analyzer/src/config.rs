@@ -284,8 +284,22 @@ impl Config {
 
 fn normalize_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
-    normalized
-        .strip_prefix("./")
-        .unwrap_or(&normalized)
-        .to_string()
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized);
+    // Collapse redundant slashes so a config directory written with a trailing
+    // slash (`<directory name="src/Foo/"/>` -> pattern `src/Foo//**`) still
+    // matches `src/Foo/Bar.php`.
+    let mut result = String::with_capacity(stripped.len());
+    let mut prev_was_slash = false;
+    for ch in stripped.chars() {
+        if ch == '/' {
+            if !prev_was_slash {
+                result.push('/');
+            }
+            prev_was_slash = true;
+        } else {
+            result.push(ch);
+            prev_was_slash = false;
+        }
+    }
+    result
 }

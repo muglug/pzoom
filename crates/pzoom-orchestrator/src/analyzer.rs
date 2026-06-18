@@ -9,7 +9,7 @@
 use pzoom_analyzer::Config;
 use pzoom_analyzer::file_analyzer::{FileAnalyzer, FileReferenceData};
 use pzoom_code_info::symbol_references::SymbolReferences;
-use pzoom_code_info::{CodebaseInfo, Issue};
+use pzoom_code_info::{CodebaseInfo, Issue, IssueKind};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -149,8 +149,30 @@ impl<'a> Analyzer<'a> {
                 &refs.symbol_references,
                 &refs.referenced_properties,
                 &refs.method_returns_used,
+                &refs.used_method_params,
+                &refs.param_unused_candidates,
             ));
         }
+
+        // Psalm's IssueBuffer keys emitted issues by type + file:line:column +
+        // (dupe_key ?? message). A trait method analysed in the context of each
+        // using class (mirroring Psalm) yields the same issue once per class, at
+        // the same trait-file position; collapse those here, just as the
+        // per-file `FunctionAnalysisData::add_issue` collapses within a file.
+        let mut seen: FxHashSet<(IssueKind, StrId, u32, u32, String)> = FxHashSet::default();
+        issues.retain(|issue| {
+            let dedupe_text = issue
+                .dupe_key
+                .clone()
+                .unwrap_or_else(|| issue.message.clone());
+            seen.insert((
+                issue.kind,
+                issue.location.file_path,
+                issue.location.start_line,
+                issue.location.start_column,
+                dedupe_text,
+            ))
+        });
         issues
     }
 }
@@ -162,6 +184,8 @@ struct ReferenceAccumulator {
     symbol_references: SymbolReferences,
     referenced_properties: FxHashSet<(StrId, StrId)>,
     method_returns_used: FxHashSet<(StrId, StrId)>,
+    used_method_params: FxHashSet<(StrId, StrId, usize)>,
+    param_unused_candidates: Vec<pzoom_analyzer::function_analysis_data::ParamUnusedCandidate>,
 }
 
 impl ReferenceAccumulator {
@@ -170,6 +194,9 @@ impl ReferenceAccumulator {
         self.referenced_properties
             .extend(data.referenced_properties);
         self.method_returns_used.extend(data.method_returns_used);
+        self.used_method_params.extend(data.used_method_params);
+        self.param_unused_candidates
+            .extend(data.param_unused_candidates);
     }
 
     fn merge_accumulator(&mut self, other: ReferenceAccumulator) {
@@ -177,5 +204,8 @@ impl ReferenceAccumulator {
         self.referenced_properties
             .extend(other.referenced_properties);
         self.method_returns_used.extend(other.method_returns_used);
+        self.used_method_params.extend(other.used_method_params);
+        self.param_unused_candidates
+            .extend(other.param_unused_candidates);
     }
 }

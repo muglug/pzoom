@@ -50,7 +50,13 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    let enforce_mutation_free = is_mutation_free_context(analyzer);
+    // Psalm reports ImpureFunctionCall in `mutation_free` *or*
+    // `external_mutation_free` contexts; the latter includes an immutable
+    // class's constructor, which `is_mutation_free_context` exempts.
+    let enforce_mutation_free = is_mutation_free_context(analyzer)
+        || crate::expr::call::method_call_analyzer::is_external_mutation_free_constructor_context(
+            analyzer,
+        );
 
     // Analyze the callee expression to get the function name
     // (general use — Hakana's expression_call_analyzer; `$c(22)` uses `$c`).

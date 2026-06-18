@@ -1,0 +1,2 @@
+PossiblyUnusedMethod - input.php:4:21 - Cannot find any calls to method Shape::area
+PossiblyUnusedMethod - input.php:5:21 - Cannot find any calls to method Shape::perimeter

@@ -1,0 +1,2 @@
+ImpureMethodCall - input.php:16:33 - Cannot call a possibly-mutating method Source::read from a mutation-free context
+ImpureMethodCall - input.php:17:32 - Cannot call a possibly-mutating method Source::read from a mutation-free context

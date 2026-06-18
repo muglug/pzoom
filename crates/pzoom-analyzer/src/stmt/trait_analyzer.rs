@@ -11,6 +11,7 @@ use mago_syntax::ast::ast::class_like::Trait;
 use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
 
 use pzoom_code_info::{Issue, IssueKind};
+use pzoom_str::StrId;
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -24,7 +25,6 @@ use crate::stmt::class_analyzer::{
     check_missing_dependencies, check_missing_property_types, check_pseudo_method_annotations,
     check_pseudo_method_compatibility, check_undefined_docblock_mixins,
     check_undefined_docblock_property_types, collect_dependency_name_spans,
-    union_contains_special_class_names,
 };
 
 /// Analyze a trait declaration. The enclosing namespace (if any) is read from
@@ -112,9 +112,61 @@ pub fn analyze(
         check_missing_property_types(analyzer, &fqn, info, analysis_data);
     }
 
+    // Psalm analyses each trait method body once per using class, with
+    // `$this`/`self` bound to that class, and emits the resulting diagnostics at
+    // the trait-file location (its IssueBuffer deduplicates the per-class copies).
+    // Drive the body with each direct user's context so member accesses resolve
+    // against the real property / method types — analysing the bare trait once
+    // would type `$this` as the trait, where members are unknown, which forced a
+    // lossy kind allowlist that dropped ordinary local diagnostics. Emission
+    // stays in the trait file's own analysis so the trait's `@psalm-suppress` /
+    // findUnusedPsalmSuppress accounting still applies, and `add_issue` collapses
+    // the duplicate issues each user produces at the same trait-file position.
+    let mut direct_users: Vec<StrId> = analyzer
+        .codebase
+        .all_classlike_descendants
+        .get(&trait_name_id)
+        .into_iter()
+        .flatten()
+        .copied()
+        .filter(|user| {
+            let Some(info) = analyzer.codebase.get_class(*user) else {
+                return false;
+            };
+            if !info.used_traits.contains(&trait_name_id) {
+                return false;
+            }
+            // `used_traits` is inherited-inclusive, but Psalm analyses a trait
+            // method body only in the class that *directly* uses the trait — a
+            // subclass inherits the already-analysed method. Exclude users whose
+            // parent already pulls the trait in.
+            info.parent_class.is_none_or(|parent| {
+                analyzer
+                    .codebase
+                    .get_class(parent)
+                    .is_none_or(|parent_info| !parent_info.used_traits.contains(&trait_name_id))
+            })
+        })
+        .collect();
+    direct_users.sort_by(|a, b| {
+        analyzer
+            .interner
+            .lookup(*a)
+            .as_ref()
+            .cmp(analyzer.interner.lookup(*b).as_ref())
+    });
+
+    let body_issues_start = analysis_data.issues.len();
+
     for member in trait_stmt.members.iter() {
-        if let ClassLikeMember::Method(method) = member {
-            let issue_count_before = analysis_data.issues.len();
+        let ClassLikeMember::Method(method) = member else {
+            continue;
+        };
+        let method_name_id = analyzer.interner.intern(method.name.value);
+
+        if direct_users.is_empty() {
+            // A trait with no user still has its body checked once, against
+            // itself, so local diagnostics aren't lost entirely.
             analyze_method(
                 analyzer,
                 method,
@@ -123,60 +175,51 @@ pub fn analyze(
                 context.namespace,
                 analysis_data,
             )?;
+            continue;
+        }
 
-            let method_name_id = analyzer.interner.intern(method.name.value);
-            let should_emit_return_mismatch = trait_info
-                .and_then(|info| info.methods.get(&method_name_id))
-                .and_then(|method_info| method_info.get_return_type())
-                .is_some_and(|return_type| !union_contains_special_class_names(return_type));
-
-            let new_issues = analysis_data.issues.split_off(issue_count_before);
-            let filtered_issues: Vec<_> = new_issues
-                .into_iter()
-                .filter_map(|mut issue| {
-                    // Purity and readonly/visibility diagnostics follow from the
-                    // method's own mutation-free contract and from local / `$this`
-                    // writes, not from the using class, so Psalm emits them while
-                    // analysing the trait and the trait file's @psalm-suppress
-                    // annotations apply here. Surface them directly (the
-                    // per-using-class reference pass discards its issue copies).
-                    if matches!(
-                        issue.kind,
-                        IssueKind::ImpureMethodCall
-                            | IssueKind::ImpureFunctionCall
-                            | IssueKind::ImpurePropertyAssignment
-                            | IssueKind::ImpurePropertyFetch
-                            | IssueKind::ImpureStaticProperty
-                            | IssueKind::ImpureStaticVariable
-                            | IssueKind::ImpureVariable
-                            | IssueKind::ImpureByReferenceAssignment
-                            | IssueKind::InaccessibleProperty
-                    ) {
-                        return Some(issue);
-                    }
-
-                    if !should_emit_return_mismatch {
-                        return None;
-                    }
-
-                    // Psalm guards the per-`return` diagnostics behind
-                    // `!($source->getSource() instanceof TraitAnalyzer)`, so a
-                    // trait body reports only the overall declared-vs-inferred
-                    // return-TYPE mismatch (InvalidReturnType), never the
-                    // statement-level one. Keep InvalidReturnType as-is and drop
-                    // InvalidReturnStatement — remapping it produced a duplicate
-                    // InvalidReturnType alongside the genuine one.
-                    if !matches!(issue.kind, IssueKind::InvalidReturnType) {
-                        return None;
-                    }
-
-                    Some(issue)
-                })
-                .collect();
-
-            analysis_data.issues.extend(filtered_issues);
+        for user_id in &direct_users {
+            let user_info = analyzer.codebase.get_class(*user_id);
+            // A user that redeclares the method analyses its own copy as part of
+            // its class body, so don't analyse the trait's copy for it here.
+            if user_info.is_some_and(|info| {
+                info.methods
+                    .get(&method_name_id)
+                    .is_some_and(|method_info| method_info.declaring_class == Some(*user_id))
+            }) {
+                continue;
+            }
+            analyze_method(
+                analyzer,
+                method,
+                *user_id,
+                user_info,
+                context.namespace,
+                analysis_data,
+            )?;
         }
     }
+
+    // Psalm guards the entire return-STATEMENT analysis block behind
+    // `!($source->getSource() instanceof TraitAnalyzer)` (ReturnAnalyzer), so a
+    // trait body never reports the per-`return` diagnostics — only the overall
+    // declared-vs-inferred return-TYPE check (ReturnTypeAnalyzer) runs, which is
+    // emitted elsewhere and survives. Drop that guarded set from the trait body.
+    let body_issues = analysis_data.issues.split_off(body_issues_start);
+    analysis_data
+        .issues
+        .extend(body_issues.into_iter().filter(|issue| {
+            !matches!(
+                issue.kind,
+                IssueKind::InvalidReturnStatement
+                    | IssueKind::NullableReturnStatement
+                    | IssueKind::FalsableReturnStatement
+                    | IssueKind::MixedReturnStatement
+                    | IssueKind::MixedReturnTypeCoercion
+                    | IssueKind::LessSpecificReturnStatement
+                    | IssueKind::NonVariableReferenceReturn
+            )
+        }));
 
     Ok(())
 }

@@ -599,6 +599,20 @@ pub(crate) fn verify_missing_return_checks(
             ..Default::default()
         },
     );
+    // A trait method's declared return type may reference the trait's own
+    // template params (`@return T`); the using class binds them through
+    // `@use Trait<...>` recorded in `template_extended_params`. Resolve them so
+    // the declared type is compared in the using class's terms (Psalm applies
+    // the trait's extends map the same way), instead of the unbound
+    // `T:Trait as mixed` placeholder.
+    if analysis_data.in_trait_body
+        && let Some(class_info) = class_info
+    {
+        declared = crate::stmt::class_analyzer::replace_extended_templates_in_union(
+            &declared,
+            &class_info.template_extended_params,
+        );
+    }
     let declared = &declared;
 
     // Psalm drops a docblock type identical to the signature type at scan time
@@ -907,16 +921,27 @@ pub(crate) fn verify_missing_return_checks(
                     );
                 }
             } else {
-                emit(
-                    IssueKind::MoreSpecificReturnType,
-                    format!(
-                        "The declared return type '{}' for {} is more specific than the inferred return type '{}'",
-                        declared.get_id(Some(analyzer.interner)),
-                        cased_name,
-                        inferred.get_id(Some(analyzer.interner))
-                    ),
-                    analysis_data,
-                );
+                // A trait body's `return $this` infers `static`, which is wider
+                // than a declared `self`/concrete class — but the trait is
+                // generic, so Psalm doesn't treat the declaration as
+                // over-specific here (its source-is-trait guard). Suppress the
+                // `self`-vs-`static` coercion report; genuine over-specific
+                // returns (no `static` involved) still fire.
+                let inferred_is_static = inferred.types.iter().any(|atomic| {
+                    matches!(atomic, TAtomic::TNamedObject { is_static: true, .. })
+                });
+                if !(analysis_data.in_trait_body && inferred_is_static) {
+                    emit(
+                        IssueKind::MoreSpecificReturnType,
+                        format!(
+                            "The declared return type '{}' for {} is more specific than the inferred return type '{}'",
+                            declared.get_id(Some(analyzer.interner)),
+                            cased_name,
+                            inferred.get_id(Some(analyzer.interner))
+                        ),
+                        analysis_data,
+                    );
+                }
             }
         } else if !is_nullable || !parent_class_exists {
             emit(

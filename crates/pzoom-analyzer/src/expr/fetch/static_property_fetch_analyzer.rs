@@ -271,17 +271,21 @@ fn fetch_static_property(
         );
     }
     let Some(prop_info) = prop_lookup else {
-        // Property not found
-        let (line, col) = analyzer.get_line_column(pos.0);
-        analysis_data.add_issue(Issue::new(
-            IssueKind::UndefinedProperty,
-            format!("Property {}::${} does not exist", class_name, prop_name),
-            analyzer.file_path,
-            pos.0,
-            pos.1,
-            line,
-            col,
-        ));
+        // Property not found. `isset(Foo::$bar)` legitimately probes a property
+        // that may not exist (Psalm leaves the existence check to isset), so a
+        // missing property inside an isset() reports nothing.
+        if !context.inside_isset {
+            let (line, col) = analyzer.get_line_column(pos.0);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::UndefinedProperty,
+                format!("Property {}::${} does not exist", class_name, prop_name),
+                analyzer.file_path,
+                pos.0,
+                pos.1,
+                line,
+                col,
+            ));
+        }
         return None;
     };
 

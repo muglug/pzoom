@@ -1,0 +1,1 @@
+InvalidReturnType - input.php:3:34 - The declared return type 'int' for C::badReturn is incorrect, got ''nope''

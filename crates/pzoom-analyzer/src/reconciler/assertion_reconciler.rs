@@ -58,7 +58,33 @@ pub fn reconcile(
         )
     };
 
+    // In a trait body `$this` is generic: the same code runs for every using
+    // class, so an `instanceof`/class assertion the concrete using class can't
+    // satisfy must narrow `$this` to the asserted class (Psalm treats the trait
+    // receiver as open), not to the empty `never` intersection that would make
+    // every subsequent `$this->...` access look invalid.
+    if analysis_data.in_trait_body
+        && key == Some("$this")
+        && !negated
+        && reconciled_type.is_nothing()
+        && !existing_var_type.is_nothing()
+        && let Some(asserted) = positive_object_assertion_type(assertion)
+    {
+        return asserted;
+    }
+
     reconciled_type
+}
+
+/// The asserted object type of a positive class/instanceof assertion
+/// (`$x instanceof Foo`, `get_class($x) === Foo::class`), used to narrow a
+/// generic trait's `$this` to the asserted class rather than `never`.
+fn positive_object_assertion_type(assertion: &Assertion) -> Option<TUnion> {
+    let atomic = match assertion {
+        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) => atomic,
+        _ => return None,
+    };
+    matches!(atomic, TAtomic::TNamedObject { .. }).then(|| TUnion::new(atomic.clone()))
 }
 
 /// Returns the type to use when a variable doesn't exist in the context.

@@ -649,6 +649,14 @@ fn get_property_type_inner(
         }
     }
 
+    // In a trait body `$this` is generic; an impossible `instanceof` narrows it
+    // to `never` for a non-matching using class, but that branch is meaningful
+    // for the matching one, so Psalm doesn't report a property fetch there (its
+    // source-is-trait guard, as for never-receiver method calls).
+    if analysis_data.in_trait_body && expanded_obj_type.is_nothing() {
+        return None;
+    }
+
     // Check for invalid (non-object) types
     if has_invalid_type {
         if !has_object_type {

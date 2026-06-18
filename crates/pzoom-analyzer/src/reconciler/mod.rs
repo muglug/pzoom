@@ -2246,6 +2246,15 @@ pub(crate) fn trigger_issue_for_impossible(
         return;
     }
 
+    // In a trait body `$this` is generic — the same code runs for every using
+    // class — so narrowing it to the concrete class under analysis must not
+    // report the using-class `instanceof` / `get_class` check as redundant or
+    // impossible. Psalm guards these reports behind `!(getSource() instanceof
+    // TraitAnalyzer)`; literal redundancy on other variables is unaffected.
+    if analysis_data.in_trait_body && key == "$this" {
+        return;
+    }
+
     // Psalm's sub-reconcilers set `$failed_reconciliation = RECONCILIATION_
     // REDUNDANT` alongside this report; reconcileKeyedTypes folds that into
     // `$changed_var_ids`, so a redundantly-asserted var's clauses are removed

@@ -1,0 +1,2 @@
+InvalidArgument - input.php:4:21 - Argument 1 of strlen expects string, but array<never, never> provided
+TooManyArguments - input.php:5:15 - Too many arguments to function strlen, 1 expected, 2 provided

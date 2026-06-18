@@ -159,14 +159,17 @@ pub fn analyze(
                         return None;
                     }
 
-                    if !matches!(
-                        issue.kind,
-                        IssueKind::InvalidReturnStatement | IssueKind::InvalidReturnType
-                    ) {
+                    // Psalm guards the per-`return` diagnostics behind
+                    // `!($source->getSource() instanceof TraitAnalyzer)`, so a
+                    // trait body reports only the overall declared-vs-inferred
+                    // return-TYPE mismatch (InvalidReturnType), never the
+                    // statement-level one. Keep InvalidReturnType as-is and drop
+                    // InvalidReturnStatement — remapping it produced a duplicate
+                    // InvalidReturnType alongside the genuine one.
+                    if !matches!(issue.kind, IssueKind::InvalidReturnType) {
                         return None;
                     }
 
-                    issue.kind = IssueKind::InvalidReturnType;
                     Some(issue)
                 })
                 .collect();

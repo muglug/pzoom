@@ -352,21 +352,6 @@ pub(crate) fn retarget_property_class_for_context(
         return receiver_class;
     }
 
-    // A trait method's `$this->prop` resolves against the using class — the
-    // property is declared by the class that uses the trait, not the bare
-    // trait. Psalm analyses trait bodies per using class; pzoom analyses the
-    // trait once with `$this` typed as the trait, so retarget to a using class
-    // that declares the property (the readonly / mutation-free diagnostics, and
-    // the property type, then resolve as they would in the using class).
-    if analyzer
-        .codebase
-        .get_class(receiver_class)
-        .is_some_and(|class_info| class_info.kind == ClassLikeKind::Trait)
-        && let Some(user) = trait_user_declaring_property(analyzer, receiver_class, prop_id)
-    {
-        return user;
-    }
-
     let Some(self_class) = analyzer.get_declaring_class() else {
         return receiver_class;
     };
@@ -413,72 +398,6 @@ pub(crate) fn calling_context_owns_class(
             .all_classlike_descendants
             .get(&self_class)
             .is_some_and(|users| users.contains(&target_class))
-}
-
-/// When the calling scope is a trait, returns a using class under which
-/// `prop_id` is write-restricted — the declaring class is immutable, or it
-/// declares the property readonly. Psalm analyses a trait body once per using
-/// class and so emits the readonly violation for the immutable user even when a
-/// mutable user shares the trait; pzoom analyses the trait once, so it must look
-/// across the users to police the write the same way. Chosen deterministically
-/// by name. Returns `None` outside a trait scope or when no user restricts it.
-pub(crate) fn trait_restricting_property_owner(
-    analyzer: &StatementsAnalyzer<'_>,
-    prop_id: pzoom_str::StrId,
-) -> Option<pzoom_str::StrId> {
-    let self_class = analyzer.get_declaring_class()?;
-    if analyzer
-        .codebase
-        .get_class(self_class)
-        .is_none_or(|info| info.kind != ClassLikeKind::Trait)
-    {
-        return None;
-    }
-    let users = analyzer.codebase.all_classlike_descendants.get(&self_class)?;
-    users
-        .iter()
-        .filter(|user| {
-            analyzer.codebase.get_class(**user).is_some_and(|info| {
-                info.properties
-                    .get(&prop_id)
-                    .is_some_and(|prop| !prop.is_static && (info.is_immutable || prop.is_readonly))
-            })
-        })
-        .min_by(|a, b| {
-            analyzer
-                .interner
-                .lookup(**a)
-                .as_ref()
-                .cmp(analyzer.interner.lookup(**b).as_ref())
-        })
-        .copied()
-}
-
-/// The using class (or descendant) of `trait_id` that declares `prop_id`, chosen
-/// deterministically by name so the retarget is stable run-to-run. `all_classlike_descendants`
-/// already records trait users (and their subclasses).
-fn trait_user_declaring_property(
-    analyzer: &StatementsAnalyzer<'_>,
-    trait_id: pzoom_str::StrId,
-    prop_id: pzoom_str::StrId,
-) -> Option<pzoom_str::StrId> {
-    let users = analyzer.codebase.all_classlike_descendants.get(&trait_id)?;
-    users
-        .iter()
-        .filter(|user| {
-            analyzer
-                .codebase
-                .get_class(**user)
-                .is_some_and(|user_info| user_info.properties.contains_key(&prop_id))
-        })
-        .min_by(|a, b| {
-            analyzer
-                .interner
-                .lookup(**a)
-                .as_ref()
-                .cmp(analyzer.interner.lookup(**b).as_ref())
-        })
-        .copied()
 }
 
 /// Look up the type of a property on a type.
@@ -647,14 +566,6 @@ fn get_property_type_inner(
                 col,
             ));
         }
-    }
-
-    // In a trait body `$this` is generic; an impossible `instanceof` narrows it
-    // to `never` for a non-matching using class, but that branch is meaningful
-    // for the matching one, so Psalm doesn't report a property fetch there (its
-    // source-is-trait guard, as for never-receiver method calls).
-    if analysis_data.in_trait_body && expanded_obj_type.is_nothing() {
-        return None;
     }
 
     // Check for invalid (non-object) types
@@ -843,8 +754,9 @@ fn get_property_type_inner(
         match visibility {
             Visibility::Public => {}
             Visibility::Private => {
-                let is_same_class =
-                    calling_context_owns_class(analyzer, visibility_scope_class_id);
+                let is_same_class = analyzer
+                    .get_declaring_class()
+                    .is_some_and(|calling_class| calling_class == visibility_scope_class_id);
 
                 if !is_same_class
                     && !receiver_allows_property_visibility_override(
@@ -991,7 +903,9 @@ fn get_property_type_inner(
                             Visibility::Public => {}
                             Visibility::Private => {
                                 let is_same_class =
-                                    calling_context_owns_class(analyzer, visibility_scope_class_id);
+                                    analyzer.get_declaring_class().is_some_and(|calling_class| {
+                                        calling_class == visibility_scope_class_id
+                                    });
 
                                 if !is_same_class
                                     && !receiver_allows_property_visibility_override(

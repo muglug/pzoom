@@ -1536,15 +1536,6 @@ pub(crate) fn get_method_return_type(
                 ));
             }
             _ => {
-                // A trait body's `$this` is generic: an impossible
-                // `instanceof`/`get_class` against one using class narrows it to
-                // `never` for the others, but that branch is meaningful for the
-                // matching class, so Psalm doesn't report the call there (its
-                // source-is-trait guard). Skip the never-receiver report in a
-                // trait body; other invalid receivers still report.
-                if analysis_data.in_trait_body && matches!(atomic, TAtomic::TNever) {
-                    continue;
-                }
                 let type_desc = atomic.get_id(Some(analyzer.interner));
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(

@@ -412,30 +412,11 @@ pub fn analyze_with_known_type(
 
                                 // Check if property is readonly. A
                                 // @psalm-immutable class implicitly marks all
-                                // its properties readonly (Psalm's scanner). When
-                                // the receiver class isn't itself restricted but a
-                                // trait scope is shared with an immutable user that
-                                // declares the property, police it for that user
-                                // too (Psalm analyses the trait per using class).
-                                let restricting = if prop_info.is_readonly || class_info.is_immutable
-                                {
-                                    Some((*name, prop_info.readonly_allow_private_mutation))
-                                } else {
-                                    crate::expr::fetch::atomic_property_fetch_analyzer::trait_restricting_property_owner(
-                                        analyzer, prop_id,
-                                    )
-                                    .map(|owner| {
-                                        let allow_private = analyzer
-                                            .codebase
-                                            .get_class(owner)
-                                            .and_then(|c| c.properties.get(&prop_id))
-                                            .is_some_and(|p| p.readonly_allow_private_mutation);
-                                        (owner, allow_private)
-                                    })
-                                };
-                                if let Some((restricting_class, readonly_allow_private_mutation)) =
-                                    restricting
-                                {
+                                // its properties readonly (Psalm's scanner).
+                                if prop_info.is_readonly || class_info.is_immutable {
+                                    let restricting_class = *name;
+                                    let readonly_allow_private_mutation =
+                                        prop_info.readonly_allow_private_mutation;
                                     let class_name = analyzer.interner.lookup(restricting_class);
                                     // Psalm `InstancePropertyAssignmentAnalyzer::
                                     // can_set_readonly_property`: writing a

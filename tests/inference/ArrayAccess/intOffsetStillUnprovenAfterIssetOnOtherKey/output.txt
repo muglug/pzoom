@@ -1,0 +1,1 @@
+PossiblyUndefinedIntArrayOffset - input.php:16:29 - Possibly undefined array offset '3' is risky given expected type 'array-key'. Consider using isset beforehand.

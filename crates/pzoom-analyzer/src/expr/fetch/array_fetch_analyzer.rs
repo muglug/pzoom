@@ -577,26 +577,54 @@ pub fn analyze(
                                     result_types.push(t.clone());
                                 }
                             }
-                            // A literal STRING key absent from the shape but
-                            // admitted by the non-sealed array's fallback key type
-                            // isn't proven present (ensureArrayStringOffsetsExist) —
-                            // Psalm flags it exactly as for a plain `array<K, V>`.
-                            // This is the `isset($a['x'])`-narrows-a-generic-array
-                            // case: the resulting shape keeps the `array-key`
-                            // fallback, so `$a['y']` is still risky. Int offsets are
-                            // left to the generic-array/list path, which models a
-                            // list's contiguous-from-0 guarantee.
-                            let fallback_admits_string = fallback_key_type.is_some_and(|key_type| {
-                                key_type.has_string()
-                                    || key_type.types.iter().any(|t| {
-                                        matches!(
-                                            t,
-                                            TAtomic::TArrayKey | TAtomic::TMixed | TAtomic::TScalar
-                                        )
+                            // A literal key absent from the shape but admitted
+                            // by the non-sealed array's fallback isn't proven
+                            // present: Psalm's `fallback_params !== null` branch
+                            // runs both ensureArray{Int,String}OffsetsExist
+                            // checks (checkLiteralIntArrayOffset /
+                            // checkLiteralStringArrayOffset), exactly as for a
+                            // plain `array<K, V>`. This is the
+                            // `isset($a['x'])`-narrows-a-generic-array case: the
+                            // resulting shape keeps the fallback key, so a
+                            // *different* key is still risky.
+                            if *is_list {
+                                // A list's keys are non-negative ints (Psalm
+                                // types them int<0, max>): a provably-negative
+                                // offset is an invalid offset, not a possibly-
+                                // undefined one, so leave it to that path. A
+                                // non-negative index past the known prefix is
+                                // unproven.
+                                if let ArrayKey::Int(value) = index_key
+                                    && *value >= 0
+                                {
+                                    tarray_int_offset_unproven = true;
+                                }
+                            } else {
+                                let fallback_admits = |is_int: bool| {
+                                    fallback_key_type.is_some_and(|key_type| {
+                                        (if is_int {
+                                            key_type.has_int()
+                                        } else {
+                                            key_type.has_string()
+                                        }) || key_type.types.iter().any(|t| {
+                                            matches!(
+                                                t,
+                                                TAtomic::TArrayKey
+                                                    | TAtomic::TMixed
+                                                    | TAtomic::TScalar
+                                            )
+                                        })
                                     })
-                            });
-                            if matches!(index_key, ArrayKey::String(_)) && fallback_admits_string {
-                                tarray_string_offset_unproven = true;
+                                };
+                                match index_key {
+                                    ArrayKey::Int(_) if fallback_admits(true) => {
+                                        tarray_int_offset_unproven = true;
+                                    }
+                                    ArrayKey::String(_) if fallback_admits(false) => {
+                                        tarray_string_offset_unproven = true;
+                                    }
+                                    _ => {}
+                                }
                             }
                         } else {
                             has_literal_index_miss = true;

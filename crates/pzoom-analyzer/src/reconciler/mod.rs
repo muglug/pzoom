@@ -2036,27 +2036,39 @@ fn adjust_tkeyed_array_type(
                     &result_type,
                 )),
                 // A generic LIST (no known entries): narrowing a *literal* list
-                // offset (`is_int($list[0])`) records the known element on a keyed
-                // list, the original element type staying as the unsealed
-                // fallback — so e.g. a later `array_shift` reads the narrowed
-                // first element.
-                // TODO(unify-array): the old code forced `is_list: true` for any
-                // int offset; `keyed_array` now normalises list-ness, so a
-                // non-contiguous offset (`$list[5]` with no 0..4) yields a
-                // non-list keyed array instead of a malformed list. This is the
-                // closest-equivalent (and arguably more correct) behaviour.
+                // offset (`is_int($list[0])`, `isset($list[1])`) records the known
+                // element on a keyed list, the original element type staying as the
+                // unsealed fallback — so e.g. a later `array_shift` reads the
+                // narrowed first element. A list with offset `n` present has offsets
+                // 0..n all present (Psalm keeps it a list and fills the lower ones),
+                // so materialise 0..n from the fallback to keep it a contiguous list
+                // and leave the lower offsets defined.
                 TAtomic::TArray {
                     known_values,
                     params,
                     is_list: true,
                     ..
-                } if known_values.is_empty() && matches!(offset, ArrayKey::Int(_)) => {
+                } if known_values.is_empty()
+                    && matches!(offset, ArrayKey::Int(n) if *n >= 0) =>
+                {
                     let mut new_known_values = FxHashMap::default();
+                    let fallback_value = params.as_deref().map(|(_, value)| value.clone());
                     let entry_undefined = result_type.possibly_undefined_from_try;
+                    // Only when the asserted offset is *definitely* present do the
+                    // lower offsets follow (a list with index `n` set has 0..n set).
+                    // If the offset is itself possibly-undefined, asserting nothing
+                    // about it implies nothing about the lower ones.
+                    if !entry_undefined
+                        && let (ArrayKey::Int(n), Some(fallback)) = (offset, &fallback_value)
+                    {
+                        for index in 0..*n {
+                            new_known_values
+                                .insert(ArrayKey::Int(index), (false, fallback.clone()));
+                        }
+                    }
                     let mut entry_value = result_type.clone();
                     entry_value.possibly_undefined_from_try = false;
                     new_known_values.insert(offset.clone(), (entry_undefined, entry_value));
-                    let fallback_value = params.as_deref().map(|(_, value)| value.clone());
                     Some(TAtomic::keyed_array(
                         new_known_values,
                         true,

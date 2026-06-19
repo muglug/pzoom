@@ -2835,24 +2835,6 @@ pub(crate) fn check_by_ref_property_mutability(
         return;
     };
 
-    // Psalm only reaches the readonly check for by-ref property args when the
-    // receiver is `\$this` or the caller is a free function (verified against
-    // the reference checkout: array_shift(\$other->readonly_array) inside any
-    // class method reports nothing; the same call in a free function — or on
-    // \$this — reports InaccessibleProperty).
-    let receiver_is_this = matches!(
-        property_access.object.unparenthesized(),
-        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct))
-            if direct.name == "$this"
-    );
-    if !receiver_is_this
-        && analyzer
-            .function_info
-            .is_some_and(|info| info.declaring_class.is_some())
-    {
-        return;
-    }
-
     let object_span = property_access.object.span();
     let Some(object_type) = analysis_data
         .expr_types
@@ -2863,6 +2845,19 @@ pub(crate) fn check_by_ref_property_mutability(
     };
 
     let property_id = analyzer.interner.intern(id.value);
+
+    // Passing a property by reference is a write, so Psalm routes it through the
+    // same readonly check as an assignment. Unlike a direct assignment, taking a
+    // reference defeats the receiver's reference-freedom, so the pure-compatible
+    // (fresh `new`/`clone`) exemption never applies here — every restricted
+    // by-ref pass is reported. The one place Psalm does not reach the check is a
+    // method of a class that does not own the appearing property class (e.g.
+    // `array_shift($other->items)` where `$other` is some other immutable
+    // class); a free-function / global scope, or a method that owns the class,
+    // is policed.
+    let in_class_method = analyzer
+        .function_info
+        .is_some_and(|info| info.declaring_class.is_some());
 
     for atomic in &object_type.types {
         let TAtomic::TNamedObject { name, .. } = atomic else {
@@ -2877,33 +2872,37 @@ pub(crate) fn check_by_ref_property_mutability(
             continue;
         };
 
-        if prop_info.is_readonly || class_info.is_immutable {
-            // Psalm routes by-ref property args through the property
-            // ASSIGNMENT checks, which permit writes in the declaring
-            // class's constructor / unserialize / __clone (`ksort($this->
-            // properties)` in an immutable constructor is fine).
-            let receiver_is_declaring_class = analyzer
-                .get_declaring_class()
-                .is_some_and(|calling_class| calling_class == *name);
-            if receiver_is_this
-                && receiver_is_declaring_class
-                && crate::expr::assignment::instance_property_assignment_analyzer::is_special_write_method(analyzer)
-            {
-                break;
-            }
-            let class_name = analyzer.interner.lookup(*name);
-            add_issue(
-                analyzer,
-                analysis_data,
-                arg_pos,
-                IssueKind::InaccessibleProperty,
-                format!(
-                    "Cannot pass readonly or immutable property {}::${} by reference",
-                    class_name, id.value
-                ),
+        if !(prop_info.is_readonly || class_info.is_immutable) {
+            continue;
+        }
+
+        let owns_class =
+            crate::expr::fetch::atomic_property_fetch_analyzer::calling_context_owns_class(
+                analyzer, *name,
             );
+        if in_class_method && !owns_class {
+            continue;
+        }
+
+        // The property-assignment readonly check permits writes from the owning
+        // class's special init methods (constructor / unserialize / __clone),
+        // and for properties that allow private mutation.
+        if owns_class
+            && (crate::expr::assignment::instance_property_assignment_analyzer::is_special_write_method(analyzer)
+                || prop_info.readonly_allow_private_mutation)
+        {
             break;
         }
+
+        let class_name = analyzer.interner.lookup(*name);
+        add_issue(
+            analyzer,
+            analysis_data,
+            arg_pos,
+            IssueKind::InaccessibleProperty,
+            format!("{}::${} is marked readonly", class_name, id.value),
+        );
+        break;
     }
 }
 

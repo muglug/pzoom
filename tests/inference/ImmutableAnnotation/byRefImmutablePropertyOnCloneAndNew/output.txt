@@ -1,0 +1,1 @@
+InaccessibleProperty - input.php:9:15 - Bag::$items is marked readonly

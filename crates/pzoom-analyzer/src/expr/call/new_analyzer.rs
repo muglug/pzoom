@@ -497,13 +497,14 @@ pub fn analyze(
                 ));
             }
 
-            // Impure-constructor purity check (Psalm `NewAnalyzer`): from a pure
-            // context, instantiating a class whose constructor may mutate
-            // external state is an `ImpureMethodCall`, unless we're inside a
-            // `throw`. Classes with no constructor — or an external-mutation-free
-            // constructor (immutable/EMF class, or one that only assigns simple
-            // values to its own properties) — are exempt.
-            if super::method_call_analyzer::is_mutation_free_context(analyzer)
+            // Impure-constructor purity check (Psalm `NewAnalyzer`): only a
+            // `@psalm-pure` context (`$context->pure`) forbids instantiating a
+            // class whose constructor may mutate external state — a merely
+            // mutation-free / external-mutation-free context does not — unless
+            // we're inside a `throw`. Classes with no constructor, or an
+            // external-mutation-free constructor (immutable/EMF class, or one
+            // that only assigns simple values to its own properties), are exempt.
+            if analyzer.function_info.is_some_and(|function_info| function_info.is_pure)
                 && !context.inside_throw
             {
                 let resolved_constructor = class_info

@@ -108,6 +108,7 @@ pub fn analyze_with_known_type(
     context.inside_general_use = was_inside_general_use;
     let raw_obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
     let receiver_reference_free = raw_obj_type.as_ref().is_some_and(|t| t.reference_free);
+    let receiver_allow_mutations = raw_obj_type.as_ref().is_some_and(|t| t.allow_mutations);
     let obj_type = raw_obj_type.map(|obj_type| expand_template_object_union(&obj_type));
 
     // Get the property name. A dynamic selector (`$obj->$name = …`) is an
@@ -382,9 +383,10 @@ pub fn analyze_with_known_type(
 
                                 // Check property visibility - private properties are only accessible within the same class
                                 if prop_info.visibility == Visibility::Private {
-                                    let is_same_class = analyzer
-                                        .get_declaring_class()
-                                        .is_some_and(|calling_class| calling_class == *name);
+                                    let is_same_class =
+                                        crate::expr::fetch::atomic_property_fetch_analyzer::calling_context_owns_class(
+                                            analyzer, *name,
+                                        );
 
                                     if !is_same_class
                                         && !receiver_allows_property_visibility_override(
@@ -410,41 +412,43 @@ pub fn analyze_with_known_type(
 
                                 // Check if property is readonly. A
                                 // @psalm-immutable class implicitly marks all
-                                // its properties readonly (Psalm's scanner),
-                                // and Psalm's can_set_readonly_property allows
-                                // a pure-compatible (reference-free, fresh)
-                                // receiver alongside the special methods.
+                                // its properties readonly (Psalm's scanner).
                                 if prop_info.is_readonly || class_info.is_immutable {
                                     let class_name = analyzer.interner.lookup(*name);
-                                    let same_class_private_mutation_allowed = prop_info
-                                        .readonly_allow_private_mutation
-                                        && analyzer
-                                            .get_declaring_class()
-                                            .is_some_and(|calling_class| calling_class == *name);
-                                    let can_write_restricted_property =
-                                        is_special_write_method(analyzer)
-                                            || same_class_private_mutation_allowed
-                                            || (class_info.is_immutable
-                                                && analyzer.get_declaring_class().is_some_and(
-                                                    |calling_class| {
-                                                        calling_class == *name
-                                                            && !is_this_assignment
-                                                    },
-                                                ));
+                                    // Psalm `InstancePropertyAssignmentAnalyzer::
+                                    // can_set_readonly_property`: writing a
+                                    // readonly / immutable-class property is only
+                                    // allowed from code that owns the appearing
+                                    // class (`$context->self` is, or extends, it —
+                                    // and a trait body owns its using class, since
+                                    // it is analysed with `$this` retargeted there)
+                                    // AND one of: a special init method
+                                    // (__construct/unserialize/__unserialize/
+                                    // __clone), the property allows private
+                                    // mutation, or the receiver value is
+                                    // pure-compatible. A receiver is pure-compatible
+                                    // when its type is reference-free *and* still
+                                    // allows mutations — i.e. a fresh `new`/`clone`
+                                    // of an immutable class (the "wither"), but not
+                                    // `$this` outside the constructor and not an
+                                    // external param of an immutable type.
+                                    let owns_class =
+                                        crate::expr::fetch::atomic_property_fetch_analyzer::calling_context_owns_class(
+                                            analyzer, *name,
+                                        );
+                                    let property_var_pure_compatible =
+                                        receiver_reference_free && receiver_allow_mutations;
+                                    let can_write_restricted_property = owns_class
+                                        && (is_special_write_method(analyzer)
+                                            || prop_info.readonly_allow_private_mutation
+                                            || property_var_pure_compatible);
 
                                     if !can_write_restricted_property {
                                         let (line, col) = analyzer.get_line_column(pos.0);
-                                        let message = if prop_info.is_readonly {
-                                            format!(
-                                                "Cannot assign to readonly property {}::${}",
-                                                class_name, prop_name
-                                            )
-                                        } else {
-                                            format!(
-                                                "Property {}::${} is defined on an immutable class",
-                                                class_name, prop_name
-                                            )
-                                        };
+                                        let message = format!(
+                                            "{}::${} is marked readonly",
+                                            class_name, prop_name
+                                        );
                                         analysis_data.add_issue(Issue::new(
                                             IssueKind::InaccessibleProperty,
                                             message,

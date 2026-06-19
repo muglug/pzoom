@@ -6884,8 +6884,24 @@ pub(crate) fn analyze_method(
         }
     }
 
+    // A trait method analysed in a using class's context: its body is owned by a
+    // trait (the method's declaring class is a trait other than the class we're
+    // analysing it for). Psalm suppresses the `$this`-narrowing diagnostics here
+    // and keeps the trait's own purity contract (a non-immutable trait's method
+    // is not mutation-free just because an immutable class uses it).
+    let trait_owner = method_info
+        .and_then(|mi| mi.declaring_class)
+        .filter(|declaring| *declaring != class_name_id)
+        .filter(|declaring| {
+            analyzer
+                .codebase
+                .get_class(*declaring)
+                .is_some_and(|declaring_info| declaring_info.kind == ClassLikeKind::Trait)
+        });
+    let body_belongs_to_trait = trait_owner.is_some();
+
     // Create a function-like info wrapper for the method
-    let func_info = method_info.map(|mi| (**mi).clone()).map(|mut mi| {
+    let mut func_info = method_info.map(|mi| (**mi).clone()).map(|mut mi| {
         if mi.return_type.is_none()
             && method_name_id != StrId::CONSTRUCT
             && let Some(current_class_info) = class_info
@@ -6942,10 +6958,32 @@ pub(crate) fn analyze_method(
         mi
     });
 
+    // The flattened method inherits the using class's purity (an immutable class
+    // marks all its members mutation-free), but Psalm derives a trait method's
+    // mutation-free contract from the trait, not the using class — a non-immutable
+    // trait used by an immutable class emits MutableDependency and its writes are
+    // not impure. Restore the trait method's own purity flags for the body.
+    if let Some(trait_id) = trait_owner
+        && let Some(func_info) = func_info.as_mut()
+        && let Some(trait_method) = analyzer
+            .codebase
+            .get_class(trait_id)
+            .and_then(|trait_info| trait_info.methods.get(&method_name_id))
+    {
+        func_info.is_pure = trait_method.is_pure;
+        func_info.is_mutation_free = trait_method.is_mutation_free;
+        func_info.is_external_mutation_free = trait_method.is_external_mutation_free;
+        func_info.mutation_free_inferred = trait_method.mutation_free_inferred;
+    }
+
     // Create a new analyzer with the method context
     let method_analyzer = analyzer.for_nested_function(func_info.as_ref());
 
-    // Create a new context for the method body with namespace preserved
+    // Mark the analysis data as inside a trait body for the duration of the body
+    // (computed above as `body_belongs_to_trait`) and restore it afterwards.
+    let outer_in_trait_body = analysis_data.in_trait_body;
+    analysis_data.in_trait_body = body_belongs_to_trait;
+
     let mut method_context = BlockContext::new();
     method_context.namespace = namespace;
     method_context.self_class = Some(class_name_id);
@@ -7118,6 +7156,17 @@ pub(crate) fn analyze_method(
         } else {
             TUnion::mixed()
         };
+
+        // A trait method's parameter may be typed with the trait's own template
+        // param (`@param T`); bind it to the using class's `@use Trait<...>`
+        // binding so the body sees the concrete type rather than the unbound
+        // `T:Trait as mixed` placeholder (matches the return-type localization).
+        if body_belongs_to_trait
+            && let Some(class_info) = class_info
+        {
+            param_type =
+                replace_extended_templates_in_union(&param_type, &class_info.template_extended_params);
+        }
 
         // Hakana `functionlike_analyzer::get_param_source_kind`: inout (≈ PHP
         // by-ref) → InoutParam; private methods are `is_simple_fn` →
@@ -7378,6 +7427,7 @@ pub(crate) fn analyze_method(
         }
     }
 
+    analysis_data.in_trait_body = outer_in_trait_body;
     Ok(())
 }
 

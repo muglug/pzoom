@@ -2872,7 +2872,24 @@ pub(crate) fn check_by_ref_property_mutability(
             continue;
         };
 
-        if !(prop_info.is_readonly || class_info.is_immutable) {
+        // In a trait body `$this` is generic, so only a property the trait
+        // *itself* declares is resolved against the readonly check — a using-class
+        // property's readonly-ness (native `@psalm-readonly` or via the using
+        // class's `@psalm-immutable`) isn't known to Psalm's open trait receiver,
+        // and the same trait may be used by a mutable class too (e.g. an immutable
+        // `Union` and a `MutableUnion`).
+        let is_readonly = if analysis_data.in_trait_body {
+            let prop_from_trait = analyzer
+                .codebase
+                .get_class(prop_info.declaring_class)
+                .is_some_and(|info| {
+                    info.kind == pzoom_code_info::class_like_info::ClassLikeKind::Trait
+                });
+            prop_from_trait && prop_info.is_readonly
+        } else {
+            prop_info.is_readonly || class_info.is_immutable
+        };
+        if !is_readonly {
             continue;
         }
 

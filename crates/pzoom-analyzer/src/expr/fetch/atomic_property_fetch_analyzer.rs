@@ -374,6 +374,32 @@ pub(crate) fn retarget_property_class_for_context(
     receiver_class
 }
 
+/// Whether the code currently being analysed belongs to `target_class` for
+/// member-visibility purposes. True when the enclosing class *is* `target_class`,
+/// or when it is a trait used by `target_class` — a trait body is analysed with
+/// `$this` retargeted to a using class, and the trait's code is part of that
+/// class, so it may touch the class's private and protected members.
+pub(crate) fn calling_context_owns_class(
+    analyzer: &StatementsAnalyzer<'_>,
+    target_class: pzoom_str::StrId,
+) -> bool {
+    let Some(self_class) = analyzer.get_declaring_class() else {
+        return false;
+    };
+    if self_class == target_class {
+        return true;
+    }
+    analyzer
+        .codebase
+        .get_class(self_class)
+        .is_some_and(|info| info.kind == ClassLikeKind::Trait)
+        && analyzer
+            .codebase
+            .all_classlike_descendants
+            .get(&self_class)
+            .is_some_and(|users| users.contains(&target_class))
+}
+
 /// Look up the type of a property on a type.
 pub(crate) fn get_property_type(
     analyzer: &StatementsAnalyzer<'_>,
@@ -1505,30 +1531,4 @@ pub(crate) fn can_access_protected_member_visibility(
             caller_class,
             analyzer.codebase,
         )
-}
-
-/// Whether the code currently being analysed belongs to `target_class` for
-/// member-visibility purposes. True when the enclosing class *is* `target_class`,
-/// or when it is a trait used by `target_class` — a trait body is analysed with
-/// `$this` retargeted to a using class, and the trait's code is part of that
-/// class, so it may touch the class's private and protected members.
-pub(crate) fn calling_context_owns_class(
-    analyzer: &StatementsAnalyzer<'_>,
-    target_class: pzoom_str::StrId,
-) -> bool {
-    let Some(self_class) = analyzer.get_declaring_class() else {
-        return false;
-    };
-    if self_class == target_class {
-        return true;
-    }
-    analyzer
-        .codebase
-        .get_class(self_class)
-        .is_some_and(|info| info.kind == ClassLikeKind::Trait)
-        && analyzer
-            .codebase
-            .all_classlike_descendants
-            .get(&self_class)
-            .is_some_and(|users| users.contains(&target_class))
 }

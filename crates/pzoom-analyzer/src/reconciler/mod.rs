@@ -271,6 +271,31 @@ pub fn reconcile_keyed_types(
                     negated,
                 );
 
+                // In a trait body `$this` is generic — the same code runs for
+                // every using class — so a using-class `instanceof`/`get_class`
+                // assertion that the concrete class under analysis can't satisfy
+                // must not empty `$this` to `never` (which makes the branch's
+                // `$this->...` accesses read as mixed). A *positive* assertion
+                // narrows `$this` to the asserted class (the using class could be
+                // it); a *negated* one keeps `$this` open as the using class (the
+                // branch is dead here but live for the other using classes). This
+                // mirrors Psalm analysing the trait with an open `$this`.
+                // (`assertion_reconciler` does the same, but only when a report
+                // key is threaded through — here `var_name` is always known.)
+                if analysis_data.in_trait_body
+                    && var_name.as_str() == "$this"
+                    && current_type.is_nothing()
+                    && !type_before_assertion.is_nothing()
+                {
+                    if assertion.has_negation() {
+                        current_type = type_before_assertion.clone();
+                    } else if let Some(asserted) =
+                        assertion_reconciler::positive_object_assertion_type(assertion)
+                    {
+                        current_type = asserted;
+                    }
+                }
+
                 // Psalm sets `$failed_reconciliation = RECONCILIATION_REDUNDANT`
                 // whether or not it reports: a non-equality, non-isset
                 // assertion that left the type untouched was redundant, and
@@ -367,6 +392,37 @@ pub fn reconcile_keyed_types(
                         None => narrowed,
                         Some(existing) => combine_union_types(&existing, &narrowed, false),
                     });
+                }
+                // In a trait body keep `$this` from emptying to `never` on a
+                // using-class disjunction (mirrors the single-assertion case): a
+                // positive `instanceof X || instanceof Y` narrows `$this` to
+                // `X|Y` (the using class could be either), a negated one keeps
+                // `$this` open as the using class.
+                if analysis_data.in_trait_body
+                    && var_name.as_str() == "$this"
+                    && result.as_ref().is_some_and(|result| result.is_nothing())
+                    && !base_type.is_nothing()
+                {
+                    if assertion_group.iter().any(|assertion| assertion.has_negation()) {
+                        result = Some(base_type.clone());
+                    } else {
+                        let mut asserted: Option<TUnion> = None;
+                        for assertion in assertion_group {
+                            if let Some(atomic_union) =
+                                assertion_reconciler::positive_object_assertion_type(assertion)
+                            {
+                                asserted = Some(match asserted {
+                                    None => atomic_union,
+                                    Some(existing) => {
+                                        combine_union_types(&existing, &atomic_union, false)
+                                    }
+                                });
+                            }
+                        }
+                        if asserted.is_some() {
+                            result = asserted;
+                        }
+                    }
                 }
                 if let Some(result) = result {
                     // Psalm reports impossible OR alternatives individually;
@@ -2243,6 +2299,15 @@ pub(crate) fn trigger_issue_for_impossible(
     // Reconciling on an already-impossible value reports nothing more
     // (Psalm: the contradiction was the narrowing that produced `never`).
     if existing_var_type.is_nothing() && !existing_var_type.types.is_empty() {
+        return;
+    }
+
+    // In a trait body `$this` is generic — the same code runs for every using
+    // class — so narrowing it to the concrete class under analysis must not
+    // report the using-class `instanceof` / `get_class` check as redundant or
+    // impossible. Psalm guards these reports behind `!(getSource() instanceof
+    // TraitAnalyzer)`; literal redundancy on other variables is unaffected.
+    if analysis_data.in_trait_body && key == "$this" {
         return;
     }
 

@@ -599,6 +599,20 @@ pub(crate) fn verify_missing_return_checks(
             ..Default::default()
         },
     );
+    // A trait method's declared return type may reference the trait's own
+    // template params (`@return T`); the using class binds them through
+    // `@use Trait<...>` recorded in `template_extended_params`. Resolve them so
+    // the declared type is compared in the using class's terms (Psalm applies
+    // the trait's extends map the same way), instead of the unbound
+    // `T:Trait as mixed` placeholder.
+    if analysis_data.in_trait_body
+        && let Some(class_info) = class_info
+    {
+        declared = crate::stmt::class_analyzer::replace_extended_templates_in_union(
+            &declared,
+            &class_info.template_extended_params,
+        );
+    }
     let declared = &declared;
 
     // Psalm drops a docblock type identical to the signature type at scan time
@@ -907,16 +921,25 @@ pub(crate) fn verify_missing_return_checks(
                     );
                 }
             } else {
-                emit(
-                    IssueKind::MoreSpecificReturnType,
-                    format!(
-                        "The declared return type '{}' for {} is more specific than the inferred return type '{}'",
-                        declared.get_id(Some(analyzer.interner)),
-                        cased_name,
-                        inferred.get_id(Some(analyzer.interner))
-                    ),
-                    analysis_data,
-                );
+                // In a trait body the inferred return is computed against the
+                // generic `$this` — `return $this` infers `static` (wider than a
+                // declared `self`), and a using-class member infers its concrete
+                // type where Psalm's open trait receiver only sees `mixed` and so
+                // skips the check entirely (ReturnTypeAnalyzer returns early on a
+                // mixed inferred type). Either way Psalm doesn't treat the trait
+                // declaration as over-specific, so suppress the report here.
+                if !analysis_data.in_trait_body {
+                    emit(
+                        IssueKind::MoreSpecificReturnType,
+                        format!(
+                            "The declared return type '{}' for {} is more specific than the inferred return type '{}'",
+                            declared.get_id(Some(analyzer.interner)),
+                            cased_name,
+                            inferred.get_id(Some(analyzer.interner))
+                        ),
+                        analysis_data,
+                    );
+                }
             }
         } else if !is_nullable || !parent_class_exists {
             emit(

@@ -108,6 +108,14 @@ pub struct FunctionAnalysisData {
     /// `mixed` plus this marker.
     pub failed_property_fetch_positions: rustc_hash::FxHashSet<Pos>,
 
+    /// Whether the body currently being analysed belongs to a trait method
+    /// (driven in a using class's context). Psalm guards a set of diagnostics
+    /// behind `!($source->getSource() instanceof TraitAnalyzer)`: narrowing
+    /// `$this`/`static` to the concrete using class would otherwise make a
+    /// generic trait's `instanceof` / `get_class` / `self`-return checks look
+    /// redundant, impossible, or over-specific. Those are suppressed while set.
+    pub in_trait_body: bool,
+
     /// Source offsets of `@psalm-suppress` tokens that suppressed an issue at
     /// an emission-decision site (Psalm's `IssueBuffer::$used_suppressions`).
     /// The file analyzer adds filter-pass matches and reports the unmatched

@@ -1,0 +1,1 @@
+InaccessibleProperty - input.php:7:9 - Foo::$bar is marked readonly

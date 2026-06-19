@@ -272,23 +272,28 @@ pub fn reconcile_keyed_types(
                 );
 
                 // In a trait body `$this` is generic — the same code runs for
-                // every using class — so a *negated* using-class
-                // `instanceof`/`get_class` assertion (the fall-through that the
-                // concrete class under analysis can't escape) must not empty
-                // `$this` to `never`: that branch is dead here but live for the
-                // other using classes, and leaving `$this` as `never` makes its
-                // `$this->...` accesses read as mixed. Keep `$this` open as the
-                // using class (Psalm analyses the trait with an open `$this`).
-                // Positive assertions still narrow normally (a `=== B::class`
-                // branch keeps the existing `never`, so `$this->onlyOnB()` stays
-                // silent rather than reported against the wrong using class).
+                // every using class — so a using-class `instanceof`/`get_class`
+                // assertion that the concrete class under analysis can't satisfy
+                // must not empty `$this` to `never` (which makes the branch's
+                // `$this->...` accesses read as mixed). A *positive* assertion
+                // narrows `$this` to the asserted class (the using class could be
+                // it); a *negated* one keeps `$this` open as the using class (the
+                // branch is dead here but live for the other using classes). This
+                // mirrors Psalm analysing the trait with an open `$this`.
+                // (`assertion_reconciler` does the same, but only when a report
+                // key is threaded through — here `var_name` is always known.)
                 if analysis_data.in_trait_body
                     && var_name.as_str() == "$this"
-                    && assertion.has_negation()
                     && current_type.is_nothing()
                     && !type_before_assertion.is_nothing()
                 {
-                    current_type = type_before_assertion.clone();
+                    if assertion.has_negation() {
+                        current_type = type_before_assertion.clone();
+                    } else if let Some(asserted) =
+                        assertion_reconciler::positive_object_assertion_type(assertion)
+                    {
+                        current_type = asserted;
+                    }
                 }
 
                 // Psalm sets `$failed_reconciliation = RECONCILIATION_REDUNDANT`

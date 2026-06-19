@@ -79,7 +79,7 @@ pub fn reconcile(
 /// The asserted object type of a positive class/instanceof assertion
 /// (`$x instanceof Foo`, `get_class($x) === Foo::class`), used to narrow a
 /// generic trait's `$this` to the asserted class rather than `never`.
-fn positive_object_assertion_type(assertion: &Assertion) -> Option<TUnion> {
+pub(crate) fn positive_object_assertion_type(assertion: &Assertion) -> Option<TUnion> {
     let atomic = match assertion {
         Assertion::IsType(atomic) | Assertion::IsEqual(atomic) => atomic,
         _ => return None,

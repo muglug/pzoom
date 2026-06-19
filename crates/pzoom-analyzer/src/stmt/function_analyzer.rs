@@ -921,16 +921,14 @@ pub(crate) fn verify_missing_return_checks(
                     );
                 }
             } else {
-                // A trait body's `return $this` infers `static`, which is wider
-                // than a declared `self`/concrete class — but the trait is
-                // generic, so Psalm doesn't treat the declaration as
-                // over-specific here (its source-is-trait guard). Suppress the
-                // `self`-vs-`static` coercion report; genuine over-specific
-                // returns (no `static` involved) still fire.
-                let inferred_is_static = inferred.types.iter().any(|atomic| {
-                    matches!(atomic, TAtomic::TNamedObject { is_static: true, .. })
-                });
-                if !(analysis_data.in_trait_body && inferred_is_static) {
+                // In a trait body the inferred return is computed against the
+                // generic `$this` — `return $this` infers `static` (wider than a
+                // declared `self`), and a using-class member infers its concrete
+                // type where Psalm's open trait receiver only sees `mixed` and so
+                // skips the check entirely (ReturnTypeAnalyzer returns early on a
+                // mixed inferred type). Either way Psalm doesn't treat the trait
+                // declaration as over-specific, so suppress the report here.
+                if !analysis_data.in_trait_body {
                     emit(
                         IssueKind::MoreSpecificReturnType,
                         format!(

@@ -271,6 +271,26 @@ pub fn reconcile_keyed_types(
                     negated,
                 );
 
+                // In a trait body `$this` is generic — the same code runs for
+                // every using class — so a *negated* using-class
+                // `instanceof`/`get_class` assertion (the fall-through that the
+                // concrete class under analysis can't escape) must not empty
+                // `$this` to `never`: that branch is dead here but live for the
+                // other using classes, and leaving `$this` as `never` makes its
+                // `$this->...` accesses read as mixed. Keep `$this` open as the
+                // using class (Psalm analyses the trait with an open `$this`).
+                // Positive assertions still narrow normally (a `=== B::class`
+                // branch keeps the existing `never`, so `$this->onlyOnB()` stays
+                // silent rather than reported against the wrong using class).
+                if analysis_data.in_trait_body
+                    && var_name.as_str() == "$this"
+                    && assertion.has_negation()
+                    && current_type.is_nothing()
+                    && !type_before_assertion.is_nothing()
+                {
+                    current_type = type_before_assertion.clone();
+                }
+
                 // Psalm sets `$failed_reconciliation = RECONCILIATION_REDUNDANT`
                 // whether or not it reports: a non-equality, non-isset
                 // assertion that left the type untouched was redundant, and

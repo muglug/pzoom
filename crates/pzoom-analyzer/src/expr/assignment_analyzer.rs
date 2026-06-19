@@ -33,6 +33,7 @@ use crate::expr::assignment::{
     array_assignment_analyzer, instance_property_assignment_analyzer,
     static_property_assignment_analyzer,
 };
+use crate::expr::binop::coalesce_analyzer;
 use crate::expression_analyzer;
 use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
@@ -389,13 +390,17 @@ pub fn analyze(
     analysis_data.expr_types.insert(pos, Rc::new(rhs_type));
 }
 
-/// Result type of `$a ??= $b`, mirroring Psalm's `$a = $a ?? $b`:
-/// `non_null($a) | $b`. The old value survives when it isn't null, so its
-/// union-level flags (`reference_free` / `allow_mutations`) are carried and
-/// combined with `$b` rather than replaced by it. Only direct variables are
-/// handled here — property / array-access targets are routed to their own
-/// assignment analyzers before this point — and the dataflow wiring is left to
-/// the caller, so the returned type keeps only `$b`'s parent nodes.
+/// Result type of `$a ??= $b`, mirroring Psalm's desugaring to `$a = $a ?? $b`.
+/// Psalm computes this by reusing `CoalesceAnalyzer`, so we defer to the very
+/// same `non_null($a) | $b` combine the `??` operator uses
+/// ([`coalesce_analyzer::combine_coalesce_value_types`]) rather than re-deriving
+/// it: the old value survives when it isn't null, so its `reference_free` flag
+/// is carried into the result instead of being laundered into a fresh `$b` (an
+/// immutable param assigned via `$a ??= clone $this` stays non-pure-compatible,
+/// matching Psalm's readonly diagnostics). Only direct variables are handled
+/// here — property / array-access targets are routed to their own assignment
+/// analyzers before this point — and the dataflow wiring is left to the caller,
+/// so the returned type keeps only `$b`'s parent nodes.
 fn coalesce_assignment_type(
     lhs: &Expression<'_>,
     rhs_type: &TUnion,
@@ -408,22 +413,7 @@ fn coalesce_assignment_type(
         return rhs_type.clone();
     };
 
-    let non_null: Vec<_> = old_type
-        .types
-        .iter()
-        .filter(|atomic| !matches!(atomic, TAtomic::TNull))
-        .cloned()
-        .collect();
-    if non_null.is_empty() {
-        // `$a` was only null, so the result is exactly `$b`.
-        return rhs_type.clone();
-    }
-
-    let mut left = TUnion::from_types(non_null);
-    left.reference_free = old_type.reference_free;
-    left.allow_mutations = old_type.allow_mutations;
-
-    let mut combined = combine_union_types(&left, rhs_type, false);
+    let mut combined = coalesce_analyzer::combine_coalesce_value_types(old_type, rhs_type);
     combined.parent_nodes = rhs_type.parent_nodes.clone();
     combined
 }

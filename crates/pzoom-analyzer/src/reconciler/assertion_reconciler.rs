@@ -1057,18 +1057,22 @@ fn intersect_atomic_with_atomic_inner(
                 return Some(assertion_atomic.clone());
             }
             if e_shape {
-                // Existing shape ∩ generic array → keep the shape; ∩ generic
-                // list → no old arm (disjoint).
-                return if *a_is_list {
+                // Existing shape ∩ generic. Keep the (narrower) shape — even
+                // against a generic *list*, when the shape is itself a list
+                // (sequential int keys). Only a non-list shape (string keys)
+                // paired with a generic list is disjoint: a list can't carry
+                // string keys.
+                return if *a_is_list && !*e_is_list {
                     None
                 } else {
                     Some(existing_atomic.clone())
                 };
             }
             if a_shape {
-                // Generic array ∩ assertion shape → narrow to the shape; generic
-                // list ∩ shape → no old arm (disjoint).
-                return if *e_is_list {
+                // Generic ∩ assertion shape: narrow to the (narrower) shape —
+                // including a generic *list* against a list shape. Only a
+                // generic list paired with a non-list shape is disjoint.
+                return if *e_is_list && !*a_is_list {
                     None
                 } else {
                     Some(assertion_atomic.clone())

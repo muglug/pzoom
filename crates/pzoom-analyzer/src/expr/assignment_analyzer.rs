@@ -33,6 +33,7 @@ use crate::expr::assignment::{
     array_assignment_analyzer, instance_property_assignment_analyzer,
     static_property_assignment_analyzer,
 };
+use crate::expr::binop::coalesce_analyzer;
 use crate::expression_analyzer;
 use crate::expression_identifier;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
@@ -259,7 +260,18 @@ pub fn analyze(
         // variable's dataflow parents feed the new assignment through a
         // composition node (this is what marks a param used by `$hue /= 360`
         // and earlier `$x = …` assignments used by `$x ??= $y`).
-        let mut compound_type = rhs_type;
+        //
+        // `??=` also keeps the *type* of the old value: Psalm desugars it to
+        // `$a = $a ?? $b`, whose result is `non_null($a) | $b`. The old value
+        // survives when it isn't null, so flags like `reference_free` /
+        // `allow_mutations` aren't laundered into a fresh `$b` (e.g. an
+        // immutable param assigned via `$a ??= clone $this` stays non-pure-
+        // compatible, matching Psalm's readonly diagnostics).
+        let mut compound_type = if matches!(assignment.operator, AssignmentOperator::Coalesce(_)) {
+            coalesce_assignment_type(assignment.lhs, &rhs_type, context)
+        } else {
+            rhs_type
+        };
         let decision_node =
             DataFlowNode::get_for_composition(make_data_flow_node_position(analyzer, pos));
         analysis_data
@@ -376,6 +388,34 @@ pub fn analyze(
 
     // The assignment expression itself has the type of the RHS
     analysis_data.expr_types.insert(pos, Rc::new(rhs_type));
+}
+
+/// Result type of `$a ??= $b`, mirroring Psalm's desugaring to `$a = $a ?? $b`.
+/// Psalm computes this by reusing `CoalesceAnalyzer`, so we defer to the very
+/// same `non_null($a) | $b` combine the `??` operator uses
+/// ([`coalesce_analyzer::combine_coalesce_value_types`]) rather than re-deriving
+/// it: the old value survives when it isn't null, so its `reference_free` flag
+/// is carried into the result instead of being laundered into a fresh `$b` (an
+/// immutable param assigned via `$a ??= clone $this` stays non-pure-compatible,
+/// matching Psalm's readonly diagnostics). Only direct variables are handled
+/// here — property / array-access targets are routed to their own assignment
+/// analyzers before this point — and the dataflow wiring is left to the caller,
+/// so the returned type keeps only `$b`'s parent nodes.
+fn coalesce_assignment_type(
+    lhs: &Expression<'_>,
+    rhs_type: &TUnion,
+    context: &BlockContext,
+) -> TUnion {
+    let Expression::Variable(Variable::Direct(direct_var)) = lhs else {
+        return rhs_type.clone();
+    };
+    let Some(old_type) = context.get_var_type(direct_var.name) else {
+        return rhs_type.clone();
+    };
+
+    let mut combined = coalesce_analyzer::combine_coalesce_value_types(old_type, rhs_type);
+    combined.parent_nodes = rhs_type.parent_nodes.clone();
+    combined
 }
 
 fn infer_concat_assignment_type(

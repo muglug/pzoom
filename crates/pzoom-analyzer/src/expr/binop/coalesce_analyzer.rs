@@ -194,32 +194,7 @@ pub fn analyze(
             .unwrap_or_else(TUnion::mixed)
     } else {
         match (left_type, right_type) {
-            (Some(lt), Some(rt)) => {
-                // Remove null from left type
-                let left_without_null: Vec<_> = lt
-                    .types
-                    .iter()
-                    .filter(|t| !matches!(t, TAtomic::TNull))
-                    .cloned()
-                    .collect();
-
-                if left_without_null.is_empty() {
-                    // Left was only null, result is just right type
-                    (*rt).clone()
-                } else {
-                    // Combine non-null left types with right types. Keep the
-                    // left's dataflow parents — from_types builds a fresh union
-                    // and would otherwise sever the flow through the coalesce.
-                    let mut left_non_null = TUnion::from_types(left_without_null);
-                    left_non_null.parent_nodes = lt.parent_nodes.clone();
-                    let mut combined = combine_union_types(&left_non_null, &rt, false);
-                    // An internal-function falsable-leniency flag survives the
-                    // coalesce (parse_url(...) ?? '' stays assignable to string).
-                    combined.ignore_falsable_issues =
-                        lt.ignore_falsable_issues || rt.ignore_falsable_issues;
-                    combined
-                }
-            }
+            (Some(lt), Some(rt)) => combine_coalesce_value_types(&lt, &rt),
             (Some(lt), None) => {
                 // Remove null from left type
                 let left_without_null: Vec<_> = lt
@@ -244,6 +219,45 @@ pub fn analyze(
     };
 
     analysis_data.expr_types.insert(pos, Rc::new(result_type));
+}
+
+/// Combine a coalesce's left value (minus null) with its right value — the
+/// `non_null($l) | $r` that Psalm's `CoalesceAnalyzer` produces by desugaring
+/// `$l ?? $r` into `isset($l) ? $l : $r` and combining the ternary's branches.
+/// The surviving left value keeps its dataflow parents and its `reference_free`
+/// flag: Psalm's then-branch is the reconciled `$l` with its union flags intact,
+/// and `Type::combineUnionTypes` then ANDs `reference_free` against `$r`.
+/// `allow_mutations` is deliberately left to the combiner — Psalm never carries
+/// it across a combine. Shared with the `??=` assignment path so that
+/// `$a ??= $b` matches `$a = $a ?? $b` exactly, the way Psalm's
+/// `AssignmentAnalyzer` reuses `CoalesceAnalyzer`.
+pub(crate) fn combine_coalesce_value_types(left_type: &TUnion, right_type: &TUnion) -> TUnion {
+    // Remove null from the left value.
+    let left_without_null: Vec<_> = left_type
+        .types
+        .iter()
+        .filter(|t| !matches!(t, TAtomic::TNull))
+        .cloned()
+        .collect();
+
+    if left_without_null.is_empty() {
+        // Left was only null, so the result is exactly the right value.
+        return right_type.clone();
+    }
+
+    // Combine the non-null left value with the right value. Keep the left's
+    // dataflow parents and `reference_free` flag — `from_types` builds a fresh
+    // union and would otherwise sever the flow through the coalesce and launder
+    // the surviving value's freshness.
+    let mut left_non_null = TUnion::from_types(left_without_null);
+    left_non_null.parent_nodes = left_type.parent_nodes.clone();
+    left_non_null.reference_free = left_type.reference_free;
+    let mut combined = combine_union_types(&left_non_null, right_type, false);
+    // An internal-function falsable-leniency flag survives the coalesce
+    // (parse_url(...) ?? '' stays assignable to string).
+    combined.ignore_falsable_issues =
+        left_type.ignore_falsable_issues || right_type.ignore_falsable_issues;
+    combined
 }
 
 fn is_superglobal(var_name: &str) -> bool {

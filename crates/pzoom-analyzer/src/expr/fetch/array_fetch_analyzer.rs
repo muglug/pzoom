@@ -577,6 +577,55 @@ pub fn analyze(
                                     result_types.push(t.clone());
                                 }
                             }
+                            // A literal key absent from the shape but admitted
+                            // by the non-sealed array's fallback isn't proven
+                            // present: Psalm's `fallback_params !== null` branch
+                            // runs both ensureArray{Int,String}OffsetsExist
+                            // checks (checkLiteralIntArrayOffset /
+                            // checkLiteralStringArrayOffset), exactly as for a
+                            // plain `array<K, V>`. This is the
+                            // `isset($a['x'])`-narrows-a-generic-array case: the
+                            // resulting shape keeps the fallback key, so a
+                            // *different* key is still risky.
+                            if *is_list {
+                                // A list's keys are non-negative ints (Psalm
+                                // types them int<0, max>): a provably-negative
+                                // offset is an invalid offset, not a possibly-
+                                // undefined one, so leave it to that path. A
+                                // non-negative index past the known prefix is
+                                // unproven.
+                                if let ArrayKey::Int(value) = index_key
+                                    && *value >= 0
+                                {
+                                    tarray_int_offset_unproven = true;
+                                }
+                            } else {
+                                let fallback_admits = |is_int: bool| {
+                                    fallback_key_type.is_some_and(|key_type| {
+                                        (if is_int {
+                                            key_type.has_int()
+                                        } else {
+                                            key_type.has_string()
+                                        }) || key_type.types.iter().any(|t| {
+                                            matches!(
+                                                t,
+                                                TAtomic::TArrayKey
+                                                    | TAtomic::TMixed
+                                                    | TAtomic::TScalar
+                                            )
+                                        })
+                                    })
+                                };
+                                match index_key {
+                                    ArrayKey::Int(_) if fallback_admits(true) => {
+                                        tarray_int_offset_unproven = true;
+                                    }
+                                    ArrayKey::String(_) if fallback_admits(false) => {
+                                        tarray_string_offset_unproven = true;
+                                    }
+                                    _ => {}
+                                }
+                            }
                         } else {
                             has_literal_index_miss = true;
                             has_possibly_undefined_offset = true;
@@ -1189,6 +1238,9 @@ pub fn analyze(
              is risky given expected type '{expected_id}'. \
              Consider using isset beforehand."
         );
+        // Psalm anchors the issue at the array-access expression (Psalm points at
+        // `$a['x']`); use its real column rather than 0.
+        let (_, start_column) = analyzer.get_line_column(span.start.offset);
         if analyzer.config.ensure_array_int_offsets_exist
             && tarray_int_offset_unproven
             && !crate::issue_suppression::is_issue_suppressed_at(
@@ -1205,7 +1257,7 @@ pub fn analyze(
                 span.start.offset,
                 span.end.offset,
                 start_line,
-                0,
+                start_column,
             ));
         }
         if analyzer.config.ensure_array_string_offsets_exist
@@ -1224,7 +1276,7 @@ pub fn analyze(
                 span.start.offset,
                 span.end.offset,
                 start_line,
-                0,
+                start_column,
             ));
         }
     }

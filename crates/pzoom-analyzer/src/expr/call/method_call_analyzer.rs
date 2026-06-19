@@ -586,7 +586,11 @@ pub(crate) fn is_mutation_free_context(analyzer: &StatementsAnalyzer<'_>) -> boo
         return false;
     }
 
-    if function_info.is_mutation_free {
+    // Psalm sets `$context->mutation_free` only for a *declared*
+    // `@psalm-mutation-free` method (`!$storage->mutation_free_inferred`); a
+    // method pzoom inferred as mutation-free is not enforced, so calls it makes
+    // are not ImpureMethodCall.
+    if function_info.is_mutation_free && !function_info.mutation_free_inferred {
         return true;
     }
 

@@ -53,12 +53,6 @@ pub fn analyze(
     always_enters_loop: bool,
     while_true: bool,
 ) -> Result<(LoopScope, BlockContext), AnalysisError> {
-    // Baseline assignment counts before the loop, so we can later invalidate clauses
-    // for any variable the loop body (re)assigns — even when the reassignment leaves
-    // the top-level type unchanged, e.g. `unset($a['k'][$i])` which rewrites `$a` to
-    // the same type. Mirrors Hakana invalidating clauses for loop-redefined vars.
-    let pre_loop_assigned_counts = loop_parent_context.assigned_var_ids.clone();
-
     let (assignment_map, first_var_id) =
         get_assignment_map(&pre_conditions, &post_expressions, stmts);
 
@@ -428,22 +422,6 @@ pub fn analyze(
                 .possibly_assigned_var_ids
                 .insert(var_id.clone());
         }
-
-        // The inner do context still sees the break states for the post-body
-        // condition evaluation.
-        if let Some(inner_do_context_inner) = inner_do_context.as_mut() {
-            for (var_id, possibly_redefined_var_type) in
-                &loop_scope.possibly_redefined_loop_parent_vars
-            {
-                if let Some(do_context_type) = inner_do_context_inner.locals.get_mut(var_id) {
-                    *do_context_type = if do_context_type == possibly_redefined_var_type {
-                        possibly_redefined_var_type.clone()
-                    } else {
-                        combine_union_types(possibly_redefined_var_type, do_context_type, false)
-                    };
-                }
-            }
-        }
     }
 
     for (var_id, var_type) in loop_parent_context.locals.clone() {
@@ -456,33 +434,23 @@ pub fn analyze(
         }
     }
 
-    // Invalidate clauses for any variable the loop body (re)assigned, even when its
-    // top-level type is unchanged. Without this, a clause like `$a['foo']` truthy
-    // established before the loop would wrongly survive a body that does
-    // `unset($a['foo'][$i])`, producing spurious paradox/redundancy diagnostics.
-    for (var_id, body_count) in &continue_context.assigned_var_ids {
-        let pre_count = pre_loop_assigned_counts.get(var_id).copied().unwrap_or(0);
-        if *body_count > pre_count {
-            loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
-        }
-    }
-
     if !does_always_break {
         for (var_id, var_type) in loop_parent_context.locals.clone() {
-            if let Some(continue_context_type) = continue_context.locals.get(&var_id) {
+            if let Some(continue_context_type) = continue_context.locals.get_mut(&var_id) {
                 if continue_context_type.is_mixed() {
-                    // The replacement keeps the parent's dataflow parents:
-                    // mixed widening must not sever the pre-loop assignment's
-                    // flow to post-loop uses.
-                    let mut replacement = continue_context_type.clone();
+                    // Mixed widening must not sever the pre-loop assignment's
+                    // flow to post-loop uses: merge the parent's dataflow
+                    // parents into the continue-context value *in place* (Psalm
+                    // reassigns `$continue_context->vars_in_scope`, Hakana mutates
+                    // via `get_mut`) so a later `setLoopVars` copy keeps them.
                     for parent_node in &var_type.parent_nodes {
-                        if !replacement.parent_nodes.contains(parent_node) {
-                            replacement.parent_nodes.push(parent_node.clone());
+                        if !continue_context_type.parent_nodes.contains(parent_node) {
+                            continue_context_type.parent_nodes.push(parent_node.clone());
                         }
                     }
                     loop_parent_context
                         .locals
-                        .insert(var_id.clone(), replacement);
+                        .insert(var_id.clone(), continue_context_type.clone());
                     loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 } else if *continue_context_type != var_type {
                     let combined = combine_union_types(&var_type, continue_context_type, false);
@@ -565,14 +533,6 @@ pub fn analyze(
                         var_id.clone(),
                         combine_union_types(var_type, possibly_defined_type, false),
                     );
-                    // The loop always runs and every exit path defines the
-                    // variable: it is definitely assigned, not merely possibly
-                    // (the break sweep above flagged it).
-                    loop_parent_context.possibly_assigned_var_ids.remove(var_id);
-                    loop_parent_context
-                        .assigned_var_ids
-                        .entry(var_id.clone())
-                        .or_insert(1);
                 }
             } else {
                 loop_parent_context
@@ -586,16 +546,9 @@ pub fn analyze(
     // the loop (Psalm: `$loop_parent_context->vars_possibly_in_scope +=
     // $continue_context->vars_possibly_in_scope`).
     for var_id in &continue_context.vars_possibly_in_scope {
-        if !loop_parent_context.vars_possibly_in_scope.contains(var_id) {
-            loop_parent_context
-                .vars_possibly_in_scope
-                .insert(var_id.clone());
-            if !loop_parent_context.locals.contains_key(var_id) {
-                loop_parent_context
-                    .possibly_assigned_var_ids
-                    .insert(var_id.clone());
-            }
-        }
+        loop_parent_context
+            .vars_possibly_in_scope
+            .insert(var_id.clone());
     }
 
     // Variables a leaving branch inside the body could have defined become
@@ -605,11 +558,6 @@ pub fn analyze(
         loop_parent_context
             .vars_possibly_in_scope
             .insert(var_id.clone());
-        if !loop_parent_context.locals.contains_key(var_id) {
-            loop_parent_context
-                .possibly_assigned_var_ids
-                .insert(var_id.clone());
-        }
     }
 
     // Propagate references created inside the loop body so the parent scope knows
@@ -727,6 +675,16 @@ fn apply_pre_condition_to_loop_context(
 
     if is_do {
         return FxHashSet::default();
+    }
+
+    // Strip clauses mentioning any variable assigned before the loop body, so
+    // stale truthiness facts about a loop-reassigned variable do not leak into
+    // the body (Psalm `Context::filterClauses`, Hakana `BlockContext::filter_clauses`,
+    // both called with no new type — a pure removal).
+    if !loop_context.clauses.is_empty() {
+        for var_id in &always_assigned_before_loop_body_vars {
+            loop_context.remove_var_name_clauses(var_id.as_ref());
+        }
     }
 
     always_assigned_before_loop_body_vars

@@ -1367,23 +1367,51 @@ fn reconcile_has_at_least_count(
                     acceptable_types.push(atomic.clone());
                 }
             }
-            // A generic non-empty array/list is already non-empty — keep as-is.
+            // A generic non-empty *array* (not a list) is already non-empty and
+            // its keys are unknown — keep as-is. Non-empty lists fall through to
+            // the list branch below so `count($x) >= count` can still materialise
+            // offsets 0..count beyond the bare offset-0 that non-emptiness proves.
             TAtomic::TArray {
-                is_nonempty: true, ..
+                is_nonempty: true,
+                is_list: false,
+                ..
             } => {
                 acceptable_types.push(atomic.clone());
             }
-            // A generic possibly-empty LIST.
+            // A generic LIST (possibly empty, or non-empty but only min-count 1).
+            // `count($x) >= count` makes offsets 0..count definite (Psalm's
+            // reconcileNonEmptyCountable `is_list` branch materialises
+            // `properties[$i]` from the fallback for `$i` in `prop_min_count..count`).
+            // Build a list shape with those entries marked defined rather than
+            // leaving a bare list, which only proves offset 0 is present.
             TAtomic::TArray {
                 params,
                 is_list: true,
                 ..
             } => {
-                did_remove_type = true;
-                if let Some((_, value_type)) = params.as_deref()
-                    && !value_type.is_nothing()
-                {
-                    acceptable_types.push(TAtomic::non_empty_list(value_type.clone()));
+                if let Some((key_type, value_type)) = params.as_deref() {
+                    // Materialise from the fallback even when it is `never`
+                    // (Psalm sets `properties[$i] = fallback_params[1]`), so the
+                    // type is narrowed but never emptied — a `never` value just
+                    // yields a `list{never, ...}` shape rather than a contradiction.
+                    did_remove_type = true;
+                    let mut new_known_values =
+                        rustc_hash::FxHashMap::<ArrayKey, (bool, TUnion)>::default();
+                    for index in 0..count {
+                        new_known_values
+                            .insert(ArrayKey::Int(index as i64), (false, value_type.clone()));
+                    }
+                    acceptable_types.push(TAtomic::keyed_array(
+                        new_known_values,
+                        true,
+                        false,
+                        Some(key_type.clone()),
+                        Some(value_type.clone()),
+                    ));
+                } else {
+                    // Sealed list with no fallback (e.g. a fixed shape already
+                    // handled above is impossible here) — leave it unchanged.
+                    acceptable_types.push(atomic.clone());
                 }
             }
             // A generic possibly-empty ARRAY.

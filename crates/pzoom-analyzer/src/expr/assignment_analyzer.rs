@@ -1220,6 +1220,55 @@ fn analyze_destructuring_element(
         }
     }
 
+    // Under ensureArrayIntOffsetsExist, a positional (int) destructure target
+    // whose offset isn't proven present on a list with a typed fallback is
+    // reported as a possibly-undefined key — Psalm's AssignmentAnalyzer
+    // (`is_list && fallback_params`, gated on the config). A non-empty list
+    // proves only offset 0, so `[$a, $b] = explode(...)` flags `$b` but not
+    // `$a`; a possibly-empty `list<T>` proves neither. The matching shape case
+    // (a sealed `list{0: T, 1?: T}`) is already covered by the optional-property
+    // branch above, so this only fires for the unsealed `params: Some` fallback.
+    if analyzer.config.ensure_array_int_offsets_exist
+        && let DestructuringLookupKey::Int(offset_value) = &lookup_key
+        && *offset_value >= 0
+    {
+        let int_offset_unproven = rhs_type.types.iter().any(|atomic| match atomic {
+            TAtomic::TArray {
+                known_values,
+                params: Some(_),
+                is_list: true,
+                is_nonempty,
+                ..
+            } => {
+                // Unproven unless the offset is a known entry, or offset 0 of a
+                // list already proven non-empty.
+                !(known_values.contains_key(&ArrayKey::Int(*offset_value))
+                    || (*is_nonempty && *offset_value == 0))
+            }
+            _ => false,
+        });
+        let target_span = target_expr.span();
+        if int_offset_unproven
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                target_span.start.offset,
+                "PossiblyUndefinedIntArrayOffset",
+            )
+        {
+            let (line, col) = analyzer.get_line_column(target_span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyUndefinedIntArrayOffset,
+                "Possibly undefined array key".to_string(),
+                analyzer.file_path,
+                target_span.start.offset,
+                target_span.end.offset,
+                line,
+                col,
+            ));
+        }
+    }
+
     // ...and a literal offset every sealed shape member lacks reports
     // InvalidArrayOffset (`[$w, $h, $d] = size()` over `array{int, int}`).
     if let Some(array_key) = lookup_key_to_array_key(&lookup_key) {

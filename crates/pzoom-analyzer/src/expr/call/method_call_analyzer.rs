@@ -134,6 +134,15 @@ pub fn analyze(
             context,
         );
         if let Some(return_type) = return_type {
+            // A method declared to return `never`/`nothing` terminates control
+            // flow (Psalm sets $context->has_returned; Hakana sets has_returned
+            // plus ControlAction::End). Guarded on !inside_loop like both upstreams.
+            if return_type.is_nothing() && !context.inside_loop {
+                context.has_returned = true;
+                context
+                    .control_actions
+                    .insert(crate::stmt::scope_analyzer::ControlAction::End);
+            }
             analysis_data.expr_types.insert(pos, Rc::new(return_type));
             return;
         }
@@ -249,6 +258,15 @@ pub fn analyze_nullsafe(
                     .unwrap_or_else(|| (**obj_t).clone());
             if object_type_for_nullsafe.is_nullable() {
                 return_type.add_type(TAtomic::TNull);
+            }
+            // A `never`-returning call terminates flow — unless `?->` could
+            // short-circuit to null, in which case the result is `nothing|null`
+            // (not nothing) and this check correctly does not fire.
+            if return_type.is_nothing() && !context.inside_loop {
+                context.has_returned = true;
+                context
+                    .control_actions
+                    .insert(crate::stmt::scope_analyzer::ControlAction::End);
             }
             analysis_data.expr_types.insert(pos, Rc::new(return_type));
             return;

@@ -1220,6 +1220,55 @@ fn analyze_destructuring_element(
         }
     }
 
+    // Under ensureArrayIntOffsetsExist, a positional (int) destructure target
+    // whose offset isn't proven present on a list with a typed fallback is
+    // reported as a possibly-undefined key — Psalm's AssignmentAnalyzer
+    // (`is_list && fallback_params`, gated on the config). A non-empty list
+    // proves only offset 0, so `[$a, $b] = explode(...)` flags `$b` but not
+    // `$a`; a possibly-empty `list<T>` proves neither. The matching shape case
+    // (a sealed `list{0: T, 1?: T}`) is already covered by the optional-property
+    // branch above, so this only fires for the unsealed `params: Some` fallback.
+    if analyzer.config.ensure_array_int_offsets_exist
+        && let DestructuringLookupKey::Int(offset_value) = &lookup_key
+        && *offset_value >= 0
+    {
+        let int_offset_unproven = rhs_type.types.iter().any(|atomic| match atomic {
+            TAtomic::TArray {
+                known_values,
+                params: Some(_),
+                is_list: true,
+                is_nonempty,
+                ..
+            } => {
+                // Unproven unless the offset is a known entry, or offset 0 of a
+                // list already proven non-empty.
+                !(known_values.contains_key(&ArrayKey::Int(*offset_value))
+                    || (*is_nonempty && *offset_value == 0))
+            }
+            _ => false,
+        });
+        let target_span = target_expr.span();
+        if int_offset_unproven
+            && !crate::issue_suppression::is_issue_suppressed_at(
+                analyzer,
+                analysis_data,
+                target_span.start.offset,
+                "PossiblyUndefinedIntArrayOffset",
+            )
+        {
+            let (line, col) = analyzer.get_line_column(target_span.start.offset);
+            analysis_data.add_issue(Issue::new(
+                IssueKind::PossiblyUndefinedIntArrayOffset,
+                "Possibly undefined array key".to_string(),
+                analyzer.file_path,
+                target_span.start.offset,
+                target_span.end.offset,
+                line,
+                col,
+            ));
+        }
+    }
+
     // ...and a literal offset every sealed shape member lacks reports
     // InvalidArrayOffset (`[$w, $h, $d] = size()` over `array{int, int}`).
     if let Some(array_key) = lookup_key_to_array_key(&lookup_key) {
@@ -1279,6 +1328,26 @@ fn analyze_destructuring_element(
     );
     let mut target_type = infer_destructured_value_type(analyzer, &resolved_rhs_type, &lookup_key);
 
+    // Psalm's AssignmentAnalyzer widens a destructured target with `null` when
+    // the assignment is under the `@` error-suppression operator and the offset
+    // isn't guaranteed to be set: every element past the first (`offset > 0`),
+    // plus the first element when the source array can be empty. This is what
+    // leaves `$b` as `string|null` in `@[$a, $b] = explode(...)`, where the
+    // source is `non-empty-list<string>` (offset 0 is guaranteed, offset 1 not).
+    // Psalm gates this on `$list_var_id`, which is empty for a nested list/array
+    // target (`@list($a, list($b, $c))`), so those are left to recurse untouched.
+    let target_is_nested_destructure = matches!(
+        target_expr.unparenthesized(),
+        Expression::List(_) | Expression::Array(_)
+    );
+    if context.error_suppressing
+        && !target_is_nested_destructure
+        && (offset > 0 || rhs_can_be_empty(&resolved_rhs_type))
+        && !target_type.is_nullable()
+    {
+        target_type = combine_union_types(&target_type, &TUnion::new(TAtomic::TNull), false);
+    }
+
     // Hakana's list assignment connects the source array's parents to each
     // destructured value via `array_fetch_analyzer::add_array_fetch_dataflow`.
     let keyed_array_var_id =
@@ -1319,6 +1388,27 @@ fn analyze_destructuring_element(
         analysis_data,
         context,
     );
+}
+
+/// Psalm's list-destructuring tracks `$can_be_empty`, cleared once an offset is
+/// guaranteed present. Under `@`, a still-possibly-empty source widens its first
+/// target with `null`. Returns `false` only when the source guarantees an
+/// element at offset 0 — a non-empty array/list, or a shape with a required `0`
+/// entry — matching Psalm's `can_be_empty = !TNonEmptyArray` / property check.
+fn rhs_can_be_empty(rhs_type: &TUnion) -> bool {
+    !rhs_type.types.iter().any(|atomic| match atomic {
+        TAtomic::TArray {
+            is_nonempty,
+            known_values,
+            ..
+        } => {
+            *is_nonempty
+                || known_values
+                    .get(&ArrayKey::Int(0))
+                    .is_some_and(|(possibly_undefined, _)| !*possibly_undefined)
+        }
+        _ => false,
+    })
 }
 
 fn rhs_can_be_destructured(analyzer: &StatementsAnalyzer<'_>, rhs_type: &TUnion) -> bool {

@@ -41,7 +41,15 @@ pub fn analyze_prefix(
     } else {
         None
     };
+    // `@expr` suppresses runtime errors; Psalm records this on the context
+    // (`Context::error_suppressing`) so list-destructuring underneath can widen
+    // not-guaranteed targets with `null` (see AssignmentAnalyzer).
+    let was_error_suppressing = context.error_suppressing;
+    if matches!(unary.operator, UnaryPrefixOperator::ErrorControl(_)) {
+        context.error_suppressing = true;
+    }
     let operand_pos = expression_analyzer::analyze(analyzer, unary.operand, analysis_data, context);
+    context.error_suppressing = was_error_suppressing;
     if let Some(if_body_context) = saved_if_body_context {
         context.if_body_context = Some(if_body_context);
     }

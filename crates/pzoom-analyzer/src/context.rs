@@ -221,6 +221,14 @@ pub struct BlockContext {
     /// offset rather than reading it).
     pub inside_by_ref_argument: bool,
 
+    /// Whether the expression being analyzed is wrapped in the `@`
+    /// error-suppression operator (Psalm's `Context::error_suppressing`).
+    /// List-destructuring under `@` widens targets that aren't guaranteed to be
+    /// set with `null` — every element past the first, plus the first when the
+    /// source array can be empty — so `@[$a, $b] = explode(...)` leaves `$b`
+    /// as `string|null`.
+    pub error_suppressing: bool,
+
     /// Whether we're analyzing the value of an assignment (Psalm's
     /// `Context::inside_assignment`) — the result of a call here is "used".
     pub inside_assignment: bool,
@@ -460,6 +468,7 @@ impl BlockContext {
             inside_assignment_root: false,
             inside_unset: false,
             inside_by_ref_argument: false,
+            error_suppressing: self.error_suppressing,
             inside_assignment: false,
             inside_call: false,
             inside_return: false,

@@ -53,11 +53,16 @@ pub(crate) fn get_method_return_type(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Option<TUnion> {
-    if method_name.eq_ignore_ascii_case("__construct") {
+    if method_name.eq_ignore_ascii_case("__construct")
+        // Psalm guards this on `$stmt->var instanceof Variable` — a constructor
+        // reached through a non-variable receiver (e.g. `factory()->__construct()`)
+        // is not reported.
+        && matches!(object_expr.unparenthesized(), Expression::Variable(_))
+    {
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::DirectConstructorCall,
-            "Constructors should only be called with new",
+            "Constructors should not be called directly",
             analyzer.file_path,
             pos.0,
             pos.1,
@@ -86,6 +91,13 @@ pub(crate) fn get_method_return_type(
             Some(&analysis_data.type_variable_bounds),
         );
 
+    // A `nothing`/`never` receiver is unreachable: the call yields `nothing`
+    // with no diagnostic (Hakana returns get_nothing(); pzoom previously fell
+    // through to a spurious InvalidMethodCall).
+    if expanded_obj_type.is_nothing() {
+        return Some(TUnion::nothing());
+    }
+
     let mut resolved_method: Option<(
         pzoom_str::StrId,
         pzoom_str::StrId,
@@ -98,6 +110,16 @@ pub(crate) fn get_method_return_type(
     // returns string. The primary drives argument checks and dataflow; the
     // secondaries only fold their return types in at the end.
     let mut secondary_methods: Vec<(
+        pzoom_str::StrId,
+        pzoom_str::StrId,
+        Option<Vec<TUnion>>,
+        pzoom_code_info::FunctionLikeInfo,
+    )> = Vec::new();
+    // The remaining components of a `A&B` intersection receiver: unlike union
+    // members (whose returns are combined), intersection-component returns are
+    // *intersected* into the primary's return (Psalm `getIntersectionReturnType`
+    // / Hakana `intersect_union_types_simple`).
+    let mut intersection_secondary_methods: Vec<(
         pzoom_str::StrId,
         pzoom_str::StrId,
         Option<Vec<TUnion>>,
@@ -310,12 +332,12 @@ pub(crate) fn get_method_return_type(
                 }
             }
             TAtomic::TObjectIntersection { types } => {
-                let mut intersection_resolved: Option<(
+                let mut components: Vec<(
                     pzoom_str::StrId,
                     pzoom_str::StrId,
                     Option<Vec<TUnion>>,
                     pzoom_code_info::FunctionLikeInfo,
-                )> = None;
+                )> = Vec::new();
 
                 for nested in types {
                     let TAtomic::TNamedObject {
@@ -344,25 +366,32 @@ pub(crate) fn get_method_return_type(
                     };
 
                     has_valid_receiver = true;
-                    if let Some(existing) = &mut intersection_resolved {
-                        // Prefer the intersection part that supplies generic
-                        // params (e.g. `IParent<C>` over a bare `IChild`):
-                        // Psalm keeps those bindings via the atomic's
-                        // extra_types, which pzoom's intersection model splits
-                        // into separate parts.
-                        if (existing.2.is_none() && resolved_type_params.is_some())
-                            || method_has_more_specific_return(analyzer, &method_info, &existing.3)
-                        {
-                            *existing = (*name, resolved_class, resolved_type_params, method_info);
-                        }
-                    } else {
-                        intersection_resolved =
-                            Some((*name, resolved_class, resolved_type_params, method_info));
-                    }
+                    components.push((*name, resolved_class, resolved_type_params, method_info));
                 }
 
-                if resolved_method.is_none() {
-                    resolved_method = intersection_resolved;
+                if resolved_method.is_none() && !components.is_empty() {
+                    // Choose the primary component as before: prefer one that
+                    // supplies generic params (e.g. `IParent<C>` over a bare
+                    // `IChild`) or has a more specific return.
+                    let mut primary_idx = 0;
+                    for idx in 1..components.len() {
+                        let supplies_params =
+                            components[primary_idx].2.is_none() && components[idx].2.is_some();
+                        let more_specific = method_has_more_specific_return(
+                            analyzer,
+                            &components[idx].3,
+                            &components[primary_idx].3,
+                        );
+                        if supplies_params || more_specific {
+                            primary_idx = idx;
+                        }
+                    }
+
+                    let primary = components.remove(primary_idx);
+                    // The remaining components' returns are intersected into the
+                    // primary's return later (Psalm getIntersectionReturnType).
+                    intersection_secondary_methods.extend(components);
+                    resolved_method = Some(primary);
                 }
             }
             TAtomic::TObject | TAtomic::TMixed => {
@@ -418,6 +447,9 @@ pub(crate) fn get_method_return_type(
             TAtomic::TFalse => {
                 has_false_receiver = true;
             }
+            // `never` in a union (e.g. `Foo|never`) contributes nothing and is
+            // not an invalid receiver.
+            TAtomic::TNever => {}
             _ => {
                 has_invalid_receiver = true;
             }
@@ -782,6 +814,28 @@ pub(crate) fn get_method_return_type(
                     }
                 }
             }
+        }
+
+        // Union-receiver secondaries also get visibility + arity diagnostics:
+        // Psalm analyzes the call per atomic, so an inaccessible or wrong-arity
+        // method on another member of `A|B` is still reported. Argument *type*
+        // checking stays on the primary (re-running it would re-analyze the
+        // argument expressions and double their side effects).
+        for (_secondary_receiver_id, secondary_class_id, _secondary_type_params, secondary_info) in
+            &secondary_methods
+        {
+            emit_secondary_member_diagnostics(
+                analyzer,
+                &expanded_obj_type,
+                calling_class,
+                *secondary_class_id,
+                secondary_info,
+                method_name,
+                args,
+                arg_positions,
+                pos,
+                analysis_data,
+            );
         }
 
         // Deprecated / @internal method prohibition (Psalm MethodCallProhibitionAnalyzer).
@@ -1265,6 +1319,63 @@ pub(crate) fn get_method_return_type(
             );
         }
 
+        // Intersect (not combine) the other intersection components' returns —
+        // `A&B` calling a method declared on both yields the intersection of the
+        // two declared returns (Psalm getIntersectionReturnType / Hakana
+        // intersect_union_types_simple). Template-dependent returns are skipped,
+        // mirroring the union-secondary fold above.
+        for (secondary_receiver_id, secondary_class_id, _secondary_type_params, secondary_info) in
+            intersection_secondary_methods
+        {
+            let documented_secondary = if secondary_info.return_type.is_none() {
+                crate::methods::get_inherited_method_return_type(
+                    analyzer,
+                    secondary_class_id,
+                    method_name,
+                    &TemplateResult::default(),
+                    &rustc_hash::FxHashMap::default(),
+                    args.len(),
+                )
+            } else {
+                None
+            };
+            let secondary_return = match (&documented_secondary, secondary_info.get_return_type()) {
+                (Some(documented), _) => documented,
+                (None, Some(raw)) => raw,
+                (None, None) => continue,
+            };
+            if secondary_return
+                .types
+                .iter()
+                .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
+            {
+                continue;
+            }
+            let secondary_parent = analyzer
+                .codebase
+                .get_class(secondary_class_id)
+                .and_then(|info| info.parent_class);
+            let localized_secondary = crate::type_expander::localize_special_class_type_union_final(
+                analyzer.codebase,
+                analyzer.interner,
+                secondary_return,
+                secondary_class_id,
+                secondary_receiver_id,
+                secondary_parent,
+                false,
+            );
+            // Keep the current return if the intersection models as empty — a
+            // genuine empty intersection is rare for compatible component
+            // returns and would otherwise drop a valid type to `nothing`.
+            if let Some(intersected) = assertion_reconciler::intersect_union_with_union_with_codebase(
+                &localized_return_type,
+                &localized_secondary,
+                Some(analyzer.codebase),
+            ) {
+                localized_return_type = intersected;
+            }
+        }
+
         return Some(localized_return_type);
     }
 
@@ -1535,6 +1646,8 @@ pub(crate) fn get_method_return_type(
                     col,
                 ));
             }
+            // `never` receiver: unreachable, no diagnostic (see early return).
+            TAtomic::TNever => {}
             _ => {
                 let type_desc = atomic.get_id(Some(analyzer.interner));
                 let (line, col) = analyzer.get_line_column(pos.0);
@@ -1845,6 +1958,138 @@ fn collect_receiver_named_types_in_atomic(atomic: &TAtomic, target: &mut Vec<TAt
             }
         }
         _ => {}
+    }
+}
+
+/// Visibility + arity diagnostics for a non-primary union-receiver member.
+///
+/// Psalm analyzes the call once per receiver atomic, so an inaccessible or
+/// wrong-arity method on a secondary member of `A|B` is still reported. Argument
+/// *type* checking and side effects stay on the primary member to avoid
+/// re-analyzing the argument expressions; this only inspects param counts and
+/// visibility. Mirrors the primary member's visibility block and the
+/// `TooFewArguments` branch of `verify_method_arguments`.
+#[allow(clippy::too_many_arguments)]
+fn emit_secondary_member_diagnostics(
+    analyzer: &StatementsAnalyzer<'_>,
+    expanded_obj_type: &TUnion,
+    calling_class: Option<StrId>,
+    secondary_class_id: StrId,
+    method_info: &pzoom_code_info::FunctionLikeInfo,
+    method_name: &str,
+    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    arg_positions: &[Pos],
+    pos: Pos,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    let Some(resolved_class_info) = analyzer.codebase.get_class(secondary_class_id) else {
+        return;
+    };
+    let class_name = analyzer.interner.lookup(secondary_class_id);
+
+    let visibility_scope_class_id =
+        get_method_visibility_scope_class_id(resolved_class_info, method_info);
+    match method_info.visibility {
+        Visibility::Public => {}
+        Visibility::Private => {
+            let is_same_class =
+                calling_class.is_some_and(|caller_class| caller_class == visibility_scope_class_id);
+            if !is_same_class
+                && !receiver_allows_method_visibility_override(
+                    analyzer,
+                    expanded_obj_type,
+                    visibility_scope_class_id,
+                )
+            {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                let issue_kind = if should_report_private_method_as_undefined(
+                    analyzer,
+                    calling_class,
+                    visibility_scope_class_id,
+                ) {
+                    IssueKind::UndefinedMethod
+                } else {
+                    IssueKind::InaccessibleMethod
+                };
+                let message = if issue_kind == IssueKind::UndefinedMethod {
+                    crate::class_casing::undefined_method_message(analyzer, &class_name, method_name)
+                } else {
+                    format!(
+                        "Cannot access private method {}::{}",
+                        analyzer.interner.lookup(visibility_scope_class_id),
+                        method_name
+                    )
+                };
+                analysis_data.add_issue(Issue::new(
+                    issue_kind,
+                    message,
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+        }
+        Visibility::Protected => {
+            let can_access = calling_class.is_some_and(|caller_class| {
+                can_access_protected_member_visibility(
+                    analyzer,
+                    caller_class,
+                    visibility_scope_class_id,
+                )
+            });
+            if !can_access
+                && !receiver_allows_method_visibility_override(
+                    analyzer,
+                    expanded_obj_type,
+                    visibility_scope_class_id,
+                )
+            {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::InaccessibleMethod,
+                    format!(
+                        "Cannot access protected method {}::{}",
+                        analyzer.interner.lookup(visibility_scope_class_id),
+                        method_name
+                    ),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
+        }
+    }
+
+    // TooFewArguments is per-method (not aggregated across the union like
+    // TooManyArguments), so report it for this member too.
+    let has_spread = args.iter().any(|arg| arg.is_unpacked());
+    let required_params = method_info
+        .params
+        .iter()
+        .filter(|p| !p.is_optional && !p.is_variadic)
+        .count();
+    if !has_spread && args.len() < required_params {
+        let issue_pos = arg_positions.first().copied().unwrap_or(pos);
+        let (line, col) = analyzer.get_line_column(issue_pos.0);
+        analysis_data.add_issue(Issue::new(
+            IssueKind::TooFewArguments,
+            format!(
+                "Too few arguments to method {}::{}, {} expected, {} provided",
+                class_name,
+                method_name,
+                required_params,
+                args.len()
+            ),
+            analyzer.file_path,
+            issue_pos.0,
+            issue_pos.1,
+            line,
+            col,
+        ));
     }
 }
 

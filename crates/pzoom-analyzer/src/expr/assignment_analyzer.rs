@@ -1279,6 +1279,26 @@ fn analyze_destructuring_element(
     );
     let mut target_type = infer_destructured_value_type(analyzer, &resolved_rhs_type, &lookup_key);
 
+    // Psalm's AssignmentAnalyzer widens a destructured target with `null` when
+    // the assignment is under the `@` error-suppression operator and the offset
+    // isn't guaranteed to be set: every element past the first (`offset > 0`),
+    // plus the first element when the source array can be empty. This is what
+    // leaves `$b` as `string|null` in `@[$a, $b] = explode(...)`, where the
+    // source is `non-empty-list<string>` (offset 0 is guaranteed, offset 1 not).
+    // Psalm gates this on `$list_var_id`, which is empty for a nested list/array
+    // target (`@list($a, list($b, $c))`), so those are left to recurse untouched.
+    let target_is_nested_destructure = matches!(
+        target_expr.unparenthesized(),
+        Expression::List(_) | Expression::Array(_)
+    );
+    if context.error_suppressing
+        && !target_is_nested_destructure
+        && (offset > 0 || rhs_can_be_empty(&resolved_rhs_type))
+        && !target_type.is_nullable()
+    {
+        target_type = combine_union_types(&target_type, &TUnion::new(TAtomic::TNull), false);
+    }
+
     // Hakana's list assignment connects the source array's parents to each
     // destructured value via `array_fetch_analyzer::add_array_fetch_dataflow`.
     let keyed_array_var_id =
@@ -1319,6 +1339,27 @@ fn analyze_destructuring_element(
         analysis_data,
         context,
     );
+}
+
+/// Psalm's list-destructuring tracks `$can_be_empty`, cleared once an offset is
+/// guaranteed present. Under `@`, a still-possibly-empty source widens its first
+/// target with `null`. Returns `false` only when the source guarantees an
+/// element at offset 0 — a non-empty array/list, or a shape with a required `0`
+/// entry — matching Psalm's `can_be_empty = !TNonEmptyArray` / property check.
+fn rhs_can_be_empty(rhs_type: &TUnion) -> bool {
+    !rhs_type.types.iter().any(|atomic| match atomic {
+        TAtomic::TArray {
+            is_nonempty,
+            known_values,
+            ..
+        } => {
+            *is_nonempty
+                || known_values
+                    .get(&ArrayKey::Int(0))
+                    .is_some_and(|(possibly_undefined, _)| !*possibly_undefined)
+        }
+        _ => false,
+    })
 }
 
 fn rhs_can_be_destructured(analyzer: &StatementsAnalyzer<'_>, rhs_type: &TUnion) -> bool {

@@ -1856,6 +1856,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut is_deprecated = false;
                     let mut deprecation_message = None;
                     let mut internal = Vec::new();
+                    let mut custom_docblock_tags: Vec<(String, String)> = Vec::new();
                     let mut assertions = Vec::new();
                     let mut if_true_assertions = Vec::new();
                     let mut if_false_assertions = Vec::new();
@@ -1878,6 +1879,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             || parsed.tags.contains_key("phpstan-throws");
                         member_is_public_api = parsed.tags.contains_key("psalm-api")
                             || parsed.tags.contains_key("api");
+                        // Tags the core doesn't consume (e.g. PHPUnit's
+                        // `@dataProvider`/`@test`) are kept verbatim for plugins.
+                        custom_docblock_tags = parsed.custom_tags();
                         is_mutation_free = self.is_docblock_mutation_free(&parsed);
                         docblock_external_mutation_free =
                             self.is_docblock_external_mutation_free(&parsed);
@@ -2224,6 +2228,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         is_static,
                         is_abstract,
                         is_final,
+                        custom_docblock_tags,
+                        attributes: self.collect_attributes(&method.attribute_lists),
                         visibility,
                         returns_by_ref: method.ampersand.is_some(),
                         is_variadic: uses_variadic_builtin_args || has_variadic_param,
@@ -6823,6 +6829,53 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
             _ => None,
         }
+    }
+
+    /// Collect the PHP attributes on a declaration into the generic
+    /// [`pzoom_code_info::AttributeMap`]: keyed by the resolved attribute-class
+    /// name, one argument-list entry per occurrence. Each argument is folded with
+    /// the same const-expression inference used for class-constant / enum-case
+    /// values ([`simple_type_inferer::infer`]); an argument that doesn't fold to a
+    /// constant becomes `mixed`. The scanner stays framework-agnostic — plugins
+    /// interpret specific attributes.
+    fn collect_attributes(
+        &mut self,
+        attribute_lists: &Sequence<'_, AttributeList<'_>>,
+    ) -> pzoom_code_info::AttributeMap {
+        let mut attributes = pzoom_code_info::AttributeMap::default();
+        for attribute in attribute_lists
+            .iter()
+            .flat_map(|attribute_list| attribute_list.attributes.iter())
+        {
+            let name = self.resolve_identifier(&attribute.name);
+            // A `Foo::class` argument folds to the class FQN using the file's
+            // `use` aliases / namespace (so `#[DataProviderExternal(Foo::class,
+            // …)]` names the real class), like every other scanned class-string.
+            let resolve_class = |raw: &str| self.resolve_scanned_class_string(raw);
+            let infer_context = simple_type_inferer::InferClassContext {
+                self_class: None,
+                parent_class: None,
+                class_resolver: Some(&resolve_class),
+                key_overflow_sink: None,
+                enum_case_resolver: None,
+                global_constant_resolver: None,
+            };
+            let args = match &attribute.argument_list {
+                Some(argument_list) => argument_list
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        simple_type_inferer::infer_with_context(argument.value(), &infer_context)
+                            .unwrap_or_else(|| {
+                                pzoom_code_info::TUnion::new(pzoom_code_info::TAtomic::TMixed)
+                            })
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+            attributes.entry(name).or_default().push(args);
+        }
+        attributes
     }
 
     fn push_docblock_issue(

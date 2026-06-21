@@ -68,6 +68,14 @@ pub struct ClassLikeInfo {
     #[serde(default)]
     pub is_public_api: bool,
 
+    /// Whether the class is instantiated/invoked dynamically by a framework
+    /// (reflectively), so the analyzed code never references it directly. Set by
+    /// a plugin's post-populate hook — e.g. the PHPUnit plugin marks `TestCase`
+    /// subclasses, which the test runner discovers and runs. Exempt from
+    /// `UnusedClass`.
+    #[serde(default)]
+    pub dynamically_callable: bool,
+
     /// Whether `@psalm-consistent-templates` is declared: child classes must
     /// keep the parent's template signature, making `new static` on a
     /// templated class safe (Psalm's `enforce_template_inheritance`).
@@ -97,6 +105,13 @@ pub struct ClassLikeInfo {
     ///
     /// `None` means this class is not marked with `#[Attribute]`.
     pub attribute_flags: Option<u8>,
+
+    /// PHP attributes on this class, keyed by resolved attribute-class name, with
+    /// each occurrence's evaluated argument list (see [`crate::AttributeMap`]).
+    /// Lets plugins read framework attributes (e.g. PHPUnit's
+    /// `#[CoversClass(...)]`) without the scanner knowing about them.
+    #[serde(default)]
+    pub attributes: crate::AttributeMap,
 
     /// Direct parent class (if any). This is the immediate parent.
     pub parent_class: Option<StrId>,

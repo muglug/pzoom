@@ -110,6 +110,55 @@ pub struct ParsedDocblock {
     pub first_line_padding: String,
 }
 
+impl ParsedDocblock {
+    /// Tags the core analyzer doesn't itself consume — framework-specific
+    /// annotations such as PHPUnit's `@dataProvider`/`@test`/`@group` — as
+    /// `(name, content)` pairs in document order. The scanner records these on a
+    /// function-like so plugins can interpret framework conventions without the
+    /// core having to know about them.
+    pub fn custom_tags(&self) -> Vec<(String, String)> {
+        let mut tags: Vec<(usize, String, String)> = Vec::new();
+        for (name, list) in &self.tags {
+            if is_recognized_tag(name) {
+                continue;
+            }
+            for (offset, content) in list.iter() {
+                tags.push((*offset, name.clone(), content.clone()));
+            }
+        }
+        tags.sort_by_key(|(offset, _, _)| *offset);
+        tags.into_iter()
+            .map(|(_, name, content)| (name, content))
+            .collect()
+    }
+}
+
+/// Whether `name` is a docblock tag the core analyzer understands — a PHPDoc
+/// type/structure tag (via [`classify_tag`]), a `psalm-`/`phpstan-` directive, or
+/// one of the standard flag tags it reads directly. Everything else is treated
+/// as a custom tag (see [`ParsedDocblock::custom_tags`]).
+fn is_recognized_tag(name: &str) -> bool {
+    classify_tag(name) != 0
+        || name.starts_with("psalm-")
+        || name.starts_with("phpstan-")
+        || matches!(
+            name,
+            "throws"
+                | "deprecated"
+                | "api"
+                | "internal"
+                | "inheritdoc"
+                | "pure"
+                | "immutable"
+                | "readonly"
+                | "mutation-free"
+                | "external-mutation-free"
+                | "assert"
+                | "assert-if-true"
+                | "assert-if-false"
+        )
+}
+
 /// Parse a docblock comment string into structured data.
 ///
 /// Based on Psalm's DocblockParser::parse().

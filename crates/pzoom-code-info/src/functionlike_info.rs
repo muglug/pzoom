@@ -119,6 +119,29 @@ pub struct FunctionLikeInfo {
     /// Whether this is a final method.
     pub is_final: bool,
 
+    /// Whether the method is invoked dynamically by a framework (reflectively),
+    /// so the analyzed code never calls it directly. Set by a plugin's
+    /// post-populate hook — e.g. the PHPUnit plugin marks `test*` methods and
+    /// `@dataProvider` providers on a `TestCase`. Exempt from
+    /// `UnusedMethod`/`PossiblyUnusedMethod`/`(Possibly)UnusedReturnValue`.
+    #[serde(default)]
+    pub dynamically_callable: bool,
+
+    /// Docblock tags the core analyzer doesn't consume, recorded verbatim as
+    /// `(tag, content)` pairs (without the leading `@`), in document order, so a
+    /// plugin can interpret framework-specific annotations — e.g. the PHPUnit
+    /// plugin reads `@dataProvider`/`@test` — without the scanner knowing about
+    /// them.
+    #[serde(default)]
+    pub custom_docblock_tags: Vec<(String, String)>,
+
+    /// PHP attributes on this function-like, keyed by resolved attribute-class
+    /// name, with each occurrence's evaluated argument list (see
+    /// [`crate::AttributeMap`]) — the attribute analogue of `custom_docblock_tags`,
+    /// so a plugin can read e.g. PHPUnit's `#[Test]`/`#[DataProvider('…')]`.
+    #[serde(default)]
+    pub attributes: crate::AttributeMap,
+
     /// Visibility (for methods).
     pub visibility: Visibility,
 

@@ -290,6 +290,13 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         populator.populate();
     }
 
+    // Let active plugins record framework knowledge on the populated codebase
+    // (e.g. the PHPUnit plugin flags TestCase subclasses + their test methods)
+    // and collect any diagnostics they emit (e.g. @dataProvider validation).
+    // Runs before the immutable borrow taken by `Analyzer::new`.
+    let plugin_issues =
+        pzoom_analyzer::plugin::run_after_populate(&config.plugins, &mut codebase, &interner);
+
     if config.all_constants_global {
         pzoom_orchestrator::register_global_defined_constants(&mut codebase);
     }
@@ -320,7 +327,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
             .ok()
             .is_some_and(|p| p == display_root);
 
-    let result = if analyze_all || targeting_project_root {
+    let mut result = if analyze_all || targeting_project_root {
         if configured_analysis_files.is_empty() {
             analyzer.analyze()
         } else {
@@ -370,6 +377,10 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
 
         analyzer.analyze_files(&files_to_analyze)
     };
+
+    // Plugin diagnostics from the post-populate hook join the analysis issues so
+    // they share the same stub/global/baseline suppression below.
+    result.issues.extend(plugin_issues);
 
     let mut baseline = load_error_baseline(config, &display_root);
 

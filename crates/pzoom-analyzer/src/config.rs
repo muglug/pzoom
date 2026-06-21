@@ -124,6 +124,12 @@ pub struct Config {
     /// the stubs those plugins would `addStubFile` are loaded directly).
     pub plugin_stubs: Vec<String>,
 
+    /// Compiled-in analysis plugins active for this project (the pzoom analogue
+    /// of Hakana's `Config.hooks`). Populated during config load from the
+    /// project's declared dependencies — see [`crate::plugin`]. Shared by
+    /// reference across analysis threads, hence `Arc`.
+    pub plugins: Vec<std::sync::Arc<dyn crate::plugin::Plugin>>,
+
     /// Functions that are forbidden.
     pub forbidden_functions: FxHashSet<String>,
 
@@ -209,6 +215,7 @@ impl Default for Config {
             report_mixed_issues: true,
             stubs: Vec::new(),
             plugin_stubs: Vec::new(),
+            plugins: Vec::new(),
             forbidden_functions: FxHashSet::default(),
             find_unused_suppress: false,
             limit_method_complexity: false,

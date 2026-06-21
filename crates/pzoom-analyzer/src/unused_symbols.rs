@@ -106,8 +106,9 @@ pub fn find_unused_definitions(
 
     // Referenced classes (member == EMPTY) and class members (method / class
     // constant / enum case), straight from the merged graph — body references,
-    // signature references (extends/implements, parameter/return types) and
-    // file-scope references are all recorded into it during analysis.
+    // signature references (extends/implements, parameter/return types),
+    // attribute usage (`#[Foo]`) and file-scope references are all recorded into
+    // it during analysis.
     let referenced_classes: FxHashSet<StrId> = referenced
         .iter()
         .filter(|(_, member)| *member == StrId::EMPTY)
@@ -325,7 +326,7 @@ fn report_unused_declarations(
                 }
             };
 
-        if !class_info.is_public_api && !class_referenced {
+        if !class_info.is_public_api && !class_referenced && !class_info.dynamically_callable {
             // Psalm anchors class-wide issues on the NAME token, not the start
             // of the whole declaration span.
             let (name_start, name_end) = class_info.name_location.unwrap_or((
@@ -351,6 +352,22 @@ fn report_unused_declarations(
                         .declaring_class
                         .is_some_and(|declaring| class_info.used_traits.contains(&declaring));
                 if !declared_here {
+                    continue;
+                }
+                // A method a framework invokes reflectively (a PHPUnit `test*`
+                // method or `@dataProvider` provider, flagged at populate time)
+                // is never called from analyzed code; don't report it unused.
+                if method_info.dynamically_callable {
+                    continue;
+                }
+                // Psalm's `canReportIssues`: a method declared outside the
+                // project (a vendor trait's `#[Before]` hook supplied to a test
+                // class, say) is not ours to act on and may be framework-called.
+                if !codebase
+                    .files
+                    .get(&method_info.file_path)
+                    .is_some_and(|file| file.is_in_project_dirs)
+                {
                     continue;
                 }
                 let method_name = interner.lookup(*method_name_id).to_string();

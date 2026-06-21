@@ -411,6 +411,26 @@ fn get_attribute(e: &BytesStart<'_>, name: &str) -> Result<Option<String>, Psalm
     Ok(None)
 }
 
+/// The package names required by the project's `composer.json` (`require` +
+/// `require-dev`), lowercased — the signal compiled-in plugins activate on (a
+/// plugin "just works" once its package is installed). Empty when there is no
+/// readable `composer.json`.
+pub fn composer_required_packages(base_dir: &Path) -> FxHashSet<String> {
+    let mut packages = FxHashSet::default();
+    let Ok(contents) = std::fs::read_to_string(base_dir.join("composer.json")) else {
+        return packages;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&contents) else {
+        return packages;
+    };
+    for section in ["require", "require-dev"] {
+        if let Some(map) = json.get(section).and_then(|value| value.as_object()) {
+            packages.extend(map.keys().map(|name| name.to_ascii_lowercase()));
+        }
+    }
+    packages
+}
+
 /// Psalm's `Config::getPHPVersionFromComposerJson`: read `require.php`
 /// from composer.json in the base directory and pick the lowest
 /// major.minor PHP release that satisfies the constraint.
@@ -513,6 +533,17 @@ pub fn load_psalm_config<P: AsRef<Path>>(path: P) -> Result<Config, PsalmConfigE
         && let Some(version) = php_version_from_composer_json(config_dir)
     {
         config.php_version = version;
+    }
+
+    // Activate the compiled-in plugins that apply to this project, based on its
+    // declared Composer dependencies (and any psalm.xml `<pluginClass>` opt-ins
+    // already folded into `plugin_stubs`). The config dir is the project base.
+    if let Some(config_dir) = config_path.parent() {
+        let composer_packages = composer_required_packages(config_dir);
+        config.plugins = crate::plugin::activate_plugins(&crate::plugin::PluginActivationContext {
+            composer_packages: &composer_packages,
+            plugin_stubs: &config.plugin_stubs,
+        });
     }
 
     if let Some(error_baseline) = config.error_baseline.clone() {

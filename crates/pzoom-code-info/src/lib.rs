@@ -5,6 +5,7 @@
 
 pub mod algebra;
 pub mod assertion;
+pub mod attribute_info;
 pub mod class_constant_info;
 pub mod class_like_info;
 pub mod class_type_alias;
@@ -28,6 +29,7 @@ pub mod var_name;
 
 pub use algebra::{AssertionSet, Clause, ClauseKey};
 pub use assertion::Assertion;
+pub use attribute_info::AttributeMap;
 pub use class_like_info::ClassLikeInfo;
 pub use class_type_alias::ClassTypeAlias;
 pub use code_location::CodeLocation;

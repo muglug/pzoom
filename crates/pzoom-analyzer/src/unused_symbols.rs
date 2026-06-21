@@ -112,6 +112,7 @@ pub fn find_unused_definitions(
         .iter()
         .filter(|(_, member)| *member == StrId::EMPTY)
         .map(|(class, _)| *class)
+        .chain(codebase.plugin_referenced_classes.iter().copied())
         .collect();
     let mut referenced_class_members: FxHashSet<(StrId, StrId)> = referenced
         .iter()

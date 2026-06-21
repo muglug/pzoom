@@ -17,6 +17,14 @@ pub struct CodebaseInfo {
     /// All classes, interfaces, traits, and enums.
     pub classlike_infos: FxHashMap<StrId, ClassLikeInfo>,
 
+    /// Classes a plugin's post-populate hook recorded as referenced from outside
+    /// the analyzed code — e.g. the PHPUnit plugin marks the class behind a
+    /// cross-class `@dataProvider Other::provide`. The unused-definition pass
+    /// treats them as referenced (so they aren't reported `UnusedClass`) while
+    /// still checking their members, mirroring a real classlike reference.
+    #[serde(default)]
+    pub plugin_referenced_classes: FxHashSet<StrId>,
+
     /// All top-level functions.
     pub functionlike_infos: FxHashMap<StrId, FunctionLikeInfo>,
 

@@ -29,10 +29,12 @@ use std::sync::Arc;
 use pzoom_code_info::class_like_info::ClassLikeInfo;
 use pzoom_code_info::functionlike_info::FunctionLikeInfo;
 use pzoom_code_info::issue::{Issue, IssueKind};
+use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 
 use super::{Plugin, PluginActivationContext};
+use crate::type_comparator::is_contained_by_with_codebase;
 
 /// The PHPUnit base class every test case ultimately extends.
 const TEST_CASE_FQN: &str = "PHPUnit\\Framework\\TestCase";
@@ -124,31 +126,153 @@ fn atomic_is_iterable(codebase: &CodebaseInfo, atomic: &TAtomic) -> bool {
     }
 }
 
+/// The per-call dataset type of a provider — the value type of its iterable
+/// return (`V` of `iterable<K, V>` / `array<K, V>` / `Generator<K, V>`). `None`
+/// when the return isn't a single, shape-determinable iterable, so callers skip
+/// the dataset checks rather than guess.
+fn provider_dataset_type(codebase: &CodebaseInfo, return_type: &TUnion) -> Option<TUnion> {
+    match return_type.get_single()? {
+        TAtomic::TIterable { value_type, .. } => Some((**value_type).clone()),
+        TAtomic::TArray {
+            params: Some(params),
+            known_values,
+            ..
+        } if known_values.is_empty() => Some(params.1.clone()),
+        TAtomic::TNamedObject {
+            name,
+            type_params: Some(type_params),
+            ..
+        } if object_is_iterable(codebase, *name) => type_params.get(1).cloned(),
+        _ => None,
+    }
+}
+
+/// Port of psalm-plugin-phpunit's `$checkParam`: match a provider's `dataset`
+/// (one row of arguments) positionally against the test method `consumer`'s
+/// parameters, emitting `TooFewArguments`/`InvalidArgument` on a definite
+/// mismatch. Conservative: only a single, integer-keyed (positional) array
+/// dataset is reasoned about, `mixed` elements are accepted, and `TooFewArguments`
+/// fires only for a sealed (fixed-length) dataset — so a loosely-typed provider
+/// is never falsely flagged.
+fn check_dataset_against_params(
+    codebase: &CodebaseInfo,
+    interner: &Interner,
+    consumer: &FunctionLikeInfo,
+    dataset: &TUnion,
+) -> Vec<Issue> {
+    let mut issues = Vec::new();
+    let Some(TAtomic::TArray {
+        known_values,
+        params,
+        is_sealed,
+        ..
+    }) = dataset.get_single()
+    else {
+        return issues;
+    };
+    // Only positional datasets; a named-argument dataset (string keys) is skipped.
+    if known_values
+        .keys()
+        .any(|key| !matches!(key, ArrayKey::Int(_)))
+    {
+        return issues;
+    }
+
+    let span = consumer
+        .name_location
+        .unwrap_or((consumer.start_offset, consumer.start_offset + 1));
+    for (index, param) in consumer.params.iter().enumerate() {
+        // A variadic parameter soaks up the remaining datasets of any length.
+        if param.is_variadic {
+            break;
+        }
+        let param_name = interner.lookup(param.name);
+        if let Some((_, element)) = known_values.get(&ArrayKey::Int(index as i64)) {
+            let Some(param_type) = param.get_type() else {
+                continue;
+            };
+            if !element.is_mixed() && !is_contained_by_with_codebase(element, param_type, codebase)
+            {
+                issues.push(issue_at(
+                    codebase,
+                    IssueKind::InvalidArgument,
+                    format!(
+                        "Data provider supplies {} for ${} (#{}), which expects {}",
+                        element.get_id(Some(interner)),
+                        param_name,
+                        index + 1,
+                        param_type.get_id(Some(interner)),
+                    ),
+                    consumer.file_path,
+                    span,
+                ));
+            }
+        } else if let Some(fallback) = params {
+            let Some(param_type) = param.get_type() else {
+                continue;
+            };
+            if !fallback.1.is_mixed()
+                && !is_contained_by_with_codebase(&fallback.1, param_type, codebase)
+            {
+                issues.push(issue_at(
+                    codebase,
+                    IssueKind::InvalidArgument,
+                    format!(
+                        "Data provider supplies {} for ${} (#{}), which expects {}",
+                        fallback.1.get_id(Some(interner)),
+                        param_name,
+                        index + 1,
+                        param_type.get_id(Some(interner)),
+                    ),
+                    consumer.file_path,
+                    span,
+                ));
+            }
+        } else if *is_sealed && !param.is_optional {
+            issues.push(issue_at(
+                codebase,
+                IssueKind::TooFewArguments,
+                format!(
+                    "Data provider supplies no value for required parameter ${} (#{})",
+                    param_name,
+                    index + 1
+                ),
+                consumer.file_path,
+                span,
+            ));
+        }
+    }
+    issues
+}
+
 /// Resolve and validate one `@dataProvider` reference of the test method
 /// `consumer` (on `consumer_class`). Returns the provider `(class, method)` to
-/// mark used (when it exists) and any diagnostic. A reference that doesn't
-/// resolve to an existing method is reported missing only when unambiguous — a
-/// bare name, or a `Class::name` whose class resolves — so a class name we can't
-/// resolve here never yields a false `UndefinedMethod`.
+/// mark used (when it exists) and any diagnostics: the provider must exist
+/// (`UndefinedMethod`), return an iterable (`InvalidReturnType`), and supply
+/// datasets matching the test method's parameters
+/// (`TooFewArguments`/`InvalidArgument`). A reference that doesn't resolve to an
+/// existing method is reported missing only when unambiguous — a bare name, or a
+/// `Class::name` whose class resolves — so a class name we can't resolve here
+/// never yields a false `UndefinedMethod`.
 fn check_data_provider(
     codebase: &CodebaseInfo,
     interner: &Interner,
     consumer_class: StrId,
     consumer: &FunctionLikeInfo,
     reference: &str,
-) -> (Option<(StrId, StrId)>, Option<Issue>) {
+) -> (Option<(StrId, StrId)>, Vec<Issue>) {
     let reference = reference.trim().trim_end_matches("()").trim_end();
     let (class_id, method_name) = match reference.rsplit_once("::") {
         Some((class_name, method_name)) => match resolve_class(codebase, interner, class_name) {
             Some(class_id) => (class_id, method_name),
-            None => return (None, None),
+            None => return (None, Vec::new()),
         },
         None => (consumer_class, reference),
     };
 
     let method_id = interner.intern(method_name);
     let Some(class_info) = codebase.get_class(class_id) else {
-        return (None, None);
+        return (None, Vec::new());
     };
 
     let Some(provider) = class_info.methods.get(&method_id) else {
@@ -162,38 +286,42 @@ fn check_data_provider(
         );
         return (
             None,
-            Some(issue_at(
+            vec![issue_at(
                 codebase,
                 IssueKind::UndefinedMethod,
                 message,
                 consumer.file_path,
                 span,
-            )),
+            )],
         );
     };
 
-    let issue = provider.get_return_type().and_then(|return_type| {
-        if return_type_is_iterable(codebase, return_type) {
-            return None;
+    let mut issues = Vec::new();
+    if let Some(return_type) = provider.get_return_type() {
+        if !return_type_is_iterable(codebase, return_type) {
+            let span = provider
+                .return_type_location
+                .or(provider.name_location)
+                .unwrap_or((provider.start_offset, provider.start_offset + 1));
+            issues.push(issue_at(
+                codebase,
+                IssueKind::InvalidReturnType,
+                format!(
+                    "Data provider {}::{} must return iterable<array-key, array>",
+                    interner.lookup(class_id),
+                    method_name
+                ),
+                provider.file_path,
+                span,
+            ));
+        } else if let Some(dataset) = provider_dataset_type(codebase, return_type) {
+            issues.extend(check_dataset_against_params(
+                codebase, interner, consumer, &dataset,
+            ));
         }
-        let span = provider
-            .return_type_location
-            .or(provider.name_location)
-            .unwrap_or((provider.start_offset, provider.start_offset + 1));
-        Some(issue_at(
-            codebase,
-            IssueKind::InvalidReturnType,
-            format!(
-                "Data provider {}::{} must return iterable<array-key, array>",
-                interner.lookup(class_id),
-                method_name
-            ),
-            provider.file_path,
-            span,
-        ))
-    });
+    }
 
-    (Some((class_id, method_id)), issue)
+    (Some((class_id, method_id)), issues)
 }
 
 /// Whether the class declares a PHPUnit per-test initializer. PHPUnit calls
@@ -242,6 +370,7 @@ impl Plugin for PhpUnitPlugin {
         // ValidCodeAnalysisTestTrait::testValidCode points at, per-subclass) — so
         // the unused pass doesn't flag them, and validate each provider.
         let mut methods_to_mark: Vec<(StrId, StrId)> = Vec::new();
+        let mut classes_to_reference: Vec<StrId> = Vec::new();
         let mut issues: Vec<Issue> = Vec::new();
         for &class_id in &test_cases {
             let Some(class_info) = codebase.get_class(class_id) else {
@@ -258,14 +387,18 @@ impl Plugin for PhpUnitPlugin {
                 }
                 methods_to_mark.push((class_id, *method_id));
                 for provider in &method_info.data_providers {
-                    let (provider_to_mark, issue) =
+                    let (provider_to_mark, provider_issues) =
                         check_data_provider(codebase, interner, class_id, method_info, provider);
-                    if let Some(resolved) = provider_to_mark {
-                        methods_to_mark.push(resolved);
+                    if let Some((provider_class, provider_method)) = provider_to_mark {
+                        methods_to_mark.push((provider_class, provider_method));
+                        // A provider on another class is referenced by this test
+                        // (Psalm registers a classlike reference), so it isn't
+                        // `UnusedClass` even when nothing else uses it.
+                        if provider_class != class_id {
+                            classes_to_reference.push(provider_class);
+                        }
                     }
-                    if let Some(issue) = issue {
-                        issues.push(issue);
-                    }
+                    issues.extend(provider_issues);
                 }
             }
         }
@@ -283,6 +416,9 @@ impl Plugin for PhpUnitPlugin {
                 Arc::make_mut(method).dynamically_callable = true;
             }
         }
+        codebase
+            .plugin_referenced_classes
+            .extend(classes_to_reference);
 
         issues
     }

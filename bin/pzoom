@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * Thin launcher for the native `pzoom` binary.
+ *
+ * Composer exposes this script as `vendor/bin/pzoom`. The matching prebuilt
+ * native binary is downloaded next to this file (as `pzoom-native`) by the
+ * Composer plugin during `composer install` / `composer update`. This shim
+ * simply forwards all arguments, stdin/stdout/stderr and the exit code to it.
+ */
+
+$binary = __DIR__ . DIRECTORY_SEPARATOR . 'pzoom-native';
+if (PHP_OS_FAMILY === 'Windows') {
+    $binary .= '.exe';
+}
+
+if (!is_file($binary)) {
+    fwrite(STDERR, "pzoom: native binary not found at {$binary}.\n");
+    fwrite(STDERR, "Run `composer install` (or `composer update`) to fetch it. ");
+    fwrite(STDERR, "If your platform has no prebuilt binary, build from source: https://github.com/muglug/pzoom#building\n");
+    exit(1);
+}
+
+if (!is_executable($binary)) {
+    @chmod($binary, 0755);
+}
+
+$args = array_slice($argv, 1);
+
+// Prefer pcntl_exec: it replaces this PHP process with the native binary, so
+// signals and the exit status are handled by the OS directly.
+if (function_exists('pcntl_exec')) {
+    pcntl_exec($binary, $args);
+    // pcntl_exec only returns on failure.
+}
+
+// Fallback for platforms without ext-pcntl.
+$command = escapeshellarg($binary);
+foreach ($args as $arg) {
+    $command .= ' ' . escapeshellarg($arg);
+}
+
+$descriptors = [0 => STDIN, 1 => STDOUT, 2 => STDERR];
+$process = proc_open($command, $descriptors, $pipes);
+if (!is_resource($process)) {
+    fwrite(STDERR, "pzoom: failed to launch native binary.\n");
+    exit(1);
+}
+
+exit(proc_close($process));

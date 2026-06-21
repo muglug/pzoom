@@ -1,0 +1,103 @@
+name: Release
+
+# Builds prebuilt `pzoom` binaries for the platforms the Composer installer
+# knows how to fetch, and attaches them (plus SHA-256 checksums) to the GitHub
+# Release for the pushed tag. The Composer package downloads these assets during
+# `composer install`, so every published Composer version needs a matching
+# `vX.Y.Z` release with these assets.
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and attach binaries to"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            cross: true
+          - os: macos-14
+            target: aarch64-apple-darwin
+            cross: false
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install aarch64 Linux cross linker
+        if: matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build (release)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release -p pzoom-cli --target ${{ matrix.target }}
+
+      - name: Package binary + checksum
+        run: |
+          out="pzoom-${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/pzoom" "$out"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$out" > "$out.sha256"
+          else
+            shasum -a 256 "$out" > "$out.sha256"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pzoom-${{ matrix.target }}
+          path: |
+            pzoom-${{ matrix.target }}
+            pzoom-${{ matrix.target }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Attach binaries to release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*
+          fail_on_unmatched_files: true

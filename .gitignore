@@ -2,6 +2,13 @@
 /target/
 Cargo.lock
 
+# PHP / Composer
+/vendor/
+# Native binary fetched by the Composer plugin at install time
+/bin/pzoom-native
+/bin/pzoom-native.exe
+/bin/.pzoom-binary-version
+
 # IDE
 .idea/
 .vscode/

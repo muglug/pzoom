@@ -7,6 +7,44 @@ Read the backstory: [From Psalm to Pzoom](https://mattbrown.dev/articles/from-ps
 > [!NOTE]
 > This is not something I ever intend to support. Also, it is vibe-coded with no great care taken as to its overall quality. Caveat emptor.
 
+## Installing with Composer
+
+PHP projects can install pzoom as a dev dependency and version-manage it
+alongside everything else in `composer.json`:
+
+```bash
+composer require --dev muglug/pzoom
+```
+
+There's no Rust toolchain involved on your side. A Composer plugin fetches the
+prebuilt native binary that matches your platform from the matching GitHub
+release during `composer install` / `composer update`, and exposes it at
+`vendor/bin/pzoom`:
+
+```bash
+vendor/bin/pzoom path/to/php/project
+```
+
+Each Composer version maps to a `vX.Y.Z` GitHub release, so pinning a constraint
+(`"muglug/pzoom": "^0.1"`) pins the binary too.
+
+Because the package ships a Composer plugin, Composer will ask you to allow it
+on first install. To allow it non-interactively (e.g. in CI), add it to your
+`composer.json`:
+
+```json
+{
+    "config": {
+        "allow-plugins": {
+            "muglug/pzoom": true
+        }
+    }
+}
+```
+
+Prebuilt binaries are published for Linux (`x86_64`, `aarch64`) and macOS
+(Apple Silicon). On any other platform, build from source as below.
+
 ## Building
 
 Requires a recent stable [Rust toolchain](https://rustup.rs/).

@@ -25,6 +25,16 @@ pub fn reconcile(
     // Get the assertion type if any
     let assertion_type = assertion.get_type();
 
+    // Loose equality (`==`) coerces, so it is reconciled permissively before the
+    // strict intersection path (Psalm's `IsLooselyEqual` branches). When no PHP
+    // coercion can apply it returns `None` and falls through to the strict path,
+    // which reports the impossibility (`4 == 5.0`, `Helloa == Goodbye`, …).
+    if let Assertion::IsLooselyEqual(asserted) = assertion
+        && let Some(loose_result) = reconcile_loosely_equal(asserted, existing_var_type, analyzer)
+    {
+        return loose_result;
+    }
+
     // Handle type assertions with intersection
     if let Some(assertion_atomic) = assertion_type {
         // Check for TMixed with non-null flag
@@ -463,8 +473,10 @@ pub fn reconcile(
             }
             with_docblock_from(TUnion::nothing(), existing_var_type)
         }
-        Assertion::IsEqual(atomic) => {
-            // For equality, the type becomes exactly that literal
+        Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
+            // For equality, the type becomes exactly that literal. (Positive
+            // equality normally resolves in the get_type intersection path
+            // above; this arm is the fallback when no atomic intersection ran.)
             let mut result = TUnion::new(atomic.clone());
             result.from_docblock = existing_var_type.from_docblock;
             result
@@ -663,6 +675,167 @@ fn with_docblock_from(mut new_var_type: TUnion, existing_var_type: &TUnion) -> T
     // stale bits from before the narrowing would misreport issue kinds.
     new_var_type.sync_docblock_bits_from_union_flag();
     new_var_type
+}
+
+/// Psalm's loose-equality (`==`) reconciliation (`IsLooselyEqual`). Unlike strict
+/// `===`, PHP coercion makes `==` permissive: a wide scalar holder
+/// (`mixed`/`scalar`/`numeric`/`array-key`) is kept, a string compared with a
+/// number narrows to `numeric-string`, a non-literal numeric/string holder is
+/// kept (it *could* coerce-match), and literal operands match by PHP coercion
+/// (`5.0 == 5`, `"5" == 5`). Returns `None` when no coercion can apply, so the
+/// caller falls through to the strict path which reports the impossibility
+/// (`4 == 5.0`, `Goodbye == Helloa`, `true == 5`).
+fn reconcile_loosely_equal(
+    asserted: &TAtomic,
+    existing_var_type: &TUnion,
+    analyzer: &StatementsAnalyzer<'_>,
+) -> Option<TUnion> {
+    // `mixed == x` keeps mixed (Psalm short-circuits on hasMixed under loose).
+    if existing_var_type.is_mixed() {
+        return Some(existing_var_type.clone());
+    }
+
+    // A lone wide scalar holder is preserved rather than narrowed to the value
+    // (Psalm's getCompatible*Type loose branch returns the existing type).
+    if existing_var_type.types.len() == 1
+        && matches!(
+            existing_var_type.types[0],
+            TAtomic::TScalar
+                | TAtomic::TNonEmptyScalar
+                | TAtomic::TNumeric
+                | TAtomic::TArrayKey
+        )
+    {
+        return Some(existing_var_type.clone());
+    }
+
+    // Compatible atomics narrow exactly like strict `===`.
+    if let Some(result) =
+        assertion_reconciler::intersect_union_with_atomic(existing_var_type, asserted, analyzer)
+    {
+        return Some(with_docblock_from(result, existing_var_type));
+    }
+
+    // No strict overlap. Loose coercion only relates scalar values.
+    let asserted_is_int = matches!(
+        asserted,
+        TAtomic::TInt | TAtomic::TIntRange { .. } | TAtomic::TLiteralInt { .. }
+    );
+    let asserted_is_float = matches!(
+        asserted,
+        TAtomic::TFloat | TAtomic::TLiteralFloat { .. }
+    );
+    if !(asserted_is_int || asserted_is_float || is_loose_string_atomic(asserted)) {
+        // Non-scalar asserted (object/array/…): loose behaves like strict.
+        return None;
+    }
+
+    // `null == <falsy>` is possible (`null == 0`/`""`/`false`); to avoid a false
+    // impossibility we keep a nullable type rather than reasoning per-value.
+    if existing_var_type.types.iter().any(|a| matches!(a, TAtomic::TNull)) {
+        return Some(existing_var_type.clone());
+    }
+
+    // An object with `__toString` is loosely equal to a string, so a string
+    // comparison against an object type is not an impossibility (Psalm allows
+    // `$obj == $str`). Kept conservatively for any object type.
+    if is_loose_string_atomic(asserted)
+        && existing_var_type
+            .types
+            .iter()
+            .any(|a| matches!(a, TAtomic::TNamedObject { .. } | TAtomic::TObject))
+    {
+        return Some(existing_var_type.clone());
+    }
+
+    // `$s == $i` (`$s: string`, `$i: int`) narrows the string to `numeric-string`
+    // (Psalm's SimpleAssertionReconciler loose int/float branch).
+    let asserted_is_nonliteral_number = matches!(
+        asserted,
+        TAtomic::TInt | TAtomic::TIntRange { .. } | TAtomic::TFloat
+    );
+    if asserted_is_nonliteral_number && existing_var_type.types.iter().any(is_loose_string_atomic) {
+        return Some(TUnion::new(TAtomic::TNumericString));
+    }
+
+    // A non-literal numeric/string holder could coerce-match — keep it (Psalm's
+    // "accept non-literal type that could match on loose equality" fallback).
+    if existing_var_type.types.iter().any(is_nonliteral_numeric_or_string) {
+        return Some(existing_var_type.clone());
+    }
+
+    // Literal operands: keep those that are loosely equal by PHP coercion.
+    let kept: Vec<TAtomic> = existing_var_type
+        .types
+        .iter()
+        .filter(|atomic| loose_literal_match(atomic, asserted))
+        .cloned()
+        .collect();
+    if !kept.is_empty() {
+        return Some(with_docblock_from(TUnion::from_types(kept), existing_var_type));
+    }
+
+    // Nothing can be loosely equal — fall through to the strict impossibility.
+    None
+}
+
+/// String-family atomics that can coerce to/from a number under loose `==`.
+fn is_loose_string_atomic(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TString
+            | TAtomic::TLiteralString { .. }
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+    )
+}
+
+/// A non-literal numeric or string atomic — one that *could* coerce-match a
+/// scalar value under loose `==`, so Psalm keeps it rather than ruling it out.
+fn is_nonliteral_numeric_or_string(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TInt
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TNumeric
+            | TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+    )
+}
+
+/// The numeric value of a literal scalar for loose comparison (`5.0`/`5`/`"5"`
+/// all read as `5.0`); `None` for a non-numeric literal string.
+fn loose_numeric_value(atomic: &TAtomic) -> Option<f64> {
+    match atomic {
+        TAtomic::TLiteralInt { value } => Some(*value as f64),
+        TAtomic::TLiteralFloat { value } => Some(*value),
+        TAtomic::TLiteralString { value } => value.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+/// Whether two literal atomics are loosely equal (`==`) by PHP coercion.
+fn loose_literal_match(existing: &TAtomic, asserted: &TAtomic) -> bool {
+    match (loose_numeric_value(existing), loose_numeric_value(asserted)) {
+        (Some(a), Some(b)) => a == b,
+        _ => match (existing, asserted) {
+            (
+                TAtomic::TLiteralString { value: e },
+                TAtomic::TLiteralString { value: a },
+            ) => e == a,
+            _ => false,
+        },
+    }
 }
 
 fn finalize_reconciliation(

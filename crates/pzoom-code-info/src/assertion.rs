@@ -39,10 +39,23 @@ pub enum Assertion {
     NonEmpty,
 
     /// Variable is equal to a specific value (e.g., `$x === 5`).
+    /// Mirrors Psalm's `IsIdentical` (strict `===`).
     IsEqual(TAtomic),
 
     /// Variable is not equal to a specific value (e.g., `$x !== 5`).
+    /// Mirrors Psalm's `IsNotIdentical` (strict `!==`).
     IsNotEqual(TAtomic),
+
+    /// Variable is loosely equal to a specific value (e.g., `$x == 5`).
+    /// Mirrors Psalm's `IsLooselyEqual` (loose `==`): reconciles like
+    /// [`Assertion::IsEqual`] but, against a non-literal numeric/string holder,
+    /// PHP coercion keeps the existing type (or narrows `string` to
+    /// `numeric-string`) instead of producing an impossibility.
+    IsLooselyEqual(TAtomic),
+
+    /// Variable is not loosely equal to a specific value (e.g., `$x != 5`).
+    /// Mirrors Psalm's `IsNotLooselyEqual` (loose `!=`).
+    IsNotLooselyEqual(TAtomic),
 
     /// Variable is set via equality check in isset context.
     IsEqualIsset,
@@ -134,6 +147,8 @@ impl Assertion {
             Assertion::IsNotType(atomic) => format!("!{}", atomic.get_id(interner)),
             Assertion::IsEqual(atomic) => format!("={}", atomic.get_id(interner)),
             Assertion::IsNotEqual(atomic) => format!("!={}", atomic.get_id(interner)),
+            Assertion::IsLooselyEqual(atomic) => format!("~{}", atomic.get_id(interner)),
+            Assertion::IsNotLooselyEqual(atomic) => format!("!~{}", atomic.get_id(interner)),
             Assertion::IsEqualIsset => "=isset".to_string(),
             Assertion::IsIsset => "isset".to_string(),
             Assertion::IsNotIsset => "!isset".to_string(),
@@ -184,6 +199,7 @@ impl Assertion {
             Assertion::Falsy
                 | Assertion::IsNotType(_)
                 | Assertion::IsNotEqual(_)
+                | Assertion::IsNotLooselyEqual(_)
                 | Assertion::IsNotIsset
                 | Assertion::NotInArray(_)
                 | Assertion::ArrayKeyDoesNotExist
@@ -214,6 +230,7 @@ impl Assertion {
                 | Assertion::HasIntOrStringArrayAccess
                 | Assertion::HasStringArrayAccess
                 | Assertion::IsEqual(_)
+                | Assertion::IsLooselyEqual(_)
         )
     }
 
@@ -227,6 +244,8 @@ impl Assertion {
                 | Assertion::IsEqualIsset
                 | Assertion::IsEqual(_)
                 | Assertion::IsNotEqual(_)
+                | Assertion::IsLooselyEqual(_)
+                | Assertion::IsNotLooselyEqual(_)
         )
     }
 
@@ -235,6 +254,8 @@ impl Assertion {
         match self {
             Assertion::IsEqual(atomic)
             | Assertion::IsNotEqual(atomic)
+            | Assertion::IsLooselyEqual(atomic)
+            | Assertion::IsNotLooselyEqual(atomic)
             | Assertion::IsType(atomic)
             | Assertion::IsNotType(atomic) => {
                 matches!(
@@ -251,6 +272,8 @@ impl Assertion {
         match self {
             Assertion::IsEqual(atomic)
             | Assertion::IsNotEqual(atomic)
+            | Assertion::IsLooselyEqual(atomic)
+            | Assertion::IsNotLooselyEqual(atomic)
             | Assertion::IsType(atomic)
             | Assertion::IsNotType(atomic) => Some(atomic),
             _ => None,
@@ -279,6 +302,14 @@ impl Assertion {
             },
             Assertion::IsNotEqual(atomic) => match other {
                 Assertion::IsEqual(other_atomic) => other_atomic == atomic,
+                _ => false,
+            },
+            Assertion::IsLooselyEqual(atomic) => match other {
+                Assertion::IsNotLooselyEqual(other_atomic) => other_atomic == atomic,
+                _ => false,
+            },
+            Assertion::IsNotLooselyEqual(atomic) => match other {
+                Assertion::IsLooselyEqual(other_atomic) => other_atomic == atomic,
                 _ => false,
             },
             Assertion::IsEqualIsset => false,
@@ -367,6 +398,8 @@ impl Assertion {
             Assertion::NonEmpty => Assertion::Falsy,
             Assertion::IsEqual(atomic) => Assertion::IsNotEqual(atomic.clone()),
             Assertion::IsNotEqual(atomic) => Assertion::IsEqual(atomic.clone()),
+            Assertion::IsLooselyEqual(atomic) => Assertion::IsNotLooselyEqual(atomic.clone()),
+            Assertion::IsNotLooselyEqual(atomic) => Assertion::IsLooselyEqual(atomic.clone()),
             Assertion::IsIsset => Assertion::IsNotIsset,
             Assertion::IsNotIsset => Assertion::IsIsset,
             Assertion::NonEmptyCountable(negatable) => {

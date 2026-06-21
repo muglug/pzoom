@@ -54,7 +54,7 @@ pub fn reconcile(
         // The comparison uses the PRE-reconciliation type — the narrowed
         // result trivially excludes the asserted value (`string − "" ⇒
         // non-empty-string` must not read as redundant).
-        if let Assertion::IsNotEqual(atomic) = assertion {
+        if let Assertion::IsNotEqual(atomic) | Assertion::IsNotLooselyEqual(atomic) = assertion {
             let assertion_union = TUnion::new(atomic.clone());
             if !crate::type_comparator::union_type_comparator::can_expression_types_be_identical(
                 analyzer.codebase,
@@ -88,7 +88,9 @@ pub fn reconcile(
             && !existing_var_type.possibly_undefined_from_try
             && !matches!(
                 assertion,
-                Assertion::IsNotType(TAtomic::TNull) | Assertion::IsNotEqual(TAtomic::TNull)
+                Assertion::IsNotType(TAtomic::TNull)
+                    | Assertion::IsNotEqual(TAtomic::TNull)
+                    | Assertion::IsNotLooselyEqual(TAtomic::TNull)
             )
             && result.types == existing_var_type.types
             && super::should_emit_redundant_issue_for_unchanged_assertion(
@@ -240,7 +242,9 @@ fn reconcile_inner(
 
     match assertion {
         Assertion::IsNotType(atomic) => reconcile_not_type(existing_var_type, atomic, analyzer),
-        Assertion::IsNotEqual(atomic) => subtract_literal(existing_var_type, atomic, analyzer),
+        Assertion::IsNotEqual(atomic) | Assertion::IsNotLooselyEqual(atomic) => {
+            subtract_literal(existing_var_type, atomic, analyzer)
+        }
         Assertion::NotInArray(array_type) => {
             reconcile_not_in_array(existing_var_type, array_type, analyzer)
         }

@@ -235,14 +235,34 @@ impl Clause {
 
             for (_, assertion) in possibility {
                 match assertion {
-                    Assertion::IsEqual(atomic) | Assertion::IsNotEqual(atomic) => {
-                        // Literal equalities negate cleanly. Named-object
-                        // equalities model Psalm's IsClassEqual/IsClassNotEqual
-                        // (from get_class comparisons), whose negations map to
-                        // each other — so `get_class($a) !== B` lets the else
-                        // branch recover `=B`.
+                    // Psalm's `Clause::calculateNegation` skips (wedges) any
+                    // equality assertion whose atomic is not a literal
+                    // int/float/string / class-const / enum-case. `IsEqual`
+                    // models Psalm's `IsClassEqual`/`IsIdentical`
+                    // (`hasEquality() === true`): a named-object or template
+                    // equality (`get_class($x) === C`, `instanceof self`,
+                    // `get_class($x) === $cs`) therefore WEDGES — "not exactly
+                    // class C" is not a sound narrowing, so the else/negated
+                    // branch must derive nothing on the variable.
+                    Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
+                        if atomic.is_literal() || matches!(atomic, crate::TAtomic::TEnumCase { .. })
+                        {
+                            impossibility.push(assertion.get_negation());
+                        }
+                    }
+                    // `IsNotEqual` of a named object models Psalm's
+                    // `IsClassNotEqual` (`hasEquality() === false`), which
+                    // negates cleanly — `get_class($a) !== B` lets the else
+                    // branch recover `= B`. Literal/enum-case inequalities
+                    // (`IsNotIdentical`) also negate. A non-literal,
+                    // non-named-object inequality (e.g. `IsNotIdentical` of a
+                    // template/union) wedges, mirroring `hasEquality()`.
+                    Assertion::IsNotEqual(atomic) | Assertion::IsNotLooselyEqual(atomic) => {
                         if atomic.is_literal()
-                            || matches!(atomic, crate::TAtomic::TNamedObject { .. })
+                            || matches!(
+                                atomic,
+                                crate::TAtomic::TNamedObject { .. } | crate::TAtomic::TEnumCase { .. }
+                            )
                         {
                             impossibility.push(assertion.get_negation());
                         }
@@ -301,9 +321,23 @@ impl Clause {
                             value.get_id(Some(interner))
                         ));
                     }
+                    Assertion::IsLooselyEqual(value) => {
+                        clause_string_parts.push(format!(
+                            "{} is loosely {}",
+                            var_id_str,
+                            value.get_id(Some(interner))
+                        ));
+                    }
                     Assertion::IsNotType(value) | Assertion::IsNotEqual(value) => {
                         clause_string_parts.push(format!(
                             "{} is not {}",
+                            var_id_str,
+                            value.get_id(Some(interner))
+                        ));
+                    }
+                    Assertion::IsNotLooselyEqual(value) => {
+                        clause_string_parts.push(format!(
+                            "{} is not loosely {}",
                             var_id_str,
                             value.get_id(Some(interner))
                         ));

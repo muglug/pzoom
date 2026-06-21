@@ -298,11 +298,11 @@ pub(crate) fn apply_post_call_assertions(
 fn make_assertion_rule(assertion_type: &AssertionType, atomic: TAtomic) -> Assertion {
     match assertion_type {
         AssertionType::IsType(_) => Assertion::IsType(atomic),
-        AssertionType::IsEqual(_) | AssertionType::IsLooselyEqual(_) => Assertion::IsEqual(atomic),
+        AssertionType::IsEqual(_) => Assertion::IsEqual(atomic),
+        AssertionType::IsLooselyEqual(_) => Assertion::IsLooselyEqual(atomic),
         AssertionType::IsNotType(_) => Assertion::IsNotType(atomic),
-        AssertionType::IsNotEqual(_) | AssertionType::IsNotLooselyEqual(_) => {
-            Assertion::IsNotEqual(atomic)
-        }
+        AssertionType::IsNotEqual(_) => Assertion::IsNotEqual(atomic),
+        AssertionType::IsNotLooselyEqual(_) => Assertion::IsNotLooselyEqual(atomic),
         AssertionType::Truthy | AssertionType::NotEmpty => Assertion::Truthy,
         AssertionType::Falsy => Assertion::Falsy,
         AssertionType::NotNull => Assertion::IsNotType(TAtomic::TNull),

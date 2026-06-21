@@ -62,9 +62,26 @@ pub fn extract_var_name_from_content(content: &str) -> Option<&str> {
         return None;
     }
 
+    // A `$` inside a quoted literal (`'$argv'` in `value-of<self::X>|'$argv'
+    // $var`) is part of the type, not the variable name, so quote runs are
+    // skipped — matching the quote tracking in `extract_type_string`.
     let mut depth: u32 = 0;
+    let mut in_quote: Option<char> = None;
+    let mut quote_escape = false;
     for (idx, ch) in trimmed.char_indices() {
+        if let Some(active_quote) = in_quote {
+            if quote_escape {
+                quote_escape = false;
+            } else if ch == '\\' {
+                quote_escape = true;
+            } else if ch == active_quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
         match ch {
+            '\'' | '"' => in_quote = Some(ch),
             '<' | '{' | '(' => depth += 1,
             '>' | '}' | ')' => depth = depth.saturating_sub(1),
             '$' if depth == 0 => {
@@ -574,6 +591,41 @@ fn strip_wrapping_quotes(s: &str) -> Option<String> {
     }
 
     Some(unescaped)
+}
+
+/// When `value-of<…>` / `key-of<…>` wraps an unresolved class-constant
+/// reference (`self::SUPER_GLOBALS`, `Foo::BAR`, `self::PREFIX_*`), emit a
+/// deferred `value-of<Class::CONST>` / `key-of<Class::CONST>` sentinel rather
+/// than collapsing to `mixed`. The constant can't be read here (the parser has
+/// no class context); the declaration collector resolves the sentinel against
+/// the declaring class in `expand_docblock_class_constant_wildcards`, and the
+/// analyzer's TypeExpander handles the `static::` / cross-file cases. This
+/// mirrors Psalm parsing `value-of<self::CONST>` into a `TValueOf` of a
+/// `TClassConstant` and expanding it later. Returns `None` for any other inner
+/// (templates, array/enum literals) so the existing eager resolution applies.
+fn class_constant_deferred_key_value_of(
+    union: &TUnion,
+    is_key_of: bool,
+    interner: &Interner,
+) -> Option<TAtomic> {
+    let TAtomic::TNamedObject {
+        name,
+        type_params: None,
+        ..
+    } = union.get_single()?
+    else {
+        return None;
+    };
+
+    let inner = interner.lookup(*name);
+    if !inner.contains("::") {
+        return None;
+    }
+
+    let utility = if is_key_of { "key-of" } else { "value-of" };
+    Some(TAtomic::named_object(
+        interner.intern(&format!("{utility}<{}>", inner.as_ref())),
+    ))
 }
 
 fn template_param_deferred_key_of(union: &TUnion, is_key_of: bool) -> Option<TAtomic> {
@@ -1167,6 +1219,10 @@ fn generic_tree_to_type(
                 if let Some(template) = template_param_deferred_key_of(param, true) {
                     return TypeResult::Atomic(template);
                 }
+                if let Some(deferred) = class_constant_deferred_key_value_of(param, true, interner)
+                {
+                    return TypeResult::Atomic(deferred);
+                }
                 return TypeResult::Union(resolve_key_of_union_to_union(param));
             }
             return TypeResult::Union(TUnion::array_key());
@@ -1175,6 +1231,10 @@ fn generic_tree_to_type(
             if let Some(param) = params.first() {
                 if let Some(template) = template_param_deferred_key_of(param, false) {
                     return TypeResult::Atomic(template);
+                }
+                if let Some(deferred) = class_constant_deferred_key_value_of(param, false, interner)
+                {
+                    return TypeResult::Atomic(deferred);
                 }
                 return TypeResult::Union(resolve_value_of_union_to_union(param));
             }
@@ -2197,6 +2257,34 @@ mod tests {
         // `int<1, max>`.
         assert!(id.contains("int<1, max>"), "unexpected: {id}");
         assert!(id.contains("int"), "unexpected: {id}");
+    }
+
+    #[test]
+    fn extract_var_name_skips_dollar_inside_quoted_literal() {
+        // A `$` inside a quoted literal (`'$argv'`) is part of the type, not the
+        // variable name — the name is the `$var_id` that follows the type.
+        assert_eq!(
+            extract_var_name_from_content("value-of<self::SUPER_GLOBALS>|'$argv'|'$argc' $var_id"),
+            Some("$var_id"),
+        );
+        assert_eq!(
+            extract_var_name_from_content("'literal'|'$dollar' $id"),
+            Some("$id"),
+        );
+    }
+
+    #[test]
+    fn extract_var_name_plain_types_unaffected() {
+        assert_eq!(extract_var_name_from_content("string $name"), Some("$name"));
+        assert_eq!(
+            extract_var_name_from_content("array<int, string> $x"),
+            Some("$x"),
+        );
+        // A double-quoted literal containing `$` is handled too.
+        assert_eq!(
+            extract_var_name_from_content("\"$quoted\"|int $value"),
+            Some("$value"),
+        );
     }
 
     #[test]

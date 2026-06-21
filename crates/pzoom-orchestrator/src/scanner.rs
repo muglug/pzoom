@@ -430,6 +430,13 @@ impl Scanner {
         for entry in walker.filter_map(|e| e.ok()) {
             let path = entry.path();
 
+            // Never analyze pzoom's own working directory: `.pzoom/` holds
+            // stub-provider output, which is ingested explicitly as stubs (via
+            // `--stubs`), not analyzed as project source.
+            if path.components().any(|c| c.as_os_str() == ".pzoom") {
+                continue;
+            }
+
             // Skip excluded files
             if self.should_exclude(path) {
                 continue;

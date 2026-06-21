@@ -47,38 +47,28 @@ it emits:
 class User extends \Illuminate\Database\Eloquent\Model {}
 ```
 
-## Current boundary: stubs vs. project classes
+## Stub augmentation of project classes
 
-This is where a *stubs-only* system meets its edge, and the example is honest
-about it. pzoom applies a stub's members only where the class is **otherwise
-undefined**. It will not let a stub augment a class the project itself declares:
-`register_class` mirrors Psalm, whose scanner "refuses to stub-override classes
-from analyzed project dirs" — the project declaration wins wholesale.
+pzoom **augments** a project class with the magic members a stub declares: a
+stub adds `@property`/`@method`/`@mixin` to a class without replacing what the
+class itself declares (`register_class` keeps the real declaration as the base
+and folds the stub's magic members in). So the generated `@property` lines above
+apply to your real models.
 
-Eloquent models are project classes, so the generated `@property` lines above
-**do not currently take effect** when the models live in the analyzed code. They
-apply only to models pzoom wouldn't otherwise see (e.g. ones shipped inside a
-dependency). Psalm gets model magic-properties to work on project classes
-through an imperative *property provider* (a hook that answers "does `$user`
-have property `email`?" during analysis), not through a stub — and a
-deliberately stubs-only provider system has no such hook.
+The one requirement is a **magic getter** for pzoom to consult `@property`
+through — pzoom only resolves a magic property on a class that has `__get` (and
+`@method` needs `__call`), mirroring how the members actually exist at runtime.
+Eloquent's base `Model` provides `__get`/`__set`/`__call`, so every model
+qualifies; a plain class would need to declare them (or `@mixin` something that
+does).
 
-So this provider is most valuable as a faithful illustration of the
-boot-and-reflect pipeline, and as a concrete marker of the capability that would
-make it fully effective. Two ways to get there:
+A stub can only *add* magic members — it can't override what the class declares
+itself, and built-in stubs carry no magic members, so a project polyfill of a
+stubbed name is unaffected.
 
-- **Write annotations into the model files** (the approach `laravel-ide-helper`
-  takes with its `--write` mode): then the `@property` lines live on the real
-  class and pzoom honors them today. A provider can't do this (it only returns
-  stubs), but a sibling command could.
-- **Teach pzoom stub *augmentation*** of project classes — letting a stub add
-  pseudo-members (`@property`/`@method`) to a class without replacing it. That's
-  a focused `register_class` change, and would light up model stubs (and facade
-  `@method` stubs, which hit the same gap) across the board.
-
-What *does* work today, unchanged, is any stub that **defines** a symbol the
-analyzed code is otherwise missing — the common case for framework glue that
-only exists at runtime.
+Independently, any stub that **defines** a symbol the analyzed code is otherwise
+missing works too — the common case for framework glue that only exists at
+runtime.
 
 ## Running it
 

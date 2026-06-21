@@ -22,17 +22,12 @@ use ReflectionClass;
  * What it generates: for every model under `app/Models`, a `@property` line per
  * cast (mapped to its PHP type) plus an `@mixin` onto the query builder.
  *
- * IMPORTANT — scope of a stubs-only provider. pzoom applies a stub's members
- * only where the class is *otherwise undefined*; it will not let a stub augment
- * a class that the project itself declares (pzoom mirrors Psalm, whose scanner
- * "refuses to stub-override classes from analyzed project dirs"). Eloquent
- * models are project classes, so these generated `@property` lines take effect
- * only if the models live outside the analyzed dirs (e.g. a shipped package),
- * or once pzoom grows a stub-*augmentation* capability for project classes.
- * Psalm itself adds model magic-properties through an imperative property
- * provider, not a stub — which a deliberately stubs-only system doesn't have.
- * This provider is therefore most useful as a worked example of the
- * boot-and-reflect pipeline; see the README for the current boundary.
+ * pzoom *augments* a project class with the magic members a stub declares, so
+ * these `@property` lines apply to your real models — the stub adds them without
+ * disturbing the model's own code. The one requirement is that the class has a
+ * magic getter for pzoom to consult `@property` through, which Eloquent's base
+ * `Model` supplies (`__get`/`__set`/`__call`). A stub can only *add* magic
+ * members; it can't replace what the class itself declares.
  *
  * Implementations are constructed with no arguments (see {@see StubProvider}).
  */

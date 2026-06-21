@@ -8,7 +8,6 @@ class B2 {
     public function unser(array $properties): void
     {
         foreach (['x', 'y'] as $key => $property_name) {
-            /** @psalm-suppress PossiblyUndefinedIntArrayOffset */
             $this->$property_name = $properties[$key];
         }
     }

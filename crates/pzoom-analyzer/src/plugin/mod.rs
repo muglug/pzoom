@@ -24,8 +24,12 @@ use rustc_hash::FxHashSet;
 
 use pzoom_code_info::CodebaseInfo;
 use pzoom_code_info::class_like_info::ClassLikeInfo;
+use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
+use pzoom_code_info::functionlike_info::FunctionLikeInfo;
 use pzoom_code_info::issue::Issue;
 use pzoom_str::{Interner, StrId};
+
+use crate::function_analysis_data::FunctionAnalysisData;
 
 pub mod phpunit;
 
@@ -86,6 +90,33 @@ pub trait Plugin: Send + Sync + std::fmt::Debug {
         vec![]
     }
 
+    /// Called at the end of analyzing each function-like (free function or
+    /// method), with the per-file [`FunctionAnalysisData`] whose symbol-reference
+    /// graph is later merged codebase-wide. A plugin records extra references it
+    /// alone understands, in the same graph as ordinary references (so the
+    /// unused-definition pass treats their targets as referenced). The PHPUnit
+    /// plugin uses this for a test method's `@dataProvider Other::provide` /
+    /// `#[DataProvider('p')]`: it records a reference from the test method to the
+    /// provider method, which keeps that method — and, for a cross-class
+    /// provider, its class — out of the unused-definition report. Analogous to
+    /// Hakana's `after_functionlike_analysis`.
+    fn after_functionlike_analysis(
+        &self,
+        codebase: &CodebaseInfo,
+        interner: &Interner,
+        function_id: &FunctionLikeIdentifier,
+        function_info: &FunctionLikeInfo,
+        analysis_data: &mut FunctionAnalysisData,
+    ) {
+        let _ = (
+            codebase,
+            interner,
+            function_id,
+            function_info,
+            analysis_data,
+        );
+    }
+
     /// Suppress `MissingConstructor` (and the folded-in
     /// `PropertyNotSetInConstructor`) for a class whose typed properties are
     /// initialized outside a constructor — e.g. a PHPUnit `setUp()`/`@before`
@@ -128,6 +159,28 @@ pub fn run_after_populate(
         issues.extend(plugin.after_populate(codebase, interner));
     }
     issues
+}
+
+/// Run every active plugin's [`Plugin::after_functionlike_analysis`] hook for the
+/// function-like just analyzed, letting them contribute references into its
+/// per-file analysis graph.
+pub fn after_functionlike_analysis(
+    plugins: &[Arc<dyn Plugin>],
+    codebase: &CodebaseInfo,
+    interner: &Interner,
+    function_id: &FunctionLikeIdentifier,
+    function_info: &FunctionLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for plugin in plugins {
+        plugin.after_functionlike_analysis(
+            codebase,
+            interner,
+            function_id,
+            function_info,
+            analysis_data,
+        );
+    }
 }
 
 /// Whether any active plugin treats `class_id` as initializing its properties

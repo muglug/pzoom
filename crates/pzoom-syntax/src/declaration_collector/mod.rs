@@ -6833,8 +6833,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
     /// Collect the PHP attributes on a declaration into the generic
     /// [`pzoom_code_info::AttributeMap`]: keyed by the resolved attribute-class
-    /// name, one argument-list entry per occurrence. The scanner stays
-    /// framework-agnostic — plugins interpret specific attributes.
+    /// name, one argument-list entry per occurrence. Each argument is folded with
+    /// the same const-expression inference used for class-constant / enum-case
+    /// values ([`simple_type_inferer::infer`]); an argument that doesn't fold to a
+    /// constant becomes `mixed`. The scanner stays framework-agnostic — plugins
+    /// interpret specific attributes.
     fn collect_attributes(
         &mut self,
         attribute_lists: &Sequence<'_, AttributeList<'_>>,
@@ -6845,65 +6848,34 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .flat_map(|attribute_list| attribute_list.attributes.iter())
         {
             let name = self.resolve_identifier(&attribute.name);
+            // A `Foo::class` argument folds to the class FQN using the file's
+            // `use` aliases / namespace (so `#[DataProviderExternal(Foo::class,
+            // …)]` names the real class), like every other scanned class-string.
+            let resolve_class = |raw: &str| self.resolve_scanned_class_string(raw);
+            let infer_context = simple_type_inferer::InferClassContext {
+                self_class: None,
+                parent_class: None,
+                class_resolver: Some(&resolve_class),
+                key_overflow_sink: None,
+                enum_case_resolver: None,
+                global_constant_resolver: None,
+            };
             let args = match &attribute.argument_list {
                 Some(argument_list) => argument_list
                     .arguments
                     .iter()
-                    .map(|argument| self.const_value_from_expr(argument.value()))
+                    .map(|argument| {
+                        simple_type_inferer::infer_with_context(argument.value(), &infer_context)
+                            .unwrap_or_else(|| {
+                                pzoom_code_info::TUnion::new(pzoom_code_info::TAtomic::TMixed)
+                            })
+                    })
                     .collect(),
                 None => Vec::new(),
             };
             attributes.entry(name).or_default().push(args);
         }
         attributes
-    }
-
-    /// Fold a constant expression (an attribute argument) into a
-    /// [`pzoom_code_info::ConstValue`], reusing the const-expression inferer.
-    fn const_value_from_expr(&self, expr: &Expression<'_>) -> pzoom_code_info::ConstValue {
-        match simple_type_inferer::infer(expr) {
-            Some(union) => union
-                .get_single()
-                .map(|atomic| self.const_value_from_atomic(atomic))
-                .unwrap_or(pzoom_code_info::ConstValue::Unknown),
-            None => pzoom_code_info::ConstValue::Unknown,
-        }
-    }
-
-    fn const_value_from_atomic(&self, atomic: &TAtomic) -> pzoom_code_info::ConstValue {
-        use pzoom_code_info::{ArrayKey, ConstValue};
-        match atomic {
-            TAtomic::TLiteralInt { value } => ConstValue::Int(*value),
-            TAtomic::TLiteralFloat { value } => ConstValue::Float(*value),
-            TAtomic::TLiteralString { value } => ConstValue::String(value.clone()),
-            TAtomic::TTrue => ConstValue::Bool(true),
-            TAtomic::TFalse => ConstValue::Bool(false),
-            TAtomic::TNull => ConstValue::Null,
-            TAtomic::TLiteralClassString { name } => ConstValue::ClassString(self.interner.intern(name)),
-            TAtomic::TArray { known_values, .. } => {
-                let mut entries: Vec<_> = known_values.iter().collect();
-                entries.sort_by(|(a, _), (b, _)| {
-                    fn rank(key: &ArrayKey) -> (u8, i64, &str) {
-                        match key {
-                            ArrayKey::Int(value) => (0, *value, ""),
-                            ArrayKey::String(value) | ArrayKey::ClassString(value) => (1, 0, value),
-                        }
-                    }
-                    rank(a).cmp(&rank(b))
-                });
-                ConstValue::Array(
-                    entries
-                        .into_iter()
-                        .filter_map(|(_, (_, value))| {
-                            value
-                                .get_single()
-                                .map(|atomic| self.const_value_from_atomic(atomic))
-                        })
-                        .collect(),
-                )
-            }
-            _ => ConstValue::Unknown,
-        }
     }
 
     fn push_docblock_issue(

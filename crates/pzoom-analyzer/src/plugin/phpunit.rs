@@ -5,15 +5,19 @@
 //! can't be expressed as type annotations on PHPUnit's own classes, and so
 //! genuinely need plugin code — are reproduced here, in [`PhpUnitPlugin`]:
 //!   * **Dead-code exemption for test cases** (`TestCaseHandler::afterStatementAnalysis`):
-//!     PHPUnit discovers and runs `TestCase` subclasses, their `test*`/`@test`/
-//!     `#[Test]` methods and their `@dataProvider`/`#[DataProvider]` providers
-//!     reflectively, so nothing in the analyzed code references them.
-//!     [`after_populate`](PhpUnitPlugin::after_populate) flags those
+//!     PHPUnit discovers and runs `TestCase` subclasses and their `test*`/`@test`/
+//!     `#[Test]` methods reflectively, so nothing in the analyzed code references
+//!     them. [`after_populate`](PhpUnitPlugin::after_populate) flags those
 //!     classes/methods `dynamically_callable`, exempting them from the
 //!     unused-definition pass.
+//!   * **`@dataProvider` references**: a provider is also called reflectively;
+//!     [`after_functionlike_analysis`](PhpUnitPlugin::after_functionlike_analysis)
+//!     records a reference from the test method to its provider method, which
+//!     keeps the provider (and a cross-class provider's class) out of the
+//!     unused-definition report.
 //!   * **`@dataProvider` validation**: [`after_populate`](PhpUnitPlugin::after_populate)
-//!     also checks each provider exists, returns an iterable, and supplies
-//!     datasets matching the test method's parameters.
+//!     checks each provider exists, returns an iterable, and supplies datasets
+//!     matching the test method's parameters.
 //!   * **`setUp()` initializes properties** (`TestCaseHandler::afterCodebasePopulated`):
 //!     a `TestCase` subclass with a `setUp()` initializer doesn't need a
 //!     constructor, so it shouldn't get `MissingConstructor`. See
@@ -32,13 +36,15 @@
 use std::sync::Arc;
 
 use pzoom_code_info::class_like_info::ClassLikeInfo;
+use pzoom_code_info::data_flow::node::FunctionLikeIdentifier;
 use pzoom_code_info::functionlike_info::FunctionLikeInfo;
 use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::t_atomic::ArrayKey;
-use pzoom_code_info::{CodebaseInfo, ConstValue, TAtomic, TUnion};
+use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 
 use super::{Plugin, PluginActivationContext};
+use crate::function_analysis_data::FunctionAnalysisData;
 use crate::type_comparator::is_contained_by_with_codebase;
 
 /// The PHPUnit base class every test case ultimately extends.
@@ -91,8 +97,8 @@ fn data_provider_refs(interner: &Interner, method: &FunctionLikeInfo) -> Vec<Str
         .get(&interner.intern(DATA_PROVIDER_ATTRIBUTE_FQN))
     {
         for args in occurrences {
-            if let Some(ConstValue::String(name)) = args.first() {
-                refs.push(name.clone());
+            if let Some(name) = args.first().and_then(literal_string) {
+                refs.push(name);
             }
         }
     }
@@ -102,15 +108,34 @@ fn data_provider_refs(interner: &Interner, method: &FunctionLikeInfo) -> Vec<Str
         .get(&interner.intern(DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN))
     {
         for args in occurrences {
-            if let (Some(ConstValue::ClassString(class)), Some(ConstValue::String(name))) =
-                (args.first(), args.get(1))
-            {
-                refs.push(format!("{}::{}", interner.lookup(*class), name));
+            if let (Some(class), Some(name)) = (
+                args.first().and_then(literal_class_string),
+                args.get(1).and_then(literal_string),
+            ) {
+                refs.push(format!("{}::{}", class, name));
             }
         }
     }
 
     refs
+}
+
+/// The string value of a folded attribute argument (`'name'`), if it is a single
+/// literal string. Attribute arguments are stored as the same constant [`TUnion`]
+/// the scanner infers for any const expression.
+fn literal_string(arg: &TUnion) -> Option<String> {
+    match arg.get_single()? {
+        TAtomic::TLiteralString { value } => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// The class name of a folded `Foo::class` attribute argument, if it is one.
+fn literal_class_string(arg: &TUnion) -> Option<String> {
+    match arg.get_single()? {
+        TAtomic::TLiteralClassString { name } => Some(name.clone()),
+        _ => None,
+    }
 }
 
 /// Resolve a class name (as written in a `@dataProvider`, possibly with a
@@ -123,6 +148,33 @@ fn resolve_class(codebase: &CodebaseInfo, interner: &Interner, name: &str) -> Op
     }
     let fq = interner.intern(&format!("\\{}", name));
     codebase.get_class(fq).is_some().then_some(fq)
+}
+
+/// Resolve a `@dataProvider` reference to the provider `(class, method)` — the
+/// named class for `Class::method` (if it exists), else `consumer_class` for a
+/// bare `method` — returning it only when that method exists. The method id is the
+/// `methods`-map key (the original-case interned name), so it can both flag the
+/// method and key a reference. Resolution only — no diagnostics; validation lives
+/// in [`check_data_provider`].
+fn resolve_provider_method(
+    codebase: &CodebaseInfo,
+    interner: &Interner,
+    consumer_class: StrId,
+    reference: &str,
+) -> Option<(StrId, StrId)> {
+    let reference = reference.trim().trim_end_matches("()").trim_end();
+    let (class_id, method_name) = match reference.rsplit_once("::") {
+        Some((class_name, method_name)) => {
+            (resolve_class(codebase, interner, class_name)?, method_name)
+        }
+        None => (consumer_class, reference),
+    };
+    let method_id = interner.intern(method_name);
+    codebase
+        .get_class(class_id)?
+        .methods
+        .contains_key(&method_id)
+        .then_some((class_id, method_id))
 }
 
 /// Build an issue at `span` in `file_path`, resolving the 1-based line/column.
@@ -310,34 +362,34 @@ fn check_dataset_against_params(
     issues
 }
 
-/// Resolve and validate one `@dataProvider` reference of the test method
-/// `consumer` (on `consumer_class`). Returns the provider `(class, method)` to
-/// mark used (when it exists) and any diagnostics: the provider must exist
-/// (`UndefinedMethod`), return an iterable (`InvalidReturnType`), and supply
-/// datasets matching the test method's parameters
-/// (`TooFewArguments`/`InvalidArgument`). A reference that doesn't resolve to an
-/// existing method is reported missing only when unambiguous — a bare name, or a
-/// `Class::name` whose class resolves — so a class name we can't resolve here
-/// never yields a false `UndefinedMethod`.
+/// Validate one `@dataProvider` reference of the test method `consumer` (on
+/// `consumer_class`): the provider must exist (`UndefinedMethod`), return an
+/// iterable (`InvalidReturnType`), and supply datasets matching the test method's
+/// parameters (`TooFewArguments`/`InvalidArgument`). A reference that doesn't
+/// resolve to an existing method is reported missing only when unambiguous — a
+/// bare name, or a `Class::name` whose class resolves — so a class name we can't
+/// resolve here never yields a false `UndefinedMethod`. The reference a provider
+/// creates is recorded separately, in
+/// [`PhpUnitPlugin::after_functionlike_analysis`].
 fn check_data_provider(
     codebase: &CodebaseInfo,
     interner: &Interner,
     consumer_class: StrId,
     consumer: &FunctionLikeInfo,
     reference: &str,
-) -> (Option<(StrId, StrId)>, Vec<Issue>) {
+) -> Vec<Issue> {
     let reference = reference.trim().trim_end_matches("()").trim_end();
     let (class_id, method_name) = match reference.rsplit_once("::") {
         Some((class_name, method_name)) => match resolve_class(codebase, interner, class_name) {
             Some(class_id) => (class_id, method_name),
-            None => return (None, Vec::new()),
+            None => return Vec::new(),
         },
         None => (consumer_class, reference),
     };
 
     let method_id = interner.intern(method_name);
     let Some(class_info) = codebase.get_class(class_id) else {
-        return (None, Vec::new());
+        return Vec::new();
     };
 
     let Some(provider) = class_info.methods.get(&method_id) else {
@@ -349,16 +401,13 @@ fn check_data_provider(
             interner.lookup(class_id),
             method_name
         );
-        return (
-            None,
-            vec![issue_at(
-                codebase,
-                IssueKind::UndefinedMethod,
-                message,
-                consumer.file_path,
-                span,
-            )],
-        );
+        return vec![issue_at(
+            codebase,
+            IssueKind::UndefinedMethod,
+            message,
+            consumer.file_path,
+            span,
+        )];
     };
 
     let mut issues = Vec::new();
@@ -386,7 +435,7 @@ fn check_data_provider(
         }
     }
 
-    (Some((class_id, method_id)), issues)
+    issues
 }
 
 /// Whether the class declares a PHPUnit per-test initializer. PHPUnit calls
@@ -430,12 +479,14 @@ impl Plugin for PhpUnitPlugin {
             .collect();
 
         // Read-only pass: collect the methods PHPUnit drives reflectively — the
-        // `test*`/`@test` methods, and the `@dataProvider` providers they name
-        // (which a trait-supplied test method like
-        // ValidCodeAnalysisTestTrait::testValidCode points at, per-subclass) — so
-        // the unused pass doesn't flag them, and validate each provider.
+        // `test*`/`@test` methods, and the provider methods their `@dataProvider`s
+        // name — so the unused pass exempts them entirely (a provider's return
+        // value is consumed reflectively, so it must also be spared
+        // `PossiblyUnusedReturnValue`, which a plain reference wouldn't do). Each
+        // provider is validated here; the cross-class *reference* a provider
+        // creates (keeping its class alive) is recorded separately, in
+        // [`PhpUnitPlugin::after_functionlike_analysis`] during analysis.
         let mut methods_to_mark: Vec<(StrId, StrId)> = Vec::new();
-        let mut classes_to_reference: Vec<StrId> = Vec::new();
         let mut issues: Vec<Issue> = Vec::new();
         for &class_id in &test_cases {
             let Some(class_info) = codebase.get_class(class_id) else {
@@ -449,18 +500,18 @@ impl Plugin for PhpUnitPlugin {
                 }
                 methods_to_mark.push((class_id, *method_id));
                 for provider in data_provider_refs(interner, method_info) {
-                    let (provider_to_mark, provider_issues) =
-                        check_data_provider(codebase, interner, class_id, method_info, &provider);
-                    if let Some((provider_class, provider_method)) = provider_to_mark {
-                        methods_to_mark.push((provider_class, provider_method));
-                        // A provider on another class is referenced by this test
-                        // (Psalm registers a classlike reference), so it isn't
-                        // `UnusedClass` even when nothing else uses it.
-                        if provider_class != class_id {
-                            classes_to_reference.push(provider_class);
-                        }
+                    issues.extend(check_data_provider(
+                        codebase,
+                        interner,
+                        class_id,
+                        method_info,
+                        &provider,
+                    ));
+                    if let Some(provider_method) =
+                        resolve_provider_method(codebase, interner, class_id, &provider)
+                    {
+                        methods_to_mark.push(provider_method);
                     }
-                    issues.extend(provider_issues);
                 }
             }
         }
@@ -478,11 +529,42 @@ impl Plugin for PhpUnitPlugin {
                 Arc::make_mut(method).dynamically_callable = true;
             }
         }
-        codebase
-            .plugin_referenced_classes
-            .extend(classes_to_reference);
 
         issues
+    }
+
+    fn after_functionlike_analysis(
+        &self,
+        codebase: &CodebaseInfo,
+        interner: &Interner,
+        function_id: &FunctionLikeIdentifier,
+        function_info: &FunctionLikeInfo,
+        analysis_data: &mut FunctionAnalysisData,
+    ) {
+        // Only a method can be a test method with a data provider.
+        let FunctionLikeIdentifier::Method(class_id, method_id) = function_id else {
+            return;
+        };
+        if !is_test_method(interner, *method_id, function_info) {
+            return;
+        }
+        for reference in data_provider_refs(interner, function_info) {
+            // The test method references its data provider — Psalm records the
+            // same reference. A member→member reference keeps the provider method
+            // alive, and (via the implied class→class reference) a cross-class
+            // provider's class too, so neither is reported unused.
+            if let Some(provider) =
+                resolve_provider_method(codebase, interner, *class_id, &reference)
+            {
+                analysis_data
+                    .symbol_references
+                    .add_class_member_reference_to_class_member(
+                        (*class_id, *method_id),
+                        provider,
+                        false,
+                    );
+            }
+        }
     }
 
     fn initializes_properties_externally(

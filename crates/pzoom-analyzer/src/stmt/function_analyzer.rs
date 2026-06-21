@@ -139,6 +139,19 @@ pub fn analyze(
             None => crate::context::FunctionLikeId::Function(info.name),
         });
         analysis_data.record_signature_references(&func_context.function_context, info);
+
+        // Using a class as an attribute (`#[Foo]`) references it. Methods are
+        // handled in the class analyzer (which sees every method), so only
+        // free-function attributes need recording here.
+        if info.declaring_class.is_none() {
+            for attribute_class in info.attributes.keys() {
+                analysis_data.add_symbol_reference(
+                    &func_context.function_context,
+                    *attribute_class,
+                    false,
+                );
+            }
+        }
     }
     let no_named_arguments = function_info.is_some_and(|info| info.no_named_arguments);
 
@@ -386,6 +399,19 @@ pub fn analyze(
                 line,
                 col,
             ),
+        );
+    }
+
+    if let Some(info) = function_info
+        && let Some(function_id) = func_context.function_context.referencing_id()
+    {
+        crate::plugin::after_functionlike_analysis(
+            &analyzer.config.plugins,
+            analyzer.codebase,
+            analyzer.interner,
+            &function_id,
+            info,
+            analysis_data,
         );
     }
 

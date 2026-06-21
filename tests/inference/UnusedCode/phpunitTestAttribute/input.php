@@ -7,9 +7,6 @@ namespace PHPUnit\Framework {
 }
 
 namespace PHPUnit\Framework\Attributes {
-    /**
-     * @api
-     */
     #[\Attribute]
     final class Test
     {

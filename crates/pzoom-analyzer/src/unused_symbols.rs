@@ -106,13 +106,13 @@ pub fn find_unused_definitions(
 
     // Referenced classes (member == EMPTY) and class members (method / class
     // constant / enum case), straight from the merged graph — body references,
-    // signature references (extends/implements, parameter/return types) and
-    // file-scope references are all recorded into it during analysis.
+    // signature references (extends/implements, parameter/return types),
+    // attribute usage (`#[Foo]`) and file-scope references are all recorded into
+    // it during analysis.
     let referenced_classes: FxHashSet<StrId> = referenced
         .iter()
         .filter(|(_, member)| *member == StrId::EMPTY)
         .map(|(class, _)| *class)
-        .chain(codebase.plugin_referenced_classes.iter().copied())
         .collect();
     let mut referenced_class_members: FxHashSet<(StrId, StrId)> = referenced
         .iter()

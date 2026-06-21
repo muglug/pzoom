@@ -29,7 +29,7 @@ pub mod var_name;
 
 pub use algebra::{AssertionSet, Clause, ClauseKey};
 pub use assertion::Assertion;
-pub use attribute_info::{AttributeMap, ConstValue};
+pub use attribute_info::AttributeMap;
 pub use class_like_info::ClassLikeInfo;
 pub use class_type_alias::ClassTypeAlias;
 pub use code_location::CodeLocation;

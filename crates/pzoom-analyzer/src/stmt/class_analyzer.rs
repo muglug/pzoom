@@ -131,6 +131,27 @@ fn analyze_class(
                 .symbol_references
                 .add_symbol_reference_to_symbol(class_name_id, *trait_name, true);
         }
+
+        // Using a class as an attribute (`#[Foo]`) references it, so it isn't
+        // `UnusedClass` even when nothing else mentions it. The scanner records
+        // every attribute generically (keyed by resolved class name) on the
+        // class and its methods; fold those into the reference graph here.
+        for attribute_class in class_info.attributes.keys() {
+            analysis_data
+                .symbol_references
+                .add_symbol_reference_to_symbol(class_name_id, *attribute_class, false);
+        }
+        for (method_name, method_info) in &class_info.methods {
+            for attribute_class in method_info.attributes.keys() {
+                analysis_data
+                    .symbol_references
+                    .add_class_member_reference_to_symbol(
+                        (class_name_id, *method_name),
+                        *attribute_class,
+                        false,
+                    );
+            }
+        }
     }
 
     // Psalm's ClassAnalyzer: a class named after a reserved word
@@ -7417,6 +7438,19 @@ pub(crate) fn analyze_method(
                 ),
             );
         }
+    }
+
+    if let Some(info) = method_info
+        && let Some(function_id) = method_context.function_context.referencing_id()
+    {
+        crate::plugin::after_functionlike_analysis(
+            &analyzer.config.plugins,
+            analyzer.codebase,
+            analyzer.interner,
+            &function_id,
+            info,
+            analysis_data,
+        );
     }
 
     analysis_data.in_trait_body = outer_in_trait_body;

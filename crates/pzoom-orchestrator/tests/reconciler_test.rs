@@ -278,11 +278,9 @@ const UNSUPPORTED: &[(&str, &str, &str, &str)] = &[
 ///   Substantive reconciler differences (worth fixing for faithfulness):
 ///     - notNullWithMixed: `!= null` on mixed yields non-empty-mixed (drops the
 ///       falsy-but-non-null values `0`/`''`/`false`).
-///     - iterableAndObject / iterableAndNotObject: object vs not-object on
-///       `iterable<K,V>` should split into `Traversable<K,V>` / `array<K,V>`.
-///     - filterKeyedArrayWithIterable / ListOfInts: an `iterable<_, V>` assertion
-///       should refine the existing array/list value type to `V`.
-///     - nonEmptyList: `non-empty-list` intersected with `array` collapses to never.
+///     - iterableAndNotObject: not-object on `iterable<K,V>` should leave `array<K,V>`.
+///     - filterKeyedArrayWithIterable: an `iterable<_, V>` assertion should refine
+///       a keyed-array's value type to `V`.
 ///     - callable + array-shape assertions (callableToCallableArray,
 ///       Small/BigKeyedArrayAndCallable, callableOrArrayToCallableArray):
 ///       pzoom keeps the callable's `list{...}` form instead of the asserted shape.
@@ -296,12 +294,9 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
     ("BigKeyedArrayAndCallable", "list{class-string|object, non-empty-string}"),
     ("callableOrArrayToCallableArray", "array<array-key, mixed>|list{class-string|object, non-empty-string}"),
     ("iterableWithoutParamsToTraversableWithoutParams", "Traversable<mixed, mixed>"),
-    ("iterableAndObject", "never"),
     ("iterableAndNotObject", "iterable<int, string>"),
     ("interfaceAssertionOnClassInterfaceUnion", "SomeClass&SomeInterface|SomeInterface"),
     ("filterKeyedArrayWithIterable", "array{some: mixed}"),
-    ("nonEmptyList", "never"),
-    ("ListOfInts", "list<mixed>"),
 ];
 
 #[test]

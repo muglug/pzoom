@@ -1158,14 +1158,11 @@ fn intersect_atomic_with_atomic_inner(
                     }
                 }
                 // array ∩ list — narrow to a list when the existing key type
-                // allows int keys. NB: a possibly-empty array asserted
-                // `non-empty-list` is intentionally disjoint (pzoom models
-                // `!== []` through a list, and a string-keyed array must not
-                // collapse to int keys there).
+                // allows int keys (a string-only-keyed array can't be a list).
+                // A possibly-empty array asserted `non-empty-list` narrows to
+                // `non-empty-list` (Psalm's filterTypeWithAnotherType); the
+                // string-keyed case is still ruled out by the int-key check.
                 (false, true) => {
-                    if *a_nonempty && !*e_nonempty {
-                        return None;
-                    }
                     if !array_key_union_allows_int(e_key) {
                         return None;
                     }
@@ -1252,7 +1249,10 @@ fn intersect_atomic_with_atomic_inner(
                 is_nonempty: e_nonempty,
                 ..
             },
-            TAtomic::TIterable { .. },
+            TAtomic::TIterable {
+                key_type: a_key_type,
+                value_type: a_value_type,
+            },
         ) => {
             if !e_known.is_empty() {
                 // shape ∩ iterable → the shape.
@@ -1263,18 +1263,25 @@ fn intersect_atomic_with_atomic_inner(
                 .as_deref()
                 .map(|(_, value)| value)
                 .unwrap_or(&never);
+            // The iterable's value type refines the array's (Psalm's
+            // filterTypeWithAnother: `list<mixed>` asserted `iterable<_, int>`
+            // is `list<int>`).
+            let value = intersect_union_with_union_with_codebase(e_value, a_value_type, codebase)
+                .unwrap_or_else(|| pick_more_specific_union(e_value, a_value_type));
             if *e_is_list {
                 if *e_nonempty {
-                    Some(TAtomic::non_empty_list(e_value.clone()))
+                    Some(TAtomic::non_empty_list(value))
                 } else {
-                    Some(TAtomic::list(e_value.clone()))
+                    Some(TAtomic::list(value))
                 }
             } else if *e_nonempty {
                 // No old `(TNonEmptyArray, TIterable)` arm — disjoint.
                 None
             } else {
                 let e_key = e_params.as_deref().map(|(key, _)| key).unwrap_or(&never);
-                Some(TAtomic::array(e_key.clone(), e_value.clone()))
+                let key = intersect_union_with_union_with_codebase(e_key, a_key_type, codebase)
+                    .unwrap_or_else(|| pick_more_specific_union(e_key, a_key_type));
+                Some(TAtomic::array(key, value))
             }
         }
         (
@@ -1309,6 +1316,27 @@ fn intersect_atomic_with_atomic_inner(
             name: *name,
             type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
         is_static: false, remapped_params: false }),
+        // `iterable<K, V>` is `array<K, V> | Traversable<K, V>`, so its object
+        // part is `Traversable<K, V>` (Psalm: `is_object` on an iterable).
+        (
+            TAtomic::TIterable {
+                key_type,
+                value_type,
+            },
+            TAtomic::TObject,
+        )
+        | (
+            TAtomic::TObject,
+            TAtomic::TIterable {
+                key_type,
+                value_type,
+            },
+        ) => Some(TAtomic::TNamedObject {
+            name: StrId::TRAVERSABLE,
+            type_params: Some(vec![(**key_type).clone(), (**value_type).clone()]),
+            is_static: false,
+            remapped_params: false,
+        }),
         (
             named @ TAtomic::TNamedObject {
                 name, type_params, ..

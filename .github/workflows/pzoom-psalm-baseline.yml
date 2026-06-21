@@ -53,6 +53,13 @@ jobs:
         # composer.lock is git-ignored upstream, so this resolves the latest
         # matching versions. Dev deps are required: the analysed code (tests/)
         # references PHPUnit and the psalm.xml.dist plugins.
+        #
+        # COMPOSER_ROOT_VERSION: a detached-HEAD checkout at a bare SHA has no
+        # nearby branch ref, so composer would infer the root vimeo/psalm version
+        # as dev-<sha> and fail the plugins' ^6/^7/dev-master constraints. Pin it
+        # to the 6.x line (the version composer infers locally for this commit).
+        env:
+          COMPOSER_ROOT_VERSION: 6.x-dev
         run: composer install --no-interaction --no-progress --ignore-platform-reqs
 
       - name: Run pzoom against Psalm

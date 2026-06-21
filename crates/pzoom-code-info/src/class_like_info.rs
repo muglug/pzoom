@@ -106,6 +106,13 @@ pub struct ClassLikeInfo {
     /// `None` means this class is not marked with `#[Attribute]`.
     pub attribute_flags: Option<u8>,
 
+    /// PHP attributes on this class, keyed by resolved attribute-class name, with
+    /// each occurrence's evaluated argument list (see [`crate::AttributeMap`]).
+    /// Lets plugins read framework attributes (e.g. PHPUnit's
+    /// `#[CoversClass(...)]`) without the scanner knowing about them.
+    #[serde(default)]
+    pub attributes: crate::AttributeMap,
+
     /// Direct parent class (if any). This is the immediate parent.
     pub parent_class: Option<StrId>,
 

@@ -2229,6 +2229,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         is_abstract,
                         is_final,
                         custom_docblock_tags,
+                        attributes: self.collect_attributes(&method.attribute_lists),
                         visibility,
                         returns_by_ref: method.ampersand.is_some(),
                         is_variadic: uses_variadic_builtin_args || has_variadic_param,
@@ -6827,6 +6828,81 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Collect the PHP attributes on a declaration into the generic
+    /// [`pzoom_code_info::AttributeMap`]: keyed by the resolved attribute-class
+    /// name, one argument-list entry per occurrence. The scanner stays
+    /// framework-agnostic — plugins interpret specific attributes.
+    fn collect_attributes(
+        &mut self,
+        attribute_lists: &Sequence<'_, AttributeList<'_>>,
+    ) -> pzoom_code_info::AttributeMap {
+        let mut attributes = pzoom_code_info::AttributeMap::default();
+        for attribute in attribute_lists
+            .iter()
+            .flat_map(|attribute_list| attribute_list.attributes.iter())
+        {
+            let name = self.resolve_identifier(&attribute.name);
+            let args = match &attribute.argument_list {
+                Some(argument_list) => argument_list
+                    .arguments
+                    .iter()
+                    .map(|argument| self.const_value_from_expr(argument.value()))
+                    .collect(),
+                None => Vec::new(),
+            };
+            attributes.entry(name).or_default().push(args);
+        }
+        attributes
+    }
+
+    /// Fold a constant expression (an attribute argument) into a
+    /// [`pzoom_code_info::ConstValue`], reusing the const-expression inferer.
+    fn const_value_from_expr(&self, expr: &Expression<'_>) -> pzoom_code_info::ConstValue {
+        match simple_type_inferer::infer(expr) {
+            Some(union) => union
+                .get_single()
+                .map(|atomic| self.const_value_from_atomic(atomic))
+                .unwrap_or(pzoom_code_info::ConstValue::Unknown),
+            None => pzoom_code_info::ConstValue::Unknown,
+        }
+    }
+
+    fn const_value_from_atomic(&self, atomic: &TAtomic) -> pzoom_code_info::ConstValue {
+        use pzoom_code_info::{ArrayKey, ConstValue};
+        match atomic {
+            TAtomic::TLiteralInt { value } => ConstValue::Int(*value),
+            TAtomic::TLiteralFloat { value } => ConstValue::Float(*value),
+            TAtomic::TLiteralString { value } => ConstValue::String(value.clone()),
+            TAtomic::TTrue => ConstValue::Bool(true),
+            TAtomic::TFalse => ConstValue::Bool(false),
+            TAtomic::TNull => ConstValue::Null,
+            TAtomic::TLiteralClassString { name } => ConstValue::ClassString(self.interner.intern(name)),
+            TAtomic::TArray { known_values, .. } => {
+                let mut entries: Vec<_> = known_values.iter().collect();
+                entries.sort_by(|(a, _), (b, _)| {
+                    fn rank(key: &ArrayKey) -> (u8, i64, &str) {
+                        match key {
+                            ArrayKey::Int(value) => (0, *value, ""),
+                            ArrayKey::String(value) | ArrayKey::ClassString(value) => (1, 0, value),
+                        }
+                    }
+                    rank(a).cmp(&rank(b))
+                });
+                ConstValue::Array(
+                    entries
+                        .into_iter()
+                        .filter_map(|(_, (_, value))| {
+                            value
+                                .get_single()
+                                .map(|atomic| self.const_value_from_atomic(atomic))
+                        })
+                        .collect(),
+                )
+            }
+            _ => ConstValue::Unknown,
         }
     }
 

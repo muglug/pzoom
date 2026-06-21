@@ -5,18 +5,23 @@
 //! can't be expressed as type annotations on PHPUnit's own classes, and so
 //! genuinely need plugin code — are reproduced here, in [`PhpUnitPlugin`]:
 //!   * **Dead-code exemption for test cases** (`TestCaseHandler::afterStatementAnalysis`):
-//!     PHPUnit discovers and runs `TestCase` subclasses, their `test*`/`@test`
-//!     methods and their `@dataProvider` providers reflectively, so nothing in
-//!     the analyzed code references them. [`after_populate`](PhpUnitPlugin::after_populate)
-//!     flags those classes/methods `dynamically_callable`, exempting them from
-//!     the unused-definition pass.
+//!     PHPUnit discovers and runs `TestCase` subclasses, their `test*`/`@test`/
+//!     `#[Test]` methods and their `@dataProvider`/`#[DataProvider]` providers
+//!     reflectively, so nothing in the analyzed code references them.
+//!     [`after_populate`](PhpUnitPlugin::after_populate) flags those
+//!     classes/methods `dynamically_callable`, exempting them from the
+//!     unused-definition pass.
 //!   * **`@dataProvider` validation**: [`after_populate`](PhpUnitPlugin::after_populate)
-//!     also checks each provider exists and returns an iterable
-//!     (`TestCaseHandler::afterStatementAnalysis`'s provider checks).
+//!     also checks each provider exists, returns an iterable, and supplies
+//!     datasets matching the test method's parameters.
 //!   * **`setUp()` initializes properties** (`TestCaseHandler::afterCodebasePopulated`):
 //!     a `TestCase` subclass with a `setUp()` initializer doesn't need a
 //!     constructor, so it shouldn't get `MissingConstructor`. See
 //!     [`PhpUnitPlugin::initializes_properties_externally`].
+//!
+//! The `@test`/`@dataProvider` docblock tags are read from the scanner's generic
+//! `custom_docblock_tags`, and the `#[Test]`/`#[DataProvider]` attribute forms
+//! from its generic `attributes` store — so no PHPUnit specifics live in the core.
 //!
 //! The plugin's *declarative* behaviors need no code here — pzoom reads PHPUnit's
 //! own docblocks like any other source, so they apply as soon as PHPUnit is
@@ -30,7 +35,7 @@ use pzoom_code_info::class_like_info::ClassLikeInfo;
 use pzoom_code_info::functionlike_info::FunctionLikeInfo;
 use pzoom_code_info::issue::{Issue, IssueKind};
 use pzoom_code_info::t_atomic::ArrayKey;
-use pzoom_code_info::{CodebaseInfo, TAtomic, TUnion};
+use pzoom_code_info::{CodebaseInfo, ConstValue, TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 
 use super::{Plugin, PluginActivationContext};
@@ -38,6 +43,12 @@ use crate::type_comparator::is_contained_by_with_codebase;
 
 /// The PHPUnit base class every test case ultimately extends.
 const TEST_CASE_FQN: &str = "PHPUnit\\Framework\\TestCase";
+
+/// PHPUnit's PHP-attribute forms (PHPUnit 10+) of `@test`/`@dataProvider`.
+const TEST_ATTRIBUTE_FQN: &str = "PHPUnit\\Framework\\Attributes\\Test";
+const DATA_PROVIDER_ATTRIBUTE_FQN: &str = "PHPUnit\\Framework\\Attributes\\DataProvider";
+const DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN: &str =
+    "PHPUnit\\Framework\\Attributes\\DataProviderExternal";
 
 /// Whether `class_info` is `PHPUnit\Framework\TestCase` or descends from it.
 /// Inheritance is flattened by the populator, so the whole ancestor chain
@@ -48,24 +59,58 @@ fn is_test_case(interner: &Interner, class_id: StrId, class_info: &ClassLikeInfo
     class_id == test_case_id || class_info.all_parent_classes.contains(&test_case_id)
 }
 
-/// Whether PHPUnit runs `method` as a test — named `test*`, or carrying the
-/// `@test` annotation (read from the generic docblock tags the scanner records).
+/// Whether PHPUnit runs `method` as a test — named `test*`, or carrying `@test`
+/// (a generic docblock tag) or `#[Test]` (a generic attribute) the scanner
+/// records.
 fn is_test_method(interner: &Interner, method_id: StrId, method: &FunctionLikeInfo) -> bool {
     interner.lookup(method_id).starts_with("test")
         || method
             .custom_docblock_tags
             .iter()
             .any(|(tag, _)| tag == "test")
+        || method
+            .attributes
+            .contains_key(&interner.intern(TEST_ATTRIBUTE_FQN))
 }
 
-/// The provider references of a method's `@dataProvider` tags — the first
-/// whitespace-delimited token of each (`providerName` or `Class::providerName`).
-fn data_provider_refs(method: &FunctionLikeInfo) -> impl Iterator<Item = &str> {
-    method
+/// The provider references of a method — from `@dataProvider` docblock tags
+/// (`providerName` / `Class::providerName`) and the `#[DataProvider('name')]` /
+/// `#[DataProviderExternal(Class::class, 'name')]` attribute forms.
+fn data_provider_refs(interner: &Interner, method: &FunctionLikeInfo) -> Vec<String> {
+    let mut refs: Vec<String> = method
         .custom_docblock_tags
         .iter()
         .filter(|(tag, _)| tag == "dataProvider")
         .filter_map(|(_, content)| content.split_whitespace().next())
+        .map(str::to_string)
+        .collect();
+
+    // `#[DataProvider('providerName')]` — a method on the test class.
+    if let Some(occurrences) = method
+        .attributes
+        .get(&interner.intern(DATA_PROVIDER_ATTRIBUTE_FQN))
+    {
+        for args in occurrences {
+            if let Some(ConstValue::String(name)) = args.first() {
+                refs.push(name.clone());
+            }
+        }
+    }
+    // `#[DataProviderExternal(OtherClass::class, 'providerName')]`.
+    if let Some(occurrences) = method
+        .attributes
+        .get(&interner.intern(DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN))
+    {
+        for args in occurrences {
+            if let (Some(ConstValue::ClassString(class)), Some(ConstValue::String(name))) =
+                (args.first(), args.get(1))
+            {
+                refs.push(format!("{}::{}", interner.lookup(*class), name));
+            }
+        }
+    }
+
+    refs
 }
 
 /// Resolve a class name (as written in a `@dataProvider`, possibly with a
@@ -403,9 +448,9 @@ impl Plugin for PhpUnitPlugin {
                     continue;
                 }
                 methods_to_mark.push((class_id, *method_id));
-                for provider in data_provider_refs(method_info) {
+                for provider in data_provider_refs(interner, method_info) {
                     let (provider_to_mark, provider_issues) =
-                        check_data_provider(codebase, interner, class_id, method_info, provider);
+                        check_data_provider(codebase, interner, class_id, method_info, &provider);
                     if let Some((provider_class, provider_method)) = provider_to_mark {
                         methods_to_mark.push((provider_class, provider_method));
                         // A provider on another class is referenced by this test

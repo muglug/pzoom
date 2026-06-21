@@ -135,6 +135,13 @@ pub struct FunctionLikeInfo {
     #[serde(default)]
     pub custom_docblock_tags: Vec<(String, String)>,
 
+    /// PHP attributes on this function-like, keyed by resolved attribute-class
+    /// name, with each occurrence's evaluated argument list (see
+    /// [`crate::AttributeMap`]) — the attribute analogue of `custom_docblock_tags`,
+    /// so a plugin can read e.g. PHPUnit's `#[Test]`/`#[DataProvider('…')]`.
+    #[serde(default)]
+    pub attributes: crate::AttributeMap,
+
     /// Visibility (for methods).
     pub visibility: Visibility,
 

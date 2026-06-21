@@ -351,6 +351,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             is_mutation_free,
             is_deprecated: is_deprecated
                 || self.has_attribute_named(&func.attribute_lists, "Deprecated"),
+            attributes: self.collect_attributes(&func.attribute_lists),
             deprecation_message,
             is_internal: !internal.is_empty(),
             internal,

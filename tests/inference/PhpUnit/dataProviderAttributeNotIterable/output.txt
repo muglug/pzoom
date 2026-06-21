@@ -1,0 +1,1 @@
+InvalidReturnType - input.php:31:40 - Data provider App\Tests\BarTest::provideData must return iterable<array-key, array>

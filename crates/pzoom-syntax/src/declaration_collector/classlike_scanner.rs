@@ -74,6 +74,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         info.attribute_flags = self.get_attribute_flags(name, &class.attribute_lists);
+        info.attributes = self.collect_attributes(&class.attribute_lists);
 
         // Parse modifiers
         for modifier in &class.modifiers {

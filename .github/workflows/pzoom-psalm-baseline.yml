@@ -1,0 +1,75 @@
+name: Pzoom ⇆ Psalm baseline
+
+# Runs pzoom against the Psalm codebase and fails if pzoom emits any issue that
+# is not already recorded in pzoom_psalm_audit.json. This guards against
+# regressions: a pzoom change that introduces a new false positive (or otherwise
+# changes what pzoom reports on Psalm) turns the build red until the baseline is
+# updated (scripts/pzoom_psalm_baseline.py trim --write) or pzoom is fixed.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Psalm commit the baseline was captured against. Keep in sync with
+  # pzoom_psalm_audit.json -> target.psalm_commit.
+  PSALM_COMMIT: be7afcfe9d7f65301c32d4bc156efa31a6caa39f
+
+jobs:
+  psalm-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build pzoom (release)
+        run: cargo build --release -p pzoom-cli
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: simplexml, dom, mbstring, tokenizer, ctype, json, libxml, curl
+          tools: composer
+
+      - name: Checkout Psalm (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: vimeo/psalm
+          ref: ${{ env.PSALM_COMMIT }}
+          path: psalm
+
+      - name: Install Psalm dependencies
+        working-directory: psalm
+        # composer.lock is git-ignored upstream, so this resolves the latest
+        # matching versions. Dev deps are required: the analysed code (tests/)
+        # references PHPUnit and the psalm.xml.dist plugins.
+        run: composer install --no-interaction --no-progress --ignore-platform-reqs
+
+      - name: Run pzoom against Psalm
+        # pzoom exits 2 when it finds issues; that is expected (the baseline is
+        # non-empty), so don't let it fail the step.
+        run: ./target/release/pzoom psalm > pzoom-output.txt 2> pzoom-stderr.txt || true
+
+      - name: Enforce baseline (fail on new issues)
+        run: python3 scripts/pzoom_psalm_baseline.py check --pzoom-output pzoom-output.txt
+
+      - name: Upload pzoom report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pzoom-psalm-report
+          path: |
+            pzoom-output.txt
+            pzoom-stderr.txt
+          if-no-files-found: warn
+          retention-days: 7

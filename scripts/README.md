@@ -1,5 +1,32 @@
 # scripts/
 
+## `pzoom_psalm_baseline.py`
+
+Maintains and enforces the **pzoom-on-Psalm issue baseline** in
+[`../pzoom_psalm_audit.json`](../pzoom_psalm_audit.json) — the set of issues
+pzoom currently emits when run against the Psalm codebase, each tagged with a
+classification (`false_positive`, `false_negative`,
+`true_issue_psalm_misses`, `real_but_psalm_suppresses_or_baselines`).
+
+Issue identity is `(kind, file, digit-normalised message)` — line/column are
+ignored and runs of digits in the message are normalised, so the baseline
+survives source-line shifts and metric-number drift (e.g. ComplexMethod's
+graph-size figures) while still catching genuinely new findings.
+
+```bash
+# CI gate: fail if pzoom emits anything not already in the baseline
+python3 scripts/pzoom_psalm_baseline.py check --pzoom-bin target/release/pzoom --project ../psalm
+# (or feed a captured report)
+python3 scripts/pzoom_psalm_baseline.py check --pzoom-output pzoom-output.txt
+
+# After a pzoom fix removes false positives, drop the now-stale entries
+python3 scripts/pzoom_psalm_baseline.py trim --pzoom-output pzoom-output.txt --write
+```
+
+The [`pzoom-psalm-baseline`](../.github/workflows/pzoom-psalm-baseline.yml)
+workflow runs `check` on every push/PR against a pinned Psalm commit (kept in
+sync with `target.psalm_commit` in the JSON).
+
 ## `similarity_heuristic.py`
 
 Scores how closely each pzoom Rust source matches its counterpart in

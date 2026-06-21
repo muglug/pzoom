@@ -244,7 +244,7 @@ impl Clause {
                     // `get_class($x) === $cs`) therefore WEDGES — "not exactly
                     // class C" is not a sound narrowing, so the else/negated
                     // branch must derive nothing on the variable.
-                    Assertion::IsEqual(atomic) => {
+                    Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
                         if atomic.is_literal() || matches!(atomic, crate::TAtomic::TEnumCase { .. })
                         {
                             impossibility.push(assertion.get_negation());
@@ -257,7 +257,7 @@ impl Clause {
                     // (`IsNotIdentical`) also negate. A non-literal,
                     // non-named-object inequality (e.g. `IsNotIdentical` of a
                     // template/union) wedges, mirroring `hasEquality()`.
-                    Assertion::IsNotEqual(atomic) => {
+                    Assertion::IsNotEqual(atomic) | Assertion::IsNotLooselyEqual(atomic) => {
                         if atomic.is_literal()
                             || matches!(
                                 atomic,
@@ -321,9 +321,23 @@ impl Clause {
                             value.get_id(Some(interner))
                         ));
                     }
+                    Assertion::IsLooselyEqual(value) => {
+                        clause_string_parts.push(format!(
+                            "{} is loosely {}",
+                            var_id_str,
+                            value.get_id(Some(interner))
+                        ));
+                    }
                     Assertion::IsNotType(value) | Assertion::IsNotEqual(value) => {
                         clause_string_parts.push(format!(
                             "{} is not {}",
+                            var_id_str,
+                            value.get_id(Some(interner))
+                        ));
+                    }
+                    Assertion::IsNotLooselyEqual(value) => {
+                        clause_string_parts.push(format!(
+                            "{} is not loosely {}",
                             var_id_str,
                             value.get_id(Some(interner))
                         ));

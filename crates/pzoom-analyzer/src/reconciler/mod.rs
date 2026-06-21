@@ -152,6 +152,8 @@ pub fn reconcile_keyed_types(
                     | Assertion::IsNotType(_)
                     | Assertion::IsEqual(_)
                     | Assertion::IsNotEqual(_)
+                    | Assertion::IsLooselyEqual(_)
+                    | Assertion::IsNotLooselyEqual(_)
                     | Assertion::Truthy
                     | Assertion::NonEmpty
                     | Assertion::InArray(_)
@@ -686,19 +688,21 @@ pub(crate) fn should_emit_redundant_issue_for_unchanged_assertion(
             analyzer,
         )
         .is_none(),
-        Assertion::IsEqual(asserted_atomic) => {
+        Assertion::IsEqual(asserted_atomic) | Assertion::IsLooselyEqual(asserted_atomic) => {
             existing_var_type.types.len() == 1
                 && existing_var_type
                     .types
                     .first()
                     .is_some_and(|existing_atomic| existing_atomic == asserted_atomic)
         }
-        Assertion::IsNotEqual(asserted_atomic) => assertion_reconciler::intersect_union_with_atomic(
-            existing_var_type,
-            asserted_atomic,
-            analyzer,
-        )
-        .is_none(),
+        Assertion::IsNotEqual(asserted_atomic) | Assertion::IsNotLooselyEqual(asserted_atomic) => {
+            assertion_reconciler::intersect_union_with_atomic(
+                existing_var_type,
+                asserted_atomic,
+                analyzer,
+            )
+            .is_none()
+        }
         // Psalm's reconcileArrayKeyExists only does setPossiblyUndefined(false) and
         // never calls triggerIssueForImpossible, so array_key_exists() is never
         // reported as redundant/impossible.
@@ -945,7 +949,9 @@ fn get_missing_type(assertion: &Assertion, inside_loop: bool) -> TUnion {
         Assertion::ArrayKeyExists
         | Assertion::NonEmptyCountable(_)
         | Assertion::HasExactCount(_) => TUnion::mixed(),
-        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) => TUnion::new(atomic.clone()),
+        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
+            TUnion::new(atomic.clone())
+        }
         _ => TUnion::mixed(),
     }
 }

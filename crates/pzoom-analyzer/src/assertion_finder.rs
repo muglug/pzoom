@@ -1751,44 +1751,71 @@ fn try_add_typed_value_comparison_assertions(
     // branch instead.
     if !is_variable_ish_expression(right_expr) || is_variable_ish_expression(left_expr) {
         if let Some(right_type) = get_expression_assertion_type(right_expr, analysis_data) {
-            if is_strict || is_safe_loose_equality_literal_assertion(&right_type) {
-                if let Some(left_var_name) = get_assertable_var_name(left_expr) {
-                    // `$a['k'] === <value>` implies the entry exists and is
-                    // non-null — unless the compared value IS null.
-                    let value_is_null = matches!(right_type, TAtomic::TNull);
-                    add_generated_type_assertions(
+            if let Some(left_var_name) = get_assertable_var_name(left_expr) {
+                // `$a['k'] === <value>` implies the entry exists and is
+                // non-null — unless the compared value IS null.
+                let value_is_null = matches!(right_type, TAtomic::TNull);
+                if is_strict {
+                    if is_nonliteral_typed_value(&right_type) {
+                        add_equality_assertions(result, left_var_name, right_type, is_positive, cond_id);
+                    } else {
+                        add_generated_type_assertions(
+                            result,
+                            left_var_name,
+                            right_type,
+                            is_positive,
+                            cond_id,
+                        );
+                    }
+                } else {
+                    // Loose `==`/`!=`: emit IsLooselyEqual (PHP coercion), which
+                    // reconciles permissively (see `reconcile_loosely_equal`)
+                    // instead of pzoom's old conservative literal-string gate.
+                    add_loose_equality_assertions(
                         result,
                         left_var_name,
                         right_type,
                         is_positive,
                         cond_id,
                     );
-                    if is_positive && !value_is_null {
-                        add_array_access_presence_assertion(result, left_expr, cond_id);
-                    }
-                    return true;
                 }
+                if is_positive && !value_is_null {
+                    add_array_access_presence_assertion(result, left_expr, cond_id);
+                }
+                return true;
             }
         }
     }
 
     if !is_variable_ish_expression(left_expr) {
         if let Some(left_type) = get_expression_assertion_type(left_expr, analysis_data) {
-            if is_strict || is_safe_loose_equality_literal_assertion(&left_type) {
-                if let Some(right_var_name) = get_assertable_var_name(right_expr) {
-                    let value_is_null = matches!(left_type, TAtomic::TNull);
-                    add_generated_type_assertions(
+            if let Some(right_var_name) = get_assertable_var_name(right_expr) {
+                let value_is_null = matches!(left_type, TAtomic::TNull);
+                if is_strict {
+                    if is_nonliteral_typed_value(&left_type) {
+                        add_equality_assertions(result, right_var_name, left_type, is_positive, cond_id);
+                    } else {
+                        add_generated_type_assertions(
+                            result,
+                            right_var_name,
+                            left_type,
+                            is_positive,
+                            cond_id,
+                        );
+                    }
+                } else {
+                    add_loose_equality_assertions(
                         result,
                         right_var_name,
                         left_type,
                         is_positive,
                         cond_id,
                     );
-                    if is_positive && !value_is_null {
-                        add_array_access_presence_assertion(result, right_expr, cond_id);
-                    }
-                    return true;
                 }
+                if is_positive && !value_is_null {
+                    add_array_access_presence_assertion(result, right_expr, cond_id);
+                }
+                return true;
             }
         }
     }
@@ -1806,23 +1833,6 @@ fn is_variable_ish_expression(expr: &Expression<'_>) -> bool {
             | Expression::Access(Access::Property(_))
             | Expression::Access(Access::StaticProperty(_))
     )
-}
-
-fn is_safe_loose_equality_literal_assertion(assertion_type: &TAtomic) -> bool {
-    match assertion_type {
-        TAtomic::TLiteralString { value } => !is_numeric_like_string(value),
-        TAtomic::TLiteralClassString { .. } => true,
-        _ => false,
-    }
-}
-
-fn is_numeric_like_string(value: &str) -> bool {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    trimmed.parse::<f64>().is_ok()
 }
 
 fn try_add_assignment_null_comparison_assertions(
@@ -2808,11 +2818,17 @@ pub(crate) fn convert_functionlike_assertion_type(
                 .map(Assertion::IsType)
                 .collect()
         }
-        AssertionType::IsEqual(union) | AssertionType::IsLooselyEqual(union) => union
+        AssertionType::IsEqual(union) => union
             .types
             .iter()
             .cloned()
             .map(Assertion::IsEqual)
+            .collect(),
+        AssertionType::IsLooselyEqual(union) => union
+            .types
+            .iter()
+            .cloned()
+            .map(Assertion::IsLooselyEqual)
             .collect(),
         AssertionType::IsNotType(union) => union
             .types
@@ -2820,11 +2836,17 @@ pub(crate) fn convert_functionlike_assertion_type(
             .cloned()
             .map(Assertion::IsNotType)
             .collect(),
-        AssertionType::IsNotEqual(union) | AssertionType::IsNotLooselyEqual(union) => union
+        AssertionType::IsNotEqual(union) => union
             .types
             .iter()
             .cloned()
             .map(Assertion::IsNotEqual)
+            .collect(),
+        AssertionType::IsNotLooselyEqual(union) => union
+            .types
+            .iter()
+            .cloned()
+            .map(Assertion::IsNotLooselyEqual)
             .collect(),
         AssertionType::Truthy => vec![Assertion::Truthy],
         AssertionType::Falsy => vec![Assertion::Falsy],
@@ -3799,6 +3821,48 @@ fn add_equality_assertions(
         .push(vec![false_assertion]);
 }
 
+/// Like [`add_equality_assertions`] but with loose-equality assertions
+/// (`IsLooselyEqual`/`IsNotLooselyEqual`), matching Psalm's `IsLooselyEqual`/
+/// `IsNotLooselyEqual` for `==`/`!=`. The positive fact narrows like an
+/// equality assertion, but its reconciliation is permissive (PHP coercion):
+/// see `reconcile_loosely_equal` in the simple assertion reconciler.
+fn add_loose_equality_assertions(
+    result: &mut AssertionResult,
+    var_name: VarName,
+    assertion_type: TAtomic,
+    is_positive: bool,
+    cond_id: (u32, u32),
+) {
+    let (true_assertion, false_assertion) = if is_positive {
+        (
+            Assertion::IsLooselyEqual(assertion_type.clone()),
+            Assertion::IsNotLooselyEqual(assertion_type),
+        )
+    } else {
+        (
+            Assertion::IsNotLooselyEqual(assertion_type.clone()),
+            Assertion::IsLooselyEqual(assertion_type),
+        )
+    };
+
+    let true_clause = create_single_var_clause(&var_name, true_assertion.clone(), cond_id);
+    result.if_true_clauses.push(true_clause);
+
+    let false_clause = create_single_var_clause(&var_name, false_assertion.clone(), cond_id);
+    result.if_false_clauses.push(false_clause);
+
+    result
+        .if_true
+        .entry(var_name.clone())
+        .or_default()
+        .push(vec![true_assertion]);
+    result
+        .if_false
+        .entry(var_name)
+        .or_default()
+        .push(vec![false_assertion]);
+}
+
 /// Detects `get_class($x) === <expr typed class-string<T>>` and returns the
 /// origin variable of `$x` together with the template parameter `T` it should
 /// be narrowed to.
@@ -4298,6 +4362,49 @@ fn get_expression_assertion_type(
             enum_name: *enum_name,
             case_name: *case_name,
         }),
+        // Psalm's `hasTypedValueComparison` treats any single non-mixed type as
+        // a typed value, not just literals — so a typed variable on one side
+        // (`$s == $i`, `$s === $i`) narrows/flags the other. Restricted to
+        // scalar types here (objects/arrays keep flowing through the
+        // intersection-of-both-sides path). The strict emission of these
+        // non-literal scalars uses `IsEqual` (Psalm's `IsIdentical`), not
+        // `IsType`, so a same-type comparison (`$b === getBool()`) is not
+        // mis-reported as a redundant condition — see
+        // `is_nonliteral_typed_value`.
+        other @ (TAtomic::TInt
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TNumeric
+            | TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TBool) => Some(other.clone()),
         _ => None,
     }
+}
+
+/// Whether a typed-value-comparison atomic is a non-literal scalar — for these,
+/// strict `===` emits `IsEqual` (Psalm's `IsIdentical`) rather than `IsType`, so
+/// a same-type comparison is not mis-reported as redundant. Literals, booleans
+/// (`true`/`false`), `null`, and enum cases keep the validated `IsType` path.
+fn is_nonliteral_typed_value(atomic: &TAtomic) -> bool {
+    matches!(
+        atomic,
+        TAtomic::TInt
+            | TAtomic::TIntRange { .. }
+            | TAtomic::TFloat
+            | TAtomic::TNumeric
+            | TAtomic::TString
+            | TAtomic::TNonEmptyString
+            | TAtomic::TNumericString
+            | TAtomic::TNonEmptyNumericString
+            | TAtomic::TLowercaseString
+            | TAtomic::TNonEmptyLowercaseString
+            | TAtomic::TTruthyString
+            | TAtomic::TBool
+    )
 }

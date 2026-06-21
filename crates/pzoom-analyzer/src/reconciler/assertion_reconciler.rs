@@ -81,7 +81,9 @@ pub fn reconcile(
 /// generic trait's `$this` to the asserted class rather than `never`.
 pub(crate) fn positive_object_assertion_type(assertion: &Assertion) -> Option<TUnion> {
     let atomic = match assertion {
-        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) => atomic,
+        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
+            atomic
+        }
         _ => return None,
     };
     matches!(atomic, TAtomic::TNamedObject { .. }).then(|| TUnion::new(atomic.clone()))

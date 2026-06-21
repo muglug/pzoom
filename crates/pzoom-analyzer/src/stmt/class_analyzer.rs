@@ -4379,25 +4379,17 @@ fn check_property_initialization(
     });
 
     let Some(constructor) = constructor.filter(|_| !constructor_is_opaque) else {
-        // The phpunit plugin (loaded via psalm.xml pluginClass) suppresses
-        // MissingConstructor for TestCase descendants that declare an
-        // initializer like setUp() (TestCaseHandler::afterCodebasePopulated).
-        if analyzer
-            .config
-            .plugin_stubs
-            .iter()
-            .any(|stub| stub.contains("plugin-phpunit"))
-            && class_info
-                .all_parent_classes
-                .iter()
-                .any(|parent| &*analyzer.interner.lookup(*parent) == "PHPUnit\\Framework\\TestCase")
-            && class_info.methods.keys().any(|method_name| {
-                analyzer
-                    .interner
-                    .lookup(*method_name)
-                    .eq_ignore_ascii_case("setup")
-            })
-        {
+        // A plugin may treat the class as initializing its properties outside a
+        // constructor (the PHPUnit plugin does this for a TestCase subclass with
+        // a setUp() initializer — psalm-plugin-phpunit's
+        // TestCaseHandler::afterCodebasePopulated), suppressing MissingConstructor.
+        if crate::plugin::initializes_properties_externally(
+            &analyzer.config.plugins,
+            analyzer.codebase,
+            analyzer.interner,
+            class_info.name,
+            class_info,
+        ) {
             return;
         }
 

@@ -119,6 +119,25 @@ pub struct FunctionLikeInfo {
     /// Whether this is a final method.
     pub is_final: bool,
 
+    /// Whether the method is invoked dynamically by a framework (reflectively),
+    /// so the analyzed code never calls it directly. Set by a plugin's
+    /// post-populate hook — e.g. the PHPUnit plugin marks `test*` methods and
+    /// `@dataProvider` providers on a `TestCase`. Exempt from
+    /// `UnusedMethod`/`PossiblyUnusedMethod`/`(Possibly)UnusedReturnValue`.
+    #[serde(default)]
+    pub dynamically_callable: bool,
+
+    /// Provider method names from this method's `@dataProvider` docblock tags
+    /// (PHPUnit). Each entry is a bare `providerName` or a `Class::providerName`.
+    /// Consumed by the PHPUnit plugin to mark providers used and validate them.
+    #[serde(default)]
+    pub data_providers: Vec<String>,
+
+    /// Whether the method carries PHPUnit's `@test` docblock tag or `#[Test]`
+    /// attribute — a test method whose name need not start with `test`.
+    #[serde(default)]
+    pub has_test_annotation: bool,
+
     /// Visibility (for methods).
     pub visibility: Visibility,
 

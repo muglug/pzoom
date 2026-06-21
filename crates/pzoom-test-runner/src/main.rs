@@ -609,6 +609,19 @@ fn run_analysis_and_compare(
         if test_dir.join("ensure_array_string_offsets_exist").exists() {
             config.ensure_array_string_offsets_exist = true;
         }
+        // A test opts a compiled-in plugin in — as if the project's composer.json
+        // required it — with an `enable_phpunit_plugin` marker, exercising the
+        // same activation path the real config loader uses.
+        if test_dir.join("enable_phpunit_plugin").exists() {
+            let mut composer_packages = rustc_hash::FxHashSet::default();
+            composer_packages.insert("phpunit/phpunit".to_string());
+            config.plugins = pzoom_analyzer::plugin::activate_plugins(
+                &pzoom_analyzer::plugin::PluginActivationContext {
+                    composer_packages: &composer_packages,
+                    plugin_stubs: &[],
+                },
+            );
+        }
     }
 
     // Builtin signatures come from Psalm's CallMap for the analysis version;
@@ -626,6 +639,10 @@ fn run_analysis_and_compare(
     if config.all_constants_global {
         pzoom_orchestrator::register_global_defined_constants(codebase);
     }
+    // Post-populate plugin hook (e.g. PHPUnit flags TestCase subclasses + test
+    // methods, validates @dataProvider) on this test's cloned codebase.
+    let plugin_issues =
+        pzoom_analyzer::plugin::run_after_populate(&config.plugins, codebase, interner);
     let pop_ms = t_pop.elapsed().as_secs_f64() * 1000.0;
 
     // Analyze only non-stub files (the test file): stubs provide type
@@ -640,7 +657,8 @@ fn run_analysis_and_compare(
         .filter(|(file_id, file_info)| !file_info.is_stub && !_stub_files.contains(*file_id))
         .map(|(file_id, _)| *file_id)
         .collect();
-    let result = analyzer.analyze_files(&files_to_analyze);
+    let mut result = analyzer.analyze_files(&files_to_analyze);
+    result.issues.extend(plugin_issues);
     let an_ms = t_an.elapsed().as_secs_f64() * 1000.0;
     if std::env::var("PZOOM_TEST_TIMING").is_ok() {
         eprintln!(

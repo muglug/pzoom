@@ -1856,6 +1856,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut is_deprecated = false;
                     let mut deprecation_message = None;
                     let mut internal = Vec::new();
+                    let mut data_providers: Vec<String> = Vec::new();
+                    let mut has_test_annotation = false;
                     let mut assertions = Vec::new();
                     let mut if_true_assertions = Vec::new();
                     let mut if_false_assertions = Vec::new();
@@ -1878,6 +1880,17 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             || parsed.tags.contains_key("phpstan-throws");
                         member_is_public_api = parsed.tags.contains_key("psalm-api")
                             || parsed.tags.contains_key("api");
+                        // PHPUnit `@dataProvider providerName` — keep the first
+                        // whitespace-delimited token of each occurrence.
+                        if let Some(tags) = parsed.tags.get("dataProvider") {
+                            data_providers = tags
+                                .values()
+                                .filter_map(|content| content.split_whitespace().next())
+                                .map(str::to_string)
+                                .collect();
+                        }
+                        // PHPUnit `@test`: a test method not named `test*`.
+                        has_test_annotation = parsed.tags.contains_key("test");
                         is_mutation_free = self.is_docblock_mutation_free(&parsed);
                         docblock_external_mutation_free =
                             self.is_docblock_external_mutation_free(&parsed);
@@ -2224,6 +2237,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         is_static,
                         is_abstract,
                         is_final,
+                        data_providers,
+                        has_test_annotation: has_test_annotation
+                            || self.has_attribute_named(&method.attribute_lists, "Test"),
                         visibility,
                         returns_by_ref: method.ampersand.is_some(),
                         is_variadic: uses_variadic_builtin_args || has_variadic_param,

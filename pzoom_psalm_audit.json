@@ -9,7 +9,7 @@
     "psalm_version": "6.x-dev@be7afcf",
     "config": "psalm.xml.dist (errorLevel=1, findUnusedCode, baseline=psalm-baseline.xml applied)"
   },
-  "methodology": "Ran the release pzoom binary on the Psalm project (vendor installed via composer; Psalm's own psalm-baseline.xml applied, as pzoom does automatically). Ground truth for 'what Psalm itself reports' was obtained by running Psalm on its own codebase with --ignore-baseline (1659 findings, all otherwise baselined). Each pzoom issue was compared against Psalm's findings and verified by reading the PHP source; a few semantic questions (write-only static properties, count()/non-empty narrowing) were settled with controlled single-file experiments run through both tools.",
+  "methodology": "Ran the release pzoom binary on the Psalm project (vendor installed via composer; Psalm's own psalm-baseline.xml applied, as pzoom does automatically). Ground truth for 'what Psalm itself reports' was obtained by running Psalm on its own codebase with --ignore-baseline (1659 findings, all otherwise baselined). Each pzoom issue was compared against Psalm's findings and verified by reading the PHP source; several semantic questions (write-only static properties, count()/non-empty narrowing, and the always-truthy RedundantCondition idiom) were settled with controlled single-file experiments run through both tools.",
   "classification_legend": {
     "false_positive": "pzoom is wrong: no real problem, or a pzoom analysis/stub/parsing/suppression-scope bug. Psalm correctly stays silent.",
     "true_issue_psalm_misses": "pzoom correctly found a genuine problem in the PHP code that Psalm does NOT report.",
@@ -19,13 +19,13 @@
   "observed_issue_count": 119,
   "expected_issue_count": 122,
   "classification_summary": {
-    "false_positive": 111,
-    "true_issue_psalm_misses": 0,
+    "false_positive": 100,
+    "true_issue_psalm_misses": 11,
     "real_but_psalm_suppresses_or_baselines": 8
   },
+  "true_issue_psalm_misses_detail": "All 11 are RedundantCondition / RedundantConditionGivenDocblockType on the idiom `<cond> && ($x = $obj->getArray()|getAtomicTypes()|getSingleAtomic())`. Those getters are @psalm-mutation-free and return non-falsable types (objects / non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. pzoom catches these; Psalm does not (confirmed by the project author and by a controlled reproduction in which Psalm is silent while pzoom emits the identical message). These are pzoom being MORE precise than Psalm.",
   "false_positive_root_causes": {
     "under_emission_of_suppressed_check (UnusedPsalmSuppress)": 59,
-    "always_truthy_assignment_in_condition (Redundant*Condition*)": 11,
     "incomplete_reference_tracking_unused_property": 12,
     "incomplete_reference_tracking_unused_return_value": 9,
     "missing_count/non_empty/guard_narrowing": 5,
@@ -340,9 +340,9 @@
       "line": 1646,
       "column": 29,
       "message": "Type Psalm\\Type\\Atomic for $arg_value_type->getsingleatomic() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "`$arg_value_type->isSingle() && ($atomic_arg_type = $arg_value_type->getSingleAtomic())` \u2014 getSingleAtomic() returns a non-null Atomic (always truthy) but the assignment binds $atomic_arg_type for use on the next lines. Psalm intentionally does not flag the truthiness of an assignment-in-condition whose value is consumed; pzoom does."
+      "explanation": "Valid finding. `getSingleAtomic()` is @psalm-mutation-free and returns a non-falsable Atomic, so the && operand `($atomic_arg_type = $arg_value_type->getSingleAtomic())` is always truthy \u2014 a genuine redundant truthiness test (the assignment still binds the var, but the test never fails). Confirmed by the project author. Psalm does NOT flag the always-truthy-ness of a mutation-free method result captured in an assignment-within-a-condition: verified by a controlled reproduction (Psalm silent, pzoom emits the identical 'Type Atom for $this->getSingle() is always truthy') and by Psalm emitting zero such findings codebase-wide (none baselined, no inline suppress). pzoom correctly catches what Psalm misses."
     },
     {
       "id": 29,
@@ -725,9 +725,9 @@
       "line": 124,
       "column": 32,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 64,
@@ -747,9 +747,9 @@
       "line": 75,
       "column": 36,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 66,
@@ -758,9 +758,9 @@
       "line": 44,
       "column": 28,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 67,
@@ -769,9 +769,9 @@
       "line": 42,
       "column": 28,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 68,
@@ -780,9 +780,9 @@
       "line": 47,
       "column": 28,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 69,
@@ -791,9 +791,9 @@
       "line": 41,
       "column": 23,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $first_arg_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 70,
@@ -802,9 +802,9 @@
       "line": 240,
       "column": 19,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TArray&Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TArray&Psalm\\Type\\Atomic\\TKeyedArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TClassStringMap&Psalm\\Type\\Atomic\\TKeyedArray for $array_atomic is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 71,
@@ -813,9 +813,9 @@
       "line": 240,
       "column": 19,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $global_type->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 72,
@@ -824,9 +824,9 @@
       "line": 244,
       "column": 31,
       "message": "Docblock-defined type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray for $atomic_type->properties['options']->getarray() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 73,
@@ -835,9 +835,9 @@
       "line": 64,
       "column": 27,
       "message": "Docblock-defined type non-empty-array<string, Psalm\\Type\\Atomic> for $haystack_type->getatomictypes() is always truthy",
-      "classification": "false_positive",
+      "classification": "true_issue_psalm_misses",
       "psalm_handling": "not_reported",
-      "explanation": "Assignment-in-condition idiom: `... && ($x = $obj->getArray()/getAtomicTypes())`. The method returns a non-null object / non-empty-array (always truthy), but the assignment binds $x for use on the following lines, so the clause is not removable. Psalm emits zero RedundantConditionGivenDocblockType for this idiom codebase-wide; pzoom over-eagerly flags the always-truthy assignment."
+      "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
       "id": 74,

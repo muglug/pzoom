@@ -1,0 +1,34 @@
+{
+    "name": "muglug/pzoom",
+    "description": "A fast PHP static analyzer written in Rust (a port of Psalm). Installs a prebuilt native binary via Composer.",
+    "type": "composer-plugin",
+    "license": "MIT",
+    "homepage": "https://github.com/muglug/pzoom",
+    "keywords": ["static analysis", "static analyzer", "psalm", "linter", "rust"],
+    "support": {
+        "issues": "https://github.com/muglug/pzoom/issues",
+        "source": "https://github.com/muglug/pzoom"
+    },
+    "require": {
+        "php": ">=8.1",
+        "ext-json": "*",
+        "composer-plugin-api": "^2.2"
+    },
+    "require-dev": {
+        "composer/composer": "^2.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pzoom\\Composer\\": "composer/src/"
+        }
+    },
+    "bin": [
+        "bin/pzoom"
+    ],
+    "extra": {
+        "class": "Pzoom\\Composer\\Plugin"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}

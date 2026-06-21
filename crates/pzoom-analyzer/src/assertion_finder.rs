@@ -1451,6 +1451,15 @@ fn scrape_equality_assertions(
         return;
     }
 
+    // `gettype($x) === "integer"` / `get_debug_type($x) === "int"` narrows `$x`
+    // to the named runtime type (Psalm's getGettype/GetdebugtypeEqualityAssertions).
+    if let Some((var_name, asserted_type)) =
+        get_type_check_comparison(binary.lhs, binary.rhs)
+    {
+        add_type_assertions(result, var_name, asserted_type, is_positive, cond_id);
+        return;
+    }
+
     if let Some((other_value_position, literal_bool)) =
         has_literal_boolean_comparison(binary.lhs, binary.rhs)
     {
@@ -1588,9 +1597,9 @@ fn scrape_equality_assertions(
         return;
     }
 
-    if is_strict
-        && let Some(var_expr) = get_empty_array_literal_comparison_target(binary.lhs, binary.rhs)
-    {
+    // `$a == []` / `$a === []` both narrow an array to empty (and the negation to
+    // non-empty) — Psalm narrows loose and strict alike.
+    if let Some(var_expr) = get_empty_array_literal_comparison_target(binary.lhs, binary.rhs) {
         let Some(var_name) = get_assertable_var_name(var_expr) else {
             return;
         };
@@ -4286,11 +4295,19 @@ fn get_usize_literal(expr: &Expression<'_>) -> Option<usize> {
 }
 
 fn get_i64_literal(expr: &Expression<'_>) -> Option<i64> {
-    let Expression::Literal(Literal::Integer(int_lit)) = expr.unparenthesized() else {
-        return None;
-    };
-
-    int_lit.value.and_then(|value| i64::try_from(value).ok())
+    match expr.unparenthesized() {
+        Expression::Literal(Literal::Integer(int_lit)) => {
+            int_lit.value.and_then(|value| i64::try_from(value).ok())
+        }
+        // Unary-signed integer literals (`-5`, `+3`) so `$i < -5` narrows to a
+        // range. Mirrors Psalm treating `-5` as the literal `int(-5)`.
+        Expression::UnaryPrefix(unary) => match &unary.operator {
+            UnaryPrefixOperator::Negation(_) => get_i64_literal(unary.operand).and_then(i64::checked_neg),
+            UnaryPrefixOperator::Plus(_) => get_i64_literal(unary.operand),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn map_binary_to_count_op(operator: &BinaryOperator<'_>) -> Option<CountCmpOp> {
@@ -4331,6 +4348,86 @@ fn get_literal_assertion_type(expr: &Expression<'_>) -> Option<TAtomic> {
         }
         _ => None,
     }
+}
+
+/// Maps a PHP `gettype()` result string to the asserted atomic, or `None` for
+/// values pzoom does not narrow on (anonymous classes, resource flavours map to
+/// the plain resource type).
+fn map_gettype_string(type_str: &str) -> Option<TAtomic> {
+    Some(match type_str {
+        "integer" => TAtomic::TInt,
+        "double" => TAtomic::TFloat,
+        "boolean" => TAtomic::TBool,
+        "string" => TAtomic::TString,
+        "array" => TAtomic::array(TUnion::array_key(), TUnion::mixed()),
+        "object" => TAtomic::TObject,
+        "NULL" => TAtomic::TNull,
+        "resource" | "resource (closed)" => TAtomic::TResource,
+        _ => return None,
+    })
+}
+
+/// Maps a PHP `get_debug_type()` result string to the asserted atomic for the
+/// built-in scalar names. Class-name results are left to the general path.
+fn map_get_debug_type_string(type_str: &str) -> Option<TAtomic> {
+    Some(match type_str {
+        "int" => TAtomic::TInt,
+        "float" => TAtomic::TFloat,
+        "bool" => TAtomic::TBool,
+        "string" => TAtomic::TString,
+        "array" => TAtomic::array(TUnion::array_key(), TUnion::mixed()),
+        "null" => TAtomic::TNull,
+        _ => return None,
+    })
+}
+
+/// If `expr` is `gettype($x)` / `get_debug_type($x)`, returns the origin
+/// variable of `$x` and whether it was the `get_debug_type` flavour.
+fn extract_type_check_call_var(expr: &Expression<'_>) -> Option<(VarName, bool)> {
+    let Expression::Call(Call::Function(function_call)) = expr.unparenthesized() else {
+        return None;
+    };
+    let Expression::Identifier(function_name) = function_call.function.unparenthesized() else {
+        return None;
+    };
+    let is_debug = if function_name.value().eq_ignore_ascii_case("gettype") {
+        false
+    } else if function_name.value().eq_ignore_ascii_case("get_debug_type") {
+        true
+    } else {
+        return None;
+    };
+    let first_arg = function_call.argument_list.arguments.first()?;
+    let var_name = expression_identifier::get_expression_var_key(first_arg.value())?;
+    Some((var_name, is_debug))
+}
+
+fn extract_string_literal_value(expr: &Expression<'_>) -> Option<String> {
+    if let Expression::Literal(Literal::String(string_lit)) = expr.unparenthesized() {
+        return string_lit.value.map(|value| value.to_string());
+    }
+    None
+}
+
+/// Detects `gettype($x) === "type"` / `get_debug_type($x) === "type"` (string on
+/// either side) and returns the origin variable plus the asserted atomic type.
+/// Mirrors Psalm's `getGettypeEqualityAssertions` /
+/// `getGetdebugtypeEqualityAssertions`.
+fn get_type_check_comparison(
+    left_expr: &Expression<'_>,
+    right_expr: &Expression<'_>,
+) -> Option<(VarName, TAtomic)> {
+    let resolve = |call_expr: &Expression<'_>, str_expr: &Expression<'_>| {
+        let (var_name, is_debug) = extract_type_check_call_var(call_expr)?;
+        let type_str = extract_string_literal_value(str_expr)?;
+        let atomic = if is_debug {
+            map_get_debug_type_string(&type_str)?
+        } else {
+            map_gettype_string(&type_str)?
+        };
+        Some((var_name, atomic))
+    };
+    resolve(left_expr, right_expr).or_else(|| resolve(right_expr, left_expr))
 }
 
 fn get_expression_assertion_type(

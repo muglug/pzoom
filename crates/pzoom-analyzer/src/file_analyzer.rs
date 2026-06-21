@@ -501,10 +501,10 @@ fn report_complex_functions(
     // (span_start, span_end, report): report = Some((is_method, name_offset))
     // for a method/top-level function; None for closures/arrows (they bound
     // attribution but never report).
-    let func_spans: Vec<(u32, u32, Option<(bool, u32)>)> = N::Program(program).filter_map(|node| {
+    let func_spans = N::Program(program).filter_map(|node| {
         let report = match node {
-            N::Method(m) => Some((true, m.name.span().start.offset)),
-            N::Function(f) => Some((false, f.name.span().start.offset)),
+            N::Method(m) => Some((true, (m.name.span().start.offset, m.name.span().end.offset))),
+            N::Function(f) => Some((false, (f.name.span().start.offset, f.name.span().end.offset))),
             N::Closure(_) | N::ArrowFunction(_) => None,
             _ => return None,
         };
@@ -525,7 +525,7 @@ fn report_complex_functions(
 
     // (is_method, name_offset, count, round(mean)) for each function-like over
     // the limits. Computed under an immutable borrow of the graph, then emitted.
-    let emits: Vec<(bool, u32, usize, i64)> = {
+    let emits = {
         let g = &analysis_data.data_flow_graph;
         let node_pos = |id: &DataFlowNodeId| {
             g.vertices
@@ -559,7 +559,7 @@ fn report_complex_functions(
         }
         let mut emits = Vec::new();
         for (owner, dests) in &owner_dest {
-            let Some((is_method, name_offset)) = func_spans[*owner].2 else {
+            let Some((is_method, (name_start, name_end))) = func_spans[*owner].2 else {
                 continue;
             };
             let count: usize = dests.values().copied().sum();
@@ -572,14 +572,14 @@ fn report_complex_functions(
                 && mean > MAX_AVG_PATH_LENGTH
                 && branch_ratio > MIN_BRANCH_RATIO
             {
-                emits.push((is_method, name_offset, count, mean.round() as i64));
+                emits.push((is_method, (name_start, name_end), count, mean.round() as i64));
             }
         }
         emits
     };
 
     for (is_method, name_offset, count, mean_round) in emits {
-        let (line, col) = stmt_analyzer.get_line_column(name_offset);
+        let (start_line, start_col) = stmt_analyzer.get_line_column(name_offset.0);
         let (kind, noun) = if is_method {
             (IssueKind::ComplexMethod, "method")
         } else {
@@ -592,10 +592,10 @@ fn report_complex_functions(
                  (method graph size = {count}, average path length = {mean_round})"
             ),
             file_path,
-            name_offset,
-            name_offset + 1,
-            line,
-            col,
+            name_offset.0,
+            name_offset.1,
+            start_line,
+            start_col,
         ));
     }
 }

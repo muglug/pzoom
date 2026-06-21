@@ -101,6 +101,9 @@ provider machinery:
 vendor/bin/pzoom --stubs path/to/stubs path/to/php/project
 ```
 
+[`examples/pzoom-laravel`](examples/pzoom-laravel) is a worked reference provider
+that boots a Laravel app and generates Eloquent model stubs from `$casts`.
+
 ## Building
 
 Requires a recent stable [Rust toolchain](https://rustup.rs/).

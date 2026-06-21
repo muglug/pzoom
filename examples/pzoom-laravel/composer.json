@@ -1,0 +1,24 @@
+{
+    "name": "muglug/pzoom-laravel",
+    "description": "Reference pzoom stub provider for Laravel — boots the application and generates Eloquent model type stubs.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": ">=8.1",
+        "muglug/pzoom": "*",
+        "illuminate/contracts": "^10 || ^11 || ^12",
+        "illuminate/database": "^10 || ^11 || ^12"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pzoom\\Laravel\\": "src/"
+        }
+    },
+    "extra": {
+        "pzoom": {
+            "stub-providers": [
+                "Pzoom\\Laravel\\LaravelStubProvider"
+            ]
+        }
+    }
+}

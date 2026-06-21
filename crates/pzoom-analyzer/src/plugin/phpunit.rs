@@ -48,6 +48,26 @@ fn is_test_case(interner: &Interner, class_id: StrId, class_info: &ClassLikeInfo
     class_id == test_case_id || class_info.all_parent_classes.contains(&test_case_id)
 }
 
+/// Whether PHPUnit runs `method` as a test — named `test*`, or carrying the
+/// `@test` annotation (read from the generic docblock tags the scanner records).
+fn is_test_method(interner: &Interner, method_id: StrId, method: &FunctionLikeInfo) -> bool {
+    interner.lookup(method_id).starts_with("test")
+        || method
+            .custom_docblock_tags
+            .iter()
+            .any(|(tag, _)| tag == "test")
+}
+
+/// The provider references of a method's `@dataProvider` tags — the first
+/// whitespace-delimited token of each (`providerName` or `Class::providerName`).
+fn data_provider_refs(method: &FunctionLikeInfo) -> impl Iterator<Item = &str> {
+    method
+        .custom_docblock_tags
+        .iter()
+        .filter(|(tag, _)| tag == "dataProvider")
+        .filter_map(|(_, content)| content.split_whitespace().next())
+}
+
 /// Resolve a class name (as written in a `@dataProvider`, possibly with a
 /// leading `\`) to its interned id, if the class exists.
 fn resolve_class(codebase: &CodebaseInfo, interner: &Interner, name: &str) -> Option<StrId> {
@@ -377,16 +397,13 @@ impl Plugin for PhpUnitPlugin {
                 continue;
             };
             for (method_id, method_info) in &class_info.methods {
-                // PHPUnit runs a method as a test if its name starts with `test`
-                // or it carries `@test`/`#[Test]`; `@dataProvider` applies only to
-                // those.
-                let is_test = method_info.has_test_annotation
-                    || interner.lookup(*method_id).starts_with("test");
-                if !is_test {
+                // `@dataProvider` applies only to test methods (named `test*` or
+                // tagged `@test`).
+                if !is_test_method(interner, *method_id, method_info) {
                     continue;
                 }
                 methods_to_mark.push((class_id, *method_id));
-                for provider in &method_info.data_providers {
+                for provider in data_provider_refs(method_info) {
                     let (provider_to_mark, provider_issues) =
                         check_data_provider(codebase, interner, class_id, method_info, provider);
                     if let Some((provider_class, provider_method)) = provider_to_mark {

@@ -127,16 +127,13 @@ pub struct FunctionLikeInfo {
     #[serde(default)]
     pub dynamically_callable: bool,
 
-    /// Provider method names from this method's `@dataProvider` docblock tags
-    /// (PHPUnit). Each entry is a bare `providerName` or a `Class::providerName`.
-    /// Consumed by the PHPUnit plugin to mark providers used and validate them.
+    /// Docblock tags the core analyzer doesn't consume, recorded verbatim as
+    /// `(tag, content)` pairs (without the leading `@`), in document order, so a
+    /// plugin can interpret framework-specific annotations — e.g. the PHPUnit
+    /// plugin reads `@dataProvider`/`@test` — without the scanner knowing about
+    /// them.
     #[serde(default)]
-    pub data_providers: Vec<String>,
-
-    /// Whether the method carries PHPUnit's `@test` docblock tag or `#[Test]`
-    /// attribute — a test method whose name need not start with `test`.
-    #[serde(default)]
-    pub has_test_annotation: bool,
+    pub custom_docblock_tags: Vec<(String, String)>,
 
     /// Visibility (for methods).
     pub visibility: Visibility,

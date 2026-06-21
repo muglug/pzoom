@@ -3293,11 +3293,20 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let parsed_type =
                     crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
                         .unwrap_or_else(|_| TUnion::mixed());
-                docblock_type = Some(self.resolve_docblock_union_type(
+                let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     Some(class_info.name),
                     class_info.parent_class,
                     Some(&class_template_map),
+                );
+                // Resolve deferred `value-of<self::CONST>` sentinels against the
+                // declaring class so the property type is the constant's values,
+                // not the unresolved sentinel.
+                docblock_type = Some(self.resolve_deferred_key_value_of_sentinels(
+                    resolved_type,
+                    Some(class_info.name),
+                    class_info.parent_class,
+                    Some(&class_info.constants),
                 ));
             } else {
                 self.push_docblock_issue(
@@ -3867,11 +3876,22 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let parsed_type =
                         crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
                             .unwrap_or_else(|_| TUnion::mixed());
-                    self.resolve_docblock_union_type(
+                    let resolved_type = self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
                         parent_class,
                         template_map,
+                    );
+                    // Resolve deferred `value-of`/`key-of` class-constant
+                    // sentinels (e.g. `value-of<self::SUPER_GLOBALS>|'$argv'`)
+                    // against the declaring class. Plain `Foo::CONST` references
+                    // stay deferred — params compare them against unexpanded
+                    // callmap/template forms.
+                    self.resolve_deferred_key_value_of_sentinels(
+                        resolved_type,
+                        self_class,
+                        parent_class,
+                        class_constants,
                     )
                 });
             let param_name = extract_param_name_from_content(content).map(str::to_string);
@@ -5782,6 +5802,14 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 name, type_params, ..
             } => {
                 if type_params.is_none() {
+                    // A deferred `value-of<Class::CONST>` / `key-of<Class::CONST>`
+                    // sentinel is resolved by `expand_docblock_class_constant_wildcards`
+                    // (and the analyzer's TypeExpander); leave it untouched so its
+                    // inner `::` is not mangled into a bogus class name here.
+                    if is_deferred_key_value_of_sentinel(self.interner.lookup(*name).as_ref()) {
+                        return;
+                    }
+
                     let template_key = self.interner.lookup(*name);
                     if let Some(template_binding) =
                         template_map.and_then(|map| map.get(template_key.as_ref()))
@@ -6069,6 +6097,46 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         parent_class: Option<StrId>,
         class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
     ) -> TUnion {
+        self.expand_docblock_constants_in_union(
+            t_union,
+            self_class,
+            parent_class,
+            class_constants,
+            false,
+        )
+    }
+
+    /// Like [`Self::expand_docblock_class_constant_wildcards`] but only resolves
+    /// deferred `value-of`/`key-of` class-constant sentinels, leaving plain
+    /// `Foo::CONST` / `Foo::PREFIX_*` references deferred. Params keep those
+    /// unexpanded so the analyzer can compare them against the equally-deferred
+    /// callmap / template forms (expanding them eagerly breaks `callable(Baz::STATUS_*)`
+    /// and template-bound checks); only the otherwise-unresolvable utility
+    /// sentinels need expanding here.
+    fn resolve_deferred_key_value_of_sentinels(
+        &mut self,
+        t_union: TUnion,
+        self_class: Option<StrId>,
+        parent_class: Option<StrId>,
+        class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
+    ) -> TUnion {
+        self.expand_docblock_constants_in_union(
+            t_union,
+            self_class,
+            parent_class,
+            class_constants,
+            true,
+        )
+    }
+
+    fn expand_docblock_constants_in_union(
+        &mut self,
+        t_union: TUnion,
+        self_class: Option<StrId>,
+        parent_class: Option<StrId>,
+        class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
+        sentinels_only: bool,
+    ) -> TUnion {
         let mut expanded_types = Vec::new();
 
         for atomic in &t_union.types {
@@ -6077,6 +6145,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 self_class,
                 parent_class,
                 class_constants,
+                sentinels_only,
             ) {
                 if !expanded_types.contains(&expanded_atomic) {
                     expanded_types.push(expanded_atomic);
@@ -6103,13 +6172,48 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         self_class: Option<StrId>,
         parent_class: Option<StrId>,
         class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
+        sentinels_only: bool,
     ) -> Vec<TAtomic> {
-        if let Some(expanded_union) = self.resolve_class_constant_union_from_atomic(
-            &atomic,
-            self_class,
-            parent_class,
-            class_constants,
-        ) {
+        // A deferred `value-of<Class::CONST>` / `key-of<Class::CONST>` sentinel
+        // (the parser couldn't read the constant without class context): resolve
+        // it here against the declaring class via the whole-string utility
+        // resolver, which handles `self`/`parent`/named classes, wildcards and
+        // enums. `static::` and as-yet-unresolved constants come back as the same
+        // sentinel; keep it untouched for the analyzer's TypeExpander. Handled
+        // before `resolve_class_constant_union_from_atomic` so the sentinel's
+        // inner `::` is never mistaken for a plain class constant.
+        if let TAtomic::TNamedObject { name, .. } = &atomic {
+            let name = *name;
+            if is_deferred_key_value_of_sentinel(self.interner.lookup(name).as_ref()) {
+                let raw = self.interner.lookup(name).to_string();
+                if let Some(resolved) = self.try_resolve_docblock_utility_type(
+                    &raw,
+                    self_class,
+                    parent_class,
+                    None,
+                    class_constants,
+                ) {
+                    let stays_deferred = resolved.get_single().is_some_and(|resolved_atomic| {
+                        matches!(resolved_atomic, TAtomic::TNamedObject { name: n, .. } if *n == name)
+                    });
+                    if !stays_deferred {
+                        return resolved.types;
+                    }
+                }
+                return vec![atomic];
+            }
+        }
+
+        // Plain `Foo::CONST` / `Foo::PREFIX_*` references are only expanded in
+        // full mode; in sentinels-only mode they stay deferred for the analyzer.
+        if !sentinels_only
+            && let Some(expanded_union) = self.resolve_class_constant_union_from_atomic(
+                &atomic,
+                self_class,
+                parent_class,
+                class_constants,
+            )
+        {
             return expanded_union.types;
         }
 
@@ -6118,17 +6222,19 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 key_type,
                 value_type,
             } => vec![TAtomic::TIterable {
-                key_type: Box::new(self.expand_docblock_class_constant_wildcards(
+                key_type: Box::new(self.expand_docblock_constants_in_union(
                     *key_type,
                     self_class,
                     parent_class,
                     class_constants,
+                    sentinels_only,
                 )),
-                value_type: Box::new(self.expand_docblock_class_constant_wildcards(
+                value_type: Box::new(self.expand_docblock_constants_in_union(
                     *value_type,
                     self_class,
                     parent_class,
                     class_constants,
+                    sentinels_only,
                 )),
             }],
             // Unified array (was TArray/TNonEmptyArray/TList/TNonEmptyList/TKeyedArray):
@@ -6151,11 +6257,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                 key,
                                 (
                                     possibly_undefined,
-                                    self.expand_docblock_class_constant_wildcards(
+                                    self.expand_docblock_constants_in_union(
                                         prop_type,
                                         self_class,
                                         parent_class,
                                         class_constants,
+                                        sentinels_only,
                                     ),
                                 ),
                             )
@@ -6165,17 +6272,19 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let params = params.map(|params| {
                     let (key_type, value_type) = *params;
                     Box::new((
-                        self.expand_docblock_class_constant_wildcards(
+                        self.expand_docblock_constants_in_union(
                             key_type,
                             self_class,
                             parent_class,
                             class_constants,
+                            sentinels_only,
                         ),
-                        self.expand_docblock_class_constant_wildcards(
+                        self.expand_docblock_constants_in_union(
                             value_type,
                             self_class,
                             parent_class,
                             class_constants,
+                            sentinels_only,
                         ),
                     ))
                 });
@@ -6198,11 +6307,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             type_params
                                 .into_iter()
                                 .map(|type_param| {
-                                    self.expand_docblock_class_constant_wildcards(
+                                    self.expand_docblock_constants_in_union(
                                         type_param,
                                         self_class,
                                         parent_class,
                                         class_constants,
+                                        sentinels_only,
                                     )
                                 })
                                 .collect(),
@@ -6226,11 +6336,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             } => vec![TAtomic::TTemplateParam {
                 name,
                 defining_entity,
-                as_type: Box::new(self.expand_docblock_class_constant_wildcards(
+                as_type: Box::new(self.expand_docblock_constants_in_union(
                     *as_type,
                     self_class,
                     parent_class,
                     class_constants,
+                    sentinels_only,
                 )),
             }],
             other => vec![other],
@@ -7607,10 +7718,28 @@ fn docblock_array_value_type(docblock_type: &TUnion) -> Option<TUnion> {
 }
 
 fn extract_param_name_from_content(content: &str) -> Option<&str> {
+    // A `$` inside a quoted literal (e.g. `'$argv'` in
+    // `@param value-of<self::SUPER_GLOBALS>|'$argv'|'$argc' $var_id`) belongs to
+    // the type, not the parameter name, so quote runs are skipped — matching the
+    // quote tracking in `extract_type_string`.
     let mut depth: u32 = 0;
+    let mut in_quote: Option<char> = None;
+    let mut quote_escape = false;
 
     for (idx, ch) in content.char_indices() {
+        if let Some(active_quote) = in_quote {
+            if quote_escape {
+                quote_escape = false;
+            } else if ch == '\\' {
+                quote_escape = true;
+            } else if ch == active_quote {
+                in_quote = None;
+            }
+            continue;
+        }
+
         match ch {
+            '\'' | '"' => in_quote = Some(ch),
             '<' | '{' | '(' => depth += 1,
             '>' | '}' | ')' => depth = depth.saturating_sub(1),
             '$' if depth == 0 => {
@@ -7636,6 +7765,18 @@ fn extract_param_name_from_content(content: &str) -> Option<&str> {
     }
 
     None
+}
+
+/// Whether `name` is a deferred `value-of<Class::CONST>` / `key-of<Class::CONST>`
+/// sentinel emitted by the docblock parser (see
+/// `class_constant_deferred_key_value_of`). The `::` requirement mirrors the
+/// analyzer's `split_key_value_of_sentinel`, so scan-time and analysis-time
+/// resolution agree on what counts as a deferred class-constant utility type.
+fn is_deferred_key_value_of_sentinel(name: &str) -> bool {
+    name.strip_prefix("value-of<")
+        .or_else(|| name.strip_prefix("key-of<"))
+        .and_then(|rest| rest.strip_suffix('>'))
+        .is_some_and(|inner| inner.contains("::"))
 }
 
 fn split_docblock_method_params(params: &str) -> Vec<String> {
@@ -9496,5 +9637,57 @@ fn merge_same_class_generic_members(resolved_types: &mut Vec<TAtomic>) {
             *type_params = Some(merged_params);
         }
         index += 1;
+    }
+}
+
+#[cfg(test)]
+mod docblock_helper_tests {
+    use super::{extract_param_name_from_content, is_deferred_key_value_of_sentinel};
+
+    #[test]
+    fn param_name_skips_dollar_inside_quoted_literal() {
+        // The `$` in `'$argv'`/`'$argc'` belongs to the type; the parameter name
+        // is `$var_id` (returned without the leading `$`).
+        assert_eq!(
+            extract_param_name_from_content(
+                "value-of<self::SUPER_GLOBALS>|'$argv'|'$argc' $var_id"
+            ),
+            Some("var_id"),
+        );
+        assert_eq!(extract_param_name_from_content("'a'|'$b' $x"), Some("x"));
+        // Double quotes and escaped quotes are handled like the type extractor.
+        assert_eq!(
+            extract_param_name_from_content("\"$y\"|int $value"),
+            Some("value"),
+        );
+    }
+
+    #[test]
+    fn param_name_plain_types_unaffected() {
+        assert_eq!(
+            extract_param_name_from_content("string $name"),
+            Some("name")
+        );
+        assert_eq!(
+            extract_param_name_from_content("array<int, string> $items"),
+            Some("items"),
+        );
+    }
+
+    #[test]
+    fn recognises_deferred_value_key_of_sentinels() {
+        // The deferred form emitted for `value-of`/`key-of` of a class constant.
+        assert!(is_deferred_key_value_of_sentinel(
+            "value-of<self::SUPER_GLOBALS>"
+        ));
+        assert!(is_deferred_key_value_of_sentinel("key-of<A::FOO>"));
+        assert!(is_deferred_key_value_of_sentinel("value-of<static::BAR>"));
+        // A bare class constant, a template, or an array literal is not deferred.
+        assert!(!is_deferred_key_value_of_sentinel("self::SUPER_GLOBALS"));
+        assert!(!is_deferred_key_value_of_sentinel("value-of<T>"));
+        assert!(!is_deferred_key_value_of_sentinel(
+            "value-of<array<int, string>>"
+        ));
+        assert!(!is_deferred_key_value_of_sentinel("Foo"));
     }
 }

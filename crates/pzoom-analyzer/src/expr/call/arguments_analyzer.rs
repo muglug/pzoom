@@ -98,6 +98,150 @@ pub fn analyze(
     }
 }
 
+/// The element value type that a *single unpacked array* contributes to the
+/// parameter at `unpacked_offset` (0-based position of that parameter within the
+/// spread). Mirrors Psalm's `ArgumentAnalyzer` unpack handling exactly: a
+/// variadic param absorbs the combined value type, a named param matches a
+/// string-keyed entry, a list shape resolves by position, a typed fallback
+/// covers keys beyond the shape, an optional param the spread does not reach
+/// keeps its default (skipped), and otherwise the element is `mixed`. Returns
+/// `None` (skip this param) for a non-array / multi-atomic spread — the
+/// iterability check for those is done by `verify_unpacked_argument` — and for
+/// the optional-default case.
+fn unpacked_element_value_type_for_param(
+    analyzer: &StatementsAnalyzer<'_>,
+    arg_type: &TUnion,
+    param: &ParamInfo,
+    unpacked_offset: usize,
+    allow_named_args: bool,
+) -> Option<TUnion> {
+    // Psalm's `$arg_value_type->getArray()` needs a single array atomic.
+    if arg_type.types.len() != 1 {
+        return None;
+    }
+    let Some(TAtomic::TArray {
+        known_values,
+        params,
+        is_list,
+        ..
+    }) = arg_type.get_single()
+    else {
+        return None;
+    };
+
+    // Generic (unsealed) array/list with no fixed entries: Psalm's
+    // `type_params[1]` — the fallback value type fills every parameter.
+    if known_values.is_empty() {
+        return params.as_deref().map(|(_, value)| value.clone());
+    }
+
+    // Tuple / keyed shape (Psalm's TKeyedArray branch):
+    // 1. a variadic param absorbs the combined value type (getGenericValueType).
+    if param.is_variadic {
+        let mut combined: Option<TUnion> = None;
+        for (_, value) in known_values.values() {
+            combined = Some(match combined {
+                Some(acc) => combine_union_types(&acc, value, false),
+                None => value.clone(),
+            });
+        }
+        if let Some((_, fallback_value)) = params.as_deref() {
+            combined = Some(match combined {
+                Some(acc) => combine_union_types(&acc, fallback_value, false),
+                None => fallback_value.clone(),
+            });
+        }
+        return Some(combined.unwrap_or_else(TUnion::mixed));
+    }
+    // 2. a named argument matches a string-keyed entry (param names are stored
+    //    with the leading `$`, so strip it to compare against the array key).
+    if allow_named_args {
+        let param_name = analyzer.interner.lookup(param.name);
+        let name = param_name
+            .as_ref()
+            .strip_prefix('$')
+            .unwrap_or(param_name.as_ref());
+        if let Some((_, value)) =
+            known_values.get(&pzoom_code_info::ArrayKey::String(name.to_string()))
+        {
+            return Some(value.clone());
+        }
+    }
+    // 3. a list shape resolves the element by position.
+    if *is_list
+        && let Some((_, value)) =
+            known_values.get(&pzoom_code_info::ArrayKey::Int(unpacked_offset as i64))
+    {
+        return Some(value.clone());
+    }
+    // 4. a typed fallback covers keys beyond the fixed shape.
+    if let Some((_, fallback_value)) = params.as_deref() {
+        return Some(fallback_value.clone());
+    }
+    // 5. an optional param the spread does not reach keeps its default — Psalm
+    //    checks the default against itself (a no-op), so skip it here.
+    if param.is_optional {
+        return None;
+    }
+    // 6. otherwise the element type is unknown.
+    Some(TUnion::mixed())
+}
+
+/// Type-check an unpacked list/array spread's element value against each
+/// parameter it can fill, from `start_param` onward. Mirrors Psalm's per-element
+/// verification of unpacked arguments so coercions (e.g. `string` ->
+/// `lowercase-string` from `...explode('::', $x)`) and mismatches in spread args
+/// are reported, including the per-position element types of a tuple/keyed
+/// shape. The iterability/key checks are done separately by
+/// [`argument_analyzer::verify_unpacked_argument`]. Dataflow is left to the
+/// caller, so this passes `None` for the dataflow hook.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_unpacked_argument_element_types(
+    analyzer: &StatementsAnalyzer<'_>,
+    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg_pos: Pos,
+    arg_type: &TUnion,
+    params: &[ParamInfo],
+    start_param: usize,
+    template_result: Option<&TemplateResult>,
+    callable_name: &str,
+    allow_named_args: bool,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    for (offset, param) in params.iter().enumerate().skip(start_param) {
+        // The parameter's 0-based position within the spread (Psalm's
+        // `$unpacked_argument_offset`), used to resolve a list shape by position.
+        let unpacked_offset = offset - start_param;
+        if param.get_type().is_some()
+            && let Some(value_type) = unpacked_element_value_type_for_param(
+                analyzer,
+                arg_type,
+                param,
+                unpacked_offset,
+                allow_named_args,
+            )
+        {
+            let effective_param = adjust_param_type(param, template_result);
+            argument_analyzer::verify_type(
+                analyzer,
+                arg,
+                arg_pos,
+                &value_type,
+                &effective_param,
+                offset,
+                callable_name,
+                analysis_data,
+                context,
+                None,
+            );
+        }
+        if param.is_variadic {
+            break;
+        }
+    }
+}
+
 pub(crate) fn check_arguments_match(
     analyzer: &StatementsAnalyzer<'_>,
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
@@ -188,6 +332,24 @@ pub(crate) fn check_arguments_match(
                         callable_name,
                         function_info.no_named_arguments,
                         analysis_data,
+                    );
+
+                    let spread_start = arg_param_indices
+                        .get(idx)
+                        .and_then(|mapped| *mapped)
+                        .unwrap_or(idx);
+                    verify_unpacked_argument_element_types(
+                        analyzer,
+                        arg,
+                        arg_pos,
+                        &arg_type,
+                        &function_info.params,
+                        spread_start,
+                        template_result,
+                        callable_name,
+                        !function_info.no_named_arguments,
+                        analysis_data,
+                        context,
                     );
 
                     // Whole-program (taint) mode: the unpacked array's values
@@ -631,72 +793,53 @@ pub(crate) fn verify_arguments(
                     analysis_data,
                 );
 
-                // The unpacked elements still flow into the mapped (or
-                // trailing variadic) parameter; verify the element type like
-                // a normal argument (Psalm checks each unpacked element).
-                let element_param = arg_param_indices
+                // Verify each parameter the spread fills against the element
+                // type at that position — Psalm's per-element unpack check: a
+                // tuple/keyed shape resolves per name/offset, a generic
+                // array/list yields its fallback value type.
+                let spread_start = arg_param_indices
                     .get(idx)
                     .and_then(|mapped| *mapped)
-                    .and_then(|mapped_index| func_info.params.get(mapped_index))
-                    .or_else(|| func_info.params.last().filter(|param| param.is_variadic));
-                // Template-typed params bind from sibling arguments, which
-                // the per-element substitution cannot replicate — only verify
-                // template-free signatures.
-                let mut verified_element = false;
-                if crate::template::template_result_is_empty(template_result)
-                    && let (Some(param), Some(element_type)) = (
-                        element_param,
-                        unpacked_iterable_element_type(analyzer.codebase, &arg_type),
-                    )
-                {
-                    // The element type loses the array's dataflow parents, so
-                    // taint dataflow is attached separately below.
-                    verified_element = !matches!(
-                        analysis_data.data_flow_graph.kind,
-                        GraphKind::WholeProgram(_)
-                    );
-                    argument_analyzer::verify_type(
-                        analyzer,
-                        arg,
-                        arg_pos,
-                        &element_type,
-                        param,
-                        arg_param_indices
-                            .get(idx)
-                            .and_then(|mapped| *mapped)
-                            .unwrap_or(idx),
-                        func_name,
-                        analysis_data,
-                        context,
-                        verified_element.then(|| call_dataflow_for_info(func_info, call_pos)),
-                    );
-                }
+                    .unwrap_or(idx);
+                verify_unpacked_argument_element_types(
+                    analyzer,
+                    arg,
+                    arg_pos,
+                    &arg_type,
+                    &func_info.params,
+                    spread_start,
+                    Some(template_result),
+                    func_name,
+                    !func_info.no_named_arguments,
+                    analysis_data,
+                    context,
+                );
 
-                if !verified_element
-                    && matches!(
-                        analysis_data.data_flow_graph.kind,
-                        GraphKind::WholeProgram(_)
-                    )
-                    && let Some(param) = element_param
-                {
-                    // Whole-program (taint) mode: the unpacked array's values
-                    // flow into the parameter (Psalm taints each unpacked
-                    // element with the array's own dataflow parents).
-                    argument_analyzer::add_dataflow(
-                        analyzer,
-                        &functionlike_id_for_info(func_info),
-                        arg_param_indices
-                            .get(idx)
-                            .and_then(|mapped| *mapped)
-                            .unwrap_or(idx),
-                        arg_pos,
-                        &arg_type,
-                        param,
-                        true,
-                        context,
-                        analysis_data,
-                        call_pos,
-                    );
+                // Whole-program (taint) mode: the unpacked array's values flow
+                // into the mapped (or trailing variadic) parameter (Psalm taints
+                // each unpacked element with the array's own dataflow parents).
+                if matches!(
+                    analysis_data.data_flow_graph.kind,
+                    GraphKind::WholeProgram(_)
+                ) {
+                    let mapped_index = arg_param_indices.get(idx).and_then(|mapped| *mapped);
+                    let param = mapped_index
+                        .and_then(|mapped_index| func_info.params.get(mapped_index))
+                        .or_else(|| func_info.params.last().filter(|param| param.is_variadic));
+                    if let Some(param) = param {
+                        argument_analyzer::add_dataflow(
+                            analyzer,
+                            &functionlike_id_for_info(func_info),
+                            mapped_index.unwrap_or(idx),
+                            arg_pos,
+                            &arg_type,
+                            param,
+                            true,
+                            context,
+                            analysis_data,
+                            call_pos,
+                        );
+                    }
                 }
             }
             continue;

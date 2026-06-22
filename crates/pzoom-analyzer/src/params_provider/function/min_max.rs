@@ -26,6 +26,15 @@ impl FunctionParamsProvider for MinMaxParamsProvider {
             return None;
         }
 
+        // A spread argument unpacks into positional values, so `max(...$list)`
+        // uses the variadic `max(mixed, mixed, ...)` form (the default stub),
+        // not the single-array `max(non-empty-array)` variant — mirroring how
+        // Psalm spreads into the variadic overload. Without this, the unpacked
+        // element type would be checked against `non-empty-array`.
+        if event.args[0].is_unpacked() {
+            return None;
+        }
+
         // Psalm picks the matching CallMap variant: a single NON-array
         // argument selects the variadic `min'1`/`max'1` variant
         // (`min($value, $value2, ...$rest)`), which needs at least two

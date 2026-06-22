@@ -2456,21 +2456,11 @@ fn union_can_contain_object(union: &TUnion) -> bool {
         // closures/callables are or may be objects.
         | TAtomic::TIterable { .. }
         | TAtomic::TClosure { .. }
-        | TAtomic::TCallable { .. } => true,
-        // Any array: an object may hide in a known entry's value or the typed
-        // fallback value (a generic array carries its element type there).
-        TAtomic::TArray {
-            known_values,
-            params,
-            ..
-        } => {
-            known_values
-                .values()
-                .any(|(_, value)| union_can_contain_object(value))
-                || params
-                    .as_deref()
-                    .is_some_and(|(_, value)| union_can_contain_object(value))
-        }
+        | TAtomic::TCallable { .. }
+        // Any array — Psalm's CanContainObjectTypeVisitor matches every
+        // `isIterable()` node, and an array counts as iterable, so `serialize()`
+        // of any array (whatever its element type) is treated as impure.
+        | TAtomic::TArray { .. } => true,
         _ => false,
     })
 }

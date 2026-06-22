@@ -1,0 +1,1 @@
+InvalidScalarArgument - input.php:12:17 - Argument 1 of twoTypes expects int, but 'x' provided

@@ -1,0 +1,2 @@
+ImpureFunctionCall - input.php:15:23 - Cannot call an impure function serialize from a mutation-free context
+ImpureFunctionCall - input.php:18:22 - Cannot call an impure function json_last_error_msg from a mutation-free context

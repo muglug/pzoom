@@ -1,0 +1,1 @@
+ArgumentTypeCoercion - input.php:16:28 - Argument 2 of MethodId::__construct expects lowercase-string, but parent type string provided

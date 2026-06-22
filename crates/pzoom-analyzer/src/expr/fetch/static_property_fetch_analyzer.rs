@@ -491,6 +491,9 @@ fn analyze_variable_static_property_fetch(
             analysis_data,
             false,
             context.inside_isset,
+            // A `Foo::$bar`/`$obj::$prop` receiver is never a null value, so the
+            // pure-null NullPropertyFetch never applies to static access.
+            false,
             context.has_this,
             context,
             // `$obj::$prop` syntax reaches static properties (Psalm's

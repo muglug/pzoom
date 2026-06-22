@@ -63,6 +63,8 @@ pub fn analyze(
                     pos,
                     analysis_data,
                     context,
+                    // A compound assignment (`$obj->prop += …`) reads the old value.
+                    !matches!(assignment.operator, AssignmentOperator::Assign(_)),
                 );
                 return;
             }
@@ -920,6 +922,7 @@ fn analyze_assignment_lhs(
                         (span.start.offset, span.end.offset),
                         analysis_data,
                         context,
+                        false,
                     );
                 }
                 Access::NullSafeProperty(_) | Access::StaticProperty(_) => {

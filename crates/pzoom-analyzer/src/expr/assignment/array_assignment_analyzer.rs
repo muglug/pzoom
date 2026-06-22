@@ -633,6 +633,7 @@ fn analyze_assignment_chain<'a>(
             assignment_pos,
             analysis_data,
             context,
+            false,
         );
     } else if let Expression::Access(Access::StaticProperty(static_prop)) =
         root_expr.unparenthesized()

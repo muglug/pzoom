@@ -89,6 +89,43 @@ fn attach_property_fetch_dataflow(
 }
 
 /// Analyze an instance property access expression ($obj->prop).
+/// Mark `$obj->prop` as read for find-unused-code. Mirrors the recording in
+/// `analyze_property`, used on the in-scope-cache fast path where that lookup is
+/// skipped. Resolves the declaring class through the receiver's atomics (and
+/// `@mixin`s are already folded into the property set), so the reference is keyed
+/// the same way the unused-property check looks it up.
+fn record_property_read_for_unused(
+    analyzer: &StatementsAnalyzer<'_>,
+    obj_type: &TUnion,
+    prop_name: &str,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    if !analyzer.config.find_unused_code {
+        return;
+    }
+    let prop_id = analyzer.interner.intern(prop_name);
+    let lookup_types = expand_intersection_lookup_types(&expand_template_object_union(obj_type));
+    for atomic in &lookup_types {
+        let TAtomic::TNamedObject { name, .. } = atomic else {
+            continue;
+        };
+        let Some(class_info) = analyzer.codebase.get_class(*name) else {
+            continue;
+        };
+        if let Some(prop_info) = class_info.properties.get(&prop_id) {
+            analysis_data
+                .referenced_properties
+                .insert((prop_info.declaring_class, prop_id));
+            analysis_data.add_class_member_reference(
+                &context.function_context,
+                (prop_info.declaring_class, prop_id),
+                false,
+            );
+        }
+    }
+}
+
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
     access: &PropertyAccess<'_>,
@@ -142,6 +179,22 @@ pub fn analyze(
 
     if let Some(prop_name) = prop_name {
         if let Some(keyed_type) = get_reconciled_property_type(context, access.object, prop_name) {
+            // The reconciled type is served straight from in-scope state (a
+            // prior assignment or narrowing), short-circuiting the property
+            // lookup below that normally records the read. Record it here too so
+            // a property that is written-then-read (or read after an isset/
+            // instanceof narrowing) is not wrongly reported as unused.
+            if !in_assignment && !context.inside_array_append_root {
+                if let Some(obj_t) = &obj_type {
+                    record_property_read_for_unused(
+                        analyzer,
+                        obj_t,
+                        prop_name,
+                        analysis_data,
+                        context,
+                    );
+                }
+            }
             analysis_data.expr_types.insert(pos, Rc::new(keyed_type));
             return;
         }
@@ -213,11 +266,14 @@ pub fn analyze(
             pos,
             analysis_data,
             is_this_fetch,
-            // PHP's ?-> short-circuits the rest of the chain: the null from an
-            // upstream nullsafe never reaches this fetch (Psalm's
-            // MethodCallAnalyzer::hasNullsafe gate).
+            // PossiblyNullPropertyFetch is suppressed inside isset()/?? (Psalm's
+            // `!$context->inside_isset` gate) and when the chain short-circuits
+            // through an upstream `?->` (MethodCallAnalyzer::hasNullsafe).
             context.inside_isset
                 || crate::expr::call::method_call_analyzer::has_nullsafe(access.object),
+            // The pure-null NullPropertyFetch is unconditional in Psalm; only a
+            // nullsafe short-circuit (the null never reaches this fetch) drops it.
+            crate::expr::call::method_call_analyzer::has_nullsafe(access.object),
             context.has_this,
             context,
             false,
@@ -241,6 +297,48 @@ pub fn analyze(
             analysis_data.expr_types.insert(pos, Rc::new(prop_type));
             return;
         }
+        // A pure-null receiver already produced NullPropertyFetch in
+        // get_property_type. Psalm's InstancePropertyFetchAnalyzer `return`s
+        // there leaving the node untyped, so the rest of the chain stays silent
+        // (`if (!$stmt_var_type) return true`). Mirror that by marking the
+        // position failed: a chained fetch must not then report
+        // MixedPropertyFetch on the `mixed` fallback below.
+        if obj_t.is_null() {
+            analysis_data.failed_property_fetch_positions.insert(pos);
+            store_property_fetch_in_scope(context, access.object, prop_name, &TUnion::mixed());
+            analysis_data
+                .expr_types
+                .insert(pos, Rc::new(TUnion::mixed()));
+            return;
+        }
+
+        // An undefined-property fetch on a *nullable* receiver (`Foo|null`)
+        // keeps the null, matching Psalm's InstancePropertyFetchAnalyzer: inside
+        // isset()/?? (or an upstream `?->`) the result is pre-seeded to `null`
+        // and the missing property contributes nothing, so the node reads
+        // `null`; outside isset the missing property reads `mixed` and `TNull`
+        // is unioned back in afterwards, giving `mixed|null`. The chained fetch
+        // must see that null/mixed so it can report NullPropertyFetch /
+        // PossiblyNullPropertyFetch / MixedPropertyFetch the way Psalm does, so
+        // the position is deliberately *not* marked as a failed fetch.
+        if obj_t.is_nullable() && !obj_t.is_null() {
+            let null_short_circuits = context.inside_isset
+                || crate::expr::call::method_call_analyzer::has_nullsafe(access.object);
+            let mut result = if null_short_circuits {
+                TUnion::new(TAtomic::TNull)
+            } else {
+                let mut mixed = TUnion::mixed();
+                mixed.add_type(TAtomic::TNull);
+                mixed
+            };
+            if obj_t.ignore_nullable_issues {
+                result.ignore_nullable_issues = true;
+            }
+            store_property_fetch_in_scope(context, access.object, prop_name, &result);
+            analysis_data.expr_types.insert(pos, Rc::new(result));
+            return;
+        }
+
         store_property_fetch_in_scope(context, access.object, prop_name, &TUnion::mixed());
 
         // A failed lookup on a known object type leaves the node effectively
@@ -342,6 +440,9 @@ pub fn analyze_nullsafe(
             pos,
             analysis_data,
             false,
+            // `$obj?->prop` short-circuits on null, so both the possibly-null
+            // and pure-null fetch issues are suppressed here.
+            true,
             true,
             context.has_this,
             context,

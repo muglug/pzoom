@@ -31,6 +31,7 @@ pub fn analyze(
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
+    is_compound: bool,
 ) {
     // Analyze the value expression
     // Hakana's instance_property_assignment_analyzer analyzes the assigned
@@ -82,7 +83,15 @@ pub fn analyze(
             .insert(value_pos, Rc::new(value_type.clone()));
     }
 
-    analyze_with_known_type(analyzer, access, value_type, pos, analysis_data, context);
+    analyze_with_known_type(
+        analyzer,
+        access,
+        value_type,
+        pos,
+        analysis_data,
+        context,
+        is_compound,
+    );
 }
 
 /// Analyze an instance property assignment using a precomputed assigned value type.
@@ -96,6 +105,7 @@ pub fn analyze_with_known_type(
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
+    is_compound: bool,
 ) {
     let explicit_mutation_free_context = is_explicit_mutation_free_context(analyzer);
 
@@ -342,6 +352,21 @@ pub fn analyze_with_known_type(
                                 .get(&prop_id)
                                 .filter(|prop_info| !prop_info.is_static)
                             {
+                                // A compound assignment (`$obj->prop += …`)
+                                // reads the old value, so it marks the property
+                                // used for find_unused_code (a plain `=` write
+                                // does not count as a read).
+                                if is_compound && analyzer.config.find_unused_code {
+                                    analysis_data
+                                        .referenced_properties
+                                        .insert((prop_info.declaring_class, prop_id));
+                                    analysis_data.add_class_member_reference(
+                                        &context.function_context,
+                                        (prop_info.declaring_class, prop_id),
+                                        false,
+                                    );
+                                }
+
                                 // Hakana `add_instance_property_dataflow`: a
                                 // `@psalm-taint-specialize` class routes the
                                 // assignment through the receiver variable's

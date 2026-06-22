@@ -89,6 +89,43 @@ fn attach_property_fetch_dataflow(
 }
 
 /// Analyze an instance property access expression ($obj->prop).
+/// Mark `$obj->prop` as read for find-unused-code. Mirrors the recording in
+/// `analyze_property`, used on the in-scope-cache fast path where that lookup is
+/// skipped. Resolves the declaring class through the receiver's atomics (and
+/// `@mixin`s are already folded into the property set), so the reference is keyed
+/// the same way the unused-property check looks it up.
+fn record_property_read_for_unused(
+    analyzer: &StatementsAnalyzer<'_>,
+    obj_type: &TUnion,
+    prop_name: &str,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    if !analyzer.config.find_unused_code {
+        return;
+    }
+    let prop_id = analyzer.interner.intern(prop_name);
+    let lookup_types = expand_intersection_lookup_types(&expand_template_object_union(obj_type));
+    for atomic in &lookup_types {
+        let TAtomic::TNamedObject { name, .. } = atomic else {
+            continue;
+        };
+        let Some(class_info) = analyzer.codebase.get_class(*name) else {
+            continue;
+        };
+        if let Some(prop_info) = class_info.properties.get(&prop_id) {
+            analysis_data
+                .referenced_properties
+                .insert((prop_info.declaring_class, prop_id));
+            analysis_data.add_class_member_reference(
+                &context.function_context,
+                (prop_info.declaring_class, prop_id),
+                false,
+            );
+        }
+    }
+}
+
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
     access: &PropertyAccess<'_>,
@@ -142,6 +179,22 @@ pub fn analyze(
 
     if let Some(prop_name) = prop_name {
         if let Some(keyed_type) = get_reconciled_property_type(context, access.object, prop_name) {
+            // The reconciled type is served straight from in-scope state (a
+            // prior assignment or narrowing), short-circuiting the property
+            // lookup below that normally records the read. Record it here too so
+            // a property that is written-then-read (or read after an isset/
+            // instanceof narrowing) is not wrongly reported as unused.
+            if !in_assignment && !context.inside_array_append_root {
+                if let Some(obj_t) = &obj_type {
+                    record_property_read_for_unused(
+                        analyzer,
+                        obj_t,
+                        prop_name,
+                        analysis_data,
+                        context,
+                    );
+                }
+            }
             analysis_data.expr_types.insert(pos, Rc::new(keyed_type));
             return;
         }

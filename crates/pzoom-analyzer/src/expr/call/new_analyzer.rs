@@ -1571,6 +1571,22 @@ fn verify_constructor_arguments(
                     construct_info.no_named_arguments,
                     analysis_data,
                 );
+                let spread_start = arg_param_indices
+                    .get(idx)
+                    .and_then(|mapped| *mapped)
+                    .unwrap_or(idx);
+                arguments_analyzer::verify_unpacked_argument_element_types(
+                    analyzer,
+                    arg,
+                    arg_pos,
+                    &arg_type,
+                    &construct_info.params,
+                    spread_start,
+                    Some(&template_result),
+                    &callable_name,
+                    analysis_data,
+                    context,
+                );
             }
             continue;
         }

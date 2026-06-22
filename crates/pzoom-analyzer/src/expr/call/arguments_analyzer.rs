@@ -98,6 +98,70 @@ pub fn analyze(
     }
 }
 
+/// The element value type of a *generic* (unsealed) array/list spread, whose
+/// single value type fills the unpacked parameters uniformly. Returns `None`
+/// for sealed tuples (their per-position element types are checked elsewhere)
+/// and for multi-atomic or non-array spreads, to avoid over-reporting.
+fn unpacked_generic_value_type(arg_type: &TUnion) -> Option<TUnion> {
+    if arg_type.types.len() != 1 {
+        return None;
+    }
+    match arg_type.get_single() {
+        Some(pzoom_code_info::TAtomic::TArray {
+            known_values,
+            params: Some(params),
+            ..
+        }) if known_values.is_empty() => Some(params.1.clone()),
+        _ => None,
+    }
+}
+
+/// Type-check a generic (unsealed) list/array spread's element value against
+/// each parameter it can fill, from `start_param` onward. Mirrors Psalm's
+/// per-element verification of unpacked arguments so coercions (e.g.
+/// `string` -> `lowercase-string` from `...explode('::', $x)`) and mismatches in
+/// spread args are reported -- the iterability/key checks are done separately by
+/// [`argument_analyzer::verify_unpacked_argument`]. A no-op for sealed tuples and
+/// non-array spreads (their element types are checked elsewhere). Dataflow is
+/// left to the caller, so this passes `None` for the dataflow hook.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_unpacked_argument_element_types(
+    analyzer: &StatementsAnalyzer<'_>,
+    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg_pos: Pos,
+    arg_type: &TUnion,
+    params: &[ParamInfo],
+    start_param: usize,
+    template_result: Option<&TemplateResult>,
+    callable_name: &str,
+    analysis_data: &mut FunctionAnalysisData,
+    context: &BlockContext,
+) {
+    let Some(value_type) = unpacked_generic_value_type(arg_type) else {
+        return;
+    };
+    for (offset, param) in params.iter().enumerate().skip(start_param) {
+        if param.get_type().is_some() {
+            let effective_param = adjust_param_type(param, template_result);
+            argument_analyzer::verify_type(
+                analyzer,
+                arg,
+                arg_pos,
+                &value_type,
+                &effective_param,
+                offset,
+                callable_name,
+                analysis_data,
+                context,
+                None,
+            );
+        }
+        if param.is_variadic {
+            break;
+        }
+    }
+}
+
 pub(crate) fn check_arguments_match(
     analyzer: &StatementsAnalyzer<'_>,
     args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
@@ -188,6 +252,23 @@ pub(crate) fn check_arguments_match(
                         callable_name,
                         function_info.no_named_arguments,
                         analysis_data,
+                    );
+
+                    let spread_start = arg_param_indices
+                        .get(idx)
+                        .and_then(|mapped| *mapped)
+                        .unwrap_or(idx);
+                    verify_unpacked_argument_element_types(
+                        analyzer,
+                        arg,
+                        arg_pos,
+                        &arg_type,
+                        &function_info.params,
+                        spread_start,
+                        template_result,
+                        callable_name,
+                        analysis_data,
+                        context,
                     );
 
                     // Whole-program (taint) mode: the unpacked array's values

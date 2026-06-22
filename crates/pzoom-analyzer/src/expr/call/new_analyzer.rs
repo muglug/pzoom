@@ -1584,6 +1584,7 @@ fn verify_constructor_arguments(
                     spread_start,
                     Some(&template_result),
                     &callable_name,
+                    !construct_info.no_named_arguments,
                     analysis_data,
                     context,
                 );

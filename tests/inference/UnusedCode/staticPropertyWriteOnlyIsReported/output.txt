@@ -1,0 +1,1 @@
+UnusedProperty - input.php:9:27 - Cannot find any references to private property Registry::$last

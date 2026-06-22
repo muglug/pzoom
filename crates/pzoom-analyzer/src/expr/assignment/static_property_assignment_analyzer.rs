@@ -114,9 +114,14 @@ pub fn analyze(
 
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
             if let Some(prop_info) = class_info.properties.get(&prop_id) {
-                // A compound assignment (`self::$p += …`) reads the previous
-                // value, marking the property used for find_unused_code.
-                if is_compound && analyzer.config.find_unused_code {
+                // Any write to a static property counts as a reference in
+                // Psalm (a static-property assignment goes through a property
+                // fetch), so a static property that is only ever written is not
+                // reported as unused. (Instance-property writes, by contrast,
+                // do not count -- only reads do.) A compound assignment also
+                // reads the previous value, but plain writes count too.
+                let _ = is_compound;
+                if analyzer.config.find_unused_code {
                     analysis_data
                         .referenced_properties
                         .insert((prop_info.declaring_class, prop_id));

@@ -2,8 +2,12 @@
   "audit": "pzoom static-analysis findings on the Psalm codebase",
   "analyzer": {
     "tool": "pzoom",
-    "branch": "claude/dreamy-wright-na9bh5 (merged main incl. #36 value-of<self::CONST> docblock fix)"
+    "branch": "claude/dreamy-wright-na9bh5 (merged main thru #38; plus two offender fixes below)"
   },
+  "fixes_applied_in_this_change": [
+    "PossiblyUnusedReturnValue on interface/abstract methods (offender #2, 9 FPs): using an override's return value now also marks the overridden parent/interface method's return used (atomic_method_call_analyzer.rs), mirroring the existing referenced-member propagation.",
+    "PossiblyUnusedProperty/UnusedProperty on write-only STATIC properties (part of offender #1, 8 FPs): a static-property write now counts as a reference (static_property_assignment_analyzer.rs), matching Psalm (which counts any static-property access; instance writes still don't count)."
+  ],
   "target": {
     "project": "vimeo/psalm",
     "psalm_commit": "be7afcfe9d7f65301c32d4bc156efa31a6caa39f",
@@ -17,24 +21,24 @@
     "true_issue_psalm_misses": "pzoom correctly found a genuine issue in the PHP code that Psalm does NOT report (pzoom is more precise here).",
     "real_but_psalm_suppresses_or_baselines": "pzoom's finding is correct AND Psalm's own analysis produces it too, but Psalm intentionally suppresses it inline or via psalm-baseline.xml; pzoom surfaces it only because it does not honor that suppression/baseline entry (a suppression/baseline-matching gap, not an analysis error)."
   },
-  "count_note": "118 issues after merging pzoom main (#36 'Fix docblock parsing/resolution of value-of<self::CONST> unions') removed the single UnusedDocblockParam false positive on VariableFetchAnalyzer::getGlobalTypeInner. The pre-merge run yielded 119 (deterministic), versus the 122 originally stated: Psalm's composer.lock is git-ignored, so `composer install` pulls the latest matching dependency versions, and a few findings depend on exact vendor code (most notably the 4 PHPUnit InvocationMocker / withConsecutive issues). Vendor-version drift is the likely source of the residual difference; the classification methodology is identical regardless of the exact count.",
-  "observed_issue_count": 118,
+  "count_note": "101 issues. History: 119 at first audit; #36 (value-of<self::CONST> docblock fix) removed the UnusedDocblockParam FP -> 118; merging main thru #38 swapped 2 TypeCombiner UnusedPsalmSuppress false-negatives (now emitted) for 2 TKeyedArray PossiblyInvalidPropertyAssignmentValue list-shape FPs (net 118); then the two fixes in this change removed 17 FPs (9 return-value + 8 static-property) -> 101. Psalm's composer.lock is git-ignored so vendor versions float; a few findings (e.g. the PHPUnit InvocationMocker group) depend on exact vendor code.",
+  "observed_issue_count": 101,
   "expected_issue_count": 122,
   "classification_summary": {
-    "false_positive": 40,
-    "false_negative": 59,
+    "false_positive": 25,
+    "false_negative": 57,
     "true_issue_psalm_misses": 11,
     "real_but_psalm_suppresses_or_baselines": 8
   },
   "false_negative_detail": "All 59 are UnusedPsalmSuppress. Each marks a `@psalm-suppress X` that Psalm needs (Psalm emits X at that spot, then the suppression consumes it). pzoom does not yet emit X, so it reports the suppression as unused. By suppressed-issue type X, the checks pzoom is missing are dominated by: ArgumentTypeCoercion, MixedAssignment/MixedOperand/MixedArgumentTypeCoercion, RiskyTruthyFalsyComparison, ImpureFunctionCall/ImpureStaticProperty, PropertyTypeCoercion, PossiblyNull*/PossiblyFalse*/PossiblyInvalid* and several Redundant/More/LessSpecific* checks.",
   "true_issue_psalm_misses_detail": "All 11 are RedundantCondition / RedundantConditionGivenDocblockType on the idiom `<cond> && ($x = $obj->getArray()|getAtomicTypes()|getSingleAtomic())`. Those getters are @psalm-mutation-free and return non-falsable types (objects / non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. pzoom catches these; Psalm does not (confirmed by the project author and by a controlled reproduction in which Psalm is silent while pzoom emits the identical message). These are pzoom being MORE precise than Psalm.",
   "false_positive_root_causes": {
-    "incomplete_reference_tracking_unused_property": 12,
-    "incomplete_reference_tracking_unused_return_value": 9,
+    "incomplete_reference_tracking_unused_property (remaining: reads served from in-scope cache / compound / nested writes)": 4,
     "missing_count/non_empty/guard_narrowing": 5,
     "divergent_complexity_metric (ComplexMethod)": 4,
     "fails_to_resolve_existing_vendor_class (PHPUnit InvocationMocker)": 4,
     "imprecise_or_incorrect_type_modeling (key()/+/explode offset/hrtime stub)": 5,
+    "list_shape_not_recognised (non-empty-array treated as non-list)": 2,
     "over_eager_unresolvable_include": 1
   },
   "issues": [
@@ -150,17 +154,6 @@
     },
     {
       "id": 11,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/FileSource.php",
-      "line": 22,
-      "column": 40,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "FileSource::getRootFileName() return is used, e.g. `return $this->source->getRootFileName();` (SourceAnalyzer.php:92, ReflectorVisitor.php:646). pzoom does not propagate 'return used' from call-sites to the interface method declaration."
-    },
-    {
-      "id": 12,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Algebra.php",
       "line": 305,
@@ -171,7 +164,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedArgumentTypeCoercion` is genuinely required \u2014 Psalm emits MixedArgumentTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedArgumentTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedArgumentTypeCoercion here but does not; closing that gap would both surface MixedArgumentTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 13,
+      "id": 12,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Algebra/FormulaGenerator.php",
       "line": 450,
@@ -182,7 +175,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedOperand` is genuinely required \u2014 Psalm emits MixedOperand here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedOperand at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedOperand here but does not; closing that gap would both surface MixedOperand and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 14,
+      "id": 13,
       "kind": "PossiblyUnusedReturnValue",
       "file": "src/Psalm/Internal/Analyzer/FunctionLike/ReturnTypeAnalyzer.php",
       "line": 73,
@@ -193,7 +186,7 @@
       "explanation": "verifyReturnType() returns false|null and carries `@psalm-suppress PossiblyUnusedReturnValue unused but seems important` (line 74). Psalm emits this issue and the inline suppress consumes it. pzoom anchors the issue on the @return docblock line (73) which falls OUTSIDE the suppression scope it computes for the function, so it fails to honor the co-located suppress. Finding is real; pzoom should suppress it."
     },
     {
-      "id": 15,
+      "id": 14,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/FunctionLike/ReturnTypeAnalyzer.php",
       "line": 270,
@@ -204,7 +197,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress InvalidArgument` is genuinely required \u2014 Psalm emits InvalidArgument here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit InvalidArgument at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit InvalidArgument here but does not; closing that gap would both surface InvalidArgument and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 16,
+      "id": 15,
       "kind": "PossiblyUnusedReturnValue",
       "file": "src/Psalm/Internal/Analyzer/FunctionLikeAnalyzer.php",
       "line": 158,
@@ -215,7 +208,7 @@
       "explanation": "Method returns false|null with inline `@psalm-suppress PossiblyUnusedReturnValue unused but seems important`. Psalm detects+suppresses; pzoom fails to honor the docblock-scoped suppress."
     },
     {
-      "id": 17,
+      "id": 16,
       "kind": "PossiblyUnusedReturnValue",
       "file": "src/Psalm/Internal/Analyzer/MethodComparator.php",
       "line": 56,
@@ -226,7 +219,7 @@
       "explanation": "Method returns false|null with inline `@psalm-suppress PossiblyUnusedReturnValue unused but seems important`. Psalm detects+suppresses; pzoom fails to honor the suppress."
     },
     {
-      "id": 18,
+      "id": 17,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/ScopeAnalyzer.php",
       "line": 38,
@@ -237,7 +230,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ComplexMethod` is genuinely required \u2014 Psalm emits ComplexMethod here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ComplexMethod at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ComplexMethod here but does not; closing that gap would both surface ComplexMethod and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 19,
+      "id": 18,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/ScopeAnalyzer.php",
       "line": 93,
@@ -248,7 +241,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress InvalidArrayOffset` is genuinely required \u2014 Psalm emits InvalidArrayOffset here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit InvalidArrayOffset at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit InvalidArrayOffset here but does not; closing that gap would both surface InvalidArrayOffset and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 20,
+      "id": 19,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/ScopeAnalyzer.php",
       "line": 110,
@@ -259,7 +252,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress InvalidArrayOffset` is genuinely required \u2014 Psalm emits InvalidArrayOffset here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit InvalidArrayOffset at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit InvalidArrayOffset here but does not; closing that gap would both surface InvalidArrayOffset and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 21,
+      "id": 20,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/ScopeAnalyzer.php",
       "line": 115,
@@ -270,7 +263,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress InvalidArrayOffset` is genuinely required \u2014 Psalm emits InvalidArrayOffset here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit InvalidArrayOffset at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit InvalidArrayOffset here but does not; closing that gap would both surface InvalidArrayOffset and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 22,
+      "id": 21,
       "kind": "ComplexMethod",
       "file": "src/Psalm/Internal/Analyzer/Statements/Block/SwitchCaseAnalyzer.php",
       "line": 63,
@@ -281,7 +274,7 @@
       "explanation": "pzoom's method-complexity metric (graph size / path length) diverges from Psalm's. Psalm flags Config.php:927 and ArgumentAnalyzer.php:712 (both baselined) and does NOT flag this method; pzoom crosses the limit here instead. Not a logic defect."
     },
     {
-      "id": 23,
+      "id": 22,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/AssertionFinder.php",
       "line": 2259,
@@ -292,7 +285,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MoreSpecificReturnType` is genuinely required \u2014 Psalm emits MoreSpecificReturnType here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MoreSpecificReturnType at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MoreSpecificReturnType here but does not; closing that gap would both surface MoreSpecificReturnType and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 24,
+      "id": 23,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/AssertionFinder.php",
       "line": 2409,
@@ -303,7 +296,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress LessSpecificReturnStatement` is genuinely required \u2014 Psalm emits LessSpecificReturnStatement here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit LessSpecificReturnStatement at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit LessSpecificReturnStatement here but does not; closing that gap would both surface LessSpecificReturnStatement and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 25,
+      "id": 24,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/AssertionFinder.php",
       "line": 2988,
@@ -314,7 +307,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MoreSpecificReturnType` is genuinely required \u2014 Psalm emits MoreSpecificReturnType here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MoreSpecificReturnType at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MoreSpecificReturnType here but does not; closing that gap would both surface MoreSpecificReturnType and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 26,
+      "id": 25,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/AssertionFinder.php",
       "line": 3137,
@@ -325,7 +318,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress LessSpecificReturnStatement` is genuinely required \u2014 Psalm emits LessSpecificReturnStatement here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit LessSpecificReturnStatement at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit LessSpecificReturnStatement here but does not; closing that gap would both surface LessSpecificReturnStatement and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 27,
+      "id": 26,
       "kind": "PossiblyUnusedReturnValue",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Assignment/ArrayAssignmentAnalyzer.php",
       "line": 89,
@@ -336,7 +329,7 @@
       "explanation": "Method returns false|null with inline `@psalm-suppress PossiblyUnusedReturnValue not used but seems important`. Psalm detects+suppresses; pzoom fails to honor the suppress."
     },
     {
-      "id": 28,
+      "id": 27,
       "kind": "RedundantCondition",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/ArgumentsAnalyzer.php",
       "line": 1646,
@@ -347,7 +340,7 @@
       "explanation": "Valid finding. `getSingleAtomic()` is @psalm-mutation-free and returns a non-falsable Atomic, so the && operand `($atomic_arg_type = $arg_value_type->getSingleAtomic())` is always truthy \u2014 a genuine redundant truthiness test (the assignment still binds the var, but the test never fails). Confirmed by the project author. Psalm does NOT flag the always-truthy-ness of a mutation-free method result captured in an assignment-within-a-condition: verified by a controlled reproduction (Psalm silent, pzoom emits the identical 'Type Atom for $this->getSingle() is always truthy') and by Psalm emitting zero such findings codebase-wide (none baselined, no inline suppress). pzoom correctly catches what Psalm misses."
     },
     {
-      "id": 29,
+      "id": 28,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/ClassTemplateParamCollector.php",
       "line": 31,
@@ -358,7 +351,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MoreSpecificReturnType` is genuinely required \u2014 Psalm emits MoreSpecificReturnType here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MoreSpecificReturnType at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MoreSpecificReturnType here but does not; closing that gap would both surface MoreSpecificReturnType and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 30,
+      "id": 29,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/ClassTemplateParamCollector.php",
       "line": 32,
@@ -369,7 +362,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress LessSpecificReturnStatement` is genuinely required \u2014 Psalm emits LessSpecificReturnStatement here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit LessSpecificReturnStatement at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit LessSpecificReturnStatement here but does not; closing that gap would both surface LessSpecificReturnStatement and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 31,
+      "id": 30,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/FunctionCallAnalyzer.php",
       "line": 766,
@@ -380,7 +373,7 @@
       "explanation": "Psalm emits this same PossiblyUndefinedIntArrayOffset and it is covered by psalm-baseline.xml. pzoom emits it because its extracted snippet text does not match the baseline <code> entry, so the baseline filter misses it. The underlying finding matches Psalm."
     },
     {
-      "id": 32,
+      "id": 31,
       "kind": "PossiblyUnusedProperty",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/FunctionCallInfo.php",
       "line": 46,
@@ -391,7 +384,7 @@
       "explanation": "FunctionCallInfo::$byref_uses IS read via compound assignment at FunctionCallAnalyzer.php:707 `$function_call_info->byref_uses += $var_type_part->byref_uses;` (the `+=` reads the current value). pzoom does not count the read side of a compound assignment."
     },
     {
-      "id": 33,
+      "id": 32,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Call/FunctionCallReturnTypeFetcher.php",
       "line": 631,
@@ -402,7 +395,7 @@
       "explanation": "Guarded by `if ($function_id === 'preg_replace' && count($stmt->getArgs()) > 2)`. After count()>2, offsets 0/1/2 exist, so getArgs()[1] is defined. pzoom does not narrow list length via the count()>N guard."
     },
     {
-      "id": 34,
+      "id": 33,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/Fetch/AtomicPropertyFetchAnalyzer.php",
       "line": 85,
@@ -413,7 +406,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ComplexMethod` is genuinely required \u2014 Psalm emits ComplexMethod here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ComplexMethod at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ComplexMethod here but does not; closing that gap would both surface ComplexMethod and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 35,
+      "id": 34,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Internal/Analyzer/Statements/Expression/IncludeAnalyzer.php",
       "line": 377,
@@ -424,7 +417,7 @@
       "explanation": "Guarded by `if ($stmt->getArgs())` (line 356) which makes getArgs() a non-empty list, so getArgs()[0] is defined. pzoom does not narrow to non-empty through the truthiness guard on the (pure, memoized) getArgs() call."
     },
     {
-      "id": 36,
+      "id": 35,
       "kind": "ComplexMethod",
       "file": "src/Psalm/Internal/Analyzer/Statements/ReturnAnalyzer.php",
       "line": 63,
@@ -435,7 +428,7 @@
       "explanation": "pzoom's complexity calculation crosses the limit for a method Psalm keeps under the limit. Psalm flags different methods (Config.php:927, ArgumentAnalyzer.php:712). Metric divergence, not a code defect."
     },
     {
-      "id": 37,
+      "id": 36,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Clause.php",
       "line": 104,
@@ -446,7 +439,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ImpureFunctionCall` is genuinely required \u2014 Psalm emits ImpureFunctionCall here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ImpureFunctionCall at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ImpureFunctionCall here but does not; closing that gap would both surface ImpureFunctionCall and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 38,
+      "id": 37,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/LanguageServer.php",
       "line": 63,
@@ -457,7 +450,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ComplexMethod` is genuinely required \u2014 Psalm emits ComplexMethod here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ComplexMethod at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ComplexMethod here but does not; closing that gap would both surface ComplexMethod and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 39,
+      "id": 38,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/Psalm.php",
       "line": 1029,
@@ -468,7 +461,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RiskyTruthyFalsyComparison` is genuinely required \u2014 Psalm emits RiskyTruthyFalsyComparison here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RiskyTruthyFalsyComparison at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RiskyTruthyFalsyComparison here but does not; closing that gap would both surface RiskyTruthyFalsyComparison and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 40,
+      "id": 39,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/Psalm.php",
       "line": 1071,
@@ -479,7 +472,7 @@
       "explanation": "This is the ONE genuinely-unused suppression in the codebase: Psalm also reports UnusedPsalmSuppress here and it is recorded in psalm-baseline.xml. pzoom agrees with Psalm; it only appears because pzoom's snippet text does not match the baseline entry."
     },
     {
-      "id": 41,
+      "id": 40,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/Psalter.php",
       "line": 603,
@@ -490,7 +483,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedAssignment` is genuinely required \u2014 Psalm emits MixedAssignment here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedAssignment at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedAssignment here but does not; closing that gap would both surface MixedAssignment and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 42,
+      "id": 41,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/Review.php",
       "line": 83,
@@ -501,7 +494,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RiskyTruthyFalsyComparison` is genuinely required \u2014 Psalm emits RiskyTruthyFalsyComparison here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RiskyTruthyFalsyComparison at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RiskyTruthyFalsyComparison here but does not; closing that gap would both surface RiskyTruthyFalsyComparison and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 43,
+      "id": 42,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Cli/Review.php",
       "line": 164,
@@ -512,7 +505,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RiskyTruthyFalsyComparison` is genuinely required \u2014 Psalm emits RiskyTruthyFalsyComparison here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RiskyTruthyFalsyComparison at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RiskyTruthyFalsyComparison here but does not; closing that gap would both surface RiskyTruthyFalsyComparison and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 44,
+      "id": 43,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Codebase/Analyzer.php",
       "line": 444,
@@ -523,7 +516,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ComplexMethod` is genuinely required \u2014 Psalm emits ComplexMethod here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ComplexMethod at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ComplexMethod here but does not; closing that gap would both surface ComplexMethod and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 45,
+      "id": 44,
       "kind": "ArgumentTypeCoercion",
       "file": "src/Psalm/Internal/Codebase/ConstantTypeResolver.php",
       "line": 149,
@@ -534,7 +527,7 @@
       "explanation": "`new TKeyedArray($left->properties + $right->properties, null)` \u2014 TKeyedArray::$properties is non-empty-array<string|int,Union>. `non-empty-array + non-empty-array` stays non-empty (left keys are preserved), which matches the constructor's non-empty-array param. pzoom's `+` operator loses the non-empty-array-ness, yielding plain array."
     },
     {
-      "id": 46,
+      "id": 45,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Codebase/Scanner.php",
       "line": 585,
@@ -545,7 +538,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ArgumentTypeCoercion` is genuinely required \u2014 Psalm emits ArgumentTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ArgumentTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ArgumentTypeCoercion here but does not; closing that gap would both surface ArgumentTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 47,
+      "id": 46,
       "kind": "InvalidNullableReturnType",
       "file": "src/Psalm/Internal/ExecutionEnvironment/GitInfoCollector.php",
       "line": 61,
@@ -556,7 +549,7 @@
       "explanation": "collectBranch(): string returns `$exploded[1]` from `explode('* ', $result, 2)` where $result is guarded by `str_starts_with($result, '* ')`, so index 1 always exists and is a string. pzoom adds `null` for a possibly-undefined int offset (and ignores the str_starts_with guard / explode's guaranteed 2 parts), so it sees null|string."
     },
     {
-      "id": 48,
+      "id": 47,
       "kind": "NullableReturnStatement",
       "file": "src/Psalm/Internal/ExecutionEnvironment/GitInfoCollector.php",
       "line": 69,
@@ -567,7 +560,7 @@
       "explanation": "Same root cause as the InvalidNullableReturnType above: `return $exploded[1];` is provably a string (the '* ' separator is present), but pzoom models the possibly-undefined offset as nullable."
     },
     {
-      "id": 49,
+      "id": 48,
       "kind": "UnresolvableInclude",
       "file": "src/Psalm/Internal/Fork/ForkContext.php",
       "line": 139,
@@ -578,7 +571,7 @@
       "explanation": "`$callable = require $argv[0];` is intentional dynamic loading of a worker script path. Psalm (which has the UnresolvableInclude check) reports MixedAssignment here but deliberately does NOT emit UnresolvableInclude for a plain-variable include. pzoom over-eagerly flags the dynamic require."
     },
     {
-      "id": 50,
+      "id": 49,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Fork/Pool.php",
       "line": 105,
@@ -589,7 +582,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedAssignment` is genuinely required \u2014 Psalm emits MixedAssignment here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedAssignment at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedAssignment here but does not; closing that gap would both surface MixedAssignment and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 51,
+      "id": 50,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Fork/Pool.php",
       "line": 105,
@@ -600,7 +593,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedOperand` is genuinely required \u2014 Psalm emits MixedOperand here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedOperand at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedOperand here but does not; closing that gap would both surface MixedOperand and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 52,
+      "id": 51,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Json/Json.php",
       "line": 75,
@@ -611,7 +604,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ImpureFunctionCall` is genuinely required \u2014 Psalm emits ImpureFunctionCall here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ImpureFunctionCall at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ImpureFunctionCall here but does not; closing that gap would both surface ImpureFunctionCall and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 53,
+      "id": 52,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Json/Json.php",
       "line": 85,
@@ -622,18 +615,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ImpureFunctionCall` is genuinely required \u2014 Psalm emits ImpureFunctionCall here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ImpureFunctionCall at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ImpureFunctionCall here but does not; closing that gap would both surface ImpureFunctionCall and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 54,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/Internal/LanguageServer/EmitterInterface.php",
-      "line": 59,
-      "column": 16,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "EmitterInterface::listeners() return is used in EmitterTrait.php:87 `foreach ($this->listeners($eventName) as $listener)` and :95. pzoom misses usage through the interface/trait."
-    },
-    {
-      "id": 55,
+      "id": 53,
       "kind": "UnusedProperty",
       "file": "src/Psalm/Internal/LanguageServer/ProtocolStreamReader.php",
       "line": 35,
@@ -644,7 +626,7 @@
       "explanation": "ProtocolStreamReader::$buffer IS read at lines 80/87/88/96 (`str_ends_with($this->buffer,...)`, `explode(':', $this->buffer)`, `strlen($this->buffer)`). pzoom misses these reads (the property is mutated with `.=` then read)."
     },
     {
-      "id": 56,
+      "id": 54,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/LanguageServer/Server/Workspace.php",
       "line": 101,
@@ -655,7 +637,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress UnusedParam` is genuinely required \u2014 Psalm emits UnusedParam here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit UnusedParam at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit UnusedParam here but does not; closing that gap would both surface UnusedParam and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 57,
+      "id": 55,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/PhpVisitor/Reflector/ClassLikeNodeScanner.php",
       "line": 462,
@@ -666,7 +648,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PropertyTypeCoercion` is genuinely required \u2014 Psalm emits PropertyTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PropertyTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PropertyTypeCoercion here but does not; closing that gap would both surface PropertyTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 58,
+      "id": 56,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/PhpVisitor/Reflector/FunctionLikeDocblockParser.php",
       "line": 462,
@@ -677,7 +659,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PossiblyInvalidArrayAccess` is genuinely required \u2014 Psalm emits PossiblyInvalidArrayAccess here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PossiblyInvalidArrayAccess at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PossiblyInvalidArrayAccess here but does not; closing that gap would both surface PossiblyInvalidArrayAccess and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 59,
+      "id": 57,
       "kind": "ComplexMethod",
       "file": "src/Psalm/Internal/PhpVisitor/Reflector/FunctionLikeNodeScanner.php",
       "line": 100,
@@ -688,7 +670,7 @@
       "explanation": "pzoom's complexity calculation diverges from Psalm's; Psalm does not flag this method. Metric divergence, not a code defect."
     },
     {
-      "id": 60,
+      "id": 58,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/PhpVisitor/Reflector/FunctionLikeNodeScanner.php",
       "line": 224,
@@ -699,7 +681,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RedundantCondition` is genuinely required \u2014 Psalm emits RedundantCondition here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RedundantCondition at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RedundantCondition here but does not; closing that gap would both surface RedundantCondition and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 61,
+      "id": 59,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Provider/ClassLikeStorageProvider.php",
       "line": 48,
@@ -710,7 +692,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ImpureStaticProperty` is genuinely required \u2014 Psalm emits ImpureStaticProperty here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ImpureStaticProperty at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ImpureStaticProperty here but does not; closing that gap would both surface ImpureStaticProperty and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 62,
+      "id": 60,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ParamsProvider/ArrayFilterParamsProvider.php",
       "line": 124,
@@ -721,7 +703,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 63,
+      "id": 61,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Provider/ParamsProvider/ArrayUArrayParamsProvider.php",
       "line": 63,
@@ -732,7 +714,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PossiblyNullPropertyFetch` is genuinely required \u2014 Psalm emits PossiblyNullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PossiblyNullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PossiblyNullPropertyFetch here but does not; closing that gap would both surface PossiblyNullPropertyFetch and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 64,
+      "id": 62,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/ArrayFilterReturnTypeProvider.php",
       "line": 75,
@@ -743,7 +725,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 65,
+      "id": 63,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/ArrayPopReturnTypeProvider.php",
       "line": 44,
@@ -754,7 +736,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 66,
+      "id": 64,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/ArrayRandReturnTypeProvider.php",
       "line": 42,
@@ -765,7 +747,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 67,
+      "id": 65,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/ArrayReverseReturnTypeProvider.php",
       "line": 47,
@@ -776,7 +758,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 68,
+      "id": 66,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/ArraySpliceReturnTypeProvider.php",
       "line": 41,
@@ -787,7 +769,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 69,
+      "id": 67,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/FilterInputReturnTypeProvider.php",
       "line": 240,
@@ -798,7 +780,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 70,
+      "id": 68,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/FilterInputReturnTypeProvider.php",
       "line": 240,
@@ -809,7 +791,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 71,
+      "id": 69,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/FilterUtils.php",
       "line": 244,
@@ -820,7 +802,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 72,
+      "id": 70,
       "kind": "RedundantConditionGivenDocblockType",
       "file": "src/Psalm/Internal/Provider/ReturnTypeProvider/InArrayReturnTypeProvider.php",
       "line": 64,
@@ -831,7 +813,7 @@
       "explanation": "Valid finding Psalm misses. The && operand `... && ($x = $obj->getArray()/getAtomicTypes())` captures the result of a @psalm-mutation-free getter whose docblock return type is non-falsable (getArray() -> TArray|TKeyedArray|TClassStringMap, all objects; getAtomicTypes() -> non-empty-array), so the truthiness test is always true \u2014 a genuine redundant condition. Confirmed by the project author. Psalm reports zero RedundantConditionGivenDocblockType codebase-wide (none baselined, no inline suppress) and is silent on a controlled reproduction of this exact pattern, whereas pzoom emits it. pzoom's RedundantCondition analysis is more precise than Psalm's here."
     },
     {
-      "id": 73,
+      "id": 71,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Internal/Type/Comparator/AtomicTypeComparator.php",
       "line": 795,
@@ -842,7 +824,7 @@
       "explanation": "Psalm emits this same offset issue; it is in psalm-baseline.xml. pzoom's snippet text differs from the baseline <code>, so pzoom does not suppress it. Finding matches Psalm."
     },
     {
-      "id": 74,
+      "id": 72,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Internal/Type/Comparator/AtomicTypeComparator.php",
       "line": 796,
@@ -853,7 +835,7 @@
       "explanation": "Psalm emits this same offset issue; it is in psalm-baseline.xml. pzoom's snippet text differs from the baseline <code>, so pzoom does not suppress it. Finding matches Psalm."
     },
     {
-      "id": 75,
+      "id": 73,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Type/Comparator/CallableTypeComparator.php",
       "line": 580,
@@ -864,7 +846,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PossiblyNullArgument` is genuinely required \u2014 Psalm emits PossiblyNullArgument here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PossiblyNullArgument at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PossiblyNullArgument here but does not; closing that gap would both surface PossiblyNullArgument and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 76,
+      "id": 74,
       "kind": "ComplexMethod",
       "file": "src/Psalm/Internal/Type/Comparator/ScalarTypeComparator.php",
       "line": 51,
@@ -875,7 +857,7 @@
       "explanation": "pzoom's complexity calculation diverges from Psalm's; Psalm does not flag this method. Metric divergence, not a code defect."
     },
     {
-      "id": 77,
+      "id": 75,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Internal/Type/SimpleNegatedAssertionReconciler.php",
       "line": 1073,
@@ -886,29 +868,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RedundantCondition` is genuinely required \u2014 Psalm emits RedundantCondition here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RedundantCondition at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RedundantCondition here but does not; closing that gap would both surface RedundantCondition and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 78,
-      "kind": "UnusedPsalmSuppress",
-      "file": "src/Psalm/Internal/Type/TypeCombiner.php",
-      "line": 560,
-      "column": 37,
-      "message": "Suppression of PropertyTypeCoercion is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PropertyTypeCoercion` is genuinely required \u2014 Psalm emits PropertyTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PropertyTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PropertyTypeCoercion here but does not; closing that gap would both surface PropertyTypeCoercion and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 79,
-      "kind": "UnusedPsalmSuppress",
-      "file": "src/Psalm/Internal/Type/TypeCombiner.php",
-      "line": 603,
-      "column": 37,
-      "message": "Suppression of PropertyTypeCoercion is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PropertyTypeCoercion` is genuinely required \u2014 Psalm emits PropertyTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PropertyTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PropertyTypeCoercion here but does not; closing that gap would both surface PropertyTypeCoercion and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 80,
+      "id": 76,
       "kind": "InvalidArgument",
       "file": "src/Psalm/Internal/Type/TypeParser.php",
       "line": 716,
@@ -919,7 +879,7 @@
       "explanation": "`new TArray($generic_params, ...)` is guarded by `if (count($generic_params) !== 2) throw` (line 655), so $generic_params is exactly list{Union,Union}. pzoom does not apply count()===2 narrowing, so it still sees list{Union,Union,...<Union>}."
     },
     {
-      "id": 81,
+      "id": 77,
       "kind": "InvalidArgument",
       "file": "src/Psalm/Internal/Type/TypeParser.php",
       "line": 717,
@@ -930,7 +890,7 @@
       "explanation": "`new TNonEmptyArray($generic_params, ...)` \u2014 same count()!==2 guard at line 655 fixes the length at 2; pzoom does not narrow via count(), so the tuple looks longer than the expected list{Union,Union}."
     },
     {
-      "id": 82,
+      "id": 78,
       "kind": "InvalidArgument",
       "file": "src/Psalm/Internal/Type/TypeParser.php",
       "line": 741,
@@ -941,18 +901,7 @@
       "explanation": "`new TIterable($generic_params, ...)` is guarded by `if (count($generic_params) > 2) throw` (line 738). pzoom does not narrow list length through the count()>2 guard, so the argument looks like it may exceed list{0?:Union,1?:Union}."
     },
     {
-      "id": 83,
-      "kind": "UnusedProperty",
-      "file": "src/Psalm/IssueBuffer.php",
-      "line": 96,
-      "column": 26,
-      "message": "Cannot find any references to private property Psalm\\IssueBuffer::$console_issues",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "IssueBuffer::$console_issues is a private STATIC property written via `self::$console_issues = []` (line 1027) and never read. Controlled experiment shows Psalm does not flag write-only static properties (it counts the static write as a reference); pzoom does."
-    },
-    {
-      "id": 84,
+      "id": 79,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/PluginFileExtensionsSocket.php",
       "line": 130,
@@ -963,7 +912,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress RedundantCondition` is genuinely required \u2014 Psalm emits RedundantCondition here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit RedundantCondition at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit RedundantCondition here but does not; closing that gap would both surface RedundantCondition and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 85,
+      "id": 80,
       "kind": "PossiblyUndefinedIntArrayOffset",
       "file": "src/Psalm/Progress/DefaultProgress.php",
       "line": 34,
@@ -974,73 +923,7 @@
       "explanation": "`[$seconds, $nseconds] = hrtime();` \u2014 Psalm types hrtime() (no/false arg) as the precise array{0:int,1:int}, so 0/1 exist. pzoom's stub returns coarse `array|int|float|false`, so the destructured offsets look possibly-undefined."
     },
     {
-      "id": 86,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/Report.php",
-      "line": 83,
-      "column": 40,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Report::create() (abstract) return is used: IssueBuffer.php:1004 `return $output->create();`. pzoom misses usage through the abstract declaration."
-    },
-    {
-      "id": 87,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/StatementsSource.php",
-      "line": 27,
-      "column": 39,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "StatementsSource::getParentFQCLN() return is used (e.g. FunctionLikeAnalyzer.php:1412 `$parent_fqcln = $this->getParentFQCLN();`). pzoom misses usage through the interface declaration."
-    },
-    {
-      "id": 88,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/StatementsSource.php",
-      "line": 36,
-      "column": 59,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "StatementsSource::hasParentFilePath() return is used (IncludeAnalyzer.php:172 `if ($statements_analyzer->hasParentFilePath(...))`). pzoom misses usage through the interface declaration."
-    },
-    {
-      "id": 89,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/StatementsSource.php",
-      "line": 38,
-      "column": 68,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "StatementsSource::hasAlreadyRequiredFilePath() return is used (SourceAnalyzer.php:119 `return $this->source->hasAlreadyRequiredFilePath(...)`)."
-    },
-    {
-      "id": 90,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/StatementsSource.php",
-      "line": 40,
-      "column": 42,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "StatementsSource::getRequireNesting() return is used (IncludeAnalyzer.php:200 `$nesting = $statements_analyzer->getRequireNesting() + 1`)."
-    },
-    {
-      "id": 91,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/StatementsSource.php",
-      "line": 42,
-      "column": 33,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "StatementsSource::isStatic() return is used (VariableFetchAnalyzer.php:84 `if ($statements_analyzer->isStatic())`, ClosureAnalyzer.php:92)."
-    },
-    {
-      "id": 92,
+      "id": 81,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Storage/ClassConstantStorage.php",
       "line": 21,
@@ -1051,7 +934,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MutableDependency` is genuinely required \u2014 Psalm emits MutableDependency here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MutableDependency at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MutableDependency here but does not; closing that gap would both surface MutableDependency and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 93,
+      "id": 82,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type.php",
       "line": 978,
@@ -1062,7 +945,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress TypeDoesNotContainType` is genuinely required \u2014 Psalm emits TypeDoesNotContainType here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit TypeDoesNotContainType at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit TypeDoesNotContainType here but does not; closing that gap would both surface TypeDoesNotContainType and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 94,
+      "id": 83,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type/Atomic.php",
       "line": 647,
@@ -1073,18 +956,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress MixedAssignment` is genuinely required \u2014 Psalm emits MixedAssignment here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit MixedAssignment at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit MixedAssignment here but does not; closing that gap would both surface MixedAssignment and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 95,
-      "kind": "PossiblyUnusedReturnValue",
-      "file": "src/Psalm/Type/Atomic/TArrayKey.php",
-      "line": 17,
-      "column": 57,
-      "message": "The return value for this method is never used",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Atomic::getKey() return is used pervasively (98 `->getKey()` call-sites in src/, e.g. `$this->types[$type->getKey()] = $type`). pzoom misses usage through the abstract base."
-    },
-    {
-      "id": 96,
+      "id": 84,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type/Atomic/TKeyedArray.php",
       "line": 603,
@@ -1095,7 +967,18 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PropertyTypeCoercion` is genuinely required \u2014 Psalm emits PropertyTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PropertyTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PropertyTypeCoercion here but does not; closing that gap would both surface PropertyTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 97,
+      "id": 85,
+      "kind": "PossiblyInvalidPropertyAssignmentValue",
+      "file": "src/Psalm/Type/Atomic/TKeyedArray.php",
+      "line": 604,
+      "column": 9,
+      "message": "Property Psalm\\Type\\Atomic\\TKeyedArray::$fallback_params expects list{Psalm\\Type\\Union, Psalm\\Type\\Union}|null, possibly different type non-empty-array<int, Psalm\\Type\\Union>|null provided",
+      "classification": "false_positive",
+      "psalm_handling": "not_reported",
+      "explanation": "`$fallback_params` is typed list{Union,Union}|null and assigned a non-empty-array<int,Union>|null. In context the value is a 2-element list; Psalm emits the milder PropertyTypeCoercion here (covered by an inline `@psalm-suppress PropertyTypeCoercion`). pzoom emits the more severe PossiblyInvalidPropertyAssignmentValue instead (not covered by that suppress) because it does not treat the non-empty-array as a list shape. Same list-shape root cause as the TypeParser InvalidArgument FPs."
+    },
+    {
+      "id": 86,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type/Atomic/TKeyedArray.php",
       "line": 635,
@@ -1106,7 +989,18 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress PropertyTypeCoercion` is genuinely required \u2014 Psalm emits PropertyTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit PropertyTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit PropertyTypeCoercion here but does not; closing that gap would both surface PropertyTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 98,
+      "id": 87,
+      "kind": "PossiblyInvalidPropertyAssignmentValue",
+      "file": "src/Psalm/Type/Atomic/TKeyedArray.php",
+      "line": 636,
+      "column": 13,
+      "message": "Property Psalm\\Type\\Atomic\\TKeyedArray::$fallback_params expects list{Psalm\\Type\\Union, Psalm\\Type\\Union}|null, possibly different type non-empty-array<int, Psalm\\Type\\Union>|null provided",
+      "classification": "false_positive",
+      "psalm_handling": "not_reported",
+      "explanation": "Same list-shape coercion as TKeyedArray.php:604: list{Union,Union}|null property assigned non-empty-array<int,Union>|null. Psalm emits PropertyTypeCoercion (inline-suppressed); pzoom emits PossiblyInvalidPropertyAssignmentValue because it doesn't treat the non-empty-array as a list shape."
+    },
+    {
+      "id": 88,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type/MutableTypeVisitor.php",
       "line": 24,
@@ -1117,7 +1011,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ReferenceConstraintViolation` is genuinely required \u2014 Psalm emits ReferenceConstraintViolation here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ReferenceConstraintViolation at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ReferenceConstraintViolation here but does not; closing that gap would both surface ReferenceConstraintViolation and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 99,
+      "id": 89,
       "kind": "RedundantCastGivenDocblockType",
       "file": "src/Psalm/Type/Reconciler.php",
       "line": 377,
@@ -1128,7 +1022,7 @@
       "explanation": "`(string) key($reference_graph[$references_to_fix[0]])` \u2014 $reference_graph is array<string,array<string,true>>; the inner array is possibly-empty, so key() returns string|null and the (string) cast is meaningful. pzoom models key()'s return as string (dropping the null returned for an empty array), making the cast look redundant."
     },
     {
-      "id": 100,
+      "id": 90,
       "kind": "UnusedPsalmSuppress",
       "file": "src/Psalm/Type/UnionTrait.php",
       "line": 1285,
@@ -1139,7 +1033,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress InvalidFalsableReturnType` is genuinely required \u2014 Psalm emits InvalidFalsableReturnType here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit InvalidFalsableReturnType at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit InvalidFalsableReturnType here but does not; closing that gap would both surface InvalidFalsableReturnType and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 101,
+      "id": 91,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/AlgebraTest.php",
       "line": 190,
@@ -1150,7 +1044,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ArgumentTypeCoercion` is genuinely required \u2014 Psalm emits ArgumentTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ArgumentTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ArgumentTypeCoercion here but does not; closing that gap would both surface ArgumentTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 102,
+      "id": 92,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/AlgebraTest.php",
       "line": 218,
@@ -1161,62 +1055,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress ArgumentTypeCoercion` is genuinely required \u2014 Psalm emits ArgumentTypeCoercion here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit ArgumentTypeCoercion at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit ArgumentTypeCoercion here but does not; closing that gap would both surface ArgumentTypeCoercion and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 103,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/AsyncTestCase.php",
-      "line": 37,
-      "column": 29,
-      "message": "Cannot find any references to property Psalm\\Tests\\AsyncTestCase::$src_dir_path",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "AsyncTestCase::$src_dir_path is a (re-declared) protected static property read widely via `self::$src_dir_path` (UnusedCodeTest.php:58, TaintTest.php:31, etc.). pzoom misses self::/static:: static-property reads / the redeclaration sharing."
-    },
-    {
-      "id": 104,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/Config/ConfigTest.php",
-      "line": 50,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\Config\\ConfigTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected STATIC property written via `self::$config = new TestConfig()` in setUp. Controlled experiment shows Psalm counts a write to a non-private/static property as a 'reference' and does not flag it; pzoom requires a read, so its 'Cannot find any references' message is incorrect (the write IS a reference)."
-    },
-    {
-      "id": 105,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/Config/Plugin/EventHandler/AddTaints/AddTaintsInterfaceTest.php",
-      "line": 30,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\Config\\Plugin\\EventHandler\\AddTaints\\AddTaintsInterfaceTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected static $config written in setUp, never read. Psalm treats the static write as a reference; pzoom does not."
-    },
-    {
-      "id": 106,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/Config/Plugin/EventHandler/RemoveTaints/RemoveTaintsInterfaceTest.php",
-      "line": 30,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\Config\\Plugin\\EventHandler\\RemoveTaints\\RemoveTaintsInterfaceTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected static $config written in setUp, never read. Psalm treats the static write as a reference; pzoom does not."
-    },
-    {
-      "id": 107,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/Config/PluginTest.php",
-      "line": 43,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\Config\\PluginTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected static $config written in setUp, never read. Psalm treats the static write as a reference (verified by controlled experiment); pzoom does not."
-    },
-    {
-      "id": 108,
+      "id": 93,
       "kind": "UndefinedClass",
       "file": "tests/Config/PluginTest.php",
       "line": 876,
@@ -1227,7 +1066,7 @@
       "explanation": "PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker DOES exist (vendor/phpunit/phpunit/src/Framework/MockObject/Builder/InvocationMocker.php) and Psalm resolves it. pzoom fails to scan/resolve this PHPUnit class, so expects()/method() chains lose their type."
     },
     {
-      "id": 109,
+      "id": 94,
       "kind": "MixedMethodCall",
       "file": "tests/Config/PluginTest.php",
       "line": 878,
@@ -1238,7 +1077,7 @@
       "explanation": "Cascade of the InvocationMocker resolution failure: because pzoom treats the mock builder chain as mixed, `withConsecutive` looks like a call on mixed. withConsecutive exists in the installed PHPUnit and Psalm reports nothing here."
     },
     {
-      "id": 110,
+      "id": 95,
       "kind": "UndefinedDocblockClass",
       "file": "tests/IssueBufferTest.php",
       "line": 112,
@@ -1249,7 +1088,7 @@
       "explanation": "Docblock references PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker, which exists in vendor and is resolved by Psalm. pzoom fails to resolve the class."
     },
     {
-      "id": 111,
+      "id": 96,
       "kind": "UndefinedDocblockClass",
       "file": "tests/IssueBufferTest.php",
       "line": 124,
@@ -1260,7 +1099,7 @@
       "explanation": "Docblock references PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker, which exists in vendor and is resolved by Psalm. pzoom fails to resolve the class."
     },
     {
-      "id": 112,
+      "id": 97,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/LanguageServer/DiagnosticTest.php",
       "line": 100,
@@ -1271,7 +1110,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 113,
+      "id": 98,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/LanguageServer/DiagnosticTest.php",
       "line": 107,
@@ -1282,7 +1121,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 114,
+      "id": 99,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/LanguageServer/DiagnosticTest.php",
       "line": 153,
@@ -1293,7 +1132,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 115,
+      "id": 100,
       "kind": "UnusedPsalmSuppress",
       "file": "tests/LanguageServer/DiagnosticTest.php",
       "line": 160,
@@ -1304,29 +1143,7 @@
       "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
     },
     {
-      "id": 116,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/ProjectCheckerTest.php",
-      "line": 39,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\ProjectCheckerTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected static $config written in setUp, never read. Psalm treats the static write as a reference; pzoom does not."
-    },
-    {
-      "id": 117,
-      "kind": "PossiblyUnusedProperty",
-      "file": "tests/StubTest.php",
-      "line": 35,
-      "column": 33,
-      "message": "Cannot find any references to property Psalm\\Tests\\StubTest::$config",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Protected static $config written in setUp, never read. Psalm treats the static write as a reference; pzoom does not."
-    },
-    {
-      "id": 118,
+      "id": 101,
       "kind": "PossiblyUnusedProperty",
       "file": "tests/TypeReconciliation/ReconcilerTest.php",
       "line": 45,

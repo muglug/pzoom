@@ -1771,5 +1771,25 @@ pub(crate) fn record_method_reference(
                 .method_returns_used
                 .insert((declaring_class, method_lc));
         }
+        // Using an implementation's return value also uses the return of the
+        // parent/interface method it overrides (mirrors the referenced-member
+        // propagation above). Without this, calling a concrete override marks
+        // only the concrete method's return used, and the interface/abstract
+        // declaration is wrongly reported as PossiblyUnusedReturnValue.
+        if let Some(class_info) = analyzer.codebase.get_class(class_id) {
+            for (overridden_name, parents) in &class_info.overridden_method_ids {
+                if analyzer
+                    .interner
+                    .lookup(*overridden_name)
+                    .eq_ignore_ascii_case(method_name)
+                {
+                    for parent_id in parents {
+                        analysis_data
+                            .method_returns_used
+                            .insert((*parent_id, method_lc));
+                    }
+                }
+            }
+        }
     }
 }

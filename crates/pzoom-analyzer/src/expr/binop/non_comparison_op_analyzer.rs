@@ -257,6 +257,7 @@ fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
             params: left_params,
             is_list: left_is_list,
             is_sealed: left_sealed,
+            is_nonempty: left_nonempty,
             ..
         },
         TAtomic::TArray {
@@ -264,6 +265,7 @@ fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
             params: right_params,
             is_list: right_is_list,
             is_sealed: right_sealed,
+            is_nonempty: right_nonempty,
             ..
         },
     ) = (left.get_single()?, right.get_single()?)
@@ -306,12 +308,22 @@ fn keyed_array_plus(left: &TUnion, right: &TUnion) -> Option<TUnion> {
         (Some(fb), None) | (None, Some(fb)) => Some(fb.clone()),
     };
 
-    Some(TUnion::new(TAtomic::keyed_array_arc(
+    let mut result = TAtomic::keyed_array_arc(
         std::sync::Arc::new(known_values),
         *left_is_list && *right_is_list,
         *left_sealed && *right_sealed,
         combined_params,
-    )))
+    );
+    // `$a + $b` keeps every key of `$a` plus the keys of `$b` not already in
+    // `$a`, so the result is empty only when both operands are empty. Preserve
+    // non-emptiness (keyed_array_arc derives it from known entries alone, which
+    // drops it for generic non-empty-array operands).
+    if *left_nonempty || *right_nonempty {
+        if let TAtomic::TArray { is_nonempty, .. } = &mut result {
+            *is_nonempty = true;
+        }
+    }
+    Some(TUnion::new(result))
 }
 
 fn array_union_operand(t: &TUnion) -> TUnion {

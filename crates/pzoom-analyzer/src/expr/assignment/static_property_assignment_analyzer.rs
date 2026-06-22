@@ -115,7 +115,11 @@ pub fn analyze(
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
             if let Some(prop_info) = class_info.properties.get(&prop_id) {
                 // A compound assignment (`self::$p += …`) reads the previous
-                // value, marking the property used for find_unused_code.
+                // value, marking the property used for find_unused_code. A plain
+                // write does NOT count: a static property that is only ever
+                // written is genuinely unused storage, which pzoom reports as
+                // PossiblyUnusedProperty/UnusedProperty (a deliberate, useful
+                // divergence from Psalm, which treats any static access as a use).
                 if is_compound && analyzer.config.find_unused_code {
                     analysis_data
                         .referenced_properties

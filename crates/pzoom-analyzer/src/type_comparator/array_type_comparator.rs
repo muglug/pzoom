@@ -371,10 +371,9 @@ pub fn is_contained_by(
     } = container_type_part
         && !properties.is_empty()
     {
-        let input_params = generic_array_params(input_type_part)
-            .map(|(_, input_is_nonempty, key, value)| (input_is_nonempty, key, value));
+        let input_params = generic_array_params(input_type_part);
 
-        if let Some((input_is_nonempty, input_key, input_value)) = input_params {
+        if let Some((input_is_list, input_is_nonempty, input_key, input_value)) = input_params {
             let mut container_key: Option<TUnion> =
                 container_params.as_deref().map(|(key, _)| key.clone());
             let mut container_value: Option<TUnion> =
@@ -403,12 +402,44 @@ pub fn is_contained_by(
                 return false;
             };
 
-            // Psalm's KeyedArrayComparator: an unsized generic input can
-            // never prove a shape's required keys — InvalidArgument, not a
-            // coercion, even for non-empty inputs (non-empty-list<T> vs
-            // list{T, T} is a plain mismatch). Checked before the param
-            // comparison so its internal coercion flags don't leak out.
+            // An unsized generic input can never *prove* a shape's required
+            // keys, so it is not contained. But a generic non-empty *array* is a
+            // parent type of a list-shape (the shape is contained in it), which
+            // Psalm coerces (PropertyTypeCoercion / ArgumentTypeCoercion) rather
+            // than reporting a plain mismatch. A non-empty *list* input keeps the
+            // plain-mismatch behaviour. Checked before the param comparison so its
+            // internal coercion flags don't leak out.
             if has_required_key && input_is_nonempty {
+                // A generic non-empty input can't *prove* a shape's required
+                // keys, so it is not contained. It IS a coercible parent type
+                // when it is a non-list array whose key/value params already
+                // accept the shape's own key/value (i.e. the shape is contained
+                // in the input) — Psalm then coerces (PropertyTypeCoercion /
+                // ArgumentTypeCoercion) instead of reporting a plain mismatch.
+                // A non-empty *list* input keeps the plain-mismatch behaviour,
+                // and an input whose params don't fit the shape's keys/values is
+                // a genuine mismatch. Fresh results keep the probe's internal
+                // coercion flags from leaking into the real comparison.
+                let shape_fits_input = !input_is_list
+                    && union_type_comparator::is_contained_by(
+                        codebase,
+                        &container_key,
+                        &input_key,
+                        false,
+                        false,
+                        &mut TypeComparisonResult::new(),
+                    )
+                    && union_type_comparator::is_contained_by(
+                        codebase,
+                        &container_value,
+                        &input_value,
+                        false,
+                        false,
+                        &mut TypeComparisonResult::new(),
+                    );
+                if shape_fits_input {
+                    atomic_comparison_result.type_coerced = Some(true);
+                }
                 return false;
             }
 

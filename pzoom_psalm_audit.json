@@ -26,20 +26,18 @@
     "real_but_psalm_suppresses_or_baselines": "pzoom's finding is correct AND Psalm's own analysis produces it too, but Psalm intentionally suppresses it inline or via psalm-baseline.xml; pzoom surfaces it only because it does not honor that suppression/baseline entry (a suppression/baseline-matching gap, not an analysis error).",
     "approved_pzoom_divergence": "a known, accepted divergence that is NOT a bug to fix. ComplexMethod: pzoom's data-flow graph is structurally denser than Psalm's variable-use graph, so its complexity metric is calibrated to its own graph and flags a different (but reasonable) set of methods than Psalm. Matching Psalm's exact set would require reimplementing Psalm's graph."
   },
-  "count_note": "94 issues. This turn: spread-unpacked arguments are now type-checked against target params (6 ArgumentTypeCoercion false-negatives fixed), and ComplexMethod issues moved to the approved_pzoom_divergence class (a structural metric difference, not a bug). Earlier fixes on the branch removed the property/return-value/coercion FPs. Psalm's composer.lock is git-ignored so vendor versions float.",
-  "observed_issue_count": 94,
+  "count_note": "90 issues. This turn: spread-unpacked arguments are now type-checked against target params (6 ArgumentTypeCoercion false-negatives fixed); ComplexMethod issues moved to the approved_pzoom_divergence class (a structural metric difference, not a bug); and the NullPropertyFetch under-emission on a nullable-property chain inside isset()/?? was fixed (4 false-negatives resolved -- the `$message->body->params->...` suppressions in DiagnosticTest are now correctly consumed). Earlier fixes on the branch removed the property/return-value/coercion FPs. Psalm's composer.lock is git-ignored so vendor versions float.",
+  "observed_issue_count": 90,
   "expected_issue_count": 122,
   "classification_summary": {
     "false_positive": 15,
-    "false_negative": 45,
+    "false_negative": 41,
     "true_issue_psalm_misses": 18,
     "real_but_psalm_suppresses_or_baselines": 8,
     "approved_pzoom_divergence": 8
   },
   "false_negative_root_causes": {
     "ArgumentTypeCoercion (3)": "FIXED the 6 spread cases (`new MethodIdentifier(...explode('::', $x))`): unpacked args are now type-checked against target params, emitting the string -> lowercase-string coercion. Remaining 3: 2 AlgebraTest complex Clause array-shape args (devs annotate 'due to Psalm bug') and 1 Scanner static-method-call arg -- different root causes.",
-    "ComplexMethod (4)": "Structural: pzoom's data-flow graph is denser than Psalm's variable-use graph, so the hand-calibrated size limit (800 vs Psalm's 200) crosses for a different set of methods. No single constant reproduces Psalm's exact set; needs Psalm's graph construction.",
-    "NullPropertyFetch (4)": "`$message->body->method` where Message::$body is ?MessageBody (confirmed). pzoom does not emit NullPropertyFetch when a member is fetched on a nullable property value mid-chain.",
     "InvalidArrayOffset (3)": "`$break_types[count($break_types) - $count]` -- a computed int offset that may be negative/out-of-range on a list. pzoom does no int-range validation of computed offsets (devs' note: 'Some int-range improvements are needed').",
     "MoreSpecificReturnType (3) + LessSpecificReturnStatement (3)": "Deeply-nested specific docblock return types (e.g. list<non-empty-array<string, non-empty-list<non-empty-list<Assertion>>>>). pzoom infers the return more loosely and does not compare declared-vs-inferred specificity through nested generics, so it emits neither the MoreSpecific (declared more specific than inferred) nor the paired LessSpecific (return stmt less specific than declared). Same methods produce both.",
     "ImpureFunctionCall (3)": "serialize(), json_last_error_msg(), array_walk_recursive() called inside @psalm-pure / @psalm-mutation-free methods. pzoom's impure-function set is incomplete -- these are not flagged as impure (confirmed pzoom has no impure marking for them).",
@@ -1027,50 +1025,6 @@
     },
     {
       "id": 89,
-      "kind": "UnusedPsalmSuppress",
-      "file": "tests/LanguageServer/DiagnosticTest.php",
-      "line": 100,
-      "column": 33,
-      "message": "Suppression of NullPropertyFetch is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 90,
-      "kind": "UnusedPsalmSuppress",
-      "file": "tests/LanguageServer/DiagnosticTest.php",
-      "line": 107,
-      "column": 33,
-      "message": "Suppression of NullPropertyFetch is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 91,
-      "kind": "UnusedPsalmSuppress",
-      "file": "tests/LanguageServer/DiagnosticTest.php",
-      "line": 153,
-      "column": 31,
-      "message": "Suppression of NullPropertyFetch is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 92,
-      "kind": "UnusedPsalmSuppress",
-      "file": "tests/LanguageServer/DiagnosticTest.php",
-      "line": 160,
-      "column": 31,
-      "message": "Suppression of NullPropertyFetch is never used",
-      "classification": "false_negative",
-      "psalm_handling": "not_reported",
-      "explanation": "False negative (manifesting as a spurious UnusedPsalmSuppress): the `@psalm-suppress NullPropertyFetch` is genuinely required \u2014 Psalm emits NullPropertyFetch here and the suppression consumes it (Psalm's findUnusedPsalmSuppress flags only ONE unused suppression codebase-wide, at Cli/Psalm.php:1071, so every other suppression is in use). pzoom does NOT emit NullPropertyFetch at this spot, so it wrongly concludes the suppression is unused. The underlying defect is that pzoom should emit NullPropertyFetch here but does not; closing that gap would both surface NullPropertyFetch and make this UnusedPsalmSuppress disappear."
-    },
-    {
-      "id": 93,
       "kind": "PossiblyUnusedProperty",
       "file": "tests/ProjectCheckerTest.php",
       "line": 39,
@@ -1081,7 +1035,7 @@
       "explanation": "Good divergence: write-only static $config (assigned `new TestConfig()` in setUp, never read). Pzoom rightly flags the dead storage; Psalm misses it (treats any static access as a use)."
     },
     {
-      "id": 94,
+      "id": 90,
       "kind": "PossiblyUnusedProperty",
       "file": "tests/StubTest.php",
       "line": 35,

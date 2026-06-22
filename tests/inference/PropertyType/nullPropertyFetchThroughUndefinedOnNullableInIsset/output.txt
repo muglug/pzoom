@@ -1,0 +1,1 @@
+NullPropertyFetch - input.php:20:10 - Cannot access property $message on null

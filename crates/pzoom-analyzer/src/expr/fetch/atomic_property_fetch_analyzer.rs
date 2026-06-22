@@ -408,15 +408,19 @@ pub(crate) fn get_property_type(
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     is_this_fetch: bool,
-    suppress_null_issues: bool,
+    suppress_possibly_null_issues: bool,
+    suppress_pure_null_issues: bool,
     has_this: bool,
     context: &BlockContext,
     is_static_access: bool,
 ) -> Option<TUnion> {
     // Psalm's InstancePropertyFetchAnalyzer: `@psalm-ignore-nullable-return`
-    // receivers suppress the possibly-null fetch issues AND propagate the
-    // flag onto the fetched property type.
-    let suppress_null_issues = suppress_null_issues || obj_type.ignore_nullable_issues;
+    // receivers suppress the possibly-null fetch issue AND propagate the
+    // flag onto the fetched property type. The pure-null NullPropertyFetch
+    // (Psalm's `$stmt_var_type->isNull()` branch) is unconditional, so
+    // ignore_nullable_issues does not gate it.
+    let suppress_possibly_null_issues =
+        suppress_possibly_null_issues || obj_type.ignore_nullable_issues;
     let mut result = get_property_type_inner(
         analyzer,
         obj_type,
@@ -424,7 +428,8 @@ pub(crate) fn get_property_type(
         pos,
         analysis_data,
         is_this_fetch,
-        suppress_null_issues,
+        suppress_possibly_null_issues,
+        suppress_pure_null_issues,
         has_this,
         context,
         is_static_access,
@@ -442,7 +447,8 @@ fn get_property_type_inner(
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     is_this_fetch: bool,
-    suppress_null_issues: bool,
+    suppress_possibly_null_issues: bool,
+    suppress_pure_null_issues: bool,
     has_this: bool,
     context: &BlockContext,
     is_static_access: bool,
@@ -532,9 +538,14 @@ fn get_property_type_inner(
         )
     });
 
-    // Check for purely null type (NullPropertyFetch)
+    // Check for purely null type (NullPropertyFetch). Psalm's
+    // InstancePropertyFetchAnalyzer emits this on a null receiver
+    // unconditionally — it is *not* gated by `inside_isset`, unlike
+    // PossiblyNullPropertyFetch below — so a fetch on a definitely-null
+    // intermediate (`$a->b->c` where `$a->b` resolved to null) still fires
+    // inside `??`/`isset()`.
     if obj_type.is_null() {
-        if !suppress_null_issues {
+        if !suppress_pure_null_issues {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::NullPropertyFetch,
@@ -551,7 +562,7 @@ fn get_property_type_inner(
 
     // Check for nullable type (PossiblyNullPropertyFetch)
     if has_null && has_object_type {
-        if !suppress_null_issues {
+        if !suppress_possibly_null_issues {
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::PossiblyNullPropertyFetch,

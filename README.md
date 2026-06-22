@@ -83,7 +83,7 @@ cargo test
 
 ## Differences to Psalm
 
-pzoom aims to match Psalm's analysis, with one deliberate divergence:
+pzoom aims to broadly match Psalm's analysis, with a few deliberate divergences:
 
 - **Case-sensitive name resolution.** PHP and Psalm resolve class, function
   and method names case-insensitively. pzoom resolves them case-sensitively: a
@@ -93,6 +93,10 @@ pzoom aims to match Psalm's analysis, with one deliberate divergence:
   exist (incorrect casing of Foo)``). Runtime-truth checks still honor PHP
   semantics: `method_exists()` matches case-insensitively, and method
   *declarations* override parent methods case-insensitively.
+- **ComplexMethod calculation** Pzoom's ComplexMethod metric is derived from the
+  graph of connections between assignments within a function. Pzoom’s graph is larger
+  than Psalm’s (it tracks more connections) and so we approximate ComplexMethod issues
+  in Psalm.
 
 ## License
 

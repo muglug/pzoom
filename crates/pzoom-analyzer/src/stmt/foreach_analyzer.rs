@@ -1175,6 +1175,26 @@ fn extract_iterable_key_type(iter_type: &TUnion, _analyzer: &StatementsAnalyzer<
         match atomic {
             // Iterating mixed yields mixed keys (Psalm).
             TAtomic::TMixed | TAtomic::TNonEmptyMixed => key_types.push(TUnion::mixed()),
+            // Iterating a list shape yields integer keys in `0..len`. Psalm
+            // widens the known indices to a range (TKeyedArray::getGenericArrayType)
+            // — `list{int, int}` iterates with key `int<0, 1>`, not `0|1`.
+            // Keeping them as literal offsets would let a write at that key to a
+            // *different* list preserve list-ness, masking the PropertyTypeCoercion
+            // Psalm reports (the literal-offset write path treats `0|1` as a
+            // sequential list build).
+            TAtomic::TArray {
+                known_values,
+                is_list: true,
+                params,
+                ..
+            } if !known_values.is_empty() => {
+                let max = if params.is_some() {
+                    None
+                } else {
+                    Some(known_values.len() as i64 - 1)
+                };
+                key_types.push(TUnion::new(TAtomic::TIntRange { min: Some(0), max }));
+            }
             TAtomic::TArray {
                 known_values,
                 params,

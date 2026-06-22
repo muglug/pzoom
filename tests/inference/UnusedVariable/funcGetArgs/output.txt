@@ -1,0 +1,1 @@
+MixedArgument - input.php:3:16 - Argument 2 of print_r cannot be mixed, expecting bool

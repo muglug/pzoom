@@ -153,10 +153,17 @@ fn unpacked_element_value_type_for_param(
         }
         return Some(combined.unwrap_or_else(TUnion::mixed));
     }
-    // 2. a named argument matches a string-keyed entry.
+    // 2. a named argument matches a string-keyed entry (param names are stored
+    //    with the leading `$`, so strip it to compare against the array key).
     if allow_named_args {
-        let name = analyzer.interner.lookup(param.name).to_string();
-        if let Some((_, value)) = known_values.get(&pzoom_code_info::ArrayKey::String(name)) {
+        let param_name = analyzer.interner.lookup(param.name);
+        let name = param_name
+            .as_ref()
+            .strip_prefix('$')
+            .unwrap_or(param_name.as_ref());
+        if let Some((_, value)) =
+            known_values.get(&pzoom_code_info::ArrayKey::String(name.to_string()))
+        {
             return Some(value.clone());
         }
     }

@@ -42,9 +42,6 @@ function json_last_error(): int
 {
 }
 
-/**
- * @pure
- */
 function json_last_error_msg(): string
 {
 }

@@ -1161,10 +1161,20 @@ pub(crate) fn fetch_hrtime_return_type(
     arg_positions: &[Pos],
     analysis_data: &FunctionAnalysisData,
 ) -> Option<TUnion> {
-    let tuple_type = TAtomic::non_empty_list(TUnion::int());
+    // Psalm's HrTimeReturnTypeProvider / CallMap models `hrtime(false)` as the
+    // precise 2-element pair `array{0: int, 1: int}` — both offsets are always
+    // present, so destructuring `[$s, $n] = hrtime()` does not make the second
+    // offset look possibly-undefined (an open `non-empty-list<int>` would only
+    // guarantee offset 0).
+    fn hrtime_pair_type() -> TAtomic {
+        let mut known_values = FxHashMap::default();
+        known_values.insert(ArrayKey::Int(0), (false, TUnion::int()));
+        known_values.insert(ArrayKey::Int(1), (false, TUnion::int()));
+        TAtomic::keyed_array(known_values, true, true, None, None)
+    }
 
     if args.is_empty() {
-        return Some(TUnion::new(tuple_type));
+        return Some(TUnion::new(hrtime_pair_type()));
     }
 
     let first_arg_pos = *arg_positions.first()?;
@@ -1174,11 +1184,11 @@ pub(crate) fn fetch_hrtime_return_type(
         // Psalm's HrTimeReturnTypeProvider: as_number=true can overflow into
         // a float on 32-bit platforms — int|float.
         Some(true) => Some(TUnion::from_types(vec![TAtomic::TInt, TAtomic::TFloat])),
-        Some(false) => Some(TUnion::new(tuple_type)),
+        Some(false) => Some(TUnion::new(hrtime_pair_type())),
         None => Some(TUnion::from_types(vec![
             TAtomic::TInt,
             TAtomic::TFloat,
-            tuple_type,
+            hrtime_pair_type(),
         ])),
     }
 }

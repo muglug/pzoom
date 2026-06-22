@@ -1135,7 +1135,12 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
     for atomic in &existing_var_type.types {
         match atomic {
             // A *shape* (known entries present).
-            TAtomic::TArray { known_values, .. } if !known_values.is_empty() => {
+            TAtomic::TArray {
+                known_values,
+                params,
+                is_list,
+                ..
+            } if !known_values.is_empty() => {
                 // Mirror Psalm's reconcileNotNonEmptyCountable: a shape whose
                 // getMinCount() already meets the bound can never be shorter.
                 let prop_min_count = atomic.get_min_count().unwrap_or(0);
@@ -1144,6 +1149,41 @@ fn reconcile_does_not_have_at_least_count(existing_var_type: &TUnion, count: usi
                     // count($a) < count is impossible: the shape is always at least
                     // `count` long. Drop it (yielding a contradiction).
                     did_remove_type = true;
+                } else if *is_list && !atomic.array_is_sealed() && count >= 2 && count <= 32 {
+                    // A list shape with an open fallback tail is capped by
+                    // `count($a) < count`: it holds at most `count - 1` elements,
+                    // so the tail is dropped and the shape sealed to that length
+                    // (`list{0: T, 1?: T, ...<T>}` under `count($a) < 3` becomes
+                    // `list{0: T, 1?: T}`). Known entries keep their type and
+                    // definedness; positions the tail would have supplied become
+                    // possibly-undefined.
+                    did_remove_type = true;
+                    let tail_value = params
+                        .as_deref()
+                        .map(|(_, value)| value.clone())
+                        .unwrap_or_else(TUnion::nothing);
+                    let mut new_known_values: rustc_hash::FxHashMap<
+                        pzoom_code_info::ArrayKey,
+                        (bool, TUnion),
+                    > = rustc_hash::FxHashMap::default();
+                    for index in 0..(count - 1) {
+                        let array_key = pzoom_code_info::ArrayKey::Int(index as i64);
+                        let (possibly_undefined, value) = match known_values.get(&array_key) {
+                            Some((pu, value)) => (*pu, value.clone()),
+                            None => (true, tail_value.clone()),
+                        };
+                        if value.is_nothing() {
+                            continue;
+                        }
+                        new_known_values.insert(array_key, (possibly_undefined, value));
+                    }
+                    acceptable_types.push(TAtomic::keyed_array(
+                        new_known_values,
+                        true,
+                        true,
+                        None,
+                        None,
+                    ));
                 } else {
                     // Redundant (always shorter) or possible: keep the shape.
                     acceptable_types.push(atomic.clone());

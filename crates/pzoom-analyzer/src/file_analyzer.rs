@@ -99,12 +99,16 @@ impl<'a> FileAnalyzer<'a> {
         );
 
         // Parser diagnostics are mostly suppressed (mago recovers from
-        // constructs it mis-flags), but first-class-callable syntax in a
-        // `new` expression is a real PHP compile error ("Cannot create
-        // Closure for new expression") — surface those.
+        // constructs it mis-flags), but some are real PHP compile errors that
+        // Psalm reports as ParseError — surface those selectively:
+        //   * first-class-callable syntax in a `new` expression ("Cannot
+        //     create Closure for new expression");
+        //   * `as` inside a `for` header (`for ($x as ...)`), where `as` is
+        //     only valid in `foreach` ("unexpected T_AS, expecting ';'").
         for (offset, _message) in &file_info.parse_errors {
-            let start = (*offset as usize).saturating_sub(60);
-            let end = ((*offset as usize) + 10).min(file_info.contents.len());
+            let offset_usize = *offset as usize;
+            let start = offset_usize.saturating_sub(60);
+            let end = (offset_usize + 10).min(file_info.contents.len());
             let window = file_info.contents.get(start..end).unwrap_or("");
             if window.contains("(...)") && window.contains("new ") {
                 let (line, col) = stmt_analyzer.get_line_column(*offset);
@@ -114,6 +118,17 @@ impl<'a> FileAnalyzer<'a> {
                     file_path,
                     *offset,
                     offset.saturating_add(1),
+                    line,
+                    col,
+                ));
+            } else if is_for_as_parse_error(&file_info.contents, offset_usize) {
+                let (line, col) = stmt_analyzer.get_line_column(*offset);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::ParseError,
+                    format!("Syntax error, unexpected T_AS, expecting ';' on line {line}"),
+                    file_path,
+                    *offset,
+                    offset.saturating_add(2),
                     line,
                     col,
                 ));
@@ -440,6 +455,50 @@ pub struct FileReferenceData {
     /// Non-private method params unused in their own body, awaiting the
     /// codebase-wide verdict.
     pub param_unused_candidates: Vec<crate::function_analysis_data::ParamUnusedCandidate>,
+}
+
+/// Whether a mago parse error at `offset` is the `for ($x as ...)` mistake:
+/// `as` is only valid in `foreach`, so the parser meets the `as` keyword where
+/// a `for` header expects the `;` separating its clauses. Psalm reports this as
+/// `ParseError` ("unexpected T_AS, expecting ';'"). The error's span starts at
+/// the offending `as`, so we confirm the token there is `as` and that the
+/// enclosing construct is a `for (` header (never `foreach`, where `as` is
+/// valid) — keeping unrelated `as` uses such as trait adaptations untouched.
+fn is_for_as_parse_error(contents: &str, offset: usize) -> bool {
+    let Some(after_as) = contents.get(offset..).and_then(|rest| rest.strip_prefix("as")) else {
+        return false;
+    };
+    // Reject identifiers that merely start with "as" (e.g. `asort`).
+    if after_as
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    let line_start = contents[..offset].rfind('\n').map_or(0, |i| i + 1);
+    for_header_opens(&contents[line_start..offset])
+}
+
+/// Whether `prefix` contains the opening of a `for` loop header (a `for`
+/// keyword directly followed by `(`). The keyword check (word boundary on both
+/// sides) excludes `foreach` and identifiers like `$format`.
+fn for_header_opens(prefix: &str) -> bool {
+    let bytes = prefix.as_bytes();
+    let mut search_from = 0;
+    while let Some(rel) = prefix[search_from..].find("for") {
+        let idx = search_from + rel;
+        let before_ok = idx == 0
+            || !matches!(bytes[idx - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$');
+        let after = &prefix[idx + 3..];
+        // The next non-space char must be `(`; a letter would make it
+        // `foreach`/an identifier rather than the `for` keyword.
+        if before_ok && after.trim_start().starts_with('(') {
+            return true;
+        }
+        search_from = idx + 3;
+    }
+    false
 }
 
 /// Whether the graph holds an assignment source for `name` within the given

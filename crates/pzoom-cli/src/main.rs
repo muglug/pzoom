@@ -44,6 +44,14 @@ struct Cli {
     /// forces it on for an ad-hoc run.
     #[arg(long)]
     find_unused_code: bool,
+
+    /// Extra stub file(s) or director(ies) to scan for type information but
+    /// never analyze — the ingestion point for stubs produced by a PHP
+    /// stub-provider (see bin/pzoom). A directory is scanned for its `.php` /
+    /// `.phpstub` files. Repeatable; merged with psalm.xml `<stubs>`. `global`
+    /// so it's accepted before or after the subcommand (bin/pzoom appends it).
+    #[arg(long = "stubs", value_name = "PATH", global = true)]
+    stubs: Vec<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -105,6 +113,19 @@ fn load_config(cli: &Cli, paths: &[PathBuf]) -> Config {
         config.find_unused_code = true;
     }
 
+    // Extra stubs from the command line (e.g. those a PHP stub-provider
+    // generated, passed by bin/pzoom) join the psalm.xml `<stubs>` set. Resolve
+    // them to absolute paths now, against the invoking cwd, so they don't get
+    // re-rooted at the project directory when scanned.
+    for stub in &cli.stubs {
+        let absolute = stub
+            .canonicalize()
+            .unwrap_or_else(|_| stub.clone())
+            .to_string_lossy()
+            .into_owned();
+        config.stubs.push(absolute);
+    }
+
     config
 }
 
@@ -161,6 +182,32 @@ fn find_project_root(path: &std::path::Path) -> PathBuf {
     start_dir.to_path_buf()
 }
 
+/// Recursively collect `.php` / `.phpstub` files under a stub directory passed
+/// via `--stubs` or psalm.xml `<stubs>`.
+fn collect_stub_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext == "php" || ext == "phpstub")
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
 fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     let start_time = std::time::Instant::now();
 
@@ -204,6 +251,21 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         let stub_path = display_root.join(plugin_stub);
         if stub_path.is_file() {
             scanner.scan_stub_file(&stub_path);
+        }
+    }
+
+    // User and provider stubs: psalm.xml `<stubs>` entries plus any `--stubs`
+    // paths (the latter resolved absolute already; an absolute join is a no-op).
+    // Each entry is a stub file or a directory of `.php` / `.phpstub` stubs —
+    // type information only, never analyzed or reported.
+    for stub in &config.stubs {
+        let stub_path = display_root.join(stub);
+        if stub_path.is_file() {
+            scanner.scan_stub_file(&stub_path);
+        } else if stub_path.is_dir() {
+            for file in collect_stub_files(&stub_path) {
+                scanner.scan_stub_file(&file);
+            }
         }
     }
 

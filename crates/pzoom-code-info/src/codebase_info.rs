@@ -248,44 +248,35 @@ impl CodebaseInfo {
                     .get(&info.file_path)
                     .is_none_or(|file_info| file_info.is_in_project_dirs);
 
-                // A project-dir class always beats the stub (Psalm's
-                // ClassLikeNodeScanner refuses to stub-override classes from
-                // analyzed project dirs), so a test polyfill of ArrayObject or
-                // a project class shadowing a stubbed name wins wholesale.
-                if incoming_in_project_dirs {
-                    *existing = info;
-                    return;
-                }
-
-                // For dependency sources (vendor/), the real declaration
-                // becomes the base (real hierarchy, full member set) but
-                // members the stub declares override it — Psalm's stub
-                // semantics ("stub files override the original definitions"),
-                // which is how stubs/phpparser.phpstub refines vendor
-                // php-parser signatures (getArgs(): list<Arg>).
+                // The real declaration becomes the base — its hierarchy and real
+                // members are authoritative — and the stub *augments* it. A stub
+                // always contributes its magic members (`@property`/`@method`/
+                // `@mixin`), letting a stub provider annotate a class it doesn't
+                // own (e.g. a generated `@property` for an Eloquent model). A
+                // dependency class additionally takes the real members the stub
+                // declares (Psalm's "stub files override the original
+                // definitions", e.g. phpparser.phpstub refining vendor php-parser
+                // signatures); a project class keeps its own real members, since
+                // Psalm holds analyzed-project declarations authoritative — and
+                // built-in stubs carry no magic members, so a project polyfill of
+                // a stubbed name is unaffected.
                 let stub = std::mem::replace(existing, info);
-                // Psalm marks a storage that a stub (also) declared as
-                // `stubbed` (ClassLikeNodeScanner) - constructors of such
-                // classes are opaque to initialization checks.
-                existing.is_stubbed = true;
-                for (method_name, method_info) in stub.methods {
-                    existing.method_names.insert(method_name);
-                    existing.methods.insert(method_name, method_info);
+                if !incoming_in_project_dirs {
+                    existing.is_stubbed = true;
                 }
-                for (prop_name, prop_info) in stub.properties {
-                    existing.properties.insert(prop_name, prop_info);
-                }
-                for (const_name, const_info) in stub.constants {
-                    existing.constants.insert(const_name, const_info);
-                }
-                if !stub.template_types.is_empty() && existing.template_types.is_empty() {
-                    existing.template_types = stub.template_types;
-                }
+                merge_stub_into_real(existing, stub, !incoming_in_project_dirs);
                 return;
             }
 
             if !existing_is_stub && incoming_is_stub {
+                // The mirror case — a stub scanned after the real class augments
+                // it the same way.
+                let existing_in_project_dirs = self
+                    .files
+                    .get(&existing.file_path)
+                    .is_none_or(|file_info| file_info.is_in_project_dirs);
                 existing.is_stubbed = true;
+                merge_stub_into_real(existing, info, !existing_in_project_dirs);
                 return;
             }
 
@@ -480,19 +471,32 @@ impl CodebaseInfo {
             let incoming_prec = file_precedence(&self.files, info.file_path);
 
             // A higher-precedence source (project code > curated stubs >
-            // phpstorm-derived `extensions/*` stubs) replaces a lower one outright;
-            // a lower-precedence source is ignored. Mirrors Psalm's stub precedence.
+            // phpstorm-derived `extensions/*` stubs) takes the storage slot; a
+            // lower-precedence source is ignored. Mirrors Psalm's stub
+            // precedence — except a stub *augments* a real function it shares a
+            // name with, folding in the type info (return/param types,
+            // assertions) the real declaration lacks rather than being discarded.
             if incoming_prec > existing_prec {
-                // Project code redefining a stubbed core function is Psalm's
-                // DuplicateFunction — remember the clash, since the project
-                // definition is about to take over the storage slot.
                 if incoming_prec == 3 {
+                    // Project code redefining a stubbed function is Psalm's
+                    // DuplicateFunction — remember the clash. The real
+                    // declaration takes the slot but keeps the stub's extra
+                    // type info.
                     self.redefined_stub_functions.insert(info.name);
+                    let stub = std::mem::replace(existing, info);
+                    merge_functionlike_info(existing, stub);
+                } else {
+                    // Stub over a lower-precedence stub: replace outright.
+                    *existing = info;
                 }
-                *existing = info;
                 return;
             }
             if incoming_prec < existing_prec {
+                // A stub for an existing real function augments it; a lower stub
+                // beneath a higher stub is ignored.
+                if existing_prec == 3 {
+                    merge_functionlike_info(existing, info);
+                }
                 return;
             }
 
@@ -583,6 +587,60 @@ fn functionlike_info_quality(info: &FunctionLikeInfo) -> usize {
     }
 
     score
+}
+
+/// Fold a `stub`'s members onto a real (project or dependency) class `base`,
+/// additively — a stub *augments* the real class rather than replacing it.
+///
+/// The stub's magic members are always merged in (the real class's own
+/// declarations win on a clash): `@method` (pseudo methods), `@property`
+/// (pseudo-property get/set types) and `@mixin`s. Real (non-magic) members are
+/// merged only when `include_real_members` is set — for dependency sources,
+/// where a stub may override the original definition; a project class keeps its
+/// own real members. Built-in stubs declare no magic members, so a project
+/// polyfill of a stubbed name is unaffected.
+fn merge_stub_into_real(base: &mut ClassLikeInfo, stub: ClassLikeInfo, include_real_members: bool) {
+    if include_real_members {
+        for (method_name, method_info) in stub.methods {
+            base.method_names.insert(method_name);
+            base.methods.insert(method_name, method_info);
+        }
+        for (prop_name, prop_info) in stub.properties {
+            base.properties.insert(prop_name, prop_info);
+        }
+        for (const_name, const_info) in stub.constants {
+            base.constants.insert(const_name, const_info);
+        }
+    }
+
+    for (method_name, method_info) in stub.pseudo_methods {
+        base.pseudo_methods
+            .entry(method_name)
+            .or_insert(method_info);
+    }
+    for (method_name, method_info) in stub.pseudo_static_methods {
+        base.pseudo_static_methods
+            .entry(method_name)
+            .or_insert(method_info);
+    }
+    for (prop_name, prop_type) in stub.pseudo_property_get_types {
+        base.pseudo_property_get_types
+            .entry(prop_name)
+            .or_insert(prop_type);
+    }
+    for (prop_name, prop_type) in stub.pseudo_property_set_types {
+        base.pseudo_property_set_types
+            .entry(prop_name)
+            .or_insert(prop_type);
+    }
+    for mixin in stub.named_mixins {
+        if !base.named_mixins.contains(&mixin) {
+            base.named_mixins.push(mixin);
+        }
+    }
+    if base.template_types.is_empty() && !stub.template_types.is_empty() {
+        base.template_types = stub.template_types;
+    }
 }
 
 fn merge_functionlike_info(existing: &mut FunctionLikeInfo, incoming: FunctionLikeInfo) {
@@ -988,4 +1046,137 @@ fn union_has_top_level_template_param(union: &TUnion) -> bool {
             TAtomic::TTemplateParam { .. } | TAtomic::TTemplateParamClass { .. }
         )
     })
+}
+
+#[cfg(test)]
+mod stub_augmentation_tests {
+    use super::*;
+    use crate::file_info::FileInfo;
+    use crate::functionlike_info::FunctionLikeInfo;
+    use crate::t_atomic::TAtomic;
+    use crate::t_union::TUnion;
+
+    fn file(path: StrId, is_stub: bool, in_project: bool) -> FileInfo {
+        FileInfo {
+            path,
+            classes: Vec::new(),
+            functions: Vec::new(),
+            constants: Vec::new(),
+            content_hash: String::new(),
+            contents: String::new(),
+            parse_errors: Vec::new(),
+            docblock_parse_issues: Vec::new(),
+            is_stub,
+            is_low_precedence_stub: false,
+            is_in_project_dirs: in_project,
+            inline_annotations: Default::default(),
+            type_alias_imports: Vec::new(),
+        }
+    }
+
+    /// A stub `@property`/`@mixin` augments a project class while the project
+    /// keeps its own (real) members — the case a stub provider relies on.
+    #[test]
+    fn stub_augments_project_class() {
+        let (stub_path, project_path) = (StrId(1), StrId(2));
+        let (class_name, real_method, magic_prop) = (StrId(100), StrId(101), StrId(102));
+
+        for (existing_first, label) in [(true, "stub first"), (false, "project first")] {
+            let mut codebase = CodebaseInfo::default();
+            codebase
+                .files
+                .insert(stub_path, file(stub_path, true, false));
+            codebase
+                .files
+                .insert(project_path, file(project_path, false, true));
+
+            let mut stub = ClassLikeInfo {
+                name: class_name,
+                file_path: stub_path,
+                ..Default::default()
+            };
+            stub.pseudo_property_get_types
+                .insert(magic_prop, TUnion::new(TAtomic::TString));
+            stub.named_mixins.push(TAtomic::TString);
+
+            let mut project = ClassLikeInfo {
+                name: class_name,
+                file_path: project_path,
+                ..Default::default()
+            };
+            project.method_names.insert(real_method);
+
+            // Augmentation must hold regardless of scan order.
+            if existing_first {
+                codebase.register_class(stub);
+                codebase.register_class(project);
+            } else {
+                codebase.register_class(project);
+                codebase.register_class(stub);
+            }
+
+            let merged = codebase.classlike_infos.get(&class_name).unwrap();
+            assert_eq!(
+                merged.file_path, project_path,
+                "{label}: real class is base"
+            );
+            assert!(
+                merged.method_names.contains(&real_method),
+                "{label}: project member kept",
+            );
+            assert!(
+                merged.pseudo_property_get_types.contains_key(&magic_prop),
+                "{label}: stub @property merged in",
+            );
+            assert!(
+                merged.named_mixins.contains(&TAtomic::TString),
+                "{label}: stub @mixin merged in",
+            );
+        }
+    }
+
+    /// A stub return type fills in a project function that lacks one, without
+    /// displacing the project declaration.
+    #[test]
+    fn stub_augments_project_function() {
+        let (stub_path, project_path, fn_name) = (StrId(1), StrId(2), StrId(200));
+
+        for (existing_first, label) in [(true, "stub first"), (false, "project first")] {
+            let mut codebase = CodebaseInfo::default();
+            codebase
+                .files
+                .insert(stub_path, file(stub_path, true, false));
+            codebase
+                .files
+                .insert(project_path, file(project_path, false, true));
+
+            let project = FunctionLikeInfo {
+                name: fn_name,
+                file_path: project_path,
+                return_type: None,
+                ..Default::default()
+            };
+            let stub = FunctionLikeInfo {
+                name: fn_name,
+                file_path: stub_path,
+                return_type: Some(TUnion::new(TAtomic::TString)),
+                ..Default::default()
+            };
+
+            if existing_first {
+                codebase.register_function(stub);
+                codebase.register_function(project);
+            } else {
+                codebase.register_function(project);
+                codebase.register_function(stub);
+            }
+
+            let merged = codebase.functionlike_infos.get(&fn_name).unwrap();
+            assert_eq!(merged.file_path, project_path, "{label}: project is base");
+            assert!(
+                merged.return_type.is_some(),
+                "{label}: stub return type merged in",
+            );
+        }
+    }
 }

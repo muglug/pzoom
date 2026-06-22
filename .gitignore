@@ -8,6 +8,8 @@ Cargo.lock
 /bin/pzoom-native
 /bin/pzoom-native.exe
 /bin/.pzoom-binary-version
+# Stub-provider output (generated before analysis)
+/.pzoom/
 
 # IDE
 .idea/

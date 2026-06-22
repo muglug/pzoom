@@ -45,6 +45,65 @@ on first install. To allow it non-interactively (e.g. in CI), add it to your
 Prebuilt binaries are published for Linux (`x86_64`, `aarch64`) and macOS
 (Apple Silicon). On any other platform, build from source as below.
 
+## Stub providers
+
+pzoom's analyzer is a native binary and can't execute PHP, so a framework
+integration that needs to *run* PHP to know the types — boot the app and reflect
+over Eloquent models, container bindings, facades, and so on, the way
+[psalm-plugin-laravel](https://github.com/psalm/psalm-plugin-laravel) does —
+can't run inside analysis. Instead it runs as a **stub provider**: a small PHP
+class that (optionally) generates stub files before analysis. `vendor/bin/pzoom`
+runs every registered provider, then hands the binary their stubs via `--stubs`;
+the binary scans them for type information only (never analyzing or reporting on
+them).
+
+This is deliberately stubs-only — a provider adds type definitions, it doesn't
+hook into analysis. Most of what a Psalm plugin expresses through return-type
+providers is representable as stub annotations (`@method`, `@property`,
+generics), so stubs cover the common framework cases without executing user code
+mid-analysis.
+
+Write a provider by implementing `Pzoom\StubProvider`:
+
+```php
+use Pzoom\StubProvider;
+
+final class MyStubProvider implements StubProvider
+{
+    public function getStubFiles(string $cacheDir): array
+    {
+        // Ship fixed stubs, or generate them here (boot the app, reflect, …)
+        // and write into $cacheDir. Return the file/directory paths to scan.
+        file_put_contents($cacheDir . '/models.phpstub', $generatedStub);
+        return [$cacheDir . '/models.phpstub'];
+    }
+}
+```
+
+and registering it in the package's `composer.json` — pzoom discovers providers
+from every installed package (and the root project) this way:
+
+```json
+{
+    "extra": {
+        "pzoom": {
+            "stub-providers": ["Vendor\\Package\\MyStubProvider"]
+        }
+    }
+}
+```
+
+Providers generate into `.pzoom/` in the project (add it to `.gitignore`); pzoom
+never analyzes that directory. You can also pass stubs directly, bypassing the
+provider machinery:
+
+```bash
+vendor/bin/pzoom --stubs path/to/stubs path/to/php/project
+```
+
+[`examples/pzoom-laravel`](examples/pzoom-laravel) is a worked reference provider
+that boots a Laravel app and generates Eloquent model stubs from `$casts`.
+
 ## Building
 
 Requires a recent stable [Rust toolchain](https://rustup.rs/).

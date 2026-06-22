@@ -7,7 +7,12 @@
  * Composer exposes this script as `vendor/bin/pzoom`. The matching prebuilt
  * native binary is downloaded next to this file (as `pzoom-native`) by the
  * Composer plugin during `composer install` / `composer update`. This shim
- * simply forwards all arguments, stdin/stdout/stderr and the exit code to it.
+ * forwards all arguments, stdin/stdout/stderr and the exit code to it.
+ *
+ * Before an analysis run it also drives the stub-provider pre-pass: because the
+ * native analyzer can't execute PHP, framework integrations that need to run
+ * PHP to know the types do it here (see {@see \Pzoom\StubProvider}), and their
+ * generated stubs are forwarded to the binary as `--stubs` arguments.
  */
 
 $binary = __DIR__ . DIRECTORY_SEPARATOR . 'pzoom-native';
@@ -27,6 +32,52 @@ if (!is_executable($binary)) {
 }
 
 $args = array_slice($argv, 1);
+
+// Stub-provider pre-pass. The native analyzer can't execute PHP, so framework
+// integrations that must *run* PHP to know the types (boot the app, reflect)
+// do it here, before analysis: each registered Pzoom\StubProvider generates
+// stub files and we forward them to the binary via `--stubs`. Best-effort — a
+// provider failure must never block the analysis.
+if (pzoom_wants_stub_providers($args)) {
+    $projectRoot = getcwd() !== false ? getcwd() : '.';
+    $autoload = $projectRoot . '/vendor/autoload.php';
+    if (is_file($autoload)) {
+        require_once $autoload;
+        if (class_exists(\Pzoom\StubProviderRunner::class)) {
+            try {
+                foreach (\Pzoom\StubProviderRunner::collect($projectRoot) as $stub) {
+                    $args[] = '--stubs';
+                    $args[] = $stub;
+                }
+            } catch (\Throwable $e) {
+                fwrite(STDERR, "pzoom: stub providers failed: {$e->getMessage()}\n");
+            }
+        }
+    }
+}
+
+/**
+ * Whether this invocation analyzes code (so stub providers should run). True for
+ * `analyze` and the default no-subcommand form; false for `info`, `clear-cache`,
+ * `help` and `--help` / `--version`, which don't need stubs.
+ *
+ * @param list<string> $args
+ */
+function pzoom_wants_stub_providers(array $args): bool
+{
+    foreach ($args as $arg) {
+        if ($arg === '--help' || $arg === '-h' || $arg === '--version' || $arg === '-V') {
+            return false;
+        }
+        if ($arg !== '' && $arg[0] !== '-') {
+            // First positional token is the subcommand (or, for the default
+            // analyze form, a path).
+            return !in_array($arg, ['info', 'clear-cache', 'help'], true);
+        }
+    }
+
+    return true;
+}
 
 // Prefer pcntl_exec: it replaces this PHP process with the native binary, so
 // signals and the exit status are handled by the OS directly.

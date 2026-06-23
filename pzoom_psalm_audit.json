@@ -17,16 +17,16 @@
   "false_negative": "the visible issue is a spurious UnusedPsalmSuppress, but it is the symptom of a pzoom false NEGATIVE: pzoom fails to emit the underlying suppressed check (which Psalm does emit) and therefore thinks the @psalm-suppress is unused. The fix is to implement the missing check.",
   "true_issue_psalm_misses": "pzoom correctly found a genuine issue in the PHP code that Psalm does NOT report (pzoom is more precise here).",
   "real_but_psalm_suppresses_or_baselines": "pzoom's finding is correct AND Psalm's own analysis produces it too, but Psalm intentionally suppresses it inline or via psalm-baseline.xml; pzoom surfaces it only because it does not honor that suppression/baseline entry (a suppression/baseline-matching gap, not an analysis error).",
-  "approved_pzoom_divergence": "a known, accepted divergence that is NOT a bug to fix. ComplexMethod: pzoom's data-flow graph is structurally denser than Psalm's variable-use graph, so its complexity metric is calibrated to its own graph and flags a different (but reasonable) set of methods than Psalm. Matching Psalm's exact set would require reimplementing Psalm's graph."
+  "approved_pzoom_divergence": "a known, accepted divergence that is NOT a bug to fix. ComplexMethod: pzoom's data-flow graph is structurally denser than Psalm's variable-use graph, so its complexity metric is calibrated to its own graph and flags a different (but reasonable) set of methods than Psalm. Matching Psalm's exact set would require reimplementing Psalm's graph. Return-type prototype: pzoom reports return mismatches per statement and no longer emits the function-level MoreSpecificReturnType / InvalidNullableReturnType / InvalidFalsableReturnType (see README 'Differences to Psalm'); a now-unused @psalm-suppress MoreSpecificReturnType therefore surfaces as UnusedPsalmSuppress."
  },
- "count_note": "60 issues. Breakdown: 2 false_positive, 39 false_negative (each a spurious UnusedPsalmSuppress whose underlying check pzoom does not yet emit), 7 true_issue_psalm_misses (write-only static properties), 4 real_but_psalm_suppresses_or_baselines (3 baselined PossiblyUndefinedIntArrayOffset + 1 baselined UnusedPsalmSuppress), 8 approved_pzoom_divergence (ComplexMethod). The 2 remaining false positives -- key() non-emptiness through array_keys/unset/count (Reconciler.php) and a self:: static-property read in AsyncTestCase subclasses -- are deferred as subtle. Psalm's composer.lock is git-ignored so vendor versions float.",
- "observed_issue_count": 60,
+ "count_note": "62 issues. Breakdown: 2 false_positive, 39 false_negative (each a spurious UnusedPsalmSuppress whose underlying check pzoom does not yet emit), 7 true_issue_psalm_misses (write-only static properties), 5 real_but_psalm_suppresses_or_baselines (3 baselined PossiblyUndefinedIntArrayOffset + 1 baselined UnusedPsalmSuppress + 1 LessSpecificReturnStatement in UnionTrait that Psalm baselines as MoreSpecificReturnType), 9 approved_pzoom_divergence (8 ComplexMethod + 1 UnusedPsalmSuppress from the return-type prototype dropping MoreSpecificReturnType). The 2 remaining false positives -- key() non-emptiness through array_keys/unset/count (Reconciler.php) and a self:: static-property read in AsyncTestCase subclasses -- are deferred as subtle. The return-type prototype (per-statement return diagnostics; see README) adds the 2 trait-return entries above. Psalm's composer.lock is git-ignored so vendor versions float.",
+ "observed_issue_count": 62,
  "classification_summary": {
   "false_positive": 2,
   "false_negative": 39,
   "true_issue_psalm_misses": 7,
-  "real_but_psalm_suppresses_or_baselines": 4,
-  "approved_pzoom_divergence": 8
+  "real_but_psalm_suppresses_or_baselines": 5,
+  "approved_pzoom_divergence": 9
  },
  "false_negative_root_causes": {
   "ArgumentTypeCoercion (3)": "2 AlgebraTest complex Clause array-shape args (devs annotate 'due to Psalm bug') and 1 Scanner static-method-call arg -- pzoom does not emit the string->lowercase-string coercion there.",
@@ -643,6 +643,26 @@
    "classification": "true_issue_psalm_misses",
    "psalm_handling": "not_reported",
    "explanation": "Good divergence: write-only static $config (assigned `new TestConfig()` in setUp, never read). Pzoom rightly flags the dead storage; Psalm misses it (treats any static access as a use)."
+  },
+  {
+   "kind": "UnusedPsalmSuppress",
+   "file": "src/Psalm/Internal/Algebra.php",
+   "line": 331,
+   "column": 24,
+   "message": "Suppression of MoreSpecificReturnType is never used",
+   "classification": "approved_pzoom_divergence",
+   "psalm_handling": "reported",
+   "explanation": "Expected consequence of the return-type prototype: pzoom no longer emits MoreSpecificReturnType (return mismatches are reported per statement instead; see the README 'Differences to Psalm'), so the `@psalm-suppress MoreSpecificReturnType` here is now unused. Psalm still emits MoreSpecificReturnType and the suppression consumes it; this is a deliberate, accepted divergence, not a bug to fix."
+  },
+  {
+   "kind": "LessSpecificReturnStatement",
+   "file": "src/Psalm/Type/UnionTrait.php",
+   "line": 414,
+   "column": 16,
+   "message": "The type Psalm\\Type\\Atomic does not match the declared return type Psalm\\Type\\Atomic\\TArray|Psalm\\Type\\Atomic\\TClassStringMap|Psalm\\Type\\Atomic\\TKeyedArray",
+   "classification": "real_but_psalm_suppresses_or_baselines",
+   "psalm_handling": "baselined",
+   "explanation": "Real return-type looseness: UnionTrait::getArray returns $this->types['array'] (Atomic) against the narrower docblock TArray|TKeyedArray|TClassStringMap. Psalm detects it as MoreSpecificReturnType and baselines it (psalm-baseline.xml, UnionTrait.php). pzoom reports the paired per-statement LessSpecificReturnStatement -- the return-type prototype runs the per-`return` checks inside trait bodies, where Psalm guards them -- and surfaces it because it does not apply Psalm's psalm-baseline.xml entry."
   }
  ]
 }

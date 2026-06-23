@@ -62,9 +62,6 @@ UNSUPPORTED_CONFIG = {
 
 # Sibling issues Psalm suppresses so the headline issue is the one reported.
 IGNORED_ISSUES = {
-    "InvalidFalsableReturnType": ["FalsableReturnStatement"],
-    "InvalidNullableReturnType": ["NullableReturnStatement"],
-    "InvalidReturnType": ["InvalidReturnStatement"],
     "MixedStringOffsetAssignment": ["MixedAssignment"],
     "ParadoxicalCondition": ["MissingParamType"],
     "UnusedClass": ["UnusedVariable"],
@@ -91,6 +88,14 @@ DIVERGENT_EXPECTATIONS = {
     # pzoom resolves names case-sensitively: a wrong-cased class is
     # UndefinedClass with the correct casing suggested, not InvalidClass.
     "InvalidClass": "UndefinedClass",
+    # The return-type prototype no longer emits the function-level
+    # InvalidNullableReturnType / InvalidFalsableReturnType / InvalidReturnType;
+    # a return mismatch is reported at the offending `return` instead (see the
+    # README "Differences to Psalm"). These doc examples all return a mismatching
+    # value, so the per-statement sibling fires.
+    "InvalidFalsableReturnType": "FalsableReturnStatement",
+    "InvalidNullableReturnType": "NullableReturnStatement",
+    "InvalidReturnType": "InvalidReturnStatement",
 }
 
 # Genuine pzoom gaps, discovered by this script. Each entry must keep
@@ -101,6 +106,10 @@ KNOWN_FAILURES: dict[str, str] = {
     # docblock array shapes), so surfacing its diagnostics as ParseError
     # regresses ~5 inference tests. Revisit when mago's parser matures.
     "ParseError": "mago parser mis-flags valid constructs; surfacing false-positives",
+    # The return-type prototype drops MoreSpecificReturnType, and this doc example
+    # inline-suppresses its only per-statement sibling (LessSpecificReturnStatement),
+    # so pzoom reports nothing here by design (see README "Differences to Psalm").
+    "MoreSpecificReturnType": "return-type prototype drops MoreSpecificReturnType; example suppresses the LessSpecificReturnStatement sibling",
 }
 
 ISSUE_LINE = re.compile(r"^(?:ERROR|INFO): ([A-Za-z]+) - ")

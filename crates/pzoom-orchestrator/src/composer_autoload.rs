@@ -105,11 +105,18 @@ fn unescape_fqn(raw: &str) -> String {
 }
 
 /// Resolve `$vendorDir . '/x'` / `$baseDir . '/x'` to an absolute path.
+///
+/// The `$vendorDir`/`$baseDir` variable need not be at the very start of the
+/// piece: PSR-4 values are wrapped as `array($vendorDir . '/x', …)`, so the
+/// first directory is preceded by `array(`. Locate the variable anywhere in
+/// the piece rather than requiring it as a prefix.
 fn join_var_path(value: &str, vendor_dir: &Path, base_dir: &Path) -> Option<PathBuf> {
-    let value = value.trim();
-    let (root, rest) = match value.strip_prefix("$vendorDir") {
-        Some(rest) => (vendor_dir, rest),
-        None => (base_dir, value.strip_prefix("$baseDir")?),
+    let (root, rest) = match (value.find("$vendorDir"), value.find("$baseDir")) {
+        (Some(i), v) if v.is_none_or(|j| i < j) => {
+            (vendor_dir, &value[i + "$vendorDir".len()..])
+        }
+        (_, Some(j)) => (base_dir, &value[j + "$baseDir".len()..]),
+        _ => return None,
     };
     let rest = rest.trim_start().strip_prefix('.')?.trim_start();
     let segment = single_quoted(rest)?;

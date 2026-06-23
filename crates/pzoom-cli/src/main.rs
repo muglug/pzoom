@@ -924,8 +924,16 @@ fn is_excluded_from_analysis(path: &Path, root: &Path, exclude_patterns: &[Strin
         let pattern = pattern.replace('\\', "/");
 
         if let Some(dir) = pattern.strip_suffix("/**") {
-            if let Some(rel) = &rel_string {
-                return rel == dir || rel.starts_with(&format!("{}/", dir));
+            // A `dir/**` pattern excludes `dir` wherever it appears in the path,
+            // not only as a leading prefix — mirroring the scanner's
+            // `should_exclude` so a config-ignored directory (e.g. `data`) is
+            // dropped from analysis even at a nested depth, and even when the
+            // file entered the codebase via on-demand dependency resolution
+            // (which does not consult the exclude list while scanning).
+            if let Some(rel) = &rel_string
+                && (rel == dir || rel.starts_with(&format!("{}/", dir)))
+            {
+                return true;
             }
 
             return path_string.contains(&format!("/{}/", dir))

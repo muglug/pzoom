@@ -154,6 +154,13 @@ pub struct FunctionLikeInfo {
     /// Docblock parse/validation issues collected during scanning.
     pub docblock_issues: Vec<DocblockIssue>,
 
+    /// Issue names from this function/method's own docblock `@psalm-suppress`
+    /// (and `@psalm-fixme`) tags. Recorded at scan time so the codebase-wide
+    /// unused-definition pass can honor a method-level suppression of an issue
+    /// it reports *before* the `function` keyword (e.g. PossiblyUnusedReturnValue
+    /// at the docblock `@return` location), which a span/line text scan misses.
+    pub suppressed_issues: Vec<String>,
+
     /// Whether this method/function docblock requests inherited annotations
     /// via `@inheritdoc`/`@inheritDoc` or inline description marker.
     pub inherits_docblock: bool,

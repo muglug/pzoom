@@ -1866,6 +1866,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut no_named_arguments = false;
                     let mut method_template_map = class_template_map.clone();
                     let mut method_docblock_issues: Vec<DocblockIssue> = Vec::new();
+                    let mut suppressed_issues: Vec<String> = Vec::new();
                     let mut taints =
                         pzoom_code_info::functionlike_info::FunctionLikeTaints::default();
 
@@ -1875,6 +1876,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         let parsed = crate::docblock::parse(docblock, 0);
                         inherits_docblock = self.is_docblock_inheritdoc(&parsed);
                         is_pure = self.is_docblock_pure(&parsed);
+                        suppressed_issues = self.get_docblock_suppressed_issues(&parsed);
                         has_throws = parsed.tags.contains_key("throws")
                             || parsed.tags.contains_key("phpstan-throws");
                         member_is_public_api = parsed.tags.contains_key("psalm-api")
@@ -2244,6 +2246,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         inherits_docblock,
                         no_named_arguments,
                         docblock_issues: method_docblock_issues,
+                        suppressed_issues,
                         has_override_attribute: self
                             .has_attribute_named(&method.attribute_lists, "Override"),
                         has_return_type_will_change_attribute: self
@@ -6625,6 +6628,32 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         parsed.tags.contains_key("pure")
             || parsed.tags.contains_key("psalm-pure")
             || parsed.tags.contains_key("phpstan-pure")
+    }
+
+    /// Issue names suppressed by this docblock's `@psalm-suppress` /
+    /// `@psalm-fixme` tags. The issue name is the first token of each tag; any
+    /// trailing text is a free-form reason (e.g. `@psalm-suppress Foo because…`).
+    fn get_docblock_suppressed_issues(
+        &self,
+        parsed: &crate::docblock::ParsedDocblock,
+    ) -> Vec<String> {
+        let mut suppressed = Vec::new();
+        for tag in ["psalm-suppress", "psalm-fixme"] {
+            let Some(values) = parsed.tags.get(tag) else {
+                continue;
+            };
+            for content in values.values() {
+                let Some(token) = content.split_whitespace().next() else {
+                    continue;
+                };
+                let name =
+                    token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\');
+                if !name.is_empty() {
+                    suppressed.push(name.to_string());
+                }
+            }
+        }
+        suppressed
     }
 
     fn is_docblock_inheritdoc(&self, parsed: &crate::docblock::ParsedDocblock) -> bool {

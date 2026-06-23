@@ -98,7 +98,7 @@ impl<'a> FileAnalyzer<'a> {
             pzoom_code_info::CodeLocation::new(file_path, 0, 1, 1, 1),
         );
 
-        crate::type_coverage::record(analysis_data.expr_types.values());
+        crate::type_coverage::add(analysis_data.mixed_count, analysis_data.non_mixed_count);
 
         // Parser diagnostics are mostly suppressed (mago recovers from
         // constructs it mis-flags), but some are real PHP compile errors that

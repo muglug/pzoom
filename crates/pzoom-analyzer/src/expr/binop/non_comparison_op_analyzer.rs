@@ -16,6 +16,7 @@ pub fn analyze(
     right_type: Option<&TUnion>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
+    context: &crate::context::BlockContext,
     inside_loop: bool,
 ) -> TUnion {
     let addition_is_array_union = matches!(operator, BinaryOperator::Addition(_))
@@ -33,6 +34,11 @@ pub fn analyze(
         && !addition_is_array_union;
 
     if is_arithmetic_op {
+        // Psalm ArithmeticOpAnalyzer type-coverage: mixed if an operand is mixed.
+        analysis_data.record_mixedness(
+            context,
+            left_type.is_some_and(|t| t.is_mixed()) || right_type.is_some_and(|t| t.is_mixed()),
+        );
         arithmetic_op_analyzer::emit_arithmetic_operand_issue(
             analyzer,
             left_type,

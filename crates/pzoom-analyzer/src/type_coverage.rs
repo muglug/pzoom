@@ -1,44 +1,37 @@
-//! Lightweight, env-gated type-coverage accounting.
+//! Psalm-faithful type-coverage accounting.
 //!
-//! When `PZOOM_TYPE_COVERAGE=1`, [`record`] tallies a file's finalized
-//! per-expression types: how many distinct analyzed expressions resolved to a
-//! concrete (non-`mixed`) type vs. the total. Disabled by default so normal
-//! runs pay only a single atomic-bool check.
+//! Replicates Psalm's `Internal\Codebase\Analyzer` mixed/non-mixed counting:
+//! specific expression-analysis sites call `incrementMixedCount` /
+//! `incrementNonMixedCount` (under the `!collect_initializations`, file===root,
+//! non-trait guard), and the reported figure is
+//! `non_mixed / (mixed + non_mixed)` — "Psalm was able to infer types for X%".
+//!
+//! Per-file tallies live on [`crate::function_analysis_data::FunctionAnalysisData`];
+//! each file folds its tally into these globals at end of analysis. Env-gated
+//! (`PZOOM_TYPE_COVERAGE=1`) so normal runs do no counting.
 
-use std::rc::Rc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pzoom_code_info::TUnion;
-
-static TOTAL: AtomicU64 = AtomicU64::new(0);
+static MIXED: AtomicU64 = AtomicU64::new(0);
 static NON_MIXED: AtomicU64 = AtomicU64::new(0);
 
-fn enabled() -> bool {
+#[inline]
+pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| matches!(std::env::var("PZOOM_TYPE_COVERAGE").as_deref(), Ok("1") | Ok("true")))
 }
 
-/// Tally one file's finalized expression types.
-pub fn record<'a>(types: impl IntoIterator<Item = &'a Rc<TUnion>>) {
+/// Fold one file's `[mixed, non_mixed]` tally into the global totals.
+pub fn add(mixed: u32, non_mixed: u32) {
     if !enabled() {
         return;
     }
-
-    let mut total = 0u64;
-    let mut non_mixed = 0u64;
-    for ty in types {
-        total += 1;
-        if !ty.is_mixed() {
-            non_mixed += 1;
-        }
-    }
-
-    TOTAL.fetch_add(total, Ordering::Relaxed);
-    NON_MIXED.fetch_add(non_mixed, Ordering::Relaxed);
+    MIXED.fetch_add(mixed as u64, Ordering::Relaxed);
+    NON_MIXED.fetch_add(non_mixed as u64, Ordering::Relaxed);
 }
 
-/// Returns `(total_expressions, non_mixed_expressions)`.
+/// Returns `(mixed, non_mixed)` global totals.
 pub fn snapshot() -> (u64, u64) {
-    (TOTAL.load(Ordering::Relaxed), NON_MIXED.load(Ordering::Relaxed))
+    (MIXED.load(Ordering::Relaxed), NON_MIXED.load(Ordering::Relaxed))
 }

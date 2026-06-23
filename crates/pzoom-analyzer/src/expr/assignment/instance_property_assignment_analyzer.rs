@@ -47,6 +47,10 @@ pub fn analyze(
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
+    // Psalm InstancePropertyAssignmentAnalyzer type-coverage: a property
+    // assignment counts as mixed when the assigned value is mixed.
+    analysis_data.record_mixedness(context, value_type.is_mixed());
+
     // A statement-level `/** @var T */` overrides the assigned type (Psalm's
     // AssignmentAnalyzer applies var comments to any assignment target,
     // including instance properties — e.g. `$this->cache = unserialize(...)`).

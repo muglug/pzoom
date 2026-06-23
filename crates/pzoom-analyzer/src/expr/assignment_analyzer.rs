@@ -356,6 +356,10 @@ pub fn analyze(
             .or_insert(pos.0);
     }
 
+    // Psalm AssignmentAnalyzer type-coverage: incrementMixedCount when the
+    // assigned value has mixed, otherwise incrementNonMixedCount.
+    analysis_data.record_mixedness(context, rhs_type.is_mixed());
+
     emit_mixed_assignment_issue_if_needed(
         analyzer,
         assignment.lhs,

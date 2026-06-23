@@ -525,9 +525,10 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     );
 
     if matches!(std::env::var("PZOOM_TYPE_COVERAGE").as_deref(), Ok("1") | Ok("true")) {
-        let (total, non_mixed) = pzoom_analyzer::type_coverage::snapshot();
+        let (mixed, non_mixed) = pzoom_analyzer::type_coverage::snapshot();
+        let total = mixed + non_mixed;
         let pct = if total > 0 { non_mixed as f64 / total as f64 * 100.0 } else { 0.0 };
-        eprintln!("PZOOM-TYPE-COVERAGE expressions={total} non_mixed={non_mixed} coverage={pct:.2}%");
+        eprintln!("PZOOM-TYPE-COVERAGE mixed={mixed} non_mixed={non_mixed} total={total} coverage={pct:.4}%");
     }
 
     if error_count > 0 {

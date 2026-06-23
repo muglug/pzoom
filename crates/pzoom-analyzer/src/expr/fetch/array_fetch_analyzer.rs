@@ -296,6 +296,12 @@ pub fn analyze(
         .cloned()
         .map(|rc| (*rc).clone());
 
+    // Psalm ArrayFetchAnalyzer type-coverage: a fetch on a mixed array counts
+    // as mixed, otherwise non-mixed.
+    if let Some(at) = array_type.as_ref() {
+        analysis_data.record_mixedness(context, at.is_mixed());
+    }
+
     let base_has_nullable_or_falsable_access = array_type
         .as_ref()
         .is_some_and(|t| t.is_nullable() || t.is_falsable());

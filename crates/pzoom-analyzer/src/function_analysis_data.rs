@@ -80,6 +80,12 @@ pub struct FunctionAnalysisData {
     /// Inferred types for expressions, keyed by source position.
     pub expr_types: FxHashMap<Pos, Rc<TUnion>>,
 
+    /// Psalm type-coverage tallies for this file (`Analyzer::$mixed_counts`):
+    /// `[mixed, non_mixed]` observations recorded at the coverage sites and
+    /// folded into the global totals at end of file analysis.
+    pub mixed_count: u32,
+    pub non_mixed_count: u32,
+
     /// Start offsets of no-arg method calls whose result was memoized
     /// (Psalm's `memoizable` node attribute from MethodCallPurityAnalyzer) —
     /// only these get assertion-finder var keys like `$e->getPrevious()`.
@@ -270,6 +276,24 @@ pub struct FunctionAnalysisData {
 impl FunctionAnalysisData {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Record one type-coverage observation at a Psalm coverage site, mirroring
+    /// `Analyzer::increment{,Non}MixedCount`. Psalm's guard is
+    /// `!collect_initializations && !collect_mutations && file === root_file &&
+    /// not in a trait body`; pzoom has no `collect_mutations` pass and analyzes
+    /// every file as its own root, so only the first and last terms remain.
+    /// Gated by `PZOOM_TYPE_COVERAGE` so normal runs do nothing.
+    #[inline]
+    pub fn record_mixedness(&mut self, context: &crate::context::BlockContext, mixed: bool) {
+        if !crate::type_coverage::enabled() || context.collect_initializations || self.in_trait_body {
+            return;
+        }
+        if mixed {
+            self.mixed_count += 1;
+        } else {
+            self.non_mixed_count += 1;
+        }
     }
 
     /// Record that the function-like currently being analyzed (given by

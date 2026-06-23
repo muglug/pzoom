@@ -28,6 +28,12 @@ pub fn analyze(
     let left_type = analysis_data.expr_types.get(&left_pos).cloned();
     let right_type = analysis_data.expr_types.get(&right_pos).cloned();
 
+    // Psalm ConcatAnalyzer type-coverage: mixed if either operand has mixed.
+    analysis_data.record_mixedness(
+        context,
+        left_type.as_deref().is_some_and(|t| t.is_mixed()) || right_type.as_deref().is_some_and(|t| t.is_mixed()),
+    );
+
     analysis_data.expr_types.insert(
         pos,
         Rc::new(infer_concat_type(

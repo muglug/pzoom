@@ -157,6 +157,10 @@ pub fn verify_type(
 ) {
     coerce_value_after_gatekeeper_argument(arg, arg_type, param, context, analysis_data);
 
+    // Psalm ArgumentAnalyzer type-coverage: a verified argument counts as mixed
+    // when its type is mixed (or could not be inferred), otherwise non-mixed.
+    analysis_data.record_mixedness(context, arg_type.is_mixed());
+
     // Hakana `argument_analyzer::verify_type` attaches argument dataflow
     // (`add_dataflow`) for every verified argument, regardless of whether the
     // type check below succeeds.

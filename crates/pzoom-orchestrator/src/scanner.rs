@@ -150,16 +150,44 @@ impl Scanner {
                 break;
             }
 
-            let mut referenced: FxHashSet<StrId> = FxHashSet::default();
-            for (file_id, contents) in &pending {
+            for (file_id, _) in &pending {
                 harvested.insert(*file_id);
-                let arena = Bump::new();
-                let path = self.interner.lookup(*file_id);
-                let parse_id = FileId::new(&*path);
-                let (program, _) = parse_file_content(&arena, parse_id, contents);
-                let resolved = resolve_names(&program, &self.interner);
-                referenced.extend(resolved.values().copied());
             }
+
+            // Parse + name-resolve every pending file to discover the class
+            // names it references. Each file is independent and `Interner` is
+            // `Sync` (RwLock-backed), so fan the work across worker threads
+            // (mirroring `scan_contents_parallel`). `resolve_names` interns into
+            // the shared parent, so the ids the workers return are already
+            // global - no remapping needed.
+            let interner: &Interner = &self.interner;
+            let worker_count = if cfg!(target_arch = "wasm32") {
+                // Threads are unavailable on wasm32; resolve inline.
+                1
+            } else {
+                std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(8)
+                    .min(pending.len())
+                    .max(1)
+            };
+
+            let referenced: FxHashSet<StrId> = if worker_count == 1 {
+                harvest_referenced_ids(interner, &pending)
+            } else {
+                let chunk_size = pending.len().div_ceil(worker_count);
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = pending
+                        .chunks(chunk_size)
+                        .map(|chunk| scope.spawn(move || harvest_referenced_ids(interner, chunk)))
+                        .collect();
+                    let mut referenced: FxHashSet<StrId> = FxHashSet::default();
+                    for handle in handles {
+                        referenced.extend(handle.join().expect("harvest worker panicked"));
+                    }
+                    referenced
+                })
+            };
 
             let mut new_paths: Vec<String> = Vec::new();
             let mut queued: FxHashSet<String> = FxHashSet::default();
@@ -728,6 +756,24 @@ struct CollectedFile {
     declarations: CollectedDeclarations,
     file_parse_errors: Vec<(u32, String)>,
     scan_errors: Vec<ScanError>,
+}
+
+/// Parse + name-resolve a chunk of pending files and return every class-name
+/// id they reference. Used by `scan_dependencies_on_demand`'s transitive-closure
+/// harvest. Each file is independent and `Interner` is `Sync`, so callers run
+/// this across worker threads sharing one `&Interner`; the resolved ids are
+/// interned into that shared interner, so they need no remapping.
+fn harvest_referenced_ids(interner: &Interner, files: &[(StrId, String)]) -> FxHashSet<StrId> {
+    let mut found = FxHashSet::default();
+    for (file_id, contents) in files {
+        let arena = Bump::new();
+        let path = interner.lookup(*file_id);
+        let parse_id = FileId::new(&*path);
+        let (program, _) = parse_file_content(&arena, parse_id, contents);
+        let resolved = resolve_names(&program, interner);
+        found.extend(resolved.values().copied());
+    }
+    found
 }
 
 /// Parse a file and collect its declarations. Runs on worker threads; all

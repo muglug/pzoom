@@ -5,7 +5,7 @@ A fast PHP static analyzer written in Rust — a port of [Psalm](https://github.
 Read the backstory: [From Psalm to Pzoom](https://mattbrown.dev/articles/from-psalm-to-pzoom).
 
 > [!NOTE]
-> This is not something I ever intend to support. Also, it is vibe-coded with no great care taken as to its overall quality. Caveat emptor.
+> This is not something I ever intend to support — Caveat Emptor.
 
 ## Installing with Composer
 

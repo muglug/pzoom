@@ -55,6 +55,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let mut no_named_arguments = false;
         let mut function_template_map: TemplateMap = FxHashMap::default();
         let mut function_docblock_issues: Vec<DocblockIssue> = Vec::new();
+        let mut suppressed_issues: Vec<String> = Vec::new();
         let mut taints = pzoom_code_info::functionlike_info::FunctionLikeTaints::default();
         let mut global_types: Vec<(StrId, TUnion)> = Vec::new();
 
@@ -119,6 +120,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             );
             inherits_docblock = self.is_docblock_inheritdoc(&parsed);
             is_pure = self.is_docblock_pure(&parsed);
+            suppressed_issues = self.get_docblock_suppressed_issues(&parsed);
             has_throws =
                 parsed.tags.contains_key("throws") || parsed.tags.contains_key("phpstan-throws");
             is_mutation_free = self.is_docblock_mutation_free(&parsed);
@@ -366,6 +368,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             template_types,
             if_this_is_type,
             docblock_issues: function_docblock_issues,
+            suppressed_issues,
             inherits_docblock,
             no_named_arguments,
             defined_constants,

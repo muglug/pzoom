@@ -39,6 +39,20 @@ pub(crate) fn is_unused_definition_kind(name: &str) -> bool {
     )
 }
 
+/// Whether a function/method's own docblock `@psalm-suppress` / `@psalm-fixme`
+/// (recorded on [`FunctionLikeInfo`] at scan time) names `kind`. The unused-
+/// definition pass consults this to honor a method-level suppression of an issue
+/// anchored *before* the `function` keyword — notably PossiblyUnusedReturnValue
+/// at the docblock `@return` location — which the span/line text scan in
+/// [`find_unused_definitions`] cannot reach.
+fn functionlike_suppresses(info: &pzoom_code_info::FunctionLikeInfo, kind: IssueKind) -> bool {
+    if info.suppressed_issues.is_empty() {
+        return false;
+    }
+    let name = format!("{kind:?}");
+    info.suppressed_issues.iter().any(|s| *s == name)
+}
+
 /// 1-based (line, column) for `offset` given the file's line-start offsets.
 pub(crate) fn line_column(line_starts: &[usize], offset: u32) -> (u32, u32) {
     let offset = offset as usize;
@@ -511,22 +525,23 @@ fn report_unused_declarations(
                     // Psalm: a private method's unused return is the definite
                     // UnusedReturnValue; a public/protected one is the
                     // possibly-unused variant (it may be called externally).
-                    if matches!(method_info.visibility, Visibility::Private) {
-                        emit(
+                    let (kind, message) = if matches!(method_info.visibility, Visibility::Private) {
+                        (
                             IssueKind::UnusedReturnValue,
                             "The return value for this private method is never used".to_string(),
-                            start,
-                            end,
-                            method_info.file_path,
-                        );
+                        )
                     } else {
-                        emit(
+                        (
                             IssueKind::PossiblyUnusedReturnValue,
                             "The return value for this method is never used".to_string(),
-                            start,
-                            end,
-                            method_info.file_path,
-                        );
+                        )
+                    };
+                    // The issue is anchored at the return-type location, which for
+                    // a docblock `@return` sits before the `function` keyword and
+                    // so escapes the span/line suppression scan; honor the
+                    // method's own docblock `@psalm-suppress` recorded at scan time.
+                    if !functionlike_suppresses(method_info, kind) {
+                        emit(kind, message, start, end, method_info.file_path);
                     }
                 }
             }

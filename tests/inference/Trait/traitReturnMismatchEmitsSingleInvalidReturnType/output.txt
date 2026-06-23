@@ -1,1 +1,1 @@
-InvalidReturnType - input.php:3:34 - The declared return type 'int' for C::badReturn is incorrect, got ''nope''
+InvalidReturnStatement - input.php:4:16 - The type 'nope' does not match the declared return type int

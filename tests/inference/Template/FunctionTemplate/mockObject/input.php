@@ -11,7 +11,6 @@ function foo(string $originalClassName): MockObject {
 }
 
 /**
- * @psalm-suppress InvalidReturnType
  * @psalm-suppress InvalidReturnStatement
  *
  * @psalm-template T2 of object

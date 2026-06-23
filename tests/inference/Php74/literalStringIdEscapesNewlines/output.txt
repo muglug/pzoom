@@ -1,2 +1,1 @@
 InvalidReturnStatement - input.php:3:12 - The type 'a\nb' does not match the declared return type int
-InvalidReturnType - input.php:2:15 - The declared return type 'int' for f is incorrect, got ''a\nb''

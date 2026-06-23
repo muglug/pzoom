@@ -737,13 +737,12 @@ pub(crate) fn verify_missing_return_checks(
         && function_returns_implicitly
         && !has_yield
     {
-        let issue_kind = if function_info.signature_return_type.is_some() {
-            IssueKind::InvalidReturnType
-        } else {
-            IssueKind::InvalidNullableReturnType
-        };
+        // PROTOTYPE (return-type checks): an implicit fall-through (not all code
+        // paths end in a return) is always InvalidReturnType, even when some
+        // branches do return. The old docblock-only arm raised
+        // InvalidNullableReturnType here, which we no longer emit.
         emit(
-            issue_kind,
+            IssueKind::InvalidReturnType,
             format!(
                 "Not all code paths of {} end in a return statement, return type {} expected",
                 cased_name,
@@ -756,14 +755,19 @@ pub(crate) fn verify_missing_return_checks(
 
     // 2. Declared never, but the body can return.
     if declared.is_nothing() && !function_always_exits && !has_yield {
-        emit(
-            IssueKind::InvalidReturnType,
-            format!(
-                "{} is not expected to return, but it does, either implicitly or explicitly",
-                cased_name
-            ),
-            analysis_data,
-        );
+        // PROTOTYPE: only flag the implicit fall-through (no return statement);
+        // an explicit `return <value>` against `never` is caught per statement
+        // by InvalidReturnStatement.
+        if !has_return_statement {
+            emit(
+                IssueKind::InvalidReturnType,
+                format!(
+                    "{} is not expected to return, but it does, either implicitly or explicitly",
+                    cased_name
+                ),
+                analysis_data,
+            );
+        }
         return;
     }
 
@@ -946,28 +950,15 @@ pub(crate) fn verify_missing_return_checks(
                         analysis_data,
                     );
                 }
-            } else {
-                // In a trait body the inferred return is computed against the
-                // generic `$this` — `return $this` infers `static` (wider than a
-                // declared `self`), and a using-class member infers its concrete
-                // type where Psalm's open trait receiver only sees `mixed` and so
-                // skips the check entirely (ReturnTypeAnalyzer returns early on a
-                // mixed inferred type). Either way Psalm doesn't treat the trait
-                // declaration as over-specific, so suppress the report here.
-                if !analysis_data.in_trait_body {
-                    emit(
-                        IssueKind::MoreSpecificReturnType,
-                        format!(
-                            "The declared return type '{}' for {} is more specific than the inferred return type '{}'",
-                            declared.get_id(Some(analyzer.interner)),
-                            cased_name,
-                            inferred.get_id(Some(analyzer.interner))
-                        ),
-                        analysis_data,
-                    );
-                }
             }
-        } else if !is_nullable || !parent_class_exists {
+            // PROTOTYPE: the type-coerced, non-mixed case used to raise
+            // MoreSpecificReturnType (declared narrower than the inferred type).
+            // We no longer emit it.
+        } else if (!is_nullable || !parent_class_exists) && !has_return_statement {
+            // PROTOTYPE: the function-level InvalidReturnType only fires when
+            // there are no return statements — e.g. a generator whose
+            // aggregated yield/return type is wrong. With return statements
+            // present, per-statement InvalidReturnStatement is the safety net.
             emit(
                 IssueKind::InvalidReturnType,
                 format!(
@@ -1018,53 +1009,13 @@ pub(crate) fn verify_missing_return_checks(
         }
     }
 
-    // Psalm ReturnTypeAnalyzer's independent declaration checks, run
-    // regardless of the containment outcome: a nullable/falsable inferred
-    // return against a declaration that allows neither.
-    if !inferred.ignore_nullable_issues
-        && inferred.is_nullable()
-        && !declared.is_nullable()
-        && !declared
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, TAtomic::TTemplateParam { .. }))
-        && !declared.is_void()
-    {
-        emit(
-            IssueKind::InvalidNullableReturnType,
-            format!(
-                "The declared return type '{}' for {} is not nullable, but '{}' contains null",
-                declared.get_id(Some(analyzer.interner)),
-                cased_name,
-                inferred.get_id(Some(analyzer.interner))
-            ),
-            analysis_data,
-        );
-    }
-
-    if !inferred.ignore_falsable_issues
-        && inferred.is_falsable()
-        && !declared.is_falsable()
-        && !declared
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, TAtomic::TBool | TAtomic::TTrue | TAtomic::TFalse))
-        && !declared
-            .types
-            .iter()
-            .any(|atomic| matches!(atomic, TAtomic::TScalar))
-    {
-        emit(
-            IssueKind::InvalidFalsableReturnType,
-            format!(
-                "The declared return type '{}' for {} does not allow false, but '{}' contains false",
-                declared.get_id(Some(analyzer.interner)),
-                cased_name,
-                inferred.get_id(Some(analyzer.interner))
-            ),
-            analysis_data,
-        );
-    }
+    // PROTOTYPE: Psalm ReturnTypeAnalyzer's independent declaration checks used
+    // to run here regardless of the containment outcome — a nullable inferred
+    // return against a non-nullable declaration (InvalidNullableReturnType) and
+    // a falsable inferred return against a declaration that allows neither
+    // (InvalidFalsableReturnType). We no longer emit either: when there are
+    // return statements the per-statement NullableReturnStatement /
+    // FalsableReturnStatement checks cover them.
 }
 
 /// Psalm's FunctionLikeAnalyzer ReservedWord checks: `void`/`never` cannot be

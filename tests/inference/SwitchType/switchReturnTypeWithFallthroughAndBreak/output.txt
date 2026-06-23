@@ -1,1 +1,1 @@
-InvalidNullableReturnType
+InvalidReturnType

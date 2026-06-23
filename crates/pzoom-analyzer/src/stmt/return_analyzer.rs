@@ -168,6 +168,24 @@ pub fn analyze(
                 .and_then(|class_id| analyzer.codebase.get_class(class_id))
                 .and_then(|class_info| class_info.parent_class),
         );
+        // In a trait body the declared return's `self`/`static` and the trait's
+        // own `@template` params arrive unresolved — they were parsed against the
+        // trait, not the using class (a non-trait class has `self` bound to the
+        // concrete class by the scanner). The body is analysed once per using
+        // class, so bind them to that class here, mirroring Psalm's per-using-class
+        // trait re-analysis. Without this the per-`return` checks compare e.g.
+        // `static` against an unbound `self`, or a concrete value against an
+        // unbound `T:Trait as mixed`, and report spurious mismatches.
+        if analysis_data.in_trait_body
+            && let Some(using_class) = declaring_class
+            && let Some(using_info) = analyzer.codebase.get_class(using_class)
+        {
+            expanded_expected_type =
+                crate::stmt::class_analyzer::replace_extended_templates_in_union(
+                    &expanded_expected_type,
+                    &using_info.template_extended_params,
+                );
+        }
         // NB: `self`/`static` are resolved later by the call analyzers
         // (`localize_special_class_type_*`); resolving them here too would
         // double-resolve (see tests/inference/Class/preventDoubleStaticResolution1).
@@ -180,14 +198,22 @@ pub fn analyze(
                 .get_class(*class_id)
                 .is_some_and(|class_info| class_info.is_final)
         });
+        // A trait body always binds `self`/`static` to the using class (see
+        // above), regardless of finality — the unresolved trait `self` would
+        // otherwise never match the `static` inferred from `return $this`.
+        let self_bind_class = if analysis_data.in_trait_body {
+            declaring_class
+        } else {
+            final_declaring_class
+        };
         crate::type_expander::expand_union(
             analyzer.codebase,
             analyzer.interner,
             &mut expanded_expected_type,
             &crate::type_expander::TypeExpansionOptions {
                 evaluate_conditional_types: true,
-                self_class: final_declaring_class,
-                static_class_type: match final_declaring_class {
+                self_class: self_bind_class,
+                static_class_type: match self_bind_class {
                     Some(class_id) => crate::type_expander::StaticClassType::Name(class_id),
                     None => crate::type_expander::StaticClassType::None,
                 },

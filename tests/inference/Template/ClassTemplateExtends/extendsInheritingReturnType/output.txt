@@ -1,1 +1,0 @@
-InvalidReturnType - input.php:7:16 - The declared return type 'T1:Container as mixed' for Container::get is incorrect, got 'stdClass'

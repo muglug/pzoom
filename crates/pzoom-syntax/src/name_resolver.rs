@@ -24,6 +24,7 @@ use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
 use mago_syntax::ast::ast::statement::Statement;
 use mago_syntax::ast::ast::type_hint::Hint;
 use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems, UseType};
+use mago_syntax::ast::ast::r#yield::Yield;
 use pzoom_str::{Interner, StrId};
 use rustc_hash::FxHashMap;
 
@@ -692,9 +693,20 @@ impl<'a> NameResolver<'a> {
             Expression::AnonymousClass(anonymous_class) => {
                 self.visit_anonymous_class(anonymous_class);
             }
-            Expression::Yield(_) => {
-                // Yield structure varies - skip for now
-            }
+            Expression::Yield(yield_expr) => match yield_expr {
+                Yield::Value(yield_value) => {
+                    if let Some(value) = yield_value.value {
+                        self.visit_expression(value);
+                    }
+                }
+                Yield::Pair(yield_pair) => {
+                    self.visit_expression(yield_pair.key);
+                    self.visit_expression(yield_pair.value);
+                }
+                Yield::From(yield_from) => {
+                    self.visit_expression(yield_from.iterator);
+                }
+            },
             _ => {}
         }
     }

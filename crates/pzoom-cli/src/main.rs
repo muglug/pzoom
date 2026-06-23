@@ -524,6 +524,13 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         format_number(peak_memory_bytes() as f64 / (1024.0 * 1024.0), 3),
     );
 
+    if matches!(std::env::var("PZOOM_TYPE_COVERAGE").as_deref(), Ok("1") | Ok("true")) {
+        let (mixed, non_mixed) = pzoom_analyzer::type_coverage::snapshot();
+        let total = mixed + non_mixed;
+        let pct = if total > 0 { non_mixed as f64 / total as f64 * 100.0 } else { 0.0 };
+        eprintln!("PZOOM-TYPE-COVERAGE mixed={mixed} non_mixed={non_mixed} total={total} coverage={pct:.4}%");
+    }
+
     if error_count > 0 {
         ExitCode::from(2)
     } else {

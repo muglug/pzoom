@@ -74,6 +74,10 @@ pub fn analyze(
             .map(|t| (*t).clone())
             .unwrap_or_else(TUnion::mixed);
 
+        // Psalm ReturnAnalyzer type-coverage: a returned expression counts as
+        // mixed when its inferred type is mixed, otherwise non-mixed.
+        analysis_data.record_mixedness(context, return_type.is_only_mixed());
+
         if let Some(inline_annotation) =
             get_inline_return_annotation_type(analyzer, value, analysis_data.current_stmt_start)
         {

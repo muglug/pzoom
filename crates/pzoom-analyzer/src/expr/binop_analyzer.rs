@@ -180,6 +180,7 @@ pub fn analyze(
         right_type.as_deref(),
         pos,
         analysis_data,
+        context,
         context.inside_loop,
     );
 

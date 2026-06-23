@@ -141,6 +141,12 @@ pub fn analyze(
     context.inside_general_use = was_inside_general_use;
     let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
 
+    // Psalm InstancePropertyFetchAnalyzer type-coverage: a fetch on a mixed
+    // receiver counts as mixed, otherwise non-mixed.
+    if let Some(obj_t) = obj_type.as_deref() {
+        analysis_data.record_mixedness(context, obj_t.is_mixed());
+    }
+
     // Get the property name
     // Dynamic property selectors (`$a->$k`) consume their expression
     // (Hakana analyzes the whole fetch under inside_general_use).
@@ -412,6 +418,12 @@ pub fn analyze_nullsafe(
     let obj_pos = expression_analyzer::analyze(analyzer, access.object, analysis_data, context);
     context.inside_general_use = was_inside_general_use;
     let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
+
+    // Psalm InstancePropertyFetchAnalyzer type-coverage: a fetch on a mixed
+    // receiver counts as mixed, otherwise non-mixed.
+    if let Some(obj_t) = obj_type.as_deref() {
+        analysis_data.record_mixedness(context, obj_t.is_mixed());
+    }
 
     // Get the property name
     let prop_name = match &access.property {

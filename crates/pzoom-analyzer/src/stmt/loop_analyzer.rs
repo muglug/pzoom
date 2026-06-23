@@ -144,6 +144,11 @@ pub fn analyze(
         let original_parent_context = loop_parent_context.clone();
         let mut pre_loop_context = loop_context.clone();
 
+        // Psalm LoopAnalyzer type-coverage: save the pre-loop mixed/non-mixed
+        // tallies (Analyzer::getMixedCountsForFile) so reanalysis passes don't
+        // multiply the loop body's contribution — it is counted exactly once.
+        let saved_type_coverage = (analysis_data.mixed_count, analysis_data.non_mixed_count);
+
         analysis_data.start_recording_issues();
 
         if !is_do {
@@ -352,6 +357,12 @@ pub fn analyze(
             continue_context
                 .clauses
                 .clone_from(&pre_loop_context.clauses);
+
+            // Psalm LoopAnalyzer type-coverage: reset to the pre-loop tallies
+            // (Analyzer::setMixedCountsForFile) so only this final reanalysis
+            // pass's observations are kept.
+            analysis_data.mixed_count = saved_type_coverage.0;
+            analysis_data.non_mixed_count = saved_type_coverage.1;
 
             clean_nodes(stmts, analysis_data);
 

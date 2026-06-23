@@ -39,6 +39,20 @@ pub fn analyze(
     context.inside_general_use = was_inside_general_use;
     let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
 
+    // Psalm AtomicMethodCallAnalyzer type-coverage: per receiver atomic, a call
+    // on `mixed` counts as mixed, otherwise non-mixed.
+    if let Some(obj_t) = obj_type.as_deref() {
+        for atomic in &obj_t.types {
+            analysis_data.record_mixedness(
+                context,
+                matches!(
+                    atomic,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+                ),
+            );
+        }
+    }
+
     let args: Vec<_> = method_call.argument_list.arguments.iter().collect();
     let arg_positions: Vec<Pos> = args
         .iter()
@@ -194,6 +208,20 @@ pub fn analyze_nullsafe(
         expression_analyzer::analyze(analyzer, method_call.object, analysis_data, context);
     context.inside_general_use = was_inside_general_use;
     let obj_type = analysis_data.expr_types.get(&obj_pos).cloned();
+
+    // Psalm AtomicMethodCallAnalyzer type-coverage: per receiver atomic, a call
+    // on `mixed` counts as mixed, otherwise non-mixed.
+    if let Some(obj_t) = obj_type.as_deref() {
+        for atomic in &obj_t.types {
+            analysis_data.record_mixedness(
+                context,
+                matches!(
+                    atomic,
+                    TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+                ),
+            );
+        }
+    }
 
     let args: Vec<_> = method_call.argument_list.arguments.iter().collect();
     let arg_positions: Vec<Pos> = args

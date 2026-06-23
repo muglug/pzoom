@@ -1,5 +1,8 @@
 //! pzoom CLI - Command-line interface for the pzoom PHP static analyzer.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod shortcodes;
 
 use clap::{Parser, Subcommand};

@@ -18,3 +18,4 @@ pzoom-orchestrator.workspace = true
 clap.workspace = true
 rustc-hash.workspace = true
 libc = "0.2"
+mimalloc = "0.1"

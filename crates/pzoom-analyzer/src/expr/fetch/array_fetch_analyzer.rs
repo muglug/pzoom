@@ -301,6 +301,11 @@ pub fn analyze(
     if let Some(at) = array_type.as_ref() {
         analysis_data.record_mixedness(context, at.is_mixed());
     }
+    // Psalm ArrayFetchAnalyzer offset-handling increments: a mixed offset counts
+    // as mixed, otherwise non-mixed.
+    if let Some(it) = index_type.as_ref() {
+        analysis_data.record_mixedness(context, it.is_mixed());
+    }
 
     let base_has_nullable_or_falsable_access = array_type
         .as_ref()

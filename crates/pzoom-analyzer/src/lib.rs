@@ -36,6 +36,7 @@ pub mod stmt_analyzer;
 pub mod taint_analyzer;
 pub mod template;
 pub mod type_comparator;
+pub mod type_coverage;
 pub mod type_expander;
 pub mod unused_symbols;
 pub(crate) mod unused_variable_analyzer;

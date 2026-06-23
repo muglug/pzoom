@@ -98,6 +98,8 @@ impl<'a> FileAnalyzer<'a> {
             pzoom_code_info::CodeLocation::new(file_path, 0, 1, 1, 1),
         );
 
+        crate::type_coverage::record(analysis_data.expr_types.values());
+
         // Parser diagnostics are mostly suppressed (mago recovers from
         // constructs it mis-flags), but some are real PHP compile errors that
         // Psalm reports as ParseError — surface those selectively:

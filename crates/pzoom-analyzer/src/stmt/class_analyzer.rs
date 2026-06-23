@@ -261,6 +261,7 @@ fn analyze_class(
         check_extended_template_param_bounds(analyzer, info, analysis_data);
         check_missing_interface_method_typehints(analyzer, info, analysis_data);
         check_method_override_issues(analyzer, info, analysis_data);
+        check_param_name_mismatches(analyzer, info, analysis_data);
         check_invalid_override_attributes(analyzer, info, analysis_data);
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
@@ -391,6 +392,7 @@ pub fn analyze_anonymous_class(
         check_property_override_visibility(analyzer, info, analysis_data);
         check_property_type_invariance(analyzer, info, analysis_data);
         check_method_override_issues(analyzer, info, analysis_data);
+        check_param_name_mismatches(analyzer, info, analysis_data);
     }
 
     for member in anonymous_class.members.iter() {
@@ -2989,6 +2991,155 @@ fn check_method_override_issues(
     }
 }
 
+/// Psalm's ParamNameMismatch check (named arguments make a parameter's name part
+/// of the contract). Unlike the type/signature checks in
+/// `check_method_override_issues`, this compares against the method's *true
+/// declarers* (`overridden_method_ids`) so a rename is reported once against each
+/// declaring ancestor — including one reached transitively through a trait — and
+/// never against an intermediate that merely inherited the method. The issue is
+/// attributed to where the implementer method is declared (the trait, for a
+/// trait-supplied method), so the per-using-class copies dedup into one report.
+fn check_param_name_mismatches(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    for (method_name, method_info) in &class_info.methods {
+        let declared_here_or_used_trait =
+            method_info.declaring_class.is_some_and(|declaring_class| {
+                declaring_class == class_info.name
+                    || class_info.used_traits.contains(&declaring_class)
+            });
+        if !declared_here_or_used_trait {
+            continue;
+        }
+
+        if *method_name == StrId::CONSTRUCT {
+            // Constructors are excluded from `overridden_method_ids`; Psalm only
+            // compares constructor parameter names for a consistent constructor.
+            if let Some((guide_class_id, guide_method)) =
+                find_parent_method(analyzer, class_info, *method_name)
+                && analyzer
+                    .codebase
+                    .get_class(guide_class_id)
+                    .is_some_and(|guide_info| guide_info.is_consistent_constructor)
+            {
+                compare_param_names(
+                    analyzer,
+                    class_info,
+                    *method_name,
+                    method_info,
+                    guide_class_id,
+                    guide_method,
+                    analysis_data,
+                );
+            }
+            continue;
+        }
+
+        if !should_compare_param_names(*method_name) {
+            continue;
+        }
+
+        let Some(declarers) = class_info.overridden_method_ids.get(method_name) else {
+            continue;
+        };
+        let mut declarer_ids: Vec<StrId> = declarers.iter().copied().collect();
+        declarer_ids.sort_unstable_by_key(|id| id.0);
+        for guide_class_id in declarer_ids {
+            let Some(guide_info) = analyzer.codebase.get_class(guide_class_id) else {
+                continue;
+            };
+            let Some(guide_method) = guide_info
+                .methods
+                .get(method_name)
+                .or_else(|| get_method_case_insensitive(analyzer, guide_info, method_name))
+            else {
+                continue;
+            };
+            compare_param_names(
+                analyzer,
+                class_info,
+                *method_name,
+                method_info,
+                guide_class_id,
+                guide_method,
+                analysis_data,
+            );
+        }
+    }
+}
+
+/// Emit `ParamNameMismatch` for each positional parameter whose name differs
+/// between `implementer_method` and the method it overrides in `guide_class_id`.
+fn compare_param_names(
+    analyzer: &StatementsAnalyzer<'_>,
+    class_info: &pzoom_code_info::ClassLikeInfo,
+    method_name: StrId,
+    implementer_method: &pzoom_code_info::FunctionLikeInfo,
+    guide_class_id: StrId,
+    guide_method: &pzoom_code_info::FunctionLikeInfo,
+    analysis_data: &mut FunctionAnalysisData,
+) {
+    // The guide must be the declaring ancestor, not one that inherited the
+    // method, and must not opt out of named arguments.
+    if guide_method.no_named_arguments || guide_method.declaring_class != Some(guide_class_id) {
+        return;
+    }
+
+    let guide_is_array_access = analyzer
+        .interner
+        .lookup(guide_class_id)
+        .trim_start_matches('\\')
+        .eq_ignore_ascii_case("ArrayAccess");
+
+    let implementer_method_id = format_method_id(
+        analyzer,
+        implementer_method.declaring_class.unwrap_or(class_info.name),
+        method_name,
+    );
+    let guide_method_id = format_method_id(analyzer, guide_class_id, method_name);
+
+    for (param_index, guide_param) in guide_method.params.iter().enumerate() {
+        let Some(implementer_param) = implementer_method.params.get(param_index) else {
+            break;
+        };
+
+        // ArrayAccess::offset* opt the first parameter out of name checks (its
+        // name conflicts with implementers like ArrayObject).
+        let relax_array_access_offset_param = guide_is_array_access
+            && param_index == 0
+            && matches!(
+                method_name,
+                StrId::OFFSET_GET | StrId::OFFSET_SET | StrId::OFFSET_EXISTS | StrId::OFFSET_UNSET
+            );
+        if relax_array_access_offset_param || guide_param.name == implementer_param.name {
+            continue;
+        }
+
+        let guide_param_name =
+            normalize_param_name(analyzer.interner.lookup(guide_param.name).as_ref());
+        let implementer_param_name =
+            normalize_param_name(analyzer.interner.lookup(implementer_param.name).as_ref());
+
+        emit_param_issue(
+            analyzer,
+            analysis_data,
+            implementer_method,
+            implementer_param.start_offset,
+            IssueKind::ParamNameMismatch,
+            format!(
+                "Argument {} of {} has wrong name {}, expecting {} as defined by {}",
+                param_index + 1,
+                implementer_method_id,
+                implementer_param_name,
+                guide_param_name,
+                guide_method_id
+            ),
+        );
+    }
+}
+
 fn check_method_signature_must_omit_return_type(
     analyzer: &StatementsAnalyzer<'_>,
     method_name: StrId,
@@ -3074,7 +3225,20 @@ fn compare_method_to_guide(
         return;
     };
 
-    let implementer_method_id = format_method_id(analyzer, class_info.name, method_name);
+    // Attribute the issue message to where the method is declared. For a
+    // trait-supplied method that is the trait, matching Psalm (so the report
+    // reads `Trait::method` and is identical across every class using the trait).
+    let attribution_class = implementer_method
+        .declaring_class
+        .filter(|&declaring_class| {
+            declaring_class != class_info.name
+                && analyzer
+                    .codebase
+                    .get_class(declaring_class)
+                    .is_some_and(|declaring_info| declaring_info.kind == ClassLikeKind::Trait)
+        })
+        .unwrap_or(class_info.name);
+    let implementer_method_id = format_method_id(analyzer, attribution_class, method_name);
     let guide_method_id = format_method_id(analyzer, guide_class_id, method_name);
     let enforce_constructor_signature = method_name != StrId::CONSTRUCT
         || guide_class_info.kind == ClassLikeKind::Interface
@@ -3287,37 +3451,11 @@ fn compare_method_to_guide(
                 || method_name == offset_exists
                 || method_name == offset_unset);
 
-        let should_compare_names = should_compare_param_names(method_name)
-            || (method_name == StrId::CONSTRUCT && guide_class_info.is_consistent_constructor);
-
-        if !relax_array_access_offset_param
-            && should_compare_names
-            // Psalm skips the name check when the parent method opts out of
-            // named arguments (@no-named-arguments, e.g. ArrayObject's
-            // offsetSet whose param name conflicts with ArrayAccess's).
-            && !guide_method.no_named_arguments
-            && guide_param.name != implementer_param.name
-        {
-            let guide_param_name =
-                normalize_param_name(analyzer.interner.lookup(guide_param.name).as_ref());
-            let implementer_param_name =
-                normalize_param_name(analyzer.interner.lookup(implementer_param.name).as_ref());
-
-            emit_param_issue(
-                analyzer,
-                analysis_data,
-                implementer_param.start_offset,
-                IssueKind::ParamNameMismatch,
-                format!(
-                    "Argument {} of {} has wrong name {}, expecting {} as defined by {}",
-                    param_index + 1,
-                    implementer_method_id,
-                    implementer_param_name,
-                    guide_param_name,
-                    guide_method_id
-                ),
-            );
-        }
+        // ParamNameMismatch is handled separately by `check_param_name_mismatches`,
+        // which compares against the true-declarer `overridden_method_ids` set
+        // (Psalm reports a rename once per declaring ancestor, including ones
+        // reached transitively through a trait) rather than the nearest-parent
+        // guide used here for the template-sensitive type checks.
 
         // A docblock-only implementer param compares against the guide's
         // docblock-preferred type (Psalm's MethodComparator docblock check):
@@ -3389,6 +3527,7 @@ fn compare_method_to_guide(
                 emit_param_issue(
                     analyzer,
                     analysis_data,
+                    implementer_method,
                     implementer_param.start_offset,
                     issue_kind,
                     format!(
@@ -3443,6 +3582,7 @@ fn compare_method_to_guide(
                         emit_param_issue(
                             analyzer,
                             analysis_data,
+                            implementer_method,
                             implementer_param.start_offset,
                             IssueKind::MoreSpecificImplementedParamType,
                             format!(
@@ -3463,6 +3603,7 @@ fn compare_method_to_guide(
             emit_param_issue(
                 analyzer,
                 analysis_data,
+                implementer_method,
                 implementer_param.start_offset,
                 base_mismatch_kind,
                 format!(
@@ -3931,6 +4072,49 @@ fn format_method_id(
     )
 }
 
+/// Resolve the `(file, line, column)` an override issue should be attributed to.
+///
+/// Psalm reports an inheritance conflict where the implementer method is
+/// *declared*. For a method supplied by a trait that is the trait's own file, so
+/// the copies that pzoom produces while analysing each class that uses the trait
+/// collapse under issue dedup into the single report Psalm emits against the
+/// trait method. Methods declared directly in the analysed class keep the
+/// analyzer's own file and line index (byte-identical to the previous behaviour).
+fn locate_override_issue(
+    analyzer: &StatementsAnalyzer<'_>,
+    implementer_method: &pzoom_code_info::FunctionLikeInfo,
+    offset: u32,
+) -> (StrId, u32, u32) {
+    let declared_in_trait = implementer_method.file_path != analyzer.file_path
+        && implementer_method
+            .declaring_class
+            .and_then(|declaring_class| analyzer.codebase.get_class(declaring_class))
+            .is_some_and(|declaring_info| declaring_info.kind == ClassLikeKind::Trait);
+
+    if declared_in_trait
+        && let Some(file_info) = analyzer.codebase.files.get(&implementer_method.file_path)
+    {
+        let src = file_info.contents.as_bytes();
+        let off = (offset as usize).min(src.len());
+        let mut line = 1u32;
+        let mut line_start = 0usize;
+        for (i, &byte) in src.iter().enumerate().take(off) {
+            if byte == b'\n' {
+                line += 1;
+                line_start = i + 1;
+            }
+        }
+        return (
+            implementer_method.file_path,
+            line,
+            (off - line_start) as u32 + 1,
+        );
+    }
+
+    let (line, col) = analyzer.get_line_column(offset);
+    (analyzer.file_path, line, col)
+}
+
 fn emit_method_issue(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
@@ -3938,11 +4122,11 @@ fn emit_method_issue(
     kind: IssueKind,
     message: String,
 ) {
-    let (line, col) = analyzer.get_line_column(method_info.start_offset);
+    let (file_path, line, col) = locate_override_issue(analyzer, method_info, method_info.start_offset);
     analysis_data.add_issue(Issue::new(
         kind,
         message,
-        analyzer.file_path,
+        file_path,
         method_info.start_offset,
         method_info.end_offset,
         line,
@@ -3953,15 +4137,16 @@ fn emit_method_issue(
 fn emit_param_issue(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
+    implementer_method: &pzoom_code_info::FunctionLikeInfo,
     start_offset: u32,
     kind: IssueKind,
     message: String,
 ) {
-    let (line, col) = analyzer.get_line_column(start_offset);
+    let (file_path, line, col) = locate_override_issue(analyzer, implementer_method, start_offset);
     analysis_data.add_issue(Issue::new(
         kind,
         message,
-        analyzer.file_path,
+        file_path,
         start_offset,
         start_offset.saturating_add(1),
         line,

@@ -99,6 +99,12 @@ impl<'a> FileAnalyzer<'a> {
         );
 
         crate::type_coverage::add(analysis_data.mixed_count, analysis_data.non_mixed_count);
+        if crate::type_coverage::enabled() && std::env::var("PZOOM_COV_PERFILE").is_ok() {
+            eprintln!(
+                "PZCOV-FILE\t{}\t{}\t{}",
+                analysis_data.mixed_count, analysis_data.non_mixed_count, path_str
+            );
+        }
 
         // Parser diagnostics are mostly suppressed (mago recovers from
         // constructs it mis-flags), but some are real PHP compile errors that

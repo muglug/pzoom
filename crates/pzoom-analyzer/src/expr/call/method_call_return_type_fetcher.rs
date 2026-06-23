@@ -281,7 +281,7 @@ pub(crate) fn add_method_call_dataflow_with_receiver(
             vec![],
         );
 
-        if let Some(receiver_in_scope) = context.locals.get_mut(lhs_var_id) {
+        if let Some(receiver_in_scope) = context.locals.get_mut_owned(lhs_var_id) {
             receiver_in_scope.parent_nodes = vec![var_node.clone()];
         }
 

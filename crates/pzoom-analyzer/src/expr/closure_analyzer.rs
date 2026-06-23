@@ -97,7 +97,7 @@ pub fn analyze(
                 // For $var (by value), it's a copy
                 closure_context
                     .locals
-                    .insert(var_id.clone(), var_type.clone());
+                    .insert(var_id.clone(), var_type.as_ref().clone());
                 if use_var.ampersand.is_some() {
                     context.mark_external_reference(var_id.clone());
                     closure_context.mark_external_reference(var_id.clone());
@@ -114,7 +114,7 @@ pub fn analyze(
                     {
                         closure_context
                             .locals
-                            .insert(outer_id.clone(), outer_type.clone());
+                            .insert(outer_id.clone(), outer_type.as_ref().clone());
                     }
                 }
             } else if use_var.ampersand.is_some() {

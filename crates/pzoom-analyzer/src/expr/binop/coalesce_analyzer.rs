@@ -55,7 +55,7 @@ pub fn analyze(
             .and_then(|key| context.locals.get(&key))
             .filter(|entry| entry.possibly_undefined_from_try && !entry.is_mixed())
             .map(|entry| {
-                let mut present = entry.clone();
+                let mut present = (**entry).clone();
                 present.possibly_undefined_from_try = false;
                 present
             })
@@ -167,7 +167,7 @@ pub fn analyze(
             Some(outer_type) => {
                 right_context
                     .locals
-                    .insert(var_id.clone(), outer_type.clone());
+                    .insert(var_id.clone(), outer_type.as_ref().clone());
             }
             None => {
                 right_context.locals.remove(&var_id);
@@ -362,7 +362,7 @@ fn resolve_left_isset_type(
         None,
     );
 
-    isset_context.locals.get(&left_var_name).cloned()
+    isset_context.locals.get(&left_var_name).map(|__t| (**__t).clone())
 }
 
 fn apply_left_null_assumption(

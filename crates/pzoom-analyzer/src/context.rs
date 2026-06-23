@@ -153,11 +153,94 @@ use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 
 /// Context for analyzing a block of code.
 ///
+/// Variable-type scope: `$var` -> type.
+///
+/// Values are `Rc<TUnion>` so forking a [`BlockContext`] (`clone`, done at
+/// every branch — if/else, loop, ternary, `&&`/`||`) is a set of refcount
+/// bumps rather than a deep copy of every variable's whole type tree. Mirrors
+/// the `Rc<TUnion>` already used for `FunctionAnalysisData::expr_types`.
+///
+/// `Deref`/`DerefMut` expose the underlying map so existing read/remove/iter
+/// access compiles unchanged; the inherent [`insert`](Locals::insert) shadows
+/// `HashMap::insert` so `locals.insert(var, tunion)` sites also compile
+/// unchanged (the `Rc::new` wrap happens here).
+#[derive(Clone, Debug, Default)]
+pub struct Locals(pub FxHashMap<VarName, Rc<TUnion>>);
+
+impl std::ops::Deref for Locals {
+    type Target = FxHashMap<VarName, Rc<TUnion>>;
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Locals {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Locals {
+    /// Insert a variable type, wrapping it in `Rc`. Shadows `HashMap::insert`.
+    #[inline]
+    pub fn insert(&mut self, var_id: VarName, var_type: TUnion) -> Option<Rc<TUnion>> {
+        self.0.insert(var_id, Rc::new(var_type))
+    }
+
+    /// Mutable access to a variable's type, copy-on-write: clones the type out
+    /// of a shared `Rc` only if it is actually shared, so only the touched
+    /// variable is copied (never the whole scope).
+    #[inline]
+    pub fn get_mut_owned<Q>(&mut self, var_id: &Q) -> Option<&mut TUnion>
+    where
+        VarName: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        self.0.get_mut(var_id).map(Rc::make_mut)
+    }
+}
+
+impl<'a> IntoIterator for &'a Locals {
+    type Item = (&'a VarName, &'a Rc<TUnion>);
+    type IntoIter = std::collections::hash_map::Iter<'a, VarName, Rc<TUnion>>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Locals {
+    type Item = (&'a VarName, &'a mut Rc<TUnion>);
+    type IntoIter = std::collections::hash_map::IterMut<'a, VarName, Rc<TUnion>>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter_mut()
+    }
+}
+
+impl IntoIterator for Locals {
+    type Item = (VarName, Rc<TUnion>);
+    type IntoIter = std::collections::hash_map::IntoIter<VarName, Rc<TUnion>>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl FromIterator<(VarName, Rc<TUnion>)> for Locals {
+    #[inline]
+    fn from_iter<I: IntoIterator<Item = (VarName, Rc<TUnion>)>>(iter: I) -> Self {
+        Locals(iter.into_iter().collect())
+    }
+}
+
 /// Tracks variable types, assignments, and scope state.
 #[derive(Clone, Debug, Default)]
 pub struct BlockContext {
     /// Variable types currently in scope: `$varName` -> Type.
-    pub locals: FxHashMap<VarName, TUnion>,
+    pub locals: Locals,
 
     /// Variables whose conflicting clauses were evicted in this scope; branch
     /// analyzers propagate the eviction to the parent context after the body
@@ -530,7 +613,7 @@ impl BlockContext {
 
     /// Get the type of a variable, if known.
     pub fn get_var_type(&self, var_id: &str) -> Option<&TUnion> {
-        self.locals.get(var_id)
+        self.locals.get(var_id).map(|t| &**t)
     }
 
     /// Set the type of a variable.
@@ -582,7 +665,7 @@ impl BlockContext {
     /// Get variables that were redefined compared to a parent context.
     pub fn get_redefined_locals(
         &self,
-        parent_locals: &FxHashMap<VarName, TUnion>,
+        parent_locals: &Locals,
         _check_equality: bool,
         removed_vars: &mut FxHashSet<VarName>,
     ) -> FxHashMap<VarName, TUnion> {
@@ -592,7 +675,7 @@ impl BlockContext {
             if let Some(parent_type) = parent_locals.get(var_id) {
                 // Variable exists in both - check if redefined
                 if var_type != parent_type {
-                    redefined.insert(var_id.clone(), var_type.clone());
+                    redefined.insert(var_id.clone(), (**var_type).clone());
                 }
             }
         }
@@ -640,9 +723,9 @@ impl BlockContext {
                 None
             };
 
-            let Some(existing_type) = self.locals.get(var_id).cloned() else {
+            let Some(existing_type) = self.locals.get(var_id).map(|__t| (**__t).clone()) else {
                 if let Some(new_type) = new_type {
-                    self.locals.insert(var_id.clone(), new_type.clone());
+                    self.locals.insert(var_id.clone(), (**new_type).clone());
                     updated_vars.insert(var_id.clone());
                 }
                 continue;
@@ -657,7 +740,8 @@ impl BlockContext {
             let can_substitute = new_type.is_some() || existing_type.types.len() > 1;
 
             if type_changed && can_substitute {
-                let substituted = substitute_union(&existing_type, old_type, new_type);
+                let substituted =
+                    substitute_union(&existing_type, old_type, new_type.map(|t| &**t));
                 self.locals.insert(var_id.clone(), substituted);
                 updated_vars.insert(var_id.clone());
             }
@@ -670,7 +754,7 @@ impl BlockContext {
     /// returned types are *this* context's.
     pub fn get_redefined_vars(
         &self,
-        new_vars: &FxHashMap<VarName, TUnion>,
+        new_vars: &Locals,
         include_new_vars: bool,
     ) -> FxHashMap<VarName, TUnion> {
         let mut redefined_vars = FxHashMap::default();
@@ -679,12 +763,12 @@ impl BlockContext {
             match new_vars.get(var_id) {
                 None => {
                     if include_new_vars {
-                        redefined_vars.insert(var_id.clone(), this_type.clone());
+                        redefined_vars.insert(var_id.clone(), (**this_type).clone());
                     }
                 }
                 Some(new_type) => {
                     if this_type != new_type {
-                        redefined_vars.insert(var_id.clone(), this_type.clone());
+                        redefined_vars.insert(var_id.clone(), (**this_type).clone());
                     }
                 }
             }
@@ -740,7 +824,7 @@ impl BlockContext {
                     other => other.clone(),
                 })
                 .collect();
-            *local_type = TUnion::from_types(replaced);
+            *local_type = Rc::new(TUnion::from_types(replaced));
         }
     }
 
@@ -904,7 +988,7 @@ impl BlockContext {
                 self.locals.insert(var_id.clone(), combined);
             } else {
                 // Variable only exists in other branch - add it but mark as possibly assigned
-                self.locals.insert(var_id.clone(), other_type.clone());
+                self.locals.insert(var_id.clone(), (**other_type).clone());
                 self.possibly_assigned_var_ids.insert(var_id.clone());
             }
         }
@@ -981,7 +1065,7 @@ impl BlockContext {
         let rhs_type = self
             .locals
             .get(&rhs_root)
-            .cloned()
+            .map(|t| (**t).clone())
             .unwrap_or(rhs_fallback_type);
 
         if lhs_var_id != rhs_root {
@@ -1057,7 +1141,7 @@ impl BlockContext {
                 }
             }
 
-            if let Some(existing_type) = self.locals.get(var_id).cloned() {
+            if let Some(existing_type) = self.locals.get(var_id).map(|__t| (**__t).clone()) {
                 self.propagate_reference_cluster_type(new_root, existing_type);
             }
         }

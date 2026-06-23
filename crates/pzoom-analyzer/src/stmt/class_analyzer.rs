@@ -6889,8 +6889,13 @@ fn analyze_methods_from_trait(
     let trait_path = analyzer.interner.lookup(trait_info.file_path);
     let arena = Bump::new();
     let file_id = FileId::new(&*trait_path);
+    crate::profiling::TRAIT_PARSE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _trait_parse_start = std::time::Instant::now();
     let (program, _parse_error) = parse_file_content(&arena, file_id, &trait_file_info.contents);
+    crate::profiling::record(&crate::profiling::TRAIT_PARSE_NS, _trait_parse_start);
+    let _trait_resolve_start = std::time::Instant::now();
     let resolved_names = resolve_names(&program, analyzer.interner);
+    crate::profiling::record(&crate::profiling::TRAIT_RESOLVE_NS, _trait_resolve_start);
 
     let Some((trait_stmt, trait_namespace)) = find_trait_statement_by_offset(
         program.statements.as_slice(),

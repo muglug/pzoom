@@ -11,6 +11,7 @@ use pzoom_code_info::TUnion;
 use pzoom_code_info::VarName;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::context::Locals;
 use crate::stmt::scope_analyzer::ControlAction;
 
 /// State threaded through the analysis of a loop body.
@@ -20,7 +21,7 @@ pub struct LoopScope {
     pub iteration_count: usize,
 
     /// The locals as they were in the parent context before the loop.
-    pub parent_context_vars: FxHashMap<VarName, TUnion>,
+    pub parent_context_vars: Locals,
 
     /// Variables definitely redefined on every path through the loop body.
     pub redefined_loop_vars: FxHashMap<VarName, TUnion>,
@@ -51,7 +52,7 @@ pub struct LoopScope {
 }
 
 impl LoopScope {
-    pub fn new(parent_context_vars: FxHashMap<VarName, TUnion>) -> Self {
+    pub fn new(parent_context_vars: Locals) -> Self {
         Self {
             iteration_count: 0,
             parent_context_vars,

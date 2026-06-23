@@ -1317,7 +1317,7 @@ fn add_instance_property_assignment_dataflow(
         );
     }
 
-    if let Some(stmt_var_type) = context.locals.get_mut(lhs_var_id) {
+    if let Some(stmt_var_type) = context.locals.get_mut_owned(lhs_var_id) {
         if !stmt_var_type
             .parent_nodes
             .iter()

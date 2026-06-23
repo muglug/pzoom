@@ -499,7 +499,7 @@ pub fn analyze(
         // vars' final types into the post-if context.
         let pre_replay_types: FxHashMap<VarName, Option<TUnion>> = assigned_in_conditional_var_ids
             .iter()
-            .map(|var_id| (var_id.clone(), replay_context.locals.get(var_id).cloned()))
+            .map(|var_id| (var_id.clone(), replay_context.locals.get(var_id).map(|__t| (**__t).clone())))
             .collect();
         add_conditionally_assigned_vars_to_if_fallthrough(
             analyzer,
@@ -526,7 +526,7 @@ pub fn analyze(
             {
                 replay_context
                     .locals
-                    .insert(var_id.clone(), post_type.clone());
+                    .insert(var_id.clone(), post_type.as_ref().clone());
             }
             if let Some(final_type) = replay_context.locals.get(var_id) {
                 let mut final_type = final_type.clone();
@@ -543,14 +543,14 @@ pub fn analyze(
                 {
                     for node in &source_type.parent_nodes {
                         if !final_type.parent_nodes.contains(node) {
-                            final_type.parent_nodes.push(node.clone());
+                            std::rc::Rc::make_mut(&mut final_type).parent_nodes.push(node.clone());
                         }
                     }
                 }
                 replay_context
                     .locals
-                    .insert(var_id.clone(), final_type.clone());
-                context.locals.insert(var_id.clone(), final_type);
+                    .insert(var_id.clone(), final_type.as_ref().clone());
+                context.locals.insert(var_id.clone(), std::rc::Rc::unwrap_or_clone(final_type));
                 context.vars_possibly_in_scope.insert(var_id.clone());
             }
         }
@@ -878,7 +878,7 @@ pub fn analyze(
 
     for (var_id, var_type) in if_scope.possibly_redefined_vars.clone() {
         if context.locals.contains_key(&var_id) && !if_scope.updated_vars.contains(&var_id) {
-            let existing = context.locals.get(&var_id).cloned().unwrap();
+            let existing = context.locals.get(&var_id).map(|__t| (**__t).clone()).unwrap();
             let combined = combine_union_types(&existing, &var_type, false);
             // Structural changes invalidate dependents; parent-node-only
             // changes (dataflow merging) must not.
@@ -886,7 +886,7 @@ pub fn analyze(
                 context.invalidate_dependent_types(&var_id);
             }
             context.locals.insert(var_id, combined);
-        } else if let Some(existing) = context.locals.get_mut(&var_id) {
+        } else if let Some(existing) = context.locals.get_mut_owned(&var_id) {
             // The type was already settled through Context::update, but the
             // branch assignment nodes must still reach the post-if dataflow
             // (an elseif's reassignment is no less a definition for it).
@@ -991,7 +991,7 @@ pub(crate) fn update_if_scope(
     // e.g. `$storage->return_type` under `if ($storage instanceof X)`) are
     // already absent here, and the outer narrowing stays valid after the if
     // (Psalm never removes outer entries for branch-missing vars at all).
-    post_condition_locals: &FxHashMap<VarName, TUnion>,
+    post_condition_locals: &crate::context::Locals,
     assigned_var_ids: &FxHashMap<VarName, usize>,
     possibly_assigned_var_ids: &FxHashSet<VarName>,
     newly_reconciled_var_ids: &FxHashSet<VarName>,
@@ -1031,7 +1031,7 @@ pub(crate) fn update_if_scope(
                     .locals
                     .iter()
                     .filter(|(var_id, _)| !outer_context.locals.contains_key(*var_id))
-                    .map(|(var_id, ty)| (var_id.clone(), ty.clone()))
+                    .map(|(var_id, ty)| (var_id.clone(), (**ty).clone()))
                     .collect();
                 if_scope.new_vars = Some(new_vars);
             }
@@ -1619,7 +1619,7 @@ fn add_conditionally_assigned_vars_to_if_fallthrough(
             apply_recorded_assignments(binary.lhs, analysis_data, replay_context);
             let pre_right_types: Vec<(VarName, Option<TUnion>)> = assigned_var_ids
                 .iter()
-                .map(|var_id| (var_id.clone(), replay_context.locals.get(var_id).cloned()))
+                .map(|var_id| (var_id.clone(), replay_context.locals.get(var_id).map(|__t| (**__t).clone())))
                 .collect();
             apply_recorded_assignments(binary.rhs, analysis_data, replay_context);
             for (var_id, pre_type) in pre_right_types {

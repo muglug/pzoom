@@ -317,7 +317,7 @@ pub fn analyze(
                         .unwrap_or(0);
                     let pre_count = pre_right_assigned.get(var_id).copied().unwrap_or(0);
                     if right_count > pre_count {
-                        inner.locals.insert(var_id.clone(), right_type.clone());
+                        inner.locals.insert(var_id.clone(), right_type.as_ref().clone());
                     }
                 }
             }
@@ -366,7 +366,7 @@ pub fn analyze(
             // still reach the fall-through so the else branch reconciles the
             // real assigned type rather than minting one from the assertion.
             if !context.locals.contains_key(var_id) {
-                context.locals.insert(var_id.clone(), right_type.clone());
+                context.locals.insert(var_id.clone(), right_type.as_ref().clone());
             }
             context.possibly_assigned_var_ids.insert(var_id.clone());
             // Psalm merges the right context's assigned ids back
@@ -425,7 +425,7 @@ fn add_conditionally_assigned_vars_to_context(
         if let Some(final_type) = replay_context.locals.get(var_id) {
             right_context
                 .locals
-                .insert(var_id.clone(), final_type.clone());
+                .insert(var_id.clone(), final_type.as_ref().clone());
         }
     }
 }

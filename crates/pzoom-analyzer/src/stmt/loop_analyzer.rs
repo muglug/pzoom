@@ -347,7 +347,7 @@ pub fn analyze(
                     if let Some(pre_loop_context_type) = pre_loop_context_type {
                         continue_context
                             .locals
-                            .insert(var_id.clone(), pre_loop_context_type.clone());
+                            .insert(var_id.clone(), pre_loop_context_type.as_ref().clone());
                     } else {
                         continue_context.locals.remove(var_id);
                     }
@@ -427,7 +427,7 @@ pub fn analyze(
         for (var_id, var_type) in &loop_scope.possibly_redefined_loop_parent_vars {
             if let Some(loop_parent_context_type) = loop_parent_context.locals.get_mut(var_id) {
                 *loop_parent_context_type =
-                    combine_union_types(var_type, loop_parent_context_type, false);
+                    std::rc::Rc::new(combine_union_types(var_type, loop_parent_context_type, false));
             }
             loop_parent_context
                 .possibly_assigned_var_ids
@@ -456,12 +456,12 @@ pub fn analyze(
                     // via `get_mut`) so a later `setLoopVars` copy keeps them.
                     for parent_node in &var_type.parent_nodes {
                         if !continue_context_type.parent_nodes.contains(parent_node) {
-                            continue_context_type.parent_nodes.push(parent_node.clone());
+                            std::rc::Rc::make_mut(continue_context_type).parent_nodes.push(parent_node.clone());
                         }
                     }
                     loop_parent_context
                         .locals
-                        .insert(var_id.clone(), continue_context_type.clone());
+                        .insert(var_id.clone(), continue_context_type.as_ref().clone());
                     loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 } else if *continue_context_type != var_type {
                     let combined = combine_union_types(&var_type, continue_context_type, false);
@@ -506,7 +506,7 @@ pub fn analyze(
                     if loop_parent_context.locals.contains_key(&var_id) {
                         loop_parent_context
                             .locals
-                            .insert(var_id.clone(), reconciled_type.clone());
+                            .insert(var_id.clone(), reconciled_type.as_ref().clone());
                     }
                     loop_parent_context.remove_var_from_conflicting_clauses(var_id.clone());
                 }
@@ -548,7 +548,7 @@ pub fn analyze(
             } else {
                 loop_parent_context
                     .locals
-                    .insert(var_id.clone(), var_type.clone());
+                    .insert(var_id.clone(), var_type.as_ref().clone());
             }
         }
     }

@@ -950,7 +950,7 @@ fn analyze_compact_call(
         if let Some(var_type) = var_type {
             properties.insert(
                 ArrayKey::String(var_name.to_string()),
-                (var_type.possibly_undefined_from_try, var_type.clone()),
+                (var_type.possibly_undefined_from_try, (**var_type).clone()),
             );
         } else {
             let span = arg.span();

@@ -108,7 +108,7 @@ pub(crate) fn analyze(
     // them, mirroring Psalm passing `else_context` by reference.
     for var_id in assigned_in_conditional_var_ids.keys() {
         if let Some(ty) = post_cond_context.locals.get(var_id) {
-            else_context.locals.insert(var_id.clone(), ty.clone());
+            else_context.locals.insert(var_id.clone(), ty.as_ref().clone());
         }
         if let Some(count) = post_cond_context.assigned_var_ids.get(var_id) {
             else_context.assigned_var_ids.insert(var_id.clone(), *count);

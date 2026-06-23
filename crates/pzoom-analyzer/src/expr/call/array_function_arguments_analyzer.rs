@@ -114,7 +114,7 @@ pub(crate) fn handle_by_ref_array_adjustment(
     let var_id = VarName::new(var_name);
     context.remove_var_from_conflicting_clauses(var_id.clone());
 
-    let Some(existing_type) = context.locals.get(&var_id).cloned() else {
+    let Some(existing_type) = context.locals.get(&var_id).map(|__t| (**__t).clone()) else {
         return;
     };
 
@@ -257,7 +257,7 @@ pub(crate) fn handle_array_addition(
     is_unshift: bool,
 ) -> bool {
     let var_id = VarName::new(var_name);
-    let Some(existing_type) = context.locals.get(&var_id).cloned() else {
+    let Some(existing_type) = context.locals.get(&var_id).map(|__t| (**__t).clone()) else {
         return false;
     };
 

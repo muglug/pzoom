@@ -198,7 +198,7 @@ pub fn analyze(
             // sees the accumulated negation narrowing.
             for var_id in &negation_changed_vars {
                 if let Some(var_type) = running_context.locals.get(var_id) {
-                    arm_body_overrides.push((var_id.clone(), var_type.clone()));
+                    arm_body_overrides.push((var_id.clone(), var_type.as_ref().clone()));
                 }
             }
             has_default_arm = true;
@@ -212,7 +212,7 @@ pub fn analyze(
         context.has_returned = false;
         let saved_locals: Vec<(pzoom_code_info::VarName, Option<TUnion>)> = arm_body_overrides
             .iter()
-            .map(|(var_id, _)| (var_id.clone(), context.locals.get(var_id).cloned()))
+            .map(|(var_id, _)| (var_id.clone(), context.locals.get(var_id).map(|__t| (**__t).clone())))
             .collect();
         for (var_id, var_type) in arm_body_overrides {
             context.locals.insert(var_id, var_type);
@@ -492,7 +492,7 @@ fn narrow_match_arm_body(
         if let Some(var_type) = base.locals.get(var_id)
             && !narrowed_vars.iter().any(|(existing, _)| existing == var_id)
         {
-            narrowed_vars.push((var_id.clone(), var_type.clone()));
+            narrowed_vars.push((var_id.clone(), (**var_type).clone()));
         }
     }
     narrowed_vars

@@ -120,7 +120,7 @@ pub fn analyze(
         for (var_name, var_type) in &context.locals {
             analysis_data
                 .file_global_types
-                .insert(var_name.clone(), var_type.clone());
+                .insert(var_name.clone(), var_type.as_ref().clone());
         }
     }
 

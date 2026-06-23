@@ -234,6 +234,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // We always scan the entire project directory to get complete type information,
     // even when analyzing a single file (Hakana-style behavior).
     let mut scanner = Scanner::new();
+    scanner.set_exclude_patterns(&config.exclude_patterns);
 
     // Optional (PECL/third-party) extension stubs load only when enabled:
     // `php -m`, a project php.ini, composer.json ext-* requires, and

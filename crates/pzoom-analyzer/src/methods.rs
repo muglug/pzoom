@@ -58,14 +58,14 @@ pub(crate) fn get_method_return_type(
         return own_return_type.unwrap_or_else(TUnion::mixed);
     };
 
-    // Psalm's `Methods::getMethodReturnType` uses `$storage->return_type` (the
-    // docblock return type) as the candidate: a method that only carries a
-    // native signature hint has no candidate and defers to the documented type.
-    let candidate_type = method_info
-        .return_type
-        .is_some()
-        .then_some(own_return_type)
-        .flatten();
+    // Psalm's `Methods::getMethodReturnType` uses `$storage->return_type` as the
+    // candidate, which is the `@return` docblock type *or* the native signature
+    // type when there is no docblock (`return_type ?: signature_return_type`).
+    // `own_return_type` already resolves that unified type, so a method that
+    // narrows the return purely via a native signature hint (e.g.
+    // `ConstantStringType::getValue(): string` overriding the broader
+    // `ConstantScalarType::getValue()` docblock) is still a valid candidate.
+    let candidate_type = own_return_type;
 
     // Psalm special case: a method documented by `Iterator` keeps its own
     // native return type (when it has one matching its signature) so Iterator
@@ -111,9 +111,20 @@ pub(crate) fn get_method_return_type(
         &mut documented_in_candidate,
     );
 
-    if (!old_contained_by_new && !new_contained_by_old)
-        || (old_contained_by_new && new_contained_by_old)
-    {
+    if old_contained_by_new && new_contained_by_old {
+        // Mutually contained: Psalm intersects the two and keeps the more
+        // specific side. A native-signature-only candidate cannot carry the
+        // ancestor's docblock template parameters (e.g. `getIterator():
+        // \Traversable` overriding `@return \Traversable<TKey, TValue>`), so
+        // defer to the documented type there; a docblock candidate is itself the
+        // refined type and wins.
+        if method_info.return_type.is_none() {
+            return documented_type;
+        }
+        return candidate_type;
+    }
+
+    if !old_contained_by_new && !new_contained_by_old {
         return candidate_type;
     }
 

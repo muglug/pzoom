@@ -3613,6 +3613,7 @@ fn localize_special_class_type_union_for_callable(
             parent_class: parent_class_id,
             function_is_final: true,
             evaluate_conditional_types: false,
+            resolve_template_param_bounds: false,
         },
     );
     localized

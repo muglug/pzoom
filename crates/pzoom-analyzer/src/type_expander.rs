@@ -46,6 +46,13 @@ pub struct TypeExpansionOptions {
     /// Matches Hakana's `evaluate_conditional_types` (default `false`); only the
     /// concrete-return-type sites enable it. Localization leaves conditionals intact.
     pub evaluate_conditional_types: bool,
+    /// Replace each template param with its `as` bound instead of keeping it.
+    /// Used when localizing a trait method's declared return type for the
+    /// per-statement return check: a trait body is generic over its own
+    /// templates, so the return is compared against the bound (matching Psalm),
+    /// not the using class's concrete `@use` binding — otherwise an over-precise
+    /// bound (e.g. `list{int, int}`) spuriously rejects a wider inferred type.
+    pub resolve_template_param_bounds: bool,
 }
 
 /// Expand a union in place, collapsing conditional types and recursing into nested
@@ -280,6 +287,15 @@ fn expand_atomic(
                     expand_union(codebase, interner, &mut param.param_type, options);
                 }
             }
+        }
+        TAtomic::TTemplateParam { as_type, .. }
+            if options.resolve_template_param_bounds =>
+        {
+            // Resolve the template to its `as` bound (recursing so a nested
+            // template bound is resolved too), then drop the param itself.
+            expand_union(codebase, interner, as_type, options);
+            *skip = true;
+            replacements.extend(as_type.types.iter().cloned());
         }
         TAtomic::TTemplateParam { as_type, .. }
         | TAtomic::TTemplateKeyOf { as_type, .. }
@@ -673,6 +689,7 @@ pub(crate) fn localize_special_class_type_union_final(
             // Localization must not collapse conditionals (e.g. inside a callable's
             // return type) — they are evaluated against call arguments elsewhere.
             evaluate_conditional_types: false,
+            resolve_template_param_bounds: false,
         },
     );
     localized
@@ -701,6 +718,7 @@ pub(crate) fn localize_special_class_type_union_with_static_object(
             parent_class: parent_class_id,
             function_is_final: false,
             evaluate_conditional_types: false,
+            resolve_template_param_bounds: false,
         },
     );
     localized
@@ -787,6 +805,7 @@ fn atomic_needs_expansion(atomic: &TAtomic, options: &TypeExpansionOptions) -> b
                         .any(|param| union_needs_expansion(&param.param_type, options))
                 })
         }
+        TAtomic::TTemplateParam { .. } if options.resolve_template_param_bounds => true,
         TAtomic::TTemplateParam { as_type, .. }
         | TAtomic::TTemplateKeyOf { as_type, .. }
         | TAtomic::TTemplateValueOf { as_type, .. } => union_needs_expansion(as_type, options),

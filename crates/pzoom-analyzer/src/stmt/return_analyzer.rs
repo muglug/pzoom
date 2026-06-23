@@ -180,18 +180,33 @@ pub fn analyze(
                 .get_class(*class_id)
                 .is_some_and(|class_info| class_info.is_final)
         });
+        // A trait body's declared return is localized to the using class: `self`/
+        // `static` bind to that class (regardless of finality — the unresolved
+        // trait `self` would otherwise never match the `static` inferred from
+        // `return $this`), and the trait's own `@template` params resolve to their
+        // `as` bound. The body is generic over its templates, so — like Psalm — the
+        // return is checked against the bound, not the using class's concrete
+        // `@use` binding; binding to the concrete type makes an over-precise
+        // declared type (e.g. `list{int, int}`) spuriously reject a wider inferred
+        // type (`list{int, int, ...<int>}`).
+        let self_bind_class = if analysis_data.in_trait_body {
+            declaring_class
+        } else {
+            final_declaring_class
+        };
         crate::type_expander::expand_union(
             analyzer.codebase,
             analyzer.interner,
             &mut expanded_expected_type,
             &crate::type_expander::TypeExpansionOptions {
                 evaluate_conditional_types: true,
-                self_class: final_declaring_class,
-                static_class_type: match final_declaring_class {
+                self_class: self_bind_class,
+                static_class_type: match self_bind_class {
                     Some(class_id) => crate::type_expander::StaticClassType::Name(class_id),
                     None => crate::type_expander::StaticClassType::None,
                 },
                 function_is_final: final_declaring_class.is_some(),
+                resolve_template_param_bounds: analysis_data.in_trait_body,
                 ..Default::default()
             },
         );

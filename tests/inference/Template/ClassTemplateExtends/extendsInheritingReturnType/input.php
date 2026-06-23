@@ -6,7 +6,6 @@ class Container {
     /**
      * @return T1
      * @psalm-suppress InvalidReturnStatement
-     * @psalm-suppress InvalidReturnType
      */
     public function get(int $key) { return new stdClass(); }
 }

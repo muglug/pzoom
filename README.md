@@ -156,6 +156,23 @@ pzoom aims to broadly match Psalm's analysis, with a few deliberate divergences:
   graph of connections between assignments within a function. Pzoom’s graph is larger
   than Psalm’s (it tracks more connections) and so we approximate ComplexMethod issues
   in Psalm.
+- **Return-type mismatches reported per statement.** pzoom does not emit the
+  function-level `MoreSpecificReturnType`, `InvalidNullableReturnType` or
+  `InvalidFalsableReturnType`. A declared-vs-inferred return mismatch is reported
+  at the offending `return` instead — `InvalidReturnStatement`,
+  `NullableReturnStatement`, `FalsableReturnStatement` or
+  `LessSpecificReturnStatement`. The function-level `InvalidReturnType` is kept
+  only for the structural cases that have no single `return` to point at: an
+  implicit fall-through ("not all code paths of … end in a return"), a body with
+  no `return` statements at all, a `never` body that nonetheless returns, or a
+  generator whose aggregated yield/return type is wrong. Unlike Psalm — which
+  guards the per-`return` checks inside trait bodies and relies on the
+  function-level check there — pzoom runs them in trait methods too: the declared
+  return is localized to each using class (`self`/`static` bind to that class and
+  the trait's `@template` params resolve to their `as` bound, mirroring how Psalm
+  checks a generic trait), so a trait method's bad return is caught at the
+  `return` without spurious `self`-vs-`static` or template-binding-width
+  mismatches.
 
 ## License
 

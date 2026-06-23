@@ -156,8 +156,6 @@ pub fn analyze(
             .cmp(analyzer.interner.lookup(*b).as_ref())
     });
 
-    let body_issues_start = analysis_data.issues.len();
-
     for member in trait_stmt.members.iter() {
         let ClassLikeMember::Method(method) = member else {
             continue;
@@ -200,26 +198,12 @@ pub fn analyze(
         }
     }
 
-    // Psalm guards the entire return-STATEMENT analysis block behind
-    // `!($source->getSource() instanceof TraitAnalyzer)` (ReturnAnalyzer), so a
-    // trait body never reports the per-`return` diagnostics — only the overall
-    // declared-vs-inferred return-TYPE check (ReturnTypeAnalyzer) runs, which is
-    // emitted elsewhere and survives. Drop that guarded set from the trait body.
-    let body_issues = analysis_data.issues.split_off(body_issues_start);
-    analysis_data
-        .issues
-        .extend(body_issues.into_iter().filter(|issue| {
-            !matches!(
-                issue.kind,
-                IssueKind::InvalidReturnStatement
-                    | IssueKind::NullableReturnStatement
-                    | IssueKind::FalsableReturnStatement
-                    | IssueKind::MixedReturnStatement
-                    | IssueKind::MixedReturnTypeCoercion
-                    | IssueKind::LessSpecificReturnStatement
-                    | IssueKind::NonVariableReferenceReturn
-            )
-        }));
+    // The trait body is analysed once per using class with `self`/`static` and
+    // trait `@template` params bound to that class (see ReturnAnalyzer), so the
+    // per-`return` diagnostics are now accurate and kept — the function-level
+    // return-TYPE check no longer double-reports them. (Psalm guards its
+    // ReturnAnalyzer behind `!(... instanceof TraitAnalyzer)` only for the
+    // standalone trait pass; the using-class re-analysis still runs the checks.)
 
     Ok(())
 }

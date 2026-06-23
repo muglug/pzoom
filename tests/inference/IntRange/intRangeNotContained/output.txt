@@ -1,1 +1,1 @@
-InvalidReturnType
+InvalidReturnStatement - input.php:7:12 - The type int<1, 12> does not match the declared return type int<-1, 11>

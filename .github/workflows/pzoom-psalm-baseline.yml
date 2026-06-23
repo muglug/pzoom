@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   # Psalm commit the baseline was captured against. Keep in sync with
   # pzoom_psalm_audit.json -> target.psalm_commit.
-  PSALM_COMMIT: be7afcfe9d7f65301c32d4bc156efa31a6caa39f
+  PSALM_COMMIT: 0090471679ce0a7dc0fd412850eec35259a8ca9c
 
 jobs:
   psalm-baseline:

@@ -296,15 +296,26 @@ pub fn analyze(
         .cloned()
         .map(|rc| (*rc).clone());
 
-    // Psalm ArrayFetchAnalyzer type-coverage: a fetch on a mixed array counts
-    // as mixed, otherwise non-mixed.
+    // Psalm ArrayFetchAnalyzer type-coverage, counted per array atomic
+    // (the analyzer loops the receiver union): a mixed atomic counts as mixed
+    // (handleMixedArrayAccess), an array atomic counts the offset's mixedness
+    // (getArrayAccessTypeGivenOffset).
     if let Some(at) = array_type.as_ref() {
-        analysis_data.record_mixedness(context, at.is_mixed());
+        let offset_mixed = index_type.as_ref().is_some_and(|it| it.is_mixed());
+        for atomic in &at.types {
+            let atom_mixed =
+                matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset);
+            analysis_data.record_mixedness(context, atom_mixed || offset_mixed);
+        }
     }
-    // Psalm ArrayFetchAnalyzer offset-handling increments: a mixed offset counts
-    // as mixed, otherwise non-mixed.
+    // Psalm also increments per offset-type atomic while resolving the offset
+    // (the nested loop over the offset union in getArrayAccessTypeGivenOffset).
     if let Some(it) = index_type.as_ref() {
-        analysis_data.record_mixedness(context, it.is_mixed());
+        for atomic in &it.types {
+            let atom_mixed =
+                matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset);
+            analysis_data.record_mixedness(context, atom_mixed);
+        }
     }
 
     let base_has_nullable_or_falsable_access = array_type

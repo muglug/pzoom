@@ -332,6 +332,7 @@ impl CodebaseInfo {
                             std::sync::Arc::make_mut(existing_method_info),
                             std::sync::Arc::try_unwrap(method_info)
                                 .unwrap_or_else(|shared| (*shared).clone()),
+                            false,
                         );
                     }
                 } else {
@@ -346,7 +347,7 @@ impl CodebaseInfo {
                     {
                         *existing_method_info = method_info;
                     } else {
-                        merge_functionlike_info(existing_method_info, method_info);
+                        merge_functionlike_info(existing_method_info, method_info, false);
                     }
                 } else {
                     existing.pseudo_methods.insert(method_name, method_info);
@@ -362,7 +363,7 @@ impl CodebaseInfo {
                     {
                         *existing_method_info = method_info;
                     } else {
-                        merge_functionlike_info(existing_method_info, method_info);
+                        merge_functionlike_info(existing_method_info, method_info, false);
                     }
                 } else {
                     existing
@@ -478,13 +479,16 @@ impl CodebaseInfo {
             // assertions) the real declaration lacks rather than being discarded.
             if incoming_prec > existing_prec {
                 if incoming_prec == 3 {
-                    // Project code redefining a stubbed function is Psalm's
-                    // DuplicateFunction — remember the clash. The real
-                    // declaration takes the slot but keeps the stub's extra
-                    // type info.
+                    // The arriving real declaration takes the slot but keeps the
+                    // stub's extra type info. Project code redefining a stubbed
+                    // function is also Psalm's DuplicateFunction — remember the
+                    // clash. When the real declaration is a vendor (non-project)
+                    // one, the stub stays authoritative for the return type.
                     self.redefined_stub_functions.insert(info.name);
+                    let stub_overrides_return = file_is_stub(&self.files, existing.file_path)
+                        && !file_is_in_project_dirs(&self.files, info.file_path);
                     let stub = std::mem::replace(existing, info);
-                    merge_functionlike_info(existing, stub);
+                    merge_functionlike_info(existing, stub, stub_overrides_return);
                 } else {
                     // Stub over a lower-precedence stub: replace outright.
                     *existing = info;
@@ -493,9 +497,12 @@ impl CodebaseInfo {
             }
             if incoming_prec < existing_prec {
                 // A stub for an existing real function augments it; a lower stub
-                // beneath a higher stub is ignored.
+                // beneath a higher stub is ignored. A stub augmenting a vendor
+                // (non-project) declaration overrides its return type.
                 if existing_prec == 3 {
-                    merge_functionlike_info(existing, info);
+                    let stub_overrides_return = file_is_stub(&self.files, info.file_path)
+                        && !file_is_in_project_dirs(&self.files, existing.file_path);
+                    merge_functionlike_info(existing, info, stub_overrides_return);
                 }
                 return;
             }
@@ -503,7 +510,7 @@ impl CodebaseInfo {
             if functionlike_info_quality(&info) > functionlike_info_quality(existing) {
                 *existing = info;
             } else {
-                merge_functionlike_info(existing, info);
+                merge_functionlike_info(existing, info, false);
             }
             return;
         }
@@ -522,6 +529,19 @@ fn file_precedence(files: &FxHashMap<StrId, FileInfo>, file_path: StrId) -> u8 {
         Some(_) => 1,
         None => 2,
     }
+}
+
+/// Whether a declaration's source file is a stub file.
+fn file_is_stub(files: &FxHashMap<StrId, FileInfo>, file_path: StrId) -> bool {
+    files.get(&file_path).is_some_and(|f| f.is_stub)
+}
+
+/// Whether a declaration's source file lives in the analyzed project (as opposed
+/// to a vendored dependency). A missing file entry is treated as in-project, so
+/// the stub-override path stays conservative and only fires for declarations
+/// known to be vendored. Mirrors the convention used by `register_class`.
+fn file_is_in_project_dirs(files: &FxHashMap<StrId, FileInfo>, file_path: StrId) -> bool {
+    files.get(&file_path).is_none_or(|f| f.is_in_project_dirs)
 }
 
 fn functionlike_info_quality(info: &FunctionLikeInfo) -> usize {
@@ -643,12 +663,25 @@ fn merge_stub_into_real(base: &mut ClassLikeInfo, stub: ClassLikeInfo, include_r
     }
 }
 
-fn merge_functionlike_info(existing: &mut FunctionLikeInfo, incoming: FunctionLikeInfo) {
+/// Fold `incoming`'s type info into `existing`. `incoming_overrides_return` is
+/// set when `incoming` is a stub augmenting a *non-project* (vendor/dependency)
+/// real declaration: Psalm holds stub files authoritative over the original
+/// definitions, so the stub's return type displaces the vendor's rather than
+/// merely filling a gap. A project declaration stays authoritative for its own
+/// return type, so the flag is left false there and the stub only fills a
+/// missing type.
+fn merge_functionlike_info(
+    existing: &mut FunctionLikeInfo,
+    incoming: FunctionLikeInfo,
+    incoming_overrides_return: bool,
+) {
     if existing.template_types.is_empty() && !incoming.template_types.is_empty() {
         existing.template_types = incoming.template_types;
     }
 
-    if existing.return_type.is_none() && incoming.return_type.is_some() {
+    if (existing.return_type.is_none() || incoming_overrides_return)
+        && incoming.return_type.is_some()
+    {
         existing.return_type = incoming.return_type;
     }
 
@@ -1176,6 +1209,100 @@ mod stub_augmentation_tests {
             assert!(
                 merged.return_type.is_some(),
                 "{label}: stub return type merged in",
+            );
+        }
+    }
+
+    /// A stub return type *overrides* a vendor (non-project) function's own
+    /// return type — Psalm holds stub files authoritative over the original
+    /// definitions ("stub files override the original definitions").
+    #[test]
+    fn stub_overrides_vendor_function_return() {
+        let (stub_path, vendor_path, fn_name) = (StrId(1), StrId(2), StrId(200));
+
+        for (existing_first, label) in [(true, "stub first"), (false, "vendor first")] {
+            let mut codebase = CodebaseInfo::default();
+            codebase
+                .files
+                .insert(stub_path, file(stub_path, true, false));
+            // Vendored dependency: a real (non-stub) declaration, not in project.
+            codebase
+                .files
+                .insert(vendor_path, file(vendor_path, false, false));
+
+            let vendor = FunctionLikeInfo {
+                name: fn_name,
+                file_path: vendor_path,
+                return_type: Some(TUnion::new(TAtomic::TInt)),
+                ..Default::default()
+            };
+            let stub = FunctionLikeInfo {
+                name: fn_name,
+                file_path: stub_path,
+                return_type: Some(TUnion::new(TAtomic::TString)),
+                ..Default::default()
+            };
+
+            if existing_first {
+                codebase.register_function(stub);
+                codebase.register_function(vendor);
+            } else {
+                codebase.register_function(vendor);
+                codebase.register_function(stub);
+            }
+
+            let merged = codebase.functionlike_infos.get(&fn_name).unwrap();
+            assert_eq!(merged.file_path, vendor_path, "{label}: vendor is base");
+            assert_eq!(
+                merged.return_type,
+                Some(TUnion::new(TAtomic::TString)),
+                "{label}: stub return type overrides the vendor's",
+            );
+        }
+    }
+
+    /// The mirror guarantee: a stub does *not* override a project function's own
+    /// declared return type — analyzed-project declarations stay authoritative.
+    #[test]
+    fn stub_does_not_override_project_function_return() {
+        let (stub_path, project_path, fn_name) = (StrId(1), StrId(2), StrId(200));
+
+        for (existing_first, label) in [(true, "stub first"), (false, "project first")] {
+            let mut codebase = CodebaseInfo::default();
+            codebase
+                .files
+                .insert(stub_path, file(stub_path, true, false));
+            codebase
+                .files
+                .insert(project_path, file(project_path, false, true));
+
+            let project = FunctionLikeInfo {
+                name: fn_name,
+                file_path: project_path,
+                return_type: Some(TUnion::new(TAtomic::TInt)),
+                ..Default::default()
+            };
+            let stub = FunctionLikeInfo {
+                name: fn_name,
+                file_path: stub_path,
+                return_type: Some(TUnion::new(TAtomic::TString)),
+                ..Default::default()
+            };
+
+            if existing_first {
+                codebase.register_function(stub);
+                codebase.register_function(project);
+            } else {
+                codebase.register_function(project);
+                codebase.register_function(stub);
+            }
+
+            let merged = codebase.functionlike_infos.get(&fn_name).unwrap();
+            assert_eq!(merged.file_path, project_path, "{label}: project is base");
+            assert_eq!(
+                merged.return_type,
+                Some(TUnion::new(TAtomic::TInt)),
+                "{label}: project return type is kept",
             );
         }
     }

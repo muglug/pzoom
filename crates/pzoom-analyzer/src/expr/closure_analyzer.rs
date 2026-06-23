@@ -57,6 +57,10 @@ pub fn analyze(
     closure_context.inside_general_use = false;
     closure_context.inside_throw = false;
     closure_context.inside_isset = false;
+    // A prior `is_file()`/`file_exists()` in the enclosing scope does not vouch
+    // for an `include`/`require` inside the closure body — Psalm's fresh Context
+    // carries no phantom files.
+    closure_context.phantom_files.clear();
     if closure.r#static.is_some() {
         closure_context.strip_this_assumptions();
     }
@@ -599,6 +603,9 @@ pub fn analyze_arrow_function(
     arrow_context.inside_general_use = false;
     arrow_context.inside_throw = false;
     arrow_context.inside_isset = false;
+    // See the closure path: an arrow body's `include`/`require` is not vouched
+    // for by an enclosing-scope `is_file()`/`file_exists()` check.
+    arrow_context.phantom_files.clear();
     if arrow.r#static.is_some() {
         arrow_context.strip_this_assumptions();
     }

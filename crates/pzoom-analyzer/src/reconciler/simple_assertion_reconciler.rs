@@ -1314,13 +1314,18 @@ fn reconcile_exact_count(
             } if !known_values.is_empty() => {
                 let sealed = atomic.array_is_sealed();
                 if known_values.len() == count {
-                    // Psalm's reconcileExactlyCountable: the first `count`
-                    // entries of a list are now definitely present.
-                    let needs_defining = *is_list
-                        && known_values
-                            .values()
-                            .any(|(possibly_undefined, _)| *possibly_undefined);
-                    if needs_defining {
+                    // Psalm's reconcileExactlyCountable: a list with exactly
+                    // `count` known entries now has all of them defined, and any
+                    // open fallback tail is dropped — `count === N` means there
+                    // are exactly N elements, so the shape is sealed to length N
+                    // (`list{T, T, ...<T>}` under `count === 2` becomes the
+                    // sealed `list{T, T}`).
+                    let needs_seal = *is_list
+                        && (!sealed
+                            || known_values
+                                .values()
+                                .any(|(possibly_undefined, _)| *possibly_undefined));
+                    if needs_seal {
                         did_remove_type = true;
                         let mut defined_known_values = (**known_values).clone();
                         for (possibly_undefined, _) in defined_known_values.values_mut() {
@@ -1329,8 +1334,8 @@ fn reconcile_exact_count(
                         acceptable_types.push(TAtomic::keyed_array_arc(
                             std::sync::Arc::new(defined_known_values),
                             *is_list,
-                            sealed,
-                            params.clone(),
+                            true,
+                            None,
                         ));
                     } else {
                         acceptable_types.push(atomic.clone());

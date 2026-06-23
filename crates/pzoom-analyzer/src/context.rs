@@ -327,6 +327,12 @@ pub struct BlockContext {
     /// Constants defined at analysis time via `define()`.
     pub defined_constants: FxHashMap<StrId, TUnion>,
 
+    /// Paths a prior `is_file()`/`file_exists()` check vouched for, keyed by the
+    /// argument's extended var id (`$argv[0]`) or its statically-resolved path
+    /// string. A later `include`/`require` of the same key is not flagged
+    /// Unresolvable/Missing. Mirrors Psalm's `Context::$phantom_files`.
+    pub phantom_files: FxHashSet<String>,
+
     /// Type constraints imposed by by-ref parameters on referenced variables.
     pub reference_constraints: FxHashMap<VarName, Vec<TUnion>>,
 
@@ -496,6 +502,7 @@ impl BlockContext {
                 .clone(),
             class_aliases: self.class_aliases.clone(),
             defined_constants: self.defined_constants.clone(),
+            phantom_files: self.phantom_files.clone(),
             reference_constraints: self.reference_constraints.clone(),
             list_key_dependencies: self.list_key_dependencies.clone(),
             static_var_ids: self.static_var_ids.clone(),

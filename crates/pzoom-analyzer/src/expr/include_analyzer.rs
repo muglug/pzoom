@@ -91,24 +91,37 @@ fn analyze_path(
         }
     }
 
+    // A prior `is_file($x)`/`file_exists($x)` vouches for the path, keyed by the
+    // include expression's extended var id (Psalm's `$context->phantom_files`).
+    let path_var_id =
+        crate::expression_identifier::get_expression_var_key(path).map(|v| v.to_string());
+    let var_id_is_phantom = path_var_id
+        .as_ref()
+        .is_some_and(|var_id| context.phantom_files.contains(var_id));
+
     // Psalm's IncludeAnalyzer: resolve the path expression to a file statically
     // (getPathTo). A path that cannot be resolved is UnresolvableInclude; a
     // resolvable one that does not exist on disk is MissingFile.
     match get_path_to(analyzer, path, analysis_data) {
         None => {
-            let (line, col) = analyzer.get_line_column(pos.0);
-            analysis_data.add_issue(Issue::new(
-                IssueKind::UnresolvableInclude,
-                "Cannot resolve the given expression to a file path".to_string(),
-                analyzer.file_path,
-                pos.0,
-                pos.1,
-                line,
-                col,
-            ));
+            // Psalm only skips when the var id is itself a phantom file.
+            if !var_id_is_phantom {
+                let (line, col) = analyzer.get_line_column(pos.0);
+                analysis_data.add_issue(Issue::new(
+                    IssueKind::UnresolvableInclude,
+                    "Cannot resolve the given expression to a file path".to_string(),
+                    analyzer.file_path,
+                    pos.0,
+                    pos.1,
+                    line,
+                    col,
+                ));
+            }
         }
         Some(path_to_file) => {
-            if include_path_exists(analyzer, &path_to_file) == Some(false) {
+            let path_is_phantom =
+                var_id_is_phantom || context.phantom_files.contains(&path_to_file);
+            if !path_is_phantom && include_path_exists(analyzer, &path_to_file) == Some(false) {
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::MissingFile,
@@ -133,7 +146,7 @@ fn analyze_path(
 
 /// Port of Psalm's `IncludeAnalyzer::getPathTo`: statically resolve an
 /// include-path expression to a file path, or `None` if it can't be resolved.
-fn get_path_to(
+pub(crate) fn get_path_to(
     analyzer: &StatementsAnalyzer<'_>,
     expr: &Expression<'_>,
     analysis_data: &FunctionAnalysisData,

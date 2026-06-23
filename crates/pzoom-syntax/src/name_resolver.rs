@@ -493,6 +493,13 @@ impl<'a> NameResolver<'a> {
                         self.visit_function_like_parameter(param);
                     }
 
+                    // The return type hint references a class too (e.g. a method
+                    // declared `: SomeClass`) — resolve it so on-demand scanning
+                    // pulls in a dependency reachable only through a return type.
+                    if let Some(return_type_hint) = &method.return_type_hint {
+                        self.visit_hint(&return_type_hint.hint);
+                    }
+
                     // Visit method body if concrete (not abstract)
                     if let MethodBody::Concrete(block) = &method.body {
                         for stmt in &block.statements {
@@ -528,6 +535,10 @@ impl<'a> NameResolver<'a> {
         self.visit_attribute_lists(&func.attribute_lists);
         for param in func.parameter_list.parameters.iter() {
             self.visit_function_like_parameter(param);
+        }
+
+        if let Some(return_type_hint) = &func.return_type_hint {
+            self.visit_hint(&return_type_hint.hint);
         }
 
         for stmt in &func.body.statements {

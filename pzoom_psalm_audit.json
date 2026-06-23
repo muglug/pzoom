@@ -26,11 +26,11 @@
     "real_but_psalm_suppresses_or_baselines": "pzoom's finding is correct AND Psalm's own analysis produces it too, but Psalm intentionally suppresses it inline or via psalm-baseline.xml; pzoom surfaces it only because it does not honor that suppression/baseline entry (a suppression/baseline-matching gap, not an analysis error).",
     "approved_pzoom_divergence": "a known, accepted divergence that is NOT a bug to fix. ComplexMethod: pzoom's data-flow graph is structurally denser than Psalm's variable-use graph, so its complexity metric is calibrated to its own graph and flags a different (but reasonable) set of methods than Psalm. Matching Psalm's exact set would require reimplementing Psalm's graph."
   },
-  "count_note": "84 issues. Recent fixes on this branch: spread-unpacked arguments type-checked against target params (6 ArgumentTypeCoercion FNs); ComplexMethod moved to approved_pzoom_divergence (a structural metric difference, not a bug); the NullPropertyFetch under-emission on a nullable-property chain inside isset()/?? (4 FNs); two ImpureFunctionCall FNs -- serialize() of any array (Psalm treats arrays as iterable) and json_last_error_msg() (impure via the zero-argument rule); and four false POSITIVES -- hrtime() now returns the precise array{0:int,1:int} pair, and a `count($list) === N` / `count($list) < N` guard now seals / caps an open-tail list shape (3 TypeParser InvalidArgument FPs). Psalm's composer.lock is git-ignored so vendor versions float.",
-  "observed_issue_count": 84,
+  "count_note": "80 issues. Recent fixes on this branch: spread-unpacked arguments type-checked against target params (6 ArgumentTypeCoercion FNs); ComplexMethod moved to approved_pzoom_divergence (a structural metric difference, not a bug); the NullPropertyFetch under-emission on a nullable-property chain inside isset()/?? (4 FNs); two ImpureFunctionCall FNs -- serialize() of any array and json_last_error_msg(); hrtime() now returns the precise array{0:int,1:int} pair; a `count($list) === N` / `count($list) < N` guard now seals / caps an open-tail list shape (3 TypeParser InvalidArgument FPs); and on-demand scanning now harvests method/function RETURN type hints, so a class reachable only through a return type (PHPUnit's InvocationMocker via MockObject::expects()) is resolved -- clearing 4 vendor-resolution FPs. Psalm's composer.lock is git-ignored so vendor versions float.",
+  "observed_issue_count": 80,
   "expected_issue_count": 122,
   "classification_summary": {
-    "false_positive": 11,
+    "false_positive": 7,
     "false_negative": 39,
     "true_issue_psalm_misses": 18,
     "real_but_psalm_suppresses_or_baselines": 8,
@@ -50,7 +50,6 @@
   "false_positive_root_causes": {
     "incomplete_reference_tracking_unused_property (re-declared static read via self::)": 1,
     "missing_count/non_empty/guard_narrowing (count() on a re-evaluated pure method call -- the count===N/count<N list reshape on a *variable* is now fixed)": 2,
-    "fails_to_resolve_existing_vendor_class (PHPUnit InvocationMocker)": 4,
     "imprecise_or_incorrect_type_modeling (key() null-on-empty / explode offset; hrtime pair now fixed)": 3,
     "over_eager_unresolvable_include": 1
   },
@@ -915,50 +914,6 @@
     },
     {
       "id": 79,
-      "kind": "UndefinedClass",
-      "file": "tests/Config/PluginTest.php",
-      "line": 876,
-      "column": 9,
-      "message": "Class PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker does not exist",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker DOES exist (vendor/phpunit/phpunit/src/Framework/MockObject/Builder/InvocationMocker.php) and Psalm resolves it. pzoom fails to scan/resolve this PHPUnit class, so expects()/method() chains lose their type."
-    },
-    {
-      "id": 80,
-      "kind": "MixedMethodCall",
-      "file": "tests/Config/PluginTest.php",
-      "line": 878,
-      "column": 15,
-      "message": "Cannot call method withConsecutive on mixed type",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Cascade of the InvocationMocker resolution failure: because pzoom treats the mock builder chain as mixed, `withConsecutive` looks like a call on mixed. withConsecutive exists in the installed PHPUnit and Psalm reports nothing here."
-    },
-    {
-      "id": 81,
-      "kind": "UndefinedDocblockClass",
-      "file": "tests/IssueBufferTest.php",
-      "line": 112,
-      "column": 9,
-      "message": "Docblock-defined class or interface PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker does not exist",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Docblock references PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker, which exists in vendor and is resolved by Psalm. pzoom fails to resolve the class."
-    },
-    {
-      "id": 82,
-      "kind": "UndefinedDocblockClass",
-      "file": "tests/IssueBufferTest.php",
-      "line": 124,
-      "column": 9,
-      "message": "Docblock-defined class or interface PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker does not exist",
-      "classification": "false_positive",
-      "psalm_handling": "not_reported",
-      "explanation": "Docblock references PHPUnit\\Framework\\MockObject\\Builder\\InvocationMocker, which exists in vendor and is resolved by Psalm. pzoom fails to resolve the class."
-    },
-    {
-      "id": 83,
       "kind": "PossiblyUnusedProperty",
       "file": "tests/ProjectCheckerTest.php",
       "line": 39,
@@ -969,7 +924,7 @@
       "explanation": "Good divergence: write-only static $config (assigned `new TestConfig()` in setUp, never read). Pzoom rightly flags the dead storage; Psalm misses it (treats any static access as a use)."
     },
     {
-      "id": 84,
+      "id": 80,
       "kind": "PossiblyUnusedProperty",
       "file": "tests/StubTest.php",
       "line": 35,

@@ -4,10 +4,11 @@
 //! autoloadable and that PHP would never load), pzoom resolves a referenced
 //! class to its file through Composer's generated maps and scans only that.
 //!
-//! Parses the three maps Composer emits under `vendor/composer/`:
-//! - `autoload_classmap.php` — `'Fully\\Qualified\\Class' => $vendorDir . '/path.php'`
-//! - `autoload_psr4.php`      — `'Prefix\\' => array($vendorDir . '/src', …)`
-//! - `autoload_files.php`     — `'hash' => $vendorDir . '/functions.php'` (eager)
+//! Parses the maps Composer emits under `vendor/composer/`:
+//! - `autoload_classmap.php`   — `'Fully\\Qualified\\Class' => $vendorDir . '/path.php'`
+//! - `autoload_psr4.php`       — `'Prefix\\' => array($vendorDir . '/src', …)`
+//! - `autoload_namespaces.php` — `'Prefix_' => array($vendorDir . '/lib', …)` (PSR-0)
+//! - `autoload_files.php`      — `'hash' => $vendorDir . '/functions.php'` (eager)
 
 use std::path::{Path, PathBuf};
 
@@ -17,8 +18,12 @@ use rustc_hash::FxHashMap;
 pub struct ComposerAutoload {
     /// Fully-qualified class name (single-backslash, no leading `\`) → file.
     classmap: FxHashMap<String, PathBuf>,
-    /// `(namespace prefix, search dirs)`, longest prefix first.
+    /// PSR-4 `(namespace prefix, search dirs)`, longest prefix first.
     psr4: Vec<(String, Vec<PathBuf>)>,
+    /// PSR-0 `(prefix, search dirs)`, longest prefix first. Underscores in the
+    /// class name map to directory separators (PEAR-style), so bundled
+    /// `Zend_*` / `Twig_*` style libraries resolve.
+    psr0: Vec<(String, Vec<PathBuf>)>,
     /// Files autoloaded eagerly on every request (global functions/bootstrap).
     pub eager_files: Vec<PathBuf>,
 }
@@ -35,7 +40,7 @@ impl ComposerAutoload {
 
         let mut autoload = ComposerAutoload::default();
 
-        if let Ok(text) = std::fs::read_to_string(composer_dir.join("autoload_classmap.php")) {
+        if let Some(text) = read_map_lossy(&composer_dir.join("autoload_classmap.php")) {
             for line in text.lines() {
                 if let Some((key, path)) = parse_map_entry(line, vendor_dir, base_dir) {
                     autoload.classmap.insert(unescape_fqn(&key), path);
@@ -43,7 +48,7 @@ impl ComposerAutoload {
             }
         }
 
-        if let Ok(text) = std::fs::read_to_string(composer_dir.join("autoload_psr4.php")) {
+        if let Some(text) = read_map_lossy(&composer_dir.join("autoload_psr4.php")) {
             for line in text.lines() {
                 if let Some((prefix, dirs)) = parse_psr4_entry(line, vendor_dir, base_dir) {
                     autoload.psr4.push((unescape_fqn(&prefix), dirs));
@@ -55,7 +60,21 @@ impl ComposerAutoload {
                 .sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
         }
 
-        if let Ok(text) = std::fs::read_to_string(composer_dir.join("autoload_files.php")) {
+        // PSR-0 (`autoload_namespaces.php`) shares the PSR-4 line shape but
+        // resolves paths PEAR-style — see `resolve_class`. Magento bundles
+        // Zend Framework 1 (`Zend_Db`, `Zend_Pdf`, …) this way.
+        if let Some(text) = read_map_lossy(&composer_dir.join("autoload_namespaces.php")) {
+            for line in text.lines() {
+                if let Some((prefix, dirs)) = parse_psr4_entry(line, vendor_dir, base_dir) {
+                    autoload.psr0.push((unescape_fqn(&prefix), dirs));
+                }
+            }
+            autoload
+                .psr0
+                .sort_by_key(|(prefix, _)| std::cmp::Reverse(prefix.len()));
+        }
+
+        if let Some(text) = read_map_lossy(&composer_dir.join("autoload_files.php")) {
             for line in text.lines() {
                 if let Some((_, path)) = parse_map_entry(line, vendor_dir, base_dir) {
                     autoload.eager_files.push(path);
@@ -95,6 +114,29 @@ impl ComposerAutoload {
                 }
             }
         }
+        // PSR-0: the whole class name maps to a path under the search dir.
+        // Namespace separators become directory separators, and — PEAR-style —
+        // so do underscores in the class-name segment (the part after the last
+        // `\`). `Zend_Db_Expr` → `Zend/Db/Expr.php`.
+        for (prefix, dirs) in &self.psr0 {
+            if fqcn.starts_with(prefix.as_str()) {
+                let (namespace, class) = match fqcn.rfind('\\') {
+                    Some(pos) => (&fqcn[..pos], &fqcn[pos + 1..]),
+                    None => ("", fqcn),
+                };
+                let mut relative = namespace.replace('\\', "/");
+                if !relative.is_empty() {
+                    relative.push('/');
+                }
+                relative.push_str(&class.replace('_', "/"));
+                for dir in dirs {
+                    let candidate = dir.join(format!("{relative}.php"));
+                    if candidate.is_file() {
+                        return Some(candidate);
+                    }
+                }
+            }
+        }
         None
     }
 }
@@ -102,6 +144,23 @@ impl ComposerAutoload {
 /// Composer escapes the `\` in a PHP single-quoted string as `\\`.
 fn unescape_fqn(raw: &str) -> String {
     raw.replace("\\\\", "\\")
+}
+
+/// Read a Composer-generated map, tolerating stray non-UTF-8 bytes.
+///
+/// Composer records every class name verbatim, and a dependency may legally
+/// declare a class whose name is not valid UTF-8: `symfony/cache`, for one,
+/// ships `Traits/ValueWrapper.php` whose class is the single byte `0xA9`, so
+/// the generated `autoload_classmap.php` is not valid UTF-8 as a whole. Reading
+/// it with `read_to_string` fails outright, which would silently drop *every*
+/// classmap entry (and with it every classmap-autoloaded dependency — PHPUnit,
+/// the AWS SDK, …). Read the bytes and decode lossily instead: the one
+/// malformed key becomes U+FFFD — it is never referenced by well-formed code —
+/// while every other entry still loads.
+fn read_map_lossy(path: &Path) -> Option<String> {
+    std::fs::read(path)
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Resolve `$vendorDir . '/x'` / `$baseDir . '/x'` to an absolute path.
@@ -160,4 +219,65 @@ fn parse_psr4_entry(
         return None;
     }
     Some((prefix, dirs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// A classmap line whose key is not valid UTF-8 (`symfony/cache` ships a
+    /// class named by the single byte `0xA9`) must not drop the rest of the
+    /// classmap, and PSR-0 (`autoload_namespaces.php`, used by bundled
+    /// `Zend_*` libraries) must resolve PEAR-style.
+    #[test]
+    fn loads_classmap_past_non_utf8_key_and_resolves_psr0() {
+        let base = std::env::temp_dir().join(format!("pzoom_autoload_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let vendor = base.join("vendor");
+        let composer = vendor.join("composer");
+        fs::create_dir_all(&composer).unwrap();
+
+        // Real target for a classmap entry.
+        let widget = vendor.join("acme/lib/src/Widget.php");
+        fs::create_dir_all(widget.parent().unwrap()).unwrap();
+        fs::write(&widget, "<?php\n").unwrap();
+
+        // autoload_classmap.php: one valid entry, then a sibling whose key is a
+        // lone 0xA9 byte (invalid standalone UTF-8) — the whole file is then not
+        // valid UTF-8, which used to make `read_to_string` discard every entry.
+        let mut classmap = Vec::new();
+        classmap.extend_from_slice(b"<?php\n$vendorDir = dirname(__DIR__);\nreturn array(\n");
+        classmap.extend_from_slice(b"    'Acme\\\\Widget' => $vendorDir . '/acme/lib/src/Widget.php',\n");
+        classmap.extend_from_slice(b"    '");
+        classmap.push(0xA9);
+        classmap.extend_from_slice(b"' => $vendorDir . '/symfony/cache/Traits/ValueWrapper.php',\n);\n");
+        fs::write(composer.join("autoload_classmap.php"), &classmap).unwrap();
+
+        fs::write(composer.join("autoload_psr4.php"), b"<?php\nreturn array(\n);\n").unwrap();
+
+        // PSR-0 Zend-style library on disk.
+        let expr = vendor.join("acme/zend/library/Zend/Db/Expr.php");
+        fs::create_dir_all(expr.parent().unwrap()).unwrap();
+        fs::write(&expr, "<?php\n").unwrap();
+        fs::write(
+            composer.join("autoload_namespaces.php"),
+            b"<?php\nreturn array(\n    'Zend_' => array($vendorDir . '/acme/zend/library'),\n);\n"
+                .as_slice(),
+        )
+        .unwrap();
+
+        let autoload = ComposerAutoload::load(&vendor).expect("autoload should load");
+
+        // The valid classmap entry survived the non-UTF-8 sibling line.
+        assert_eq!(autoload.resolve_class("Acme\\Widget"), Some(widget.clone()));
+        // A leading `\` on the reference is tolerated.
+        assert_eq!(autoload.resolve_class("\\Acme\\Widget"), Some(widget));
+        // PSR-0 underscores become directory separators.
+        assert_eq!(autoload.resolve_class("Zend_Db_Expr"), Some(expr));
+        // A genuinely unknown class still resolves to nothing.
+        assert_eq!(autoload.resolve_class("Acme\\Nope"), None);
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }

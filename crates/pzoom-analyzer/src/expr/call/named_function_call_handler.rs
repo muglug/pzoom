@@ -100,6 +100,12 @@ pub(super) fn handle(
         apply_define_side_effect(func_call, arg_positions, analysis_data, context, analyzer);
     }
 
+    if function_name.eq_ignore_ascii_case("is_file")
+        || function_name.eq_ignore_ascii_case("file_exists")
+    {
+        register_phantom_file(analyzer, func_call, analysis_data, context);
+    }
+
     if function_name.eq_ignore_ascii_case("constant") {
         // Psalm's NamedFunctionCallHandler resolves `constant($name)` through
         // ConstFetchAnalyzer::getConstName/getConstType when the name is a
@@ -358,6 +364,37 @@ fn apply_define_side_effect(
 
     let const_id = analyzer.interner.intern(const_name);
     context.defined_constants.insert(const_id, const_value_type);
+}
+
+/// Mirrors Psalm's `NamedFunctionCallHandler` is_file/file_exists branch: record
+/// the argument as a phantom file so a later `include`/`require` of the same
+/// expression is not reported Unresolvable/Missing. Psalm prefers the extended
+/// var id (`$argv[0]`); failing that it falls back to the statically-resolved
+/// path string (literal/const/`__DIR__`).
+fn register_phantom_file(
+    analyzer: &StatementsAnalyzer<'_>,
+    func_call: &FunctionCall<'_>,
+    analysis_data: &FunctionAnalysisData,
+    context: &mut BlockContext,
+) {
+    let Some(first_arg) = func_call.argument_list.arguments.first() else {
+        return;
+    };
+    if first_arg.is_unpacked() {
+        return;
+    }
+    let arg_expr = first_arg.value();
+
+    if let Some(var_id) = crate::expression_identifier::get_expression_var_key(arg_expr) {
+        context.phantom_files.insert(var_id.to_string());
+        return;
+    }
+
+    if let Some(path) =
+        crate::expr::include_analyzer::get_path_to(analyzer, arg_expr, analysis_data)
+    {
+        context.phantom_files.insert(path);
+    }
 }
 
 fn extract_class_alias_name(

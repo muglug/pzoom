@@ -246,7 +246,8 @@ pub(crate) fn add_method_call_dataflow_with_receiver(
             pzoom_code_info::VarId(
                 analyzer
                     .interner
-                    .intern(&pzoom_code_info::VarName::new(lhs_var_id)),
+                    .find(&pzoom_code_info::VarName::new(lhs_var_id))
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
             ),
             make_data_flow_node_position(analyzer, lhs_expr_pos),
         );

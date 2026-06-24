@@ -19,7 +19,7 @@ use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, TemplateVariance, Visibility};
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind};
 use pzoom_str::StrId;
-use pzoom_syntax::{FileId, parse_file_content, resolve_names};
+use pzoom_syntax::{FileId, parse_file_content};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::context::BlockContext;
@@ -76,7 +76,10 @@ fn analyze_class(
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), class_name),
         None => class_name.to_string(),
     };
-    let class_name_id = analyzer.interner.intern(&fqn);
+    let class_name_id = analyzer
+        .interner
+        .find(&fqn)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // A declaration guarded by `if (class_exists(Unknown::class))` would never
     // have been registered by Psalm's scanner (enterConditional resolves the
@@ -530,7 +533,10 @@ fn analyze_enum(
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), enum_name),
         None => enum_name.to_string(),
     };
-    let enum_name_id = analyzer.interner.intern(&fqn);
+    let enum_name_id = analyzer
+        .interner
+        .find(&fqn)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     let enum_info = analyzer.codebase.get_class(enum_name_id);
 
@@ -646,7 +652,10 @@ fn check_property_defaults(
                 continue;
             };
             let prop_name_str = concrete.variable.name.trim_start_matches('$');
-            let prop_name = analyzer.interner.intern(prop_name_str);
+            let prop_name = analyzer
+                .interner
+                .find(prop_name_str)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let Some(prop_info) = class_info.properties.get(&prop_name) else {
                 continue;
             };
@@ -786,7 +795,10 @@ fn check_enum_declaration_issues(
             }
             ClassLikeMember::EnumCase(enum_case) => {
                 let case_name = enum_case.item.name().value;
-                let case_name_id = analyzer.interner.intern(case_name);
+                let case_name_id = analyzer
+                    .interner
+                    .find(case_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 let case_span = enum_case.item.name().span();
 
                 if !seen_case_names.insert(case_name_id) {
@@ -975,7 +987,10 @@ fn resolve_enum_case_value_kind(
         Expression::ConstantAccess(const_access) => {
             let name = const_access.name.value();
             let trimmed = name.trim_start_matches('\\');
-            let const_id = analyzer.interner.intern(trimmed);
+            let const_id = analyzer
+                .interner
+                .find(trimmed)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let const_info = analyzer.codebase.constants.get(&const_id)?;
             union_enum_value_kind(&const_info.constant_type)
         }
@@ -991,19 +1006,26 @@ fn resolve_enum_case_value_kind(
                     Expression::Identifier(class_identifier) => Some(
                         analyzer
                             .interner
-                            .intern(class_identifier.value().trim_start_matches('\\')),
+                            .find(class_identifier.value().trim_start_matches('\\'))
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
                     ),
                     _ => None,
                 })?;
             let class_info = analyzer.codebase.get_class(class_id)?;
-            let const_name_id = analyzer.interner.intern(const_name.value);
+            let const_name_id = analyzer
+                .interner
+                .find(const_name.value)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let const_info = class_info.constants.get(&const_name_id)?;
             union_enum_value_kind(&const_info.constant_type)
         }
         // Anything else: the scan-time inferred case value (covers literal
         // arithmetic like `1 << 0`).
         _ => {
-            let enum_id = analyzer.interner.intern(enum_stmt.name.value);
+            let enum_id = analyzer
+                .interner
+                .find(enum_stmt.name.value)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let scanned = analyzer
                 .codebase
                 .get_class(enum_id)
@@ -1260,7 +1282,8 @@ pub(crate) fn collect_dependency_name_spans(
     let mut add = |identifier: &mago_syntax::ast::ast::identifier::Identifier<'_>| {
         let id = analyzer
             .interner
-            .intern(identifier.value().trim_start_matches('\\'));
+            .find(identifier.value().trim_start_matches('\\'))
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         let span = identifier.span();
         spans.push((
             resolve_alias_in_context(id, context),
@@ -2666,7 +2689,10 @@ fn check_undefined_classes_in_constant_initializers(
             for atomic in &union.types {
                 match atomic {
                     TAtomic::TLiteralClassString { name } => {
-                        let class_id = analyzer.interner.intern(name.trim_start_matches('\\'));
+                        let class_id = analyzer
+                            .interner
+                            .find(name.trim_start_matches('\\'))
+                            .unwrap_or(pzoom_str::StrId::EMPTY);
                         if analyzer.codebase.get_class(class_id).is_none()
                             && emitted.insert(class_id)
                         {
@@ -3095,7 +3121,9 @@ fn compare_param_names(
 
     let implementer_method_id = format_method_id(
         analyzer,
-        implementer_method.declaring_class.unwrap_or(class_info.name),
+        implementer_method
+            .declaring_class
+            .unwrap_or(class_info.name),
         method_name,
     );
     let guide_method_id = format_method_id(analyzer, guide_class_id, method_name);
@@ -4122,7 +4150,8 @@ fn emit_method_issue(
     kind: IssueKind,
     message: String,
 ) {
-    let (file_path, line, col) = locate_override_issue(analyzer, method_info, method_info.start_offset);
+    let (file_path, line, col) =
+        locate_override_issue(analyzer, method_info, method_info.start_offset);
     analysis_data.add_issue(Issue::new(
         kind,
         message,
@@ -4927,7 +4956,10 @@ fn analyze_constructor_init_props(
         if let Some(property_name) = var_name.as_str().strip_prefix("$this->")
             && !var_type.possibly_undefined_from_try
         {
-            let property_id = analyzer.interner.intern(property_name);
+            let property_id = analyzer
+                .interner
+                .find(property_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let assigning_class = method_context
                 .initialized_prop_classes
                 .get(&property_id)
@@ -6484,7 +6516,8 @@ fn normalize_docblock_class_reference(analyzer: &StatementsAnalyzer<'_>, class_i
 
     analyzer
         .interner
-        .intern(class_name.trim_start_matches('\\'))
+        .find(class_name.trim_start_matches('\\'))
+        .unwrap_or(pzoom_str::StrId::EMPTY)
 }
 
 fn should_suppress_class_issue(
@@ -6893,9 +6926,9 @@ fn analyze_methods_from_trait(
     let _trait_parse_start = crate::profiling::TimerStart::now();
     let (program, _parse_error) = parse_file_content(&arena, file_id, &trait_file_info.contents);
     crate::profiling::record(&crate::profiling::TRAIT_PARSE_NS, _trait_parse_start);
-    let _trait_resolve_start = crate::profiling::TimerStart::now();
-    let resolved_names = resolve_names(&program, analyzer.interner);
-    crate::profiling::record(&crate::profiling::TRAIT_RESOLVE_NS, _trait_resolve_start);
+    // Reuse the trait file's scan-time name resolution (analysis cannot intern).
+    // The TRAIT_RESOLVE_NS profiling counter therefore stays at zero here.
+    let resolved_names = &trait_file_info.resolved_names;
 
     let Some((trait_stmt, trait_namespace)) = find_trait_statement_by_offset(
         program.statements.as_slice(),
@@ -6911,7 +6944,7 @@ fn analyze_methods_from_trait(
         analyzer.interner,
         trait_info.file_path,
         &trait_file_info.contents,
-        &resolved_names,
+        resolved_names,
         analyzer.config,
     )
     .with_arena(&arena);
@@ -6923,7 +6956,10 @@ fn analyze_methods_from_trait(
             continue;
         };
 
-        let method_name_id = analyzer.interner.intern(method.name.value);
+        let method_name_id = analyzer
+            .interner
+            .find(method.name.value)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         // A method the class redeclares is analysed as the class's own method;
         // don't analyse the trait's copy on top of it.
         if class_info
@@ -7005,10 +7041,11 @@ fn find_trait_statement_by_offset<'a>(
                 }
             }
             Statement::Namespace(namespace_stmt) => {
-                let next_namespace = namespace_stmt
-                    .name
-                    .as_ref()
-                    .map(|name| interner.intern(name.value()));
+                let next_namespace = namespace_stmt.name.as_ref().map(|name| {
+                    interner
+                        .find(name.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY)
+                });
                 let nested_statements = match &namespace_stmt.body {
                     NamespaceBody::Implicit(body) => body.statements.as_slice(),
                     NamespaceBody::BraceDelimited(body) => body.statements.as_slice(),
@@ -7040,7 +7077,10 @@ pub(crate) fn analyze_method(
 ) -> Result<(), AnalysisError> {
     // Get the method name
     let method_name = method.name.value;
-    let method_name_id = analyzer.interner.intern(method_name);
+    let method_name_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // Look up the method info from the class
     let method_info = class_info.and_then(|ci| ci.methods.get(&method_name_id));
@@ -7196,7 +7236,10 @@ pub(crate) fn analyze_method(
     // lowercased to match how call sites record references, so a recursive
     // self-call is correctly excluded.
     {
-        let method_lc_id = analyzer.interner.intern(&method_name.to_lowercase());
+        let method_lc_id = analyzer
+            .interner
+            .find(&method_name.to_lowercase())
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         method_context.function_context.calling_class = Some(class_name_id);
         method_context.function_context.calling_functionlike_id = Some(
             crate::context::FunctionLikeId::Method(class_name_id, method_lc_id),
@@ -7364,11 +7407,11 @@ pub(crate) fn analyze_method(
         // param (`@param T`); bind it to the using class's `@use Trait<...>`
         // binding so the body sees the concrete type rather than the unbound
         // `T:Trait as mixed` placeholder (matches the return-type localization).
-        if body_belongs_to_trait
-            && let Some(class_info) = class_info
-        {
-            param_type =
-                replace_extended_templates_in_union(&param_type, &class_info.template_extended_params);
+        if body_belongs_to_trait && let Some(class_info) = class_info {
+            param_type = replace_extended_templates_in_union(
+                &param_type,
+                &class_info.template_extended_params,
+            );
         }
 
         // Hakana `functionlike_analyzer::get_param_source_kind`: inout (≈ PHP
@@ -7398,7 +7441,12 @@ pub(crate) fn analyze_method(
         let parent_node = crate::data_flow::add_param_dataflow_node(
             &mut analysis_data.data_flow_graph,
             source_kind,
-            VarId(analyzer.interner.intern(&param_name_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(&param_name_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             make_data_flow_node_position(
                 analyzer,
                 (param_span.start.offset, param_span.end.offset),

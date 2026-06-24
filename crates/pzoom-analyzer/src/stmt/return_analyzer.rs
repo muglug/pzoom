@@ -1325,9 +1325,12 @@ pub(crate) fn get_inline_return_annotation_type(
     stmt_start: Option<u32>,
 ) -> Option<TUnion> {
     let direct_var_id = match expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => {
-            Some(analyzer.interner.intern(direct.name))
-        }
+        Expression::Variable(Variable::Direct(direct)) => Some(
+            analyzer
+                .interner
+                .find(direct.name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        ),
         _ => None,
     };
 

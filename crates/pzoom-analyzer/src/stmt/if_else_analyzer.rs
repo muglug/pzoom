@@ -379,7 +379,10 @@ pub fn analyze(
                 && !prop_path.contains('[')
                 && analyzer.function_info.map(|info| info.name) != Some(pzoom_str::StrId::CONSTRUCT)
                 && context.self_class.is_some_and(|self_class| {
-                    let prop_id = analyzer.interner.intern(prop_path);
+                    let prop_id = analyzer
+                        .interner
+                        .find(prop_path)
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
                     analyzer
                         .codebase
                         .get_class(self_class)

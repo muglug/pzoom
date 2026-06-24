@@ -989,7 +989,8 @@ pub(crate) fn get_resolved_class_id(
                     Some(
                         analyzer
                             .interner
-                            .intern(id.value().trim_start_matches('\\')),
+                            .find(id.value().trim_start_matches('\\'))
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
         }
@@ -1112,21 +1113,32 @@ fn pre_resolve_static_method_info<'a>(
         return None;
     };
 
-    let class_id = match static_call.class.unparenthesized() {
-        Expression::Identifier(id) => analyzer
-            .get_resolved_name(id.span().start.offset)
-            .or_else(|| Some(analyzer.interner.intern(id.value())))?,
-        Expression::Self_(_) | Expression::Static(_) => {
-            analyzer.get_declaring_class().or(context.self_class)?
-        }
-        Expression::Parent(_) => analyzer
-            .get_declaring_class()
-            .or(context.self_class)
-            .and_then(|class_id| analyzer.codebase.get_class(class_id)?.parent_class)?,
-        _ => return None,
-    };
+    let class_id =
+        match static_call.class.unparenthesized() {
+            Expression::Identifier(id) => analyzer
+                .get_resolved_name(id.span().start.offset)
+                .or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .find(id.value())
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
+                })?,
+            Expression::Self_(_) | Expression::Static(_) => {
+                analyzer.get_declaring_class().or(context.self_class)?
+            }
+            Expression::Parent(_) => analyzer
+                .get_declaring_class()
+                .or(context.self_class)
+                .and_then(|class_id| analyzer.codebase.get_class(class_id)?.parent_class)?,
+            _ => return None,
+        };
 
-    let method_id = analyzer.interner.intern(method_identifier.value);
+    let method_id = analyzer
+        .interner
+        .find(method_identifier.value)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let mut current = Some(class_id);
     while let Some(current_id) = current {
         let class_info = analyzer.codebase.get_class(current_id)?;

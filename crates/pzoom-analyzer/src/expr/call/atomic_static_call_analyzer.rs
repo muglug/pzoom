@@ -43,7 +43,10 @@ pub(crate) fn add_static_call_dataflow(
         return_type,
         None,
         class_id,
-        analyzer.interner.intern(method_name),
+        analyzer
+            .interner
+            .find(method_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY),
         method_info,
         arg_positions,
         analysis_data,
@@ -603,7 +606,10 @@ fn collect_dynamic_static_call_target_atomics(
             push_unique_dynamic_static_target(
                 output,
                 TAtomic::TNamedObject {
-                    name: analyzer.interner.intern(name.trim_start_matches('\\')),
+                    name: analyzer
+                        .interner
+                        .find(name.trim_start_matches('\\'))
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
                     type_params: None,
                     is_static: false,
                     remapped_params: false,

@@ -644,7 +644,12 @@ fn check_instanceof_class_exists(
 
     let requested = analyzer
         .get_resolved_name(identifier.span().start.offset)
-        .unwrap_or_else(|| analyzer.interner.intern(raw.trim_start_matches('\\')));
+        .unwrap_or_else(|| {
+            analyzer
+                .interner
+                .find(raw.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY)
+        });
     let requested = context
         .class_aliases
         .get(&requested)

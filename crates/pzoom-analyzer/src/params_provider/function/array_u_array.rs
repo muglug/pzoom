@@ -75,7 +75,11 @@ impl FunctionParamsProvider for ArrayUArrayParamsProvider {
             is_pure: None,
         });
         let make_callback_param = |name: &str| ParamInfo {
-            name: event.analyzer.interner.intern(name),
+            name: event
+                .analyzer
+                .interner
+                .find(name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
             param_type: Some(comparison_callback_type.clone()),
             ..Default::default()
         };

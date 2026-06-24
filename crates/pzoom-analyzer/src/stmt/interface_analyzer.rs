@@ -48,7 +48,10 @@ pub fn analyze(
         }
         None => interface_name.to_string(),
     };
-    let interface_name_id = analyzer.interner.intern(&fqn);
+    let interface_name_id = analyzer
+        .interner
+        .find(&fqn)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     let interface_info = analyzer.codebase.get_class(interface_name_id);
     attribute_analyzer::analyze_interface_or_trait_attributes(

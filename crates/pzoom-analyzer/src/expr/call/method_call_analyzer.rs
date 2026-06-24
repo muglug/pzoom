@@ -687,7 +687,10 @@ fn pre_resolve_instance_method_info<'a>(
     obj_type: Option<&pzoom_code_info::TUnion>,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     for atomic in &obj_type?.types {
         let pzoom_code_info::TAtomic::TNamedObject { name, .. } = atomic else {

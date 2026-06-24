@@ -18,13 +18,13 @@ use rustc_hash::FxHashMap;
 use pzoom_code_info::class_constant_info::{ClassConstantInfo, UnresolvedConstExpr};
 use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::{TAtomic, TUnion};
-use pzoom_str::{Interner, StrId};
+use pzoom_str::{StrId, ThreadedInterner};
 
 /// Infer a parameter default's type: a simple constant expression, or a
 /// `self::CONST` / `static::CONST` reference resolved against `class_constants`.
 pub(crate) fn infer_param_default_type(
     expr: &Expression<'_>,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     self_class: Option<StrId>,
     class_constants: Option<&FxHashMap<StrId, ClassConstantInfo>>,
 ) -> Option<TUnion> {

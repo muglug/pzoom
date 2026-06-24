@@ -25,7 +25,8 @@ use mago_syntax::ast::ast::statement::Statement;
 use mago_syntax::ast::ast::type_hint::Hint;
 use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems, UseType};
 use mago_syntax::ast::ast::r#yield::Yield;
-use pzoom_str::{Interner, StrId};
+use mago_syntax::ast::node::Node;
+use pzoom_str::{StrId, ThreadedInterner};
 use rustc_hash::FxHashMap;
 
 /// Resolved names map: start_offset -> resolved StrId
@@ -85,7 +86,7 @@ impl NameContext {
     }
 
     /// Resolve a type/class name to its fully qualified form.
-    pub fn resolve_type_name(&self, name: &str, interner: &Interner) -> StrId {
+    pub fn resolve_type_name(&self, name: &str, interner: &ThreadedInterner) -> StrId {
         // Fully qualified names (starting with \) are already resolved
         if let Some(stripped) = name.strip_prefix('\\') {
             return interner.intern(stripped);
@@ -121,7 +122,7 @@ impl NameContext {
     }
 
     /// Resolve a function name to its fully qualified form.
-    pub fn resolve_function_name(&self, name: &str, interner: &Interner) -> StrId {
+    pub fn resolve_function_name(&self, name: &str, interner: &ThreadedInterner) -> StrId {
         if let Some(stripped) = name.strip_prefix('\\') {
             return interner.intern(stripped);
         }
@@ -155,7 +156,7 @@ impl NameContext {
     }
 
     /// Resolve a constant name to its fully qualified form.
-    pub fn resolve_constant_name(&self, name: &str, interner: &Interner) -> StrId {
+    pub fn resolve_constant_name(&self, name: &str, interner: &ThreadedInterner) -> StrId {
         if let Some(stripped) = name.strip_prefix('\\') {
             return interner.intern(stripped);
         }
@@ -197,7 +198,7 @@ impl Default for NameContext {
 
 /// Name resolver that traverses the AST and resolves all identifiers.
 pub struct NameResolver<'a> {
-    interner: &'a Interner,
+    interner: &'a ThreadedInterner,
     context: NameContext,
     resolved_names: ResolvedNames,
 }
@@ -210,7 +211,7 @@ enum UseAliasKind {
 }
 
 impl<'a> NameResolver<'a> {
-    pub fn new(interner: &'a Interner) -> Self {
+    pub fn new(interner: &'a ThreadedInterner) -> Self {
         Self {
             interner,
             context: NameContext::new(),
@@ -898,7 +899,18 @@ fn normalize_use_name(name: &str) -> String {
 }
 
 /// Resolve all names in a program.
-pub fn resolve_names(program: &Program<'_>, interner: &Interner) -> ResolvedNames {
+pub fn resolve_names(program: &Program<'_>, interner: &ThreadedInterner) -> ResolvedNames {
+    // Intern every local variable name in the file. Analysis builds data-flow
+    // node ids from these names with a read-only `find` (it cannot intern), so
+    // they must already live in the interner. Mirrors Hakana's naming_visitor,
+    // which interns every `Lid` during scanning.
+    for variable_name in Node::Program(program).filter_map(|node| match node {
+        Node::DirectVariable(var) => Some(var.name),
+        _ => None,
+    }) {
+        interner.intern(variable_name);
+    }
+
     let resolver = NameResolver::new(interner);
     resolver.resolve(program)
 }

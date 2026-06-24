@@ -261,7 +261,8 @@ impl Clause {
                         if atomic.is_literal()
                             || matches!(
                                 atomic,
-                                crate::TAtomic::TNamedObject { .. } | crate::TAtomic::TEnumCase { .. }
+                                crate::TAtomic::TNamedObject { .. }
+                                    | crate::TAtomic::TEnumCase { .. }
                             )
                         {
                             impossibility.push(assertion.get_negation());

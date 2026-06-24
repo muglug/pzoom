@@ -364,15 +364,22 @@ fn literal_string_is_callable(value: &str, analyzer: &StatementsAnalyzer<'_>) ->
     if let Some((class_name, method_name)) = value.split_once("::") {
         let class_id = analyzer
             .interner
-            .intern(class_name.trim_start_matches('\\'));
-        let method_id = analyzer.interner.intern(method_name);
+            .find(class_name.trim_start_matches('\\'))
+            .unwrap_or(pzoom_str::StrId::EMPTY);
+        let method_id = analyzer
+            .interner
+            .find(method_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         return analyzer
             .codebase
             .get_class(class_id)
             .is_some_and(|class_info| class_info.methods.contains_key(&method_id));
     }
 
-    let function_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+    let function_id = analyzer
+        .interner
+        .find(value.trim_start_matches('\\'))
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     analyzer.codebase.get_function(function_id).is_some()
 }
 

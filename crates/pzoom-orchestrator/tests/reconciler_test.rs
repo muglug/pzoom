@@ -15,7 +15,6 @@
 //!     harness documents the gap instead of silently dropping it.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use pzoom_analyzer::reconciler::reconcile;
 use pzoom_analyzer::{Config, FunctionAnalysisData, StatementsAnalyzer};
@@ -24,7 +23,7 @@ use pzoom_code_info::TAtomic;
 use pzoom_code_info::codebase_info::CodebaseInfo;
 use pzoom_code_info::file_info::FileInfo;
 use pzoom_orchestrator::{Populator, Scanner, apply_call_map};
-use pzoom_str::{Interner, StrId, ThreadedInterner};
+use pzoom_str::{SharedInterner, StrId, ThreadedInterner};
 use pzoom_syntax::docblock::parse_type_string;
 use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content, resolve_names};
 use rustc_hash::FxHashSet;
@@ -42,7 +41,11 @@ interface SomeInterface {}
 /// built per reconcile call (the analyzer only holds references).
 struct Fixture {
     codebase: CodebaseInfo,
-    interner: Interner,
+    /// Held behind a mutex so the test can both intern (parsing type strings
+    /// through a `ThreadedInterner`) and analyse (locking it as a `&Interner`),
+    /// mirroring how the real pipeline keeps the interner shared during the
+    /// build passes and immutable during analysis.
+    interner: SharedInterner,
     config: Config,
     resolved_names: pzoom_syntax::ResolvedNames,
     source: String,
@@ -57,25 +60,33 @@ impl Fixture {
         scanner.scan_stub_directory(Path::new(&stubs_dir), &FxHashSet::default());
         let mut scan = scanner.finish();
 
+        let interner = scan.interner.into_shared();
+
         // 2. Builtin signatures (harness-default PHP version, as the test-runner).
-        apply_call_map(&mut scan.codebase, &scan.interner, 80_000);
+        {
+            let threaded = ThreadedInterner::new(interner.clone());
+            apply_call_map(&mut scan.codebase, &threaded, 80_000);
+        }
 
         // 3. Register the inline test classes.
-        let interner = register_php(&mut scan.codebase, scan.interner, "newfile.php", TEST_CLASSES);
+        register_php(&mut scan.codebase, &interner, "newfile.php", TEST_CLASSES);
 
         // 4. Populate once (resolves SomeChildClass -> SomeClass inheritance, etc.).
         {
-            let mut populator = Populator::new(&mut scan.codebase, &interner);
+            let mut guard = interner.lock();
+            let mut populator = Populator::new(&mut scan.codebase, &mut guard);
             populator.populate();
         }
 
         // 5. Minimal resolved-names context for a trivial source file.
         let source = "<?php\n".to_string();
-        let file_path = interner.intern("reconciler-test.php");
+        let threaded = ThreadedInterner::new(interner.clone());
+        let file_path = threaded.intern("reconciler-test.php");
         let arena = bumpalo::Bump::new();
         let file_id = FileId::new("reconciler-test.php");
         let (program, _err) = parse_file_content(&arena, file_id, &source);
-        let resolved_names = resolve_names(program, &interner);
+        let resolved_names = resolve_names(program, &threaded);
+        drop(threaded);
 
         Fixture {
             codebase: scan.codebase,
@@ -89,24 +100,30 @@ impl Fixture {
 
     /// Single atomic of a parsed type string (for assertion payloads).
     fn atom(&self, type_str: &str) -> TAtomic {
-        let union = parse_type_string(type_str, &self.interner)
+        let threaded = ThreadedInterner::new(self.interner.clone());
+        let union = parse_type_string(type_str, &threaded)
             .unwrap_or_else(|e| panic!("failed to parse {type_str:?}: {e:?}"));
+        let guard = self.interner.lock();
         assert_eq!(
             union.types.len(),
             1,
             "expected a single atomic for {type_str:?}, got {}",
-            union.get_id(Some(&self.interner))
+            union.get_id(Some(&guard))
         );
         union.types.into_iter().next().unwrap()
     }
 
     /// Reconcile `assertion` against `original` and return the result id.
     fn reconcile_id(&self, assertion: &Assertion, original: &str) -> String {
-        let existing = parse_type_string(original, &self.interner)
-            .unwrap_or_else(|e| panic!("failed to parse original {original:?}: {e:?}"));
+        let existing = {
+            let threaded = ThreadedInterner::new(self.interner.clone());
+            parse_type_string(original, &threaded)
+                .unwrap_or_else(|e| panic!("failed to parse original {original:?}: {e:?}"))
+        };
+        let guard = self.interner.lock();
         let analyzer = StatementsAnalyzer::new(
             &self.codebase,
-            &self.interner,
+            &guard,
             self.file_path,
             &self.source,
             &self.resolved_names,
@@ -114,25 +131,20 @@ impl Fixture {
         );
         let mut analysis_data = FunctionAnalysisData::new();
         let result = reconcile(assertion, &existing, &analyzer, &mut analysis_data);
-        result.get_id(Some(&self.interner))
+        result.get_id(Some(&guard))
     }
 }
 
 /// Mirror the test-runner's inline-file registration (main.rs scan path):
 /// parse, collect declarations, register them, return the owned interner.
-fn register_php(
-    codebase: &mut CodebaseInfo,
-    interner: Interner,
-    path: &str,
-    source: &str,
-) -> Interner {
-    let interner_arc = Arc::new(interner);
-    let threaded = ThreadedInterner::new(interner_arc.clone());
+fn register_php(codebase: &mut CodebaseInfo, interner: &SharedInterner, path: &str, source: &str) {
+    let threaded = ThreadedInterner::new(interner.clone());
     let file_path_id = threaded.intern(path);
     let file_id = FileId::new(path);
 
     let arena = bumpalo::Bump::new();
     let (program, _err) = parse_file_content(&arena, file_id, source);
+    let resolved_names = resolve_names(program, &threaded);
 
     let collector = DeclarationCollector::new(
         &threaded,
@@ -157,6 +169,7 @@ fn register_php(
         is_in_project_dirs: true,
         inline_annotations: std::mem::take(&mut declarations.inline_annotations),
         type_alias_imports: std::mem::take(&mut declarations.type_alias_imports),
+        resolved_names,
     };
     codebase.files.insert(file_path_id, file_info);
 
@@ -172,9 +185,6 @@ fn register_php(
     for type_alias in declarations.type_aliases {
         codebase.type_aliases.insert(type_alias.name, type_alias);
     }
-
-    drop(threaded);
-    Arc::try_unwrap(interner_arc).expect("single-thread interner handle dropped above")
 }
 
 /// One reconciliation row: (name, expected_id, assertion, original_type).
@@ -182,85 +192,363 @@ fn cases(fx: &Fixture) -> Vec<(&'static str, &'static str, Assertion, &'static s
     let t = |s: &str| fx.atom(s);
     vec![
         // --- not-null ---
-        ("notNullWithObject", "SomeClass", Assertion::IsNotType(t("null")), "SomeClass"),
-        ("notNullWithObjectPipeNull", "SomeClass", Assertion::IsNotType(t("null")), "SomeClass|null"),
-        ("notNullWithSomeClassPipeFalse", "SomeClass|false", Assertion::IsNotType(t("null")), "SomeClass|false"),
-        ("notNullWithMixed", "mixed", Assertion::IsNotType(t("null")), "mixed"),
+        (
+            "notNullWithObject",
+            "SomeClass",
+            Assertion::IsNotType(t("null")),
+            "SomeClass",
+        ),
+        (
+            "notNullWithObjectPipeNull",
+            "SomeClass",
+            Assertion::IsNotType(t("null")),
+            "SomeClass|null",
+        ),
+        (
+            "notNullWithSomeClassPipeFalse",
+            "SomeClass|false",
+            Assertion::IsNotType(t("null")),
+            "SomeClass|false",
+        ),
+        (
+            "notNullWithMixed",
+            "mixed",
+            Assertion::IsNotType(t("null")),
+            "mixed",
+        ),
         // --- truthy ---
-        ("notEmptyWithSomeClass", "SomeClass", Assertion::Truthy, "SomeClass"),
-        ("notEmptyWithSomeClassPipeNull", "SomeClass", Assertion::Truthy, "SomeClass|null"),
-        ("notEmptyWithSomeClassPipeFalse", "SomeClass", Assertion::Truthy, "SomeClass|false"),
-        ("notEmptyWithMixed", "non-empty-mixed", Assertion::Truthy, "mixed"),
+        (
+            "notEmptyWithSomeClass",
+            "SomeClass",
+            Assertion::Truthy,
+            "SomeClass",
+        ),
+        (
+            "notEmptyWithSomeClassPipeNull",
+            "SomeClass",
+            Assertion::Truthy,
+            "SomeClass|null",
+        ),
+        (
+            "notEmptyWithSomeClassPipeFalse",
+            "SomeClass",
+            Assertion::Truthy,
+            "SomeClass|false",
+        ),
+        (
+            "notEmptyWithMixed",
+            "non-empty-mixed",
+            Assertion::Truthy,
+            "mixed",
+        ),
         // --- is-null ---
-        ("nullWithSomeClassPipeNull", "null", Assertion::IsType(t("null")), "SomeClass|null"),
-        ("nullWithMixed", "null", Assertion::IsType(t("null")), "mixed"),
+        (
+            "nullWithSomeClassPipeNull",
+            "null",
+            Assertion::IsType(t("null")),
+            "SomeClass|null",
+        ),
+        (
+            "nullWithMixed",
+            "null",
+            Assertion::IsType(t("null")),
+            "mixed",
+        ),
         // --- falsy ---
         ("falsyWithSomeClass", "never", Assertion::Falsy, "SomeClass"),
-        ("falsyWithSomeClassPipeFalse", "false", Assertion::Falsy, "SomeClass|false"),
-        ("falsyWithSomeClassPipeBool", "false", Assertion::Falsy, "SomeClass|bool"),
+        (
+            "falsyWithSomeClassPipeFalse",
+            "false",
+            Assertion::Falsy,
+            "SomeClass|false",
+        ),
+        (
+            "falsyWithSomeClassPipeBool",
+            "false",
+            Assertion::Falsy,
+            "SomeClass|bool",
+        ),
         ("falsyWithMixed", "empty-mixed", Assertion::Falsy, "mixed"),
         ("falsyWithBool", "false", Assertion::Falsy, "bool"),
-        ("falsyWithStringOrNull", "''|'0'|null", Assertion::Falsy, "string|null"),
-        ("falsyWithScalarOrNull", "empty-scalar", Assertion::Falsy, "scalar"),
+        (
+            "falsyWithStringOrNull",
+            "''|'0'|null",
+            Assertion::Falsy,
+            "string|null",
+        ),
+        (
+            "falsyWithScalarOrNull",
+            "empty-scalar",
+            Assertion::Falsy,
+            "scalar",
+        ),
         ("trueWithBool", "true", Assertion::IsType(t("true")), "bool"),
-        ("falseWithBool", "false", Assertion::IsType(t("false")), "bool"),
+        (
+            "falseWithBool",
+            "false",
+            Assertion::IsType(t("false")),
+            "bool",
+        ),
         // IsNotIdentical -> pzoom IsNotEqual
-        ("notTrueWithBool", "false", Assertion::IsNotEqual(t("true")), "bool"),
-        ("notFalseWithBool", "true", Assertion::IsNotEqual(t("false")), "bool"),
+        (
+            "notTrueWithBool",
+            "false",
+            Assertion::IsNotEqual(t("true")),
+            "bool",
+        ),
+        (
+            "notFalseWithBool",
+            "true",
+            Assertion::IsNotEqual(t("false")),
+            "bool",
+        ),
         // --- not-object ---
-        ("notSomeClassWithSomeClassPipeBool", "bool", Assertion::IsNotType(t("SomeClass")), "SomeClass|bool"),
-        ("notSomeClassWithSomeClassPipeNull", "null", Assertion::IsNotType(t("SomeClass")), "SomeClass|null"),
-        ("notSomeClassWithAPipeB", "B", Assertion::IsNotType(t("A")), "A|B"),
-        ("notDateTimeWithDateTimeInterface", "DateTimeImmutable", Assertion::IsNotType(t("DateTime")), "DateTimeInterface"),
-        ("notDateTimeImmutableWithDateTimeInterface", "DateTime", Assertion::IsNotType(t("DateTimeImmutable")), "DateTimeInterface"),
+        (
+            "notSomeClassWithSomeClassPipeBool",
+            "bool",
+            Assertion::IsNotType(t("SomeClass")),
+            "SomeClass|bool",
+        ),
+        (
+            "notSomeClassWithSomeClassPipeNull",
+            "null",
+            Assertion::IsNotType(t("SomeClass")),
+            "SomeClass|null",
+        ),
+        (
+            "notSomeClassWithAPipeB",
+            "B",
+            Assertion::IsNotType(t("A")),
+            "A|B",
+        ),
+        (
+            "notDateTimeWithDateTimeInterface",
+            "DateTimeImmutable",
+            Assertion::IsNotType(t("DateTime")),
+            "DateTimeInterface",
+        ),
+        (
+            "notDateTimeImmutableWithDateTimeInterface",
+            "DateTime",
+            Assertion::IsNotType(t("DateTimeImmutable")),
+            "DateTimeInterface",
+        ),
         // --- is-object ---
-        ("myObjectWithSomeClassPipeBool", "SomeClass", Assertion::IsType(t("SomeClass")), "SomeClass|bool"),
+        (
+            "myObjectWithSomeClassPipeBool",
+            "SomeClass",
+            Assertion::IsType(t("SomeClass")),
+            "SomeClass|bool",
+        ),
         ("myObjectWithAPipeB", "A", Assertion::IsType(t("A")), "A|B"),
         // --- array / iterable / callable ---
-        ("array", "array<array-key, mixed>", Assertion::IsType(t("array<array-key, mixed>")), "array|null"),
-        ("2dArray", "array<array-key, array<array-key, string>>", Assertion::IsType(t("array<array-key, mixed>")), "array<array<string>>|null"),
-        ("numeric", "numeric-string", Assertion::IsType(t("numeric")), "string"),
-        ("nullableClassString", "null", Assertion::Falsy, "?class-string"),
-        ("mixedOrNullNotFalsy", "non-empty-mixed", Assertion::Truthy, "mixed|null"),
-        ("mixedOrNullFalsy", "empty-mixed|null", Assertion::Falsy, "mixed|null"),
-        ("nullableClassStringFalsy", "null", Assertion::Falsy, "class-string<SomeClass>|null"),
+        (
+            "array",
+            "array<array-key, mixed>",
+            Assertion::IsType(t("array<array-key, mixed>")),
+            "array|null",
+        ),
+        (
+            "2dArray",
+            "array<array-key, array<array-key, string>>",
+            Assertion::IsType(t("array<array-key, mixed>")),
+            "array<array<string>>|null",
+        ),
+        (
+            "numeric",
+            "numeric-string",
+            Assertion::IsType(t("numeric")),
+            "string",
+        ),
+        (
+            "nullableClassString",
+            "null",
+            Assertion::Falsy,
+            "?class-string",
+        ),
+        (
+            "mixedOrNullNotFalsy",
+            "non-empty-mixed",
+            Assertion::Truthy,
+            "mixed|null",
+        ),
+        (
+            "mixedOrNullFalsy",
+            "empty-mixed|null",
+            Assertion::Falsy,
+            "mixed|null",
+        ),
+        (
+            "nullableClassStringFalsy",
+            "null",
+            Assertion::Falsy,
+            "class-string<SomeClass>|null",
+        ),
         // IsIdentical -> pzoom IsEqual
-        ("nullableClassStringEqualsNull", "null", Assertion::IsEqual(t("null")), "class-string<SomeClass>|null"),
-        ("nullableClassStringTruthy", "class-string<SomeClass>", Assertion::Truthy, "class-string<SomeClass>|null"),
-        ("iterableToArray", "array<int, int>", Assertion::IsType(t("array<array-key, mixed>")), "iterable<int, int>"),
-        ("iterableToTraversable", "Traversable<int, int>", Assertion::IsType(t("Traversable")), "iterable<int, int>"),
-        ("callableToCallableArray", "callable-array{class-string|object, non-empty-string}", Assertion::IsType(t("array<array-key, mixed>")), "callable"),
-        ("SmallKeyedArrayAndCallable", "array{test: string}", Assertion::IsType(t("array{test: string}")), "callable"),
-        ("BigKeyedArrayAndCallable", "array{foo: string, test: string, thing: string}", Assertion::IsType(t("array{foo: string, test: string, thing: string}")), "callable"),
-        ("callableOrArrayToCallableArray", "array<array-key, mixed>", Assertion::IsType(t("array<array-key, mixed>")), "callable|array"),
-        ("traversableToIntersection", "Countable&Traversable", Assertion::IsType(t("Traversable")), "Countable"),
-        ("iterableWithoutParamsToTraversableWithoutParams", "Traversable", Assertion::IsNotType(t("array<array-key, mixed>")), "iterable"),
-        ("iterableWithParamsToTraversableWithParams", "Traversable<int, string>", Assertion::IsNotType(t("array<array-key, mixed>")), "iterable<int, string>"),
-        ("iterableAndObject", "Traversable<int, string>", Assertion::IsType(t("object")), "iterable<int, string>"),
-        ("iterableAndNotObject", "array<int, string>", Assertion::IsNotType(t("object")), "iterable<int, string>"),
+        (
+            "nullableClassStringEqualsNull",
+            "null",
+            Assertion::IsEqual(t("null")),
+            "class-string<SomeClass>|null",
+        ),
+        (
+            "nullableClassStringTruthy",
+            "class-string<SomeClass>",
+            Assertion::Truthy,
+            "class-string<SomeClass>|null",
+        ),
+        (
+            "iterableToArray",
+            "array<int, int>",
+            Assertion::IsType(t("array<array-key, mixed>")),
+            "iterable<int, int>",
+        ),
+        (
+            "iterableToTraversable",
+            "Traversable<int, int>",
+            Assertion::IsType(t("Traversable")),
+            "iterable<int, int>",
+        ),
+        (
+            "callableToCallableArray",
+            "callable-array{class-string|object, non-empty-string}",
+            Assertion::IsType(t("array<array-key, mixed>")),
+            "callable",
+        ),
+        (
+            "SmallKeyedArrayAndCallable",
+            "array{test: string}",
+            Assertion::IsType(t("array{test: string}")),
+            "callable",
+        ),
+        (
+            "BigKeyedArrayAndCallable",
+            "array{foo: string, test: string, thing: string}",
+            Assertion::IsType(t("array{foo: string, test: string, thing: string}")),
+            "callable",
+        ),
+        (
+            "callableOrArrayToCallableArray",
+            "array<array-key, mixed>",
+            Assertion::IsType(t("array<array-key, mixed>")),
+            "callable|array",
+        ),
+        (
+            "traversableToIntersection",
+            "Countable&Traversable",
+            Assertion::IsType(t("Traversable")),
+            "Countable",
+        ),
+        (
+            "iterableWithoutParamsToTraversableWithoutParams",
+            "Traversable",
+            Assertion::IsNotType(t("array<array-key, mixed>")),
+            "iterable",
+        ),
+        (
+            "iterableWithParamsToTraversableWithParams",
+            "Traversable<int, string>",
+            Assertion::IsNotType(t("array<array-key, mixed>")),
+            "iterable<int, string>",
+        ),
+        (
+            "iterableAndObject",
+            "Traversable<int, string>",
+            Assertion::IsType(t("object")),
+            "iterable<int, string>",
+        ),
+        (
+            "iterableAndNotObject",
+            "array<int, string>",
+            Assertion::IsNotType(t("object")),
+            "iterable<int, string>",
+        ),
         ("boolNotEmptyIsTrue", "true", Assertion::NonEmpty, "bool"),
-        ("interfaceAssertionOnClassInterfaceUnion", "SomeInterface|SomeInterface&SomeClass", Assertion::IsType(t("SomeInterface")), "SomeClass|SomeInterface"),
-        ("classAssertionOnClassInterfaceUnion", "SomeClass|SomeClass&SomeInterface", Assertion::IsType(t("SomeClass")), "SomeClass|SomeInterface"),
-        ("filterKeyedArrayWithIterable", "array{some: string}", Assertion::IsType(t("iterable<mixed, string>")), "array{some: mixed}"),
-        ("SimpleXMLElementNotAlwaysTruthy", "SimpleXMLElement", Assertion::Truthy, "SimpleXMLElement"),
-        ("SimpleXMLElementNotAlwaysTruthy2", "SimpleXMLElement", Assertion::Falsy, "SimpleXMLElement"),
-        ("SimpleXMLIteratorNotAlwaysTruthy", "SimpleXMLIterator", Assertion::Truthy, "SimpleXMLIterator"),
-        ("SimpleXMLIteratorNotAlwaysTruthy2", "SimpleXMLIterator", Assertion::Falsy, "SimpleXMLIterator"),
+        (
+            "interfaceAssertionOnClassInterfaceUnion",
+            "SomeInterface|SomeInterface&SomeClass",
+            Assertion::IsType(t("SomeInterface")),
+            "SomeClass|SomeInterface",
+        ),
+        (
+            "classAssertionOnClassInterfaceUnion",
+            "SomeClass|SomeClass&SomeInterface",
+            Assertion::IsType(t("SomeClass")),
+            "SomeClass|SomeInterface",
+        ),
+        (
+            "filterKeyedArrayWithIterable",
+            "array{some: string}",
+            Assertion::IsType(t("iterable<mixed, string>")),
+            "array{some: mixed}",
+        ),
+        (
+            "SimpleXMLElementNotAlwaysTruthy",
+            "SimpleXMLElement",
+            Assertion::Truthy,
+            "SimpleXMLElement",
+        ),
+        (
+            "SimpleXMLElementNotAlwaysTruthy2",
+            "SimpleXMLElement",
+            Assertion::Falsy,
+            "SimpleXMLElement",
+        ),
+        (
+            "SimpleXMLIteratorNotAlwaysTruthy",
+            "SimpleXMLIterator",
+            Assertion::Truthy,
+            "SimpleXMLIterator",
+        ),
+        (
+            "SimpleXMLIteratorNotAlwaysTruthy2",
+            "SimpleXMLIterator",
+            Assertion::Falsy,
+            "SimpleXMLIterator",
+        ),
         // IsLooselyEqual: a string compared with int/float is a numeric string.
-        ("stringToNumericStringWithInt", "numeric-string", Assertion::IsLooselyEqual(t("int")), "string"),
-        ("stringToNumericStringWithFloat", "numeric-string", Assertion::IsLooselyEqual(t("float")), "string"),
+        (
+            "stringToNumericStringWithInt",
+            "numeric-string",
+            Assertion::IsLooselyEqual(t("int")),
+            "string",
+        ),
+        (
+            "stringToNumericStringWithFloat",
+            "numeric-string",
+            Assertion::IsLooselyEqual(t("float")),
+            "string",
+        ),
         ("stringWithAny", "string", Assertion::Any, "string"),
-        ("nonEmptyArray", "non-empty-array<array-key, mixed>", Assertion::IsType(t("non-empty-array")), "array"),
-        ("nonEmptyList", "non-empty-list<mixed>", Assertion::IsType(t("non-empty-list")), "array"),
-        ("ListOfInts", "list<int>", Assertion::IsType(t("iterable<mixed, int>")), "list<mixed>"),
+        (
+            "nonEmptyArray",
+            "non-empty-array<array-key, mixed>",
+            Assertion::IsType(t("non-empty-array")),
+            "array",
+        ),
+        (
+            "nonEmptyList",
+            "non-empty-list<mixed>",
+            Assertion::IsType(t("non-empty-list")),
+            "array",
+        ),
+        (
+            "ListOfInts",
+            "list<int>",
+            Assertion::IsType(t("iterable<mixed, int>")),
+            "list<mixed>",
+        ),
     ]
 }
 
 /// Psalm rows whose assertion pzoom does not model yet — documented, not dropped.
 /// (name, psalm_expected_id, psalm_assertion, original_type)
-const UNSUPPORTED: &[(&str, &str, &str, &str)] = &[
-    ("IsNotAClassReconciliation", "int", "IsNotAClass(IDObject, allow_string)", "int|IDObject"),
-];
+const UNSUPPORTED: &[(&str, &str, &str, &str)] = &[(
+    "IsNotAClassReconciliation",
+    "int",
+    "IsNotAClass(IDObject, allow_string)",
+    "int|IDObject",
+)];
 
 /// Cases where pzoom's reconciler currently diverges from Psalm's expected id.
 /// Maps case name -> the id pzoom produces *today*. The `cases` table keeps
@@ -289,13 +577,31 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
     ("falsyWithMixed", "''|'0'|0|false|null"),
     ("falsyWithScalarOrNull", "''|'0'|0|false"),
     ("mixedOrNullFalsy", "''|'0'|0|false|null"),
-    ("callableToCallableArray", "list{class-string|object, non-empty-string}"),
-    ("SmallKeyedArrayAndCallable", "list{class-string|object, non-empty-string}"),
-    ("BigKeyedArrayAndCallable", "list{class-string|object, non-empty-string}"),
-    ("callableOrArrayToCallableArray", "array<array-key, mixed>|list{class-string|object, non-empty-string}"),
-    ("iterableWithoutParamsToTraversableWithoutParams", "Traversable<mixed, mixed>"),
+    (
+        "callableToCallableArray",
+        "list{class-string|object, non-empty-string}",
+    ),
+    (
+        "SmallKeyedArrayAndCallable",
+        "list{class-string|object, non-empty-string}",
+    ),
+    (
+        "BigKeyedArrayAndCallable",
+        "list{class-string|object, non-empty-string}",
+    ),
+    (
+        "callableOrArrayToCallableArray",
+        "array<array-key, mixed>|list{class-string|object, non-empty-string}",
+    ),
+    (
+        "iterableWithoutParamsToTraversableWithoutParams",
+        "Traversable<mixed, mixed>",
+    ),
     ("iterableAndNotObject", "iterable<int, string>"),
-    ("interfaceAssertionOnClassInterfaceUnion", "SomeClass&SomeInterface|SomeInterface"),
+    (
+        "interfaceAssertionOnClassInterfaceUnion",
+        "SomeClass&SomeInterface|SomeInterface",
+    ),
     ("filterKeyedArrayWithIterable", "array{some: mixed}"),
 ];
 
@@ -318,7 +624,9 @@ fn provider_test_reconciliation() {
             }
             None => {
                 if actual != psalm_expected {
-                    regressions.push(format!("  {name}: expected {psalm_expected:?}, got {actual:?}"));
+                    regressions.push(format!(
+                        "  {name}: expected {psalm_expected:?}, got {actual:?}"
+                    ));
                 }
             }
         }
@@ -326,18 +634,32 @@ fn provider_test_reconciliation() {
 
     // Surface (don't drop) the Psalm rows whose assertion pzoom can't model yet.
     for (name, expected, psalm_assertion, original) in UNSUPPORTED {
-        eprintln!("unmodelled in pzoom: {name} — {psalm_assertion} on {original:?} -> Psalm wants {expected:?}");
+        eprintln!(
+            "unmodelled in pzoom: {name} — {psalm_assertion} on {original:?} -> Psalm wants {expected:?}"
+        );
     }
 
     let mut report = String::new();
     if !regressions.is_empty() {
-        report.push_str(&format!("Faithfulness REGRESSIONS ({}):\n{}\n", regressions.len(), regressions.join("\n")));
+        report.push_str(&format!(
+            "Faithfulness REGRESSIONS ({}):\n{}\n",
+            regressions.len(),
+            regressions.join("\n")
+        ));
     }
     if !fixed.is_empty() {
-        report.push_str(&format!("Divergences now FIXED ({}) — update KNOWN_DIVERGENCES:\n{}\n", fixed.len(), fixed.join("\n")));
+        report.push_str(&format!(
+            "Divergences now FIXED ({}) — update KNOWN_DIVERGENCES:\n{}\n",
+            fixed.len(),
+            fixed.join("\n")
+        ));
     }
     if !changed.is_empty() {
-        report.push_str(&format!("Divergences CHANGED ({}):\n{}\n", changed.len(), changed.join("\n")));
+        report.push_str(&format!(
+            "Divergences CHANGED ({}):\n{}\n",
+            changed.len(),
+            changed.join("\n")
+        ));
     }
     assert!(report.is_empty(), "\n{report}");
 }

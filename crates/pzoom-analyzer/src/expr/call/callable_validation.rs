@@ -628,7 +628,10 @@ fn resolve_class_constant_like_atomic(
         return combined;
     }
 
-    let constant_id = analyzer.interner.intern(const_part);
+    let constant_id = analyzer
+        .interner
+        .find(const_part)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info
         .constants
         .get(&constant_id)
@@ -654,13 +657,19 @@ fn resolve_class_reference_for_constant(
             .and_then(|class_info| class_info.parent_class);
     }
 
-    let class_id = analyzer.interner.intern(class_part);
+    let class_id = analyzer
+        .interner
+        .find(class_part)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     if analyzer.codebase.get_class(class_id).is_some() {
         return Some(class_id);
     }
 
     let fq = format!("\\{}", class_part.trim_start_matches('\\'));
-    let fq_id = analyzer.interner.intern(&fq);
+    let fq_id = analyzer
+        .interner
+        .find(&fq)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     analyzer.codebase.get_class(fq_id).map(|_| fq_id)
 }
 
@@ -669,13 +678,19 @@ fn resolve_self_class_for_callable(
     callable_name: &str,
 ) -> Option<StrId> {
     if let Some((class_name, _)) = callable_name.split_once("::") {
-        let class_id = analyzer.interner.intern(class_name);
+        let class_id = analyzer
+            .interner
+            .find(class_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer.codebase.get_class(class_id).is_some() {
             return Some(class_id);
         }
 
         let fq = format!("\\{}", class_name.trim_start_matches('\\'));
-        let fq_id = analyzer.interner.intern(&fq);
+        let fq_id = analyzer
+            .interner
+            .find(&fq)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer.codebase.get_class(fq_id).is_some() {
             return Some(fq_id);
         }
@@ -976,7 +991,8 @@ pub(crate) fn validate_callable_argument(
     let callee_class = callable_name.split_once("::").map(|(class_part, _)| {
         analyzer
             .interner
-            .intern(class_part.trim_start_matches('\\'))
+            .find(class_part.trim_start_matches('\\'))
+            .unwrap_or(pzoom_str::StrId::EMPTY)
     });
     let callee_context = CalleeContext {
         class: callee_class,
@@ -1686,7 +1702,10 @@ fn resolve_method_callable(
     {
         // A callable referencing a method counts as a call for
         // find_unused_code (Psalm's methodExists records the reference).
-        let method_lc = analyzer.interner.intern(&method_name.to_lowercase());
+        let method_lc = analyzer
+            .interner
+            .find(&method_name.to_lowercase())
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         analysis_data
             .referenced_class_members
             .insert((class_id, method_lc));
@@ -2258,9 +2277,18 @@ fn resolve_class_id_from_expr(
     expr: &Expression<'_>,
 ) -> Option<pzoom_str::StrId> {
     match expr {
-        Expression::Identifier(id) => analyzer
-            .get_resolved_name(id.span().start.offset)
-            .or_else(|| Some(analyzer.interner.intern(id.value()))),
+        Expression::Identifier(id) => {
+            analyzer
+                .get_resolved_name(id.span().start.offset)
+                .or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .find(id.value())
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
+                })
+        }
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
         Expression::Parent(_) => analyzer
             .get_declaring_class()
@@ -2297,7 +2325,10 @@ pub(crate) fn resolve_class_id(
             .and_then(|class_id| analyzer.codebase.get_class(class_id))
             .and_then(|class_info| class_info.parent_class),
         _ => {
-            let class_id = analyzer.interner.intern(normalized);
+            let class_id = analyzer
+                .interner
+                .find(normalized)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if analyzer.codebase.get_class(class_id).is_some() {
                 return Some(class_id);
             }
@@ -2307,7 +2338,8 @@ pub(crate) fn resolve_class_id(
                     let namespace = analyzer.interner.lookup(namespace_id);
                     let namespaced_id = analyzer
                         .interner
-                        .intern(&format!("{}\\{}", namespace, normalized));
+                        .find(&format!("{}\\{}", namespace, normalized))
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
                     if analyzer.codebase.get_class(namespaced_id).is_some() {
                         return Some(namespaced_id);
                     }
@@ -2436,15 +2468,17 @@ fn resolve_callable_function<'a>(
     _context: &BlockContext,
 ) -> Option<&'a FunctionLikeInfo> {
     let name = name.strip_prefix('\\').unwrap_or(name);
-    let function_id = analyzer.interner.intern(name);
-    if let Some(function_info) = analyzer.codebase.get_function(function_id) {
+    if let Some(function_id) = analyzer.interner.find(name)
+        && let Some(function_info) = analyzer.codebase.get_function(function_id)
+    {
         return Some(function_info);
     }
 
-    // PHP function names are case-insensitive: "fooBar" references foobar.
-    if let Some(cased_id) = analyzer
-        .codebase
-        .cased_functionlike_for(analyzer.interner, function_id)
+    // PHP function names are case-insensitive: "fooBar"/"FOOFOO" reference
+    // foofoo. Resolve through the lowercase name map directly from the source
+    // string — the literal callable name may never have been interned, so we
+    // cannot rely on recovering it from an interned id.
+    if let Some(cased_id) = analyzer.codebase.resolve_functionlike_name(name)
         && let Some(function_info) = analyzer.codebase.get_function(cased_id)
     {
         return Some(function_info);
@@ -2534,7 +2568,10 @@ pub(crate) fn get_method_info<'a>(
     class_info: &'a pzoom_code_info::ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.methods.get(&method_id).map(|method| &**method)
 }
@@ -2727,7 +2764,10 @@ fn classlike_exists_case_insensitive(
         return true;
     }
 
-    let normalized_id = analyzer.interner.intern(normalized);
+    let normalized_id = analyzer
+        .interner
+        .find(normalized)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     if analyzer.codebase.get_class(normalized_id).is_some() {
         return true;
     }
@@ -2737,7 +2777,10 @@ fn classlike_exists_case_insensitive(
     {
         let namespace = analyzer.interner.lookup(namespace_id);
         let namespaced_candidate = format!("{}\\{}", namespace, normalized);
-        let namespaced_id = analyzer.interner.intern(&namespaced_candidate);
+        let namespaced_id = analyzer
+            .interner
+            .find(&namespaced_candidate)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         return analyzer.codebase.get_class(namespaced_id).is_some();
     }
 
@@ -2781,7 +2824,12 @@ fn call_returns_by_ref(
 
             let resolved_id = analyzer
                 .get_resolved_name(function_id.span().start.offset)
-                .unwrap_or_else(|| analyzer.interner.intern(function_id.value()));
+                .unwrap_or_else(|| {
+                    analyzer
+                        .interner
+                        .find(function_id.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY)
+                });
 
             analyzer
                 .codebase
@@ -2793,7 +2841,10 @@ fn call_returns_by_ref(
                 return false;
             };
 
-            let method_name_id = analyzer.interner.intern(method_id.value);
+            let method_name_id = analyzer
+                .interner
+                .find(method_id.value)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let Expression::Variable(Variable::Direct(direct)) =
                 method_call.object.unparenthesized()
             else {
@@ -2844,7 +2895,10 @@ pub(crate) fn check_by_ref_property_mutability(
         return;
     };
 
-    let property_id = analyzer.interner.intern(id.value);
+    let property_id = analyzer
+        .interner
+        .find(id.value)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // Passing a property by reference is a write, so Psalm routes it through the
     // same readonly check as an assignment. Unlike a direct assignment, taking a
@@ -3702,7 +3756,12 @@ fn get_callable_class_from_union(
         let atomic_class_id = match atomic {
             TAtomic::TLiteralClassString { name } => {
                 let class_name = name.strip_prefix('\\').unwrap_or(name);
-                Some(analyzer.interner.intern(class_name))
+                Some(
+                    analyzer
+                        .interner
+                        .find(class_name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                )
             }
             TAtomic::TLiteralString { value } => {
                 let class_name = value.strip_prefix('\\').unwrap_or(value);
@@ -3752,7 +3811,10 @@ fn resolve_class_name_for_callable(
     context: &BlockContext,
 ) -> Option<StrId> {
     let normalized = class_name.strip_prefix('\\').unwrap_or(class_name);
-    let class_id = analyzer.interner.intern(normalized);
+    let class_id = analyzer
+        .interner
+        .find(normalized)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     if analyzer.codebase.classlike_infos.contains_key(&class_id) {
         return Some(class_id);
@@ -3761,7 +3823,10 @@ fn resolve_class_name_for_callable(
     if let Some(ns_id) = context.namespace {
         let ns = analyzer.interner.lookup(ns_id);
         let qualified = format!("{}\\{}", ns, normalized);
-        let qualified_id = analyzer.interner.intern(&qualified);
+        let qualified_id = analyzer
+            .interner
+            .find(&qualified)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer
             .codebase
             .classlike_infos
@@ -3790,7 +3855,10 @@ pub(crate) fn resolve_callable_union_for_template_inference(
                 if let Some((class_name, method_name)) = cleaned.split_once("::") {
                     let class_id = resolve_class_name_for_callable(analyzer, class_name, context)?;
                     let class_info = analyzer.codebase.get_class(class_id)?;
-                    let method_id = analyzer.interner.intern(method_name);
+                    let method_id = analyzer
+                        .interner
+                        .find(method_name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
                     class_info
                         .methods
                         .get(&method_id)

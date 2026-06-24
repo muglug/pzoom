@@ -41,7 +41,10 @@ pub fn analyze(
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), trait_name),
         None => trait_name.to_string(),
     };
-    let trait_name_id = analyzer.interner.intern(&fqn);
+    let trait_name_id = analyzer
+        .interner
+        .find(&fqn)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // Look up the trait info from the codebase
     let trait_info = analyzer.codebase.get_class(trait_name_id);
@@ -160,7 +163,10 @@ pub fn analyze(
         let ClassLikeMember::Method(method) = member else {
             continue;
         };
-        let method_name_id = analyzer.interner.intern(method.name.value);
+        let method_name_id = analyzer
+            .interner
+            .find(method.name.value)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if direct_users.is_empty() {
             // A trait with no user still has its body checked once, against

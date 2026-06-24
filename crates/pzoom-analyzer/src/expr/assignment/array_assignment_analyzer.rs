@@ -533,7 +533,12 @@ fn analyze_assignment_chain<'a>(
                     } else {
                         VariableSourceKind::Default
                     },
-                    VarId(analyzer.interner.intern(&var_id)),
+                    VarId(
+                        analyzer
+                            .interner
+                            .find(&var_id)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    ),
                     node_pos,
                     false,
                     !updated_child_type.parent_nodes.is_empty(),
@@ -542,7 +547,15 @@ fn analyze_assignment_chain<'a>(
                     false,
                 )
             } else {
-                DataFlowNode::get_for_lvar(VarId(analyzer.interner.intern(&var_id)), node_pos)
+                DataFlowNode::get_for_lvar(
+                    VarId(
+                        analyzer
+                            .interner
+                            .find(&var_id)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    ),
+                    node_pos,
+                )
             };
             for parent_node in &updated_child_type.parent_nodes {
                 analysis_data.data_flow_graph.add_path(
@@ -1545,10 +1558,7 @@ fn update_generic_array_atomic(
             if let Some(literal_key) = single_literal_array_key(key_type) {
                 let is_first_list_entry = matches!(literal_key, ArrayKey::Int(0));
                 let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
-                known_values.insert(
-                    literal_key,
-                    (false, assigned_type.clone()),
-                );
+                known_values.insert(literal_key, (false, assigned_type.clone()));
 
                 if existing_key.is_nothing() {
                     return TAtomic::keyed_array(
@@ -1848,10 +1858,7 @@ fn create_autovivified_array_atomic(key_type: Option<&TUnion>, assigned_type: &T
             if let Some(literal_keys) = get_literal_keys_if_all_literals(key_type) {
                 let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 for literal_key in literal_keys {
-                    known_values.insert(
-                        literal_key,
-                        (false, assigned_type.clone()),
-                    );
+                    known_values.insert(literal_key, (false, assigned_type.clone()));
                 }
 
                 // `keyed_array` derives `is_list` from the entries (old
@@ -1874,10 +1881,7 @@ fn create_mixed_container_assignment_atomic(
             if let Some(literal_keys) = get_literal_keys_if_all_literals(key_type) {
                 let mut known_values: FxHashMap<ArrayKey, (bool, TUnion)> = FxHashMap::default();
                 for literal_key in literal_keys {
-                    known_values.insert(
-                        literal_key,
-                        (false, assigned_type.clone()),
-                    );
+                    known_values.insert(literal_key, (false, assigned_type.clone()));
                 }
 
                 // `keyed_array` derives `is_list` from the entries (old
@@ -2279,7 +2283,12 @@ fn add_array_assignment_dataflow(
 
     let parent_node = if let Some(var_var_id) = &var_var_id {
         DataFlowNode::get_for_lvar(
-            VarId(analyzer.interner.intern(var_var_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(var_var_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             make_data_flow_node_position(analyzer, expr_var_pos),
         )
     } else {

@@ -88,7 +88,10 @@ pub fn analyze(
             continue;
         };
 
-        let property_id = analyzer.interner.intern(property_name.value);
+        let property_id = analyzer
+            .interner
+            .find(property_name.value)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         for atomic in &object_type.types {
             let TAtomic::TNamedObject { name, .. } = atomic else {

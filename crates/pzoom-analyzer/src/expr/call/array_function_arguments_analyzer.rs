@@ -523,7 +523,10 @@ pub(crate) fn handle_array_addition(
         && let Some(declaring_class) = analyzer.get_declaring_class()
         && let Some(class_info) = analyzer.codebase.get_class(declaring_class)
     {
-        let prop_id = analyzer.interner.intern(prop_name);
+        let prop_id = analyzer
+            .interner
+            .find(prop_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if let Some(prop_type) = class_info
             .properties
             .get(&prop_id)

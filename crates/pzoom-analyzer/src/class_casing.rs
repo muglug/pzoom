@@ -26,7 +26,10 @@ pub fn undefined_class_message(
     requested_name: impl AsRef<str>,
 ) -> String {
     let requested_name = requested_name.as_ref();
-    let requested = analyzer.interner.intern(requested_name);
+    let requested = analyzer
+        .interner
+        .find(requested_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     match class_casing_hint(analyzer, requested) {
         Some(cased) => format!(
             "Class {} does not exist (incorrect casing of {})",
@@ -66,14 +69,22 @@ pub fn undefined_function_message(
 
     let mut hint = namespace.and_then(|ns_id| {
         let qualified = format!("{}\\{}", analyzer.interner.lookup(ns_id), clean);
-        analyzer
-            .codebase
-            .cased_functionlike_for(analyzer.interner, analyzer.interner.intern(&qualified))
+        analyzer.codebase.cased_functionlike_for(
+            analyzer.interner,
+            analyzer
+                .interner
+                .find(&qualified)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        )
     });
     if hint.is_none() {
-        hint = analyzer
-            .codebase
-            .cased_functionlike_for(analyzer.interner, analyzer.interner.intern(clean));
+        hint = analyzer.codebase.cased_functionlike_for(
+            analyzer.interner,
+            analyzer
+                .interner
+                .find(clean)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        );
     }
 
     match hint {
@@ -98,9 +109,20 @@ pub fn undefined_method_message(
 
     let hint = analyzer
         .codebase
-        .get_class(analyzer.interner.intern(class_name))
+        .get_class(
+            analyzer
+                .interner
+                .find(class_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        )
         .and_then(|class_info| {
-            class_info.cased_method_for(analyzer.interner, analyzer.interner.intern(method_name))
+            class_info.cased_method_for(
+                analyzer.interner,
+                analyzer
+                    .interner
+                    .find(method_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            )
         });
 
     match hint {

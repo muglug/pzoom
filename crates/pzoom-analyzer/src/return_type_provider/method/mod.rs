@@ -96,12 +96,18 @@ pub(super) fn class_matches_or_descends_from(
 }
 
 pub(super) fn resolve_class_id(analyzer: &StatementsAnalyzer<'_>, class_name: &str) -> StrId {
-    let direct = analyzer.interner.intern(class_name);
+    let direct = analyzer
+        .interner
+        .find(class_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     if analyzer.codebase.get_class(direct).is_some() {
         return direct;
     }
 
-    let fq = analyzer.interner.intern(&format!("\\{}", class_name));
+    let fq = analyzer
+        .interner
+        .find(&format!("\\{}", class_name))
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     if analyzer.codebase.get_class(fq).is_some() {
         return fq;
     }

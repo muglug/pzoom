@@ -5,9 +5,9 @@ use mago_syntax::ast::ast::binary::BinaryOperator;
 use mago_syntax::ast::ast::expression::Expression;
 use mago_syntax::ast::ast::variable::Variable;
 
+use pzoom_code_info::TUnion;
 use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{Clause, get_truths_from_formula, negate_formula, simplify_cnf};
-use pzoom_code_info::TUnion;
 use rustc_hash::FxHashSet;
 
 use crate::assertion_finder;

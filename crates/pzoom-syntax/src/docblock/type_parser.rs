@@ -14,7 +14,7 @@ use super::type_tokenizer;
 use pzoom_code_info::t_atomic::{FunctionLikeParameter, PropertiesOfVisibility};
 use pzoom_code_info::type_resolution::{TemplateBinding, TypeResolutionContext};
 use pzoom_code_info::{ArrayKey, GenericParent, TAtomic, TUnion};
-use pzoom_str::{Interner, StrId};
+use pzoom_str::{StrId, ThreadedInterner};
 use rustc_hash::FxHashMap;
 
 // ============================================================================
@@ -267,7 +267,10 @@ impl std::fmt::Display for TypeParseError {
 
 /// Parse a type string into a `TUnion`, or a [`TypeParseError`] on malformed
 /// input (Psalm's `TypeParseTreeException`). Public for `declaration_collector`.
-pub fn parse_type_string(type_str: &str, interner: &Interner) -> Result<TUnion, TypeParseError> {
+pub fn parse_type_string(
+    type_str: &str,
+    interner: &ThreadedInterner,
+) -> Result<TUnion, TypeParseError> {
     parse_type_string_with_context(type_str, interner, &TypeResolutionContext::new())
 }
 
@@ -277,7 +280,7 @@ pub fn parse_type_string(type_str: &str, interner: &Interner) -> Result<TUnion, 
 /// during parsing so utility types resolve to their deferred forms inline.
 pub fn parse_type_string_with_context(
     type_str: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     context: &TypeResolutionContext,
 ) -> Result<TUnion, TypeParseError> {
     let mut parsed = parse_tokens(type_str, interner, context)?;
@@ -606,7 +609,7 @@ fn strip_wrapping_quotes(s: &str) -> Option<String> {
 fn class_constant_deferred_key_value_of(
     union: &TUnion,
     is_key_of: bool,
-    interner: &Interner,
+    interner: &ThreadedInterner,
 ) -> Option<TAtomic> {
     let TAtomic::TNamedObject {
         name,
@@ -848,7 +851,7 @@ impl TypeResult {
 /// on malformed input.
 fn parse_tokens(
     type_str: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> Result<TUnion, TypeParseError> {
     let trimmed = type_str.trim();
@@ -897,7 +900,7 @@ fn parse_tokens(
 /// unsetting the preceding space.
 fn strip_param_conditional_spaces(
     tokens: Vec<type_tokenizer::TypeToken>,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> Vec<type_tokenizer::TypeToken> {
     if ctx.param_names.is_empty() {
@@ -947,7 +950,7 @@ fn strip_trailing_commas(tokens: Vec<type_tokenizer::TypeToken>) -> Vec<type_tok
 fn get_type_from_tree(
     tree: &ParseTreeArena,
     id: NodeId,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let kind = tree.kind(id).clone();
@@ -1100,7 +1103,7 @@ fn get_type_from_tree(
 fn value_to_type(
     value: &str,
     _text: Option<&str>,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     // Literal string.
@@ -1143,7 +1146,7 @@ fn value_to_type(
 /// Shared `Foo::class` handling (used by both value nodes and array-shape keys).
 fn class_string_from_class_const(
     class_name: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TAtomic {
     if class_name.is_empty() {
@@ -1193,7 +1196,7 @@ fn generic_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
     value: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     // `class-string-map<T as Foo, T>` introduces its own placeholder template
@@ -1337,7 +1340,7 @@ fn generic_tree_to_type(
 fn class_string_map_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let children = tree.children(id);
@@ -1451,7 +1454,7 @@ fn get_computed_ints_from_mask(potential_ints: &[i64]) -> Vec<TAtomic> {
 fn union_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let mut types: Vec<TAtomic> = Vec::new();
@@ -1513,7 +1516,7 @@ fn union_tree_to_type(
 fn intersection_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let mut intersection_types: Vec<TAtomic> = Vec::new();
@@ -1666,7 +1669,7 @@ fn callable_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
     value: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let mut params: Vec<FunctionLikeParameter> = Vec::new();
@@ -1724,7 +1727,7 @@ fn keyed_array_tree_to_type(
     tree: &ParseTreeArena,
     id: NodeId,
     value: &str,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TypeResult {
     let mut children = tree.children(id).to_vec();
@@ -1873,7 +1876,7 @@ fn build_named_atomic(
     base_name: &str,
     raw_name: &str,
     generic_params: Option<Vec<TUnion>>,
-    interner: &Interner,
+    interner: &ThreadedInterner,
     ctx: &TypeResolutionContext,
 ) -> TAtomic {
     match base_name {
@@ -2163,7 +2166,7 @@ fn build_named_atomic(
 fn normalize_iterator_family_params(
     name: StrId,
     generic_params: Option<Vec<TUnion>>,
-    interner: &Interner,
+    interner: &ThreadedInterner,
 ) -> Option<Vec<TUnion>> {
     let Some(params) = generic_params else {
         return None;
@@ -2223,10 +2226,11 @@ fn literal_array_key_int(literal_key: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::docblock::parse;
+    use pzoom_str::Interner;
 
     /// Test helper: parse a (valid) type string, falling back to `mixed` on the
     /// few intentionally-malformed inputs.
-    fn parse_ty(type_str: &str, interner: &Interner) -> TUnion {
+    fn parse_ty(type_str: &str, interner: &ThreadedInterner) -> TUnion {
         parse_type_string(type_str, interner).unwrap_or_else(|_| TUnion::mixed())
     }
 
@@ -2238,7 +2242,7 @@ mod tests {
     fn parameter_conditional_errors_without_param_context() {
         // Without param context the leading space before `$string` is a stray
         // callable-param marker -> parse error (Psalm's TypeParseTreeException).
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let result = parse_type_string(SPACED_PARAM_CONDITIONAL, &interner);
         assert!(result.is_err());
     }
@@ -2247,12 +2251,12 @@ mod tests {
     fn parameter_conditional_parses_with_param_context() {
         // With `$string` registered as a parameter, the conditional parses
         // (flattened to the union of its branches).
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let mut ctx = TypeResolutionContext::new();
         ctx.param_names.push(StrId::STRING_VAR);
         let ty = parse_type_string_with_context(SPACED_PARAM_CONDITIONAL, &interner, &ctx)
             .expect("param conditional should parse with param context");
-        let id = ty.get_id(Some(&interner));
+        let id = ty.get_id(Some(&*interner.lock_parent()));
         // `positive-int` lowers to a `TIntRange` (Psalm-style), displayed as
         // `int<1, max>`.
         assert!(id.contains("int<1, max>"), "unexpected: {id}");
@@ -2373,7 +2377,7 @@ mod tests {
 
     #[test]
     fn test_parse_callable_signature_type() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("callable(int, string=): bool", &interner);
         let atomic = ty.get_single().expect("single callable type");
 
@@ -2394,7 +2398,7 @@ mod tests {
 
     #[test]
     fn test_parse_callable_signature_with_spaced_colon() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("callable(string, string) : bool", &interner);
         let atomic = ty.get_single().expect("single callable type");
 
@@ -2412,7 +2416,7 @@ mod tests {
 
     #[test]
     fn test_parse_literal_int_union() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("positive-int|0|false", &interner);
 
         assert!(
@@ -2429,7 +2433,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_suffix_type() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("string[]", &interner);
         let atomic = ty.get_single().expect("single type");
 
@@ -2448,7 +2452,7 @@ mod tests {
 
     #[test]
     fn test_parse_array_shape_with_implicit_list_items() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("array{\"a1\", \"a2\"}", &interner);
         let atomic = ty.get_single().expect("single type");
 
@@ -2468,7 +2472,7 @@ mod tests {
 
     #[test]
     fn test_parse_int_range_with_max_bound() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty("int<0, max>", &interner);
         let atomic = ty.get_single().expect("single type");
 
@@ -2483,19 +2487,19 @@ mod tests {
 
     #[test]
     fn test_malformed_single_quote_type_does_not_panic() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let _ = parse_ty("'", &interner);
     }
 
     #[test]
     fn test_malformed_single_paren_type_does_not_panic() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let _ = parse_ty("(", &interner);
     }
 
     #[test]
     fn test_parse_conditional_return_type_with_func_num_args() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty(
             "(
                 func_num_args() is 1
@@ -2505,7 +2509,7 @@ mod tests {
             &interner,
         );
 
-        let ty_id = ty.get_id(Some(&interner));
+        let ty_id = ty.get_id(Some(&*interner.lock_parent()));
         assert!(
             !ty_id.contains("func_num_args()"),
             "unexpected type id: {ty_id}"
@@ -2515,7 +2519,7 @@ mod tests {
 
     #[test]
     fn test_parse_nested_conditional_return_type() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
         let ty = parse_ty(
             "(
                 T is self::TYPE_STRING
@@ -2525,7 +2529,7 @@ mod tests {
             &interner,
         );
 
-        let ty_id = ty.get_id(Some(&interner));
+        let ty_id = ty.get_id(Some(&*interner.lock_parent()));
         assert!(ty_id.contains("string"), "unexpected type id: {ty_id}");
         assert!(ty_id.contains("int"), "unexpected type id: {ty_id}");
         assert!(ty_id.contains("bool"), "unexpected type id: {ty_id}");
@@ -2534,16 +2538,13 @@ mod tests {
 
     #[test]
     fn test_parse_never_return_aliases() {
-        let interner = Interner::default();
+        let interner = ThreadedInterner::standalone(Interner::default());
 
         let never_return = parse_ty("never-return", &interner);
         assert!(matches!(never_return.get_single(), Some(TAtomic::TNever)));
 
         let never_returns = parse_ty("never-returns", &interner);
-        assert!(matches!(
-            never_returns.get_single(),
-            Some(TAtomic::TNever)
-        ));
+        assert!(matches!(never_returns.get_single(), Some(TAtomic::TNever)));
     }
 
     #[test]

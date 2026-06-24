@@ -94,7 +94,12 @@ pub fn analyze(
         for target_expr in key_expr.into_iter().chain(std::iter::once(value_expr)) {
             match unwrap_reference_target(target_expr).unparenthesized() {
                 Expression::Variable(Variable::Direct(direct)) => {
-                    safe_var_ids.push(analyzer.interner.intern(direct.name));
+                    safe_var_ids.push(
+                        analyzer
+                            .interner
+                            .find(direct.name)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    );
                 }
                 // Psalm's $safe_var_ids also covers list-destructuring
                 // targets — each item's value variable and key variable.
@@ -248,7 +253,10 @@ pub fn analyze(
                 continue;
             };
             for iterator_method in ["current", "key", "next", "rewind", "valid", "getiterator"] {
-                let method_lc = analyzer.interner.intern(iterator_method);
+                let method_lc = analyzer
+                    .interner
+                    .find(iterator_method)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 let method_info = class_info.methods.get(&method_lc).or_else(|| {
                     class_info
                         .method_lc_names
@@ -553,7 +561,12 @@ pub fn analyze(
         }
         let source_node = pzoom_code_info::DataFlowNode::get_for_variable_source(
             pzoom_code_info::VariableSourceKind::Default,
-            pzoom_code_info::VarId(analyzer.interner.intern(direct.name)),
+            pzoom_code_info::VarId(
+                analyzer
+                    .interner
+                    .find(direct.name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             crate::data_flow::make_data_flow_node_position(
                 analyzer,
                 (span.start.offset, span.end.offset),
@@ -968,7 +981,10 @@ pub(crate) fn traversable_extended_param(
     template_name: &str,
 ) -> Option<TUnion> {
     let class_info = analyzer.codebase.get_class(class_name)?;
-    let template_id = analyzer.interner.intern(template_name);
+    let template_id = analyzer
+        .interner
+        .find(template_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     let passed_type_params: Option<Vec<TUnion>> = if let Some(params) = type_params {
         Some(params.clone())
@@ -1470,7 +1486,12 @@ fn collect_destructuring_safe_var_ids(
             if let Expression::Variable(Variable::Direct(direct)) =
                 unwrap_reference_target(expr).unparenthesized()
             {
-                safe_var_ids.push(analyzer.interner.intern(direct.name));
+                safe_var_ids.push(
+                    analyzer
+                        .interner
+                        .find(direct.name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                );
             }
         }
     }
@@ -1523,7 +1544,10 @@ fn classlike_iterator_method_return(
     if !implements_iterator {
         return None;
     }
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let method = class_info.methods.get(&method_id)?;
     method.get_return_type().cloned()
 }
@@ -1536,7 +1560,10 @@ fn classlike_get_iterator_return(
     name: pzoom_str::StrId,
 ) -> Option<TUnion> {
     let class_info = analyzer.codebase.get_class(name)?;
-    let get_iterator_id = analyzer.interner.intern("getIterator");
+    let get_iterator_id = analyzer
+        .interner
+        .find("getIterator")
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let method = class_info.methods.get(&get_iterator_id)?;
     let return_type = method.get_return_type()?.clone();
     let is_self_cycle = return_type.types.iter().any(

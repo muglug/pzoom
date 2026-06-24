@@ -321,7 +321,10 @@ fn handle_constant_call(
         return None;
     }
 
-    let const_id = analyzer.interner.intern(const_name);
+    let const_id = analyzer
+        .interner
+        .find(const_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // `define()`-created constants tracked in this scope take precedence,
     // matching the `$context->hasVariable($fq_const_name)` branch of
@@ -362,7 +365,10 @@ fn apply_define_side_effect(
         .map(|t| (*t).clone())
         .unwrap_or_else(TUnion::mixed);
 
-    let const_id = analyzer.interner.intern(const_name);
+    let const_id = analyzer
+        .interner
+        .find(const_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     context.defined_constants.insert(const_id, const_value_type);
 }
 
@@ -427,13 +433,21 @@ fn extract_class_alias_name(
                 }
             }
 
-            Some(analyzer.interner.intern(normalized.as_str()))
+            Some(
+                analyzer
+                    .interner
+                    .find(normalized.as_str())
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            )
         }
         Expression::Identifier(identifier) => {
             let offset = identifier.span().start.offset;
-            let class_id = analyzer
-                .get_resolved_name(offset)
-                .unwrap_or_else(|| analyzer.interner.intern(identifier.value()));
+            let class_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
+                analyzer
+                    .interner
+                    .find(identifier.value())
+                    .unwrap_or(pzoom_str::StrId::EMPTY)
+            });
             Some(
                 context
                     .class_aliases
@@ -454,9 +468,12 @@ fn resolve_aliasable_class_id(
     let class_id = match expr.unparenthesized() {
         Expression::Identifier(id) => {
             let offset = id.span().start.offset;
-            analyzer
-                .get_resolved_name(offset)
-                .unwrap_or_else(|| analyzer.interner.intern(id.value()))
+            analyzer.get_resolved_name(offset).unwrap_or_else(|| {
+                analyzer
+                    .interner
+                    .find(id.value())
+                    .unwrap_or(pzoom_str::StrId::EMPTY)
+            })
         }
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class()?,
         Expression::Parent(_) => analyzer.get_declaring_class().and_then(|class_id| {
@@ -664,7 +681,10 @@ fn atomic_method_exists_possibility(
             }
         }
         TAtomic::TLiteralClassString { name } => {
-            let class_id = analyzer.interner.intern(name.trim_start_matches('\\'));
+            let class_id = analyzer
+                .interner
+                .find(name.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if class_or_ancestor_has_method(analyzer, class_id, method_name) {
                 (true, false)
             } else if class_could_have_undeclared_method(analyzer, class_id) {
@@ -771,7 +791,10 @@ fn class_has_method_case_insensitive(
     class_info: &pzoom_code_info::ClassLikeInfo,
     method_name: &str,
 ) -> bool {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     // method_exists() reflects PHP runtime semantics, which are
     // case-insensitive, regardless of pzoom's case-sensitive resolution.
     class_info.methods.contains_key(&method_id)

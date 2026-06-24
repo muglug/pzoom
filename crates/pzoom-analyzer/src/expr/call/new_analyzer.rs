@@ -135,7 +135,12 @@ pub fn analyze(
         );
         let custom_call_sink = DataFlowNode {
             id: pzoom_code_info::data_flow::node::DataFlowNodeId::SpecializedFunctionLikeArg(
-                FunctionLikeIdentifier::Function(analyzer.interner.intern("variable-call")),
+                FunctionLikeIdentifier::Function(
+                    analyzer
+                        .interner
+                        .find("variable-call")
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                ),
                 0,
                 sink_pos.file_path,
                 sink_pos.start_offset,
@@ -270,7 +275,10 @@ pub fn analyze(
                     false,
                 );
             }
-            let construct_lc = analyzer.interner.intern("__construct");
+            let construct_lc = analyzer
+                .interner
+                .find("__construct")
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             analysis_data
                 .referenced_class_members
                 .insert((concrete_class_id, construct_lc));
@@ -504,7 +512,9 @@ pub fn analyze(
             // we're inside a `throw`. Classes with no constructor, or an
             // external-mutation-free constructor (immutable/EMF class, or one
             // that only assigns simple values to its own properties), are exempt.
-            if analyzer.function_info.is_some_and(|function_info| function_info.is_pure)
+            if analyzer
+                .function_info
+                .is_some_and(|function_info| function_info.is_pure)
                 && !context.inside_throw
             {
                 let resolved_constructor = class_info
@@ -1011,7 +1021,12 @@ fn emit_definite_dynamic_instantiation_issues(
             return;
         };
 
-        literal_class_ids.push(analyzer.interner.intern(name.trim_start_matches('\\')));
+        literal_class_ids.push(
+            analyzer
+                .interner
+                .find(name.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        );
     }
 
     if literal_class_ids.is_empty() {
@@ -1082,7 +1097,8 @@ fn get_resolved_class_id(
                     Some(
                         analyzer
                             .interner
-                            .intern(id.value().trim_start_matches('\\')),
+                            .find(id.value().trim_start_matches('\\'))
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
         }
@@ -1119,11 +1135,19 @@ fn infer_concrete_class_id_from_class_expr_type(
     let atomic = class_expr_type.get_single()?;
 
     let raw_class_id = match atomic {
-        TAtomic::TLiteralClassString { name } => Some(analyzer.interner.intern(name)),
+        TAtomic::TLiteralClassString { name } => Some(
+            analyzer
+                .interner
+                .find(name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        ),
         // `$d = "Foo"; new $d;` — Psalm resolves the literal string.
-        TAtomic::TLiteralString { value } => {
-            Some(analyzer.interner.intern(value.trim_start_matches('\\')))
-        }
+        TAtomic::TLiteralString { value } => Some(
+            analyzer
+                .interner
+                .find(value.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        ),
         TAtomic::TClassString {
             as_type: Some(as_type),
         }
@@ -1918,7 +1942,10 @@ fn emit_dynamic_instantiation_issues(
 
     for atomic in &class_expr_type.types {
         if let TAtomic::TLiteralString { value } = atomic {
-            let class_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+            let class_id = analyzer
+                .interner
+                .find(value.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if analyzer.codebase.get_class(class_id).is_some() {
                 continue;
             }
@@ -2091,7 +2118,10 @@ fn is_dynamic_instantiable_atomic(analyzer: &StatementsAnalyzer<'_>, atomic: &TA
     // A literal string naming an existing class instantiates fine in Psalm
     // (`$d = "Foo"; new $d;`).
     if let TAtomic::TLiteralString { value } = atomic {
-        let class_id = analyzer.interner.intern(value.trim_start_matches('\\'));
+        let class_id = analyzer
+            .interner
+            .find(value.trim_start_matches('\\'))
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         return analyzer.codebase.get_class(class_id).is_some();
     }
     matches!(
@@ -2130,7 +2160,10 @@ fn collect_instantiable_atomic(
         TAtomic::TLiteralClassString { name } => push_unique_atomic(
             inferred_types,
             TAtomic::TNamedObject {
-                name: analyzer.interner.intern(name.trim_start_matches('\\')),
+                name: analyzer
+                    .interner
+                    .find(name.trim_start_matches('\\'))
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
                 type_params: None,
                 is_static: false,
                 remapped_params: false,

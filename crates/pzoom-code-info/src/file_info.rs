@@ -56,6 +56,13 @@ pub struct FileInfo {
     /// name), validated against the populated codebase during analysis.
     #[serde(default)]
     pub type_alias_imports: Vec<(StrId, String)>,
+    /// Name resolution computed during scanning: AST node offset -> resolved
+    /// fully-qualified `StrId`. Analysis reuses this map (keyed by the same
+    /// offsets, since it re-parses the identical file contents) instead of
+    /// re-resolving names, which would have to intern — impossible while
+    /// analysis only holds a shared `&Interner`.
+    #[serde(default)]
+    pub resolved_names: FxHashMap<u32, StrId>,
 }
 
 fn default_true() -> bool {

@@ -100,18 +100,24 @@ fn main() {
         let mut scan_result = scanner.finish();
 
         // Builtin signatures come from Psalm's CallMap for the harness default
-        // PHP version; per-test version pins re-apply on their clone.
-        pzoom_orchestrator::apply_call_map(
-            &mut scan_result.codebase,
-            &scan_result.interner,
-            BASE_CALLMAP_PHP_VERSION_ID,
-        );
+        // PHP version; per-test version pins re-apply on their clone. The
+        // CallMap pass interns through a threaded interner.
+        let shared_interner = scan_result.interner.into_shared();
+        {
+            let threaded = pzoom_str::ThreadedInterner::new(shared_interner.clone());
+            pzoom_orchestrator::apply_call_map(
+                &mut scan_result.codebase,
+                &threaded,
+                BASE_CALLMAP_PHP_VERSION_ID,
+            );
+        }
+        let mut interner = pzoom_str::unwrap_shared(shared_interner);
 
         // Populate the stub codebase once here: per-test populate then only
         // touches the test file's own symbols (is_populated flags skip the
         // rest), mirroring how Hakana reuses its pre-built core codebase.
         {
-            let mut populator = Populator::new(&mut scan_result.codebase, &scan_result.interner);
+            let mut populator = Populator::new(&mut scan_result.codebase, &mut interner);
             populator.populate();
         }
 
@@ -125,7 +131,7 @@ fn main() {
 
         Some(BaseCodebase {
             codebase: scan_result.codebase,
-            interner: scan_result.interner,
+            interner,
             stub_files: scan_result.stub_files,
         })
     } else {
@@ -335,8 +341,8 @@ fn run_test_with_base(
 
     // Scan just the test file (through a single-thread ThreadedInterner
     // handle, as the declaration collector requires).
-    let interner_arc = std::sync::Arc::new(interner);
-    let threaded_interner = pzoom_str::ThreadedInterner::new(interner_arc.clone());
+    let shared_interner = interner.into_shared();
+    let threaded_interner = pzoom_str::ThreadedInterner::new(shared_interner.clone());
     let file_path_id = threaded_interner.intern(&input_path);
     let file_id = pzoom_syntax::FileId::new(&input_path);
 
@@ -369,6 +375,8 @@ fn run_test_with_base(
         }
     }
 
+    let resolved_names = pzoom_syntax::resolve_names(&program, &threaded_interner);
+
     let collector = pzoom_syntax::DeclarationCollector::new(
         &threaded_interner,
         file_path_id,
@@ -396,6 +404,7 @@ fn run_test_with_base(
         is_in_project_dirs: true,
         inline_annotations,
         type_alias_imports: std::mem::take(&mut declarations.type_alias_imports),
+        resolved_names,
     };
     codebase.files.insert(file_path_id, file_info);
 
@@ -440,13 +449,12 @@ fn run_test_with_base(
     }
 
     drop(threaded_interner);
-    let interner = std::sync::Arc::try_unwrap(interner_arc)
-        .expect("single-thread interner handle dropped above");
+    let interner = pzoom_str::unwrap_shared(shared_interner);
 
     // Run analysis
     run_analysis_and_compare(
         &mut codebase,
-        &interner,
+        interner,
         &stub_files,
         &input_path,
         &output_path,
@@ -540,7 +548,7 @@ fn run_test(test_folder: &str, stubs_path: &str, update: bool, verbose: bool) ->
 
     run_analysis_and_compare(
         &mut codebase,
-        &interner,
+        interner,
         &stub_files,
         &input_path,
         &output_path,
@@ -552,7 +560,7 @@ fn run_test(test_folder: &str, stubs_path: &str, update: bool, verbose: bool) ->
 /// Run analysis and compare results to expected output.
 fn run_analysis_and_compare(
     codebase: &mut CodebaseInfo,
-    interner: &Interner,
+    interner: Interner,
     _stub_files: &FxHashSet<pzoom_str::StrId>,
     input_path: &str,
     output_path: &str,
@@ -625,15 +633,20 @@ fn run_analysis_and_compare(
     }
 
     // Builtin signatures come from Psalm's CallMap for the analysis version;
-    // skip when the (reused) base codebase was already applied for it.
+    // skip when the (reused) base codebase was already applied for it. The
+    // CallMap pass interns through a threaded interner; recover the owned form
+    // afterwards for populate (&mut) and analysis (&).
+    let shared_interner = interner.into_shared();
     if applied_callmap_php_version_id != config.php_version_id() {
-        pzoom_orchestrator::apply_call_map(codebase, interner, config.php_version_id());
+        let threaded = pzoom_str::ThreadedInterner::new(shared_interner.clone());
+        pzoom_orchestrator::apply_call_map(codebase, &threaded, config.php_version_id());
     }
+    let mut interner = pzoom_str::unwrap_shared(shared_interner);
 
     // Populate
     let t_pop = Instant::now();
     {
-        let mut populator = Populator::new(codebase, interner);
+        let mut populator = Populator::new(codebase, &mut interner);
         populator.populate();
     }
     if config.all_constants_global {
@@ -642,7 +655,7 @@ fn run_analysis_and_compare(
     // Post-populate plugin hook (e.g. PHPUnit flags TestCase subclasses + test
     // methods, validates @dataProvider) on this test's cloned codebase.
     let plugin_issues =
-        pzoom_analyzer::plugin::run_after_populate(&config.plugins, codebase, interner);
+        pzoom_analyzer::plugin::run_after_populate(&config.plugins, codebase, &interner);
     let pop_ms = t_pop.elapsed().as_secs_f64() * 1000.0;
 
     // Analyze only non-stub files (the test file): stubs provide type
@@ -650,7 +663,7 @@ fn run_analysis_and_compare(
     // analyzing the whole stub set per test dominated the runtime (~165ms of
     // a ~170ms test).
     let t_an = Instant::now();
-    let analyzer = Analyzer::new(codebase, interner, &config);
+    let analyzer = Analyzer::new(codebase, &interner, &config);
     let files_to_analyze: Vec<pzoom_str::StrId> = codebase
         .files
         .iter()

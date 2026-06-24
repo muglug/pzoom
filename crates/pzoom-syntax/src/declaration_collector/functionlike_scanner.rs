@@ -94,9 +94,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     ) else {
                         continue;
                     };
-                    let parsed_type =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     let resolved_type = self.resolve_docblock_union_type(
                         parsed_type,
                         None,

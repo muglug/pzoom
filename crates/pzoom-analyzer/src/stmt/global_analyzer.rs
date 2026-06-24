@@ -82,7 +82,12 @@ pub fn analyze(
             let span = variable.span();
             let decl_node = pzoom_code_info::DataFlowNode::get_for_variable_source(
                 pzoom_code_info::VariableSourceKind::Default,
-                pzoom_code_info::VarId(analyzer.interner.intern(&var_id)),
+                pzoom_code_info::VarId(
+                    analyzer
+                        .interner
+                        .find(&var_id)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                ),
                 crate::data_flow::make_data_flow_node_position(
                     analyzer,
                     (span.start.offset, span.end.offset),

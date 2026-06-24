@@ -200,7 +200,9 @@ impl CodebaseInfo {
         requested: StrId,
     ) -> Option<StrId> {
         let lc = interner.lookup(requested).to_ascii_lowercase();
-        let lc_id = interner.intern(&lc);
+        // Read-only: the lowercase form was interned during populate, so a
+        // miss means there is no case-only match to suggest.
+        let lc_id = interner.find(&lc)?;
         let cased = if self.classlike_infos.contains_key(&lc_id) {
             lc_id
         } else {
@@ -216,7 +218,9 @@ impl CodebaseInfo {
         requested: StrId,
     ) -> Option<StrId> {
         let lc = interner.lookup(requested).to_ascii_lowercase();
-        let lc_id = interner.intern(&lc);
+        // Read-only: the lowercase form was interned during populate, so a
+        // miss means there is no case-only match to suggest.
+        let lc_id = interner.find(&lc)?;
         let cased = if self.functionlike_infos.contains_key(&lc_id) {
             lc_id
         } else {
@@ -1104,6 +1108,7 @@ mod stub_augmentation_tests {
             is_in_project_dirs: in_project,
             inline_annotations: Default::default(),
             type_alias_imports: Vec::new(),
+            resolved_names: Default::default(),
         }
     }
 

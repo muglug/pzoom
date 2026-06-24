@@ -1804,14 +1804,22 @@ pub(crate) fn collect_call_by_ref_assignments(
     let raw_name = function_identifier.value();
     let resolved_name_id = analyzer
         .get_resolved_name(function_identifier.start_offset() as u32)
-        .unwrap_or_else(|| analyzer.interner.intern(raw_name));
+        .unwrap_or_else(|| {
+            analyzer
+                .interner
+                .find(raw_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY)
+        });
     let function_info = analyzer
         .codebase
         .get_function(resolved_name_id)
         .or_else(|| {
-            analyzer
-                .codebase
-                .get_function(analyzer.interner.intern(raw_name))
+            analyzer.codebase.get_function(
+                analyzer
+                    .interner
+                    .find(raw_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            )
         });
 
     for (idx, arg) in function_call.argument_list.arguments.iter().enumerate() {

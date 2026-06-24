@@ -700,10 +700,7 @@ fn reconcile_loosely_equal(
     if existing_var_type.types.len() == 1
         && matches!(
             existing_var_type.types[0],
-            TAtomic::TScalar
-                | TAtomic::TNonEmptyScalar
-                | TAtomic::TNumeric
-                | TAtomic::TArrayKey
+            TAtomic::TScalar | TAtomic::TNonEmptyScalar | TAtomic::TNumeric | TAtomic::TArrayKey
         )
     {
         return Some(existing_var_type.clone());
@@ -721,10 +718,7 @@ fn reconcile_loosely_equal(
         asserted,
         TAtomic::TInt | TAtomic::TIntRange { .. } | TAtomic::TLiteralInt { .. }
     );
-    let asserted_is_float = matches!(
-        asserted,
-        TAtomic::TFloat | TAtomic::TLiteralFloat { .. }
-    );
+    let asserted_is_float = matches!(asserted, TAtomic::TFloat | TAtomic::TLiteralFloat { .. });
     if !(asserted_is_int || asserted_is_float || is_loose_string_atomic(asserted)) {
         // Non-scalar asserted (object/array/…): loose behaves like strict.
         return None;
@@ -732,7 +726,11 @@ fn reconcile_loosely_equal(
 
     // `null == <falsy>` is possible (`null == 0`/`""`/`false`); to avoid a false
     // impossibility we keep a nullable type rather than reasoning per-value.
-    if existing_var_type.types.iter().any(|a| matches!(a, TAtomic::TNull)) {
+    if existing_var_type
+        .types
+        .iter()
+        .any(|a| matches!(a, TAtomic::TNull))
+    {
         return Some(existing_var_type.clone());
     }
 
@@ -760,7 +758,11 @@ fn reconcile_loosely_equal(
 
     // A non-literal numeric/string holder could coerce-match — keep it (Psalm's
     // "accept non-literal type that could match on loose equality" fallback).
-    if existing_var_type.types.iter().any(is_nonliteral_numeric_or_string) {
+    if existing_var_type
+        .types
+        .iter()
+        .any(is_nonliteral_numeric_or_string)
+    {
         return Some(existing_var_type.clone());
     }
 
@@ -772,7 +774,10 @@ fn reconcile_loosely_equal(
         .cloned()
         .collect();
     if !kept.is_empty() {
-        return Some(with_docblock_from(TUnion::from_types(kept), existing_var_type));
+        return Some(with_docblock_from(
+            TUnion::from_types(kept),
+            existing_var_type,
+        ));
     }
 
     // Nothing can be loosely equal — fall through to the strict impossibility.
@@ -829,10 +834,7 @@ fn loose_literal_match(existing: &TAtomic, asserted: &TAtomic) -> bool {
     match (loose_numeric_value(existing), loose_numeric_value(asserted)) {
         (Some(a), Some(b)) => a == b,
         _ => match (existing, asserted) {
-            (
-                TAtomic::TLiteralString { value: e },
-                TAtomic::TLiteralString { value: a },
-            ) => e == a,
+            (TAtomic::TLiteralString { value: e }, TAtomic::TLiteralString { value: a }) => e == a,
             _ => false,
         },
     }

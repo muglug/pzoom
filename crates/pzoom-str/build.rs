@@ -367,6 +367,21 @@ fn main() -> Result<()> {
         "ReflectionNamedType",
         "ReflectionParameter",
         "ReflectionObject",
+        // Synthetic data-flow label for variable calls (`$fn()`); produced only
+        // during analysis, so it is preloaded here to keep a stable id that
+        // analysis can resolve with a read-only `find`.
+        "variable-call",
+        // Language-construct labels for taint data-flow sinks (Psalm models
+        // these as pseudo function calls). They never appear as scanned
+        // function names, so preload them to keep their node ids resolvable
+        // read-only during analysis.
+        "echo",
+        "print",
+        "exit",
+        "die",
+        "eval",
+        "shell_exec",
+        "include",
     ];
 
     let mut seen = std::collections::HashSet::new();

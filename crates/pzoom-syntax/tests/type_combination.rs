@@ -12,10 +12,10 @@
 
 use pzoom_code_info::TUnion;
 use pzoom_code_info::ttype::type_combiner;
-use pzoom_str::Interner;
+use pzoom_str::ThreadedInterner;
 use pzoom_syntax::docblock::parse_type_string;
 
-fn combine_to_id(types: &[&str], interner: &Interner, reverse: bool) -> String {
+fn combine_to_id(types: &[&str], interner: &ThreadedInterner, reverse: bool) -> String {
     let mut atomics = Vec::new();
     for type_str in types {
         let parsed = parse_type_string(type_str, interner)
@@ -26,7 +26,7 @@ fn combine_to_id(types: &[&str], interner: &Interner, reverse: bool) -> String {
         atomics.reverse();
     }
     let combined = type_combiner::combine(atomics, false);
-    TUnion::from_types(combined).get_id(Some(interner))
+    TUnion::from_types(combined).get_id(Some(&interner.lock_parent()))
 }
 
 struct Case {
@@ -638,7 +638,7 @@ const KNOWN_DIVERGENCES: &[(&str, &str)] = &[
 
 #[test]
 fn type_combination_matches_psalm() {
-    let interner = Interner::default();
+    let interner = ThreadedInterner::standalone(pzoom_str::Interner::default());
     let mut failures = Vec::new();
     for case in CASES {
         let expected = KNOWN_DIVERGENCES

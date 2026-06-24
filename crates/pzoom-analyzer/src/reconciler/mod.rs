@@ -405,7 +405,10 @@ pub fn reconcile_keyed_types(
                     && result.as_ref().is_some_and(|result| result.is_nothing())
                     && !base_type.is_nothing()
                 {
-                    if assertion_group.iter().any(|assertion| assertion.has_negation()) {
+                    if assertion_group
+                        .iter()
+                        .any(|assertion| assertion.has_negation())
+                    {
                         result = Some(base_type.clone());
                     } else {
                         let mut asserted: Option<TUnion> = None;
@@ -949,9 +952,9 @@ fn get_missing_type(assertion: &Assertion, inside_loop: bool) -> TUnion {
         Assertion::ArrayKeyExists
         | Assertion::NonEmptyCountable(_)
         | Assertion::HasExactCount(_) => TUnion::mixed(),
-        Assertion::IsType(atomic) | Assertion::IsEqual(atomic) | Assertion::IsLooselyEqual(atomic) => {
-            TUnion::new(atomic.clone())
-        }
+        Assertion::IsType(atomic)
+        | Assertion::IsEqual(atomic)
+        | Assertion::IsLooselyEqual(atomic) => TUnion::new(atomic.clone()),
         _ => TUnion::mixed(),
     }
 }
@@ -1063,7 +1066,10 @@ fn get_value_for_key(
                 continue;
             }
             let method_name = property_name.strip_suffix("()");
-            let property_id = analyzer.interner.intern(&property_name);
+            let property_id = analyzer
+                .interner
+                .find(&property_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let mut new_type: Option<TUnion> = None;
 
             // Psalm walks a worklist here: a TTemplateParam atomic is replaced
@@ -1180,7 +1186,10 @@ fn resolve_method_return_type_from_key(
         return Some(Some(TUnion::mixed()));
     }
 
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let mut current = Some(class_id);
     while let Some(current_id) = current {
         let Some(class_info) = analyzer.codebase.get_class(current_id) else {
@@ -1469,7 +1478,10 @@ fn resolve_class_constant_type_from_key(
 ) -> Option<TUnion> {
     let (class_name, constant_name) = key.split_once("::")?;
     let class_id = resolve_class_id_from_key(class_name, analyzer)?;
-    let const_id = analyzer.interner.intern(constant_name);
+    let const_id = analyzer
+        .interner
+        .find(constant_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     find_class_constant_in_hierarchy(analyzer, class_id, const_id, &mut FxHashSet::default())
 }
@@ -1480,7 +1492,10 @@ fn resolve_static_property_type_from_key(
 ) -> Option<TUnion> {
     let (class_name, property_name) = key.split_once("::$")?;
     let class_id = resolve_class_id_from_key(class_name, analyzer)?;
-    let property_id = analyzer.interner.intern(property_name);
+    let property_id = analyzer
+        .interner
+        .find(property_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     find_static_property_in_hierarchy(analyzer, class_id, property_id, &mut FxHashSet::default())
 }
@@ -2054,9 +2069,7 @@ fn adjust_tkeyed_array_type(
                     params,
                     is_list: true,
                     ..
-                } if known_values.is_empty()
-                    && matches!(offset, ArrayKey::Int(n) if *n >= 0) =>
-                {
+                } if known_values.is_empty() && matches!(offset, ArrayKey::Int(n) if *n >= 0) => {
                     let mut new_known_values = FxHashMap::default();
                     let fallback_value = params.as_deref().map(|(_, value)| value.clone());
                     let entry_undefined = result_type.possibly_undefined_from_try;

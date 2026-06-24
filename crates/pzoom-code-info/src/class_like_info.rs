@@ -329,7 +329,9 @@ impl ClassLikeInfo {
         requested: StrId,
     ) -> Option<StrId> {
         let lc = interner.lookup(requested).to_ascii_lowercase();
-        let lc_id = interner.intern(&lc);
+        // Read-only: the lowercase form was interned during populate, so a
+        // miss means there is no case-only match to suggest.
+        let lc_id = interner.find(&lc)?;
         let cased = if self.methods.contains_key(&lc_id) {
             lc_id
         } else {

@@ -171,9 +171,7 @@ fn read_map_lossy(path: &Path) -> Option<String> {
 /// the piece rather than requiring it as a prefix.
 fn join_var_path(value: &str, vendor_dir: &Path, base_dir: &Path) -> Option<PathBuf> {
     let (root, rest) = match (value.find("$vendorDir"), value.find("$baseDir")) {
-        (Some(i), v) if v.is_none_or(|j| i < j) => {
-            (vendor_dir, &value[i + "$vendorDir".len()..])
-        }
+        (Some(i), v) if v.is_none_or(|j| i < j) => (vendor_dir, &value[i + "$vendorDir".len()..]),
         (_, Some(j)) => (base_dir, &value[j + "$baseDir".len()..]),
         _ => return None,
     };
@@ -248,13 +246,21 @@ mod tests {
         // valid UTF-8, which used to make `read_to_string` discard every entry.
         let mut classmap = Vec::new();
         classmap.extend_from_slice(b"<?php\n$vendorDir = dirname(__DIR__);\nreturn array(\n");
-        classmap.extend_from_slice(b"    'Acme\\\\Widget' => $vendorDir . '/acme/lib/src/Widget.php',\n");
+        classmap.extend_from_slice(
+            b"    'Acme\\\\Widget' => $vendorDir . '/acme/lib/src/Widget.php',\n",
+        );
         classmap.extend_from_slice(b"    '");
         classmap.push(0xA9);
-        classmap.extend_from_slice(b"' => $vendorDir . '/symfony/cache/Traits/ValueWrapper.php',\n);\n");
+        classmap.extend_from_slice(
+            b"' => $vendorDir . '/symfony/cache/Traits/ValueWrapper.php',\n);\n",
+        );
         fs::write(composer.join("autoload_classmap.php"), &classmap).unwrap();
 
-        fs::write(composer.join("autoload_psr4.php"), b"<?php\nreturn array(\n);\n").unwrap();
+        fs::write(
+            composer.join("autoload_psr4.php"),
+            b"<?php\nreturn array(\n);\n",
+        )
+        .unwrap();
 
         // PSR-0 Zend-style library on disk.
         let expr = vendor.join("acme/zend/library/Zend/Db/Expr.php");

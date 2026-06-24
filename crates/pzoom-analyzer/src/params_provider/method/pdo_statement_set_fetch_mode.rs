@@ -35,7 +35,7 @@ impl MethodParamsProvider for PdoStatementSetFetchMode {
 
         let interner = event.analyzer.interner;
         let make_param = |name: &str, param_type: TUnion| ParamInfo {
-            name: interner.intern(name),
+            name: interner.find(name).unwrap_or(pzoom_str::StrId::EMPTY),
             signature_type: Some(param_type),
             ..Default::default()
         };

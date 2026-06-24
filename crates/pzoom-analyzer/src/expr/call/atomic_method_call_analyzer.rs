@@ -320,7 +320,10 @@ pub(crate) fn get_method_return_type(
                     // interner lookup is needed to recognise one); resolve the
                     // method from there. Unknown methods stay exempt from
                     // issues (synthetic receiver).
-                    let method_name_id = analyzer.interner.intern(method_name);
+                    let method_name_id = analyzer
+                        .interner
+                        .find(method_name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
                     if let Some(method_info) = anonymous_methods.get(&method_name_id) {
                         has_valid_receiver = true;
                         let method_info = method_info.clone();
@@ -448,7 +451,10 @@ pub(crate) fn get_method_return_type(
                                 .map(|(index, param)| {
                                     pzoom_code_info::functionlike_info::ParamInfo {
                                         name: param.name.unwrap_or_else(|| {
-                                            analyzer.interner.intern(&format!("$arg{}", index))
+                                            analyzer
+                                                .interner
+                                                .find(&format!("$arg{}", index))
+                                                .unwrap_or(pzoom_str::StrId::EMPTY)
                                         }),
                                         param_type: Some(param.param_type.clone()),
                                         is_optional: param.is_optional,
@@ -1711,7 +1717,10 @@ pub(crate) fn record_method_reference(
     context: &BlockContext,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    let method_lc = analyzer.interner.intern(&method_name.to_lowercase());
+    let method_lc = analyzer
+        .interner
+        .find(&method_name.to_lowercase())
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let is_recursion = analyzer.function_info.is_some_and(|caller| {
         analyzer
             .interner

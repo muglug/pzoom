@@ -743,7 +743,10 @@ fn get_debug_type_case_type(analyzer: &StatementsAnalyzer<'_>, case_label: &str)
             TUnion::mixed(),
         ))),
         other => {
-            let class_id = analyzer.interner.intern(other.trim_start_matches('\\'));
+            let class_id = analyzer
+                .interner
+                .find(other.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             analyzer.codebase.get_class(class_id).map(|_| {
                 TUnion::new(TAtomic::TNamedObject {
                     name: class_id,
@@ -872,7 +875,14 @@ pub(crate) fn resolve_class_expression(
     match expr.unparenthesized() {
         Expression::Identifier(id) => analyzer
             .get_resolved_name(id.start_offset() as u32)
-            .or_else(|| Some(analyzer.interner.intern(id.value()))),
+            .or_else(|| {
+                Some(
+                    analyzer
+                        .interner
+                        .find(id.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                )
+            }),
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
         Expression::Parent(_) => analyzer.get_declaring_class().and_then(|class_id| {
             analyzer

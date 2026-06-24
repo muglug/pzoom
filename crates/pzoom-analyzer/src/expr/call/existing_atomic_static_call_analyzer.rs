@@ -291,7 +291,10 @@ pub(crate) fn get_method_info<'a>(
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.methods.get(&method_id).map(|method| &**method)
 }
@@ -301,7 +304,10 @@ pub(crate) fn get_pseudo_method_info<'a>(
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.pseudo_methods.get(&method_id)
 }
@@ -311,7 +317,10 @@ fn get_pseudo_static_method_info<'a>(
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.pseudo_static_methods.get(&method_id)
 }

@@ -745,7 +745,8 @@ fn get_docblock_class_reference(name: StrId, analyzer: &StatementsAnalyzer<'_>) 
 
     analyzer
         .interner
-        .intern(class_name.trim_start_matches('\\'))
+        .find(class_name.trim_start_matches('\\'))
+        .unwrap_or(pzoom_str::StrId::EMPTY)
 }
 
 fn looks_like_docblock_class_reference(raw_name: &str) -> bool {

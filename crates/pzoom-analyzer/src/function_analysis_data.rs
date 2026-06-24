@@ -286,7 +286,8 @@ impl FunctionAnalysisData {
     /// Gated by `PZOOM_TYPE_COVERAGE` so normal runs do nothing.
     #[inline]
     pub fn record_mixedness(&mut self, context: &crate::context::BlockContext, mixed: bool) {
-        if !crate::type_coverage::enabled() || context.collect_initializations || self.in_trait_body {
+        if !crate::type_coverage::enabled() || context.collect_initializations || self.in_trait_body
+        {
             return;
         }
         if mixed {

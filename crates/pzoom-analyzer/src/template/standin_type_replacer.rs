@@ -1411,13 +1411,19 @@ fn extract_class_string_atomic(
         // handleTemplateParamClassStandin binds `new TObject(true)`).
         TAtomic::TClassString { as_type: None } => Some(TAtomic::TObject),
         TAtomic::TLiteralClassString { name } => Some(TAtomic::TNamedObject {
-            name: analyzer.interner.intern(name),
+            name: analyzer
+                .interner
+                .find(name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
             type_params: None,
             is_static: false,
             remapped_params: false,
         }),
         TAtomic::TLiteralString { value } => Some(TAtomic::TNamedObject {
-            name: analyzer.interner.intern(value),
+            name: analyzer
+                .interner
+                .find(value)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
             type_params: None,
             is_static: false,
             remapped_params: false,

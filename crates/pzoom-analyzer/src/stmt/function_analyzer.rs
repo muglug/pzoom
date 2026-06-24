@@ -43,7 +43,10 @@ pub fn analyze(
     };
 
     // Look up the function info from the codebase
-    let func_name_id = analyzer.interner.intern(&fqn);
+    let func_name_id = analyzer
+        .interner
+        .find(&fqn)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let mut function_info = analyzer.codebase.get_function(func_name_id);
 
     // A stored definition at a different location means this declaration
@@ -224,7 +227,12 @@ pub fn analyze(
         let parent_node = crate::data_flow::add_param_dataflow_node(
             &mut analysis_data.data_flow_graph,
             source_kind,
-            VarId(analyzer.interner.intern(&param_name_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(&param_name_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             make_data_flow_node_position(
                 analyzer,
                 (param_span.start.offset, param_span.end.offset),
@@ -1340,7 +1348,10 @@ pub(crate) fn check_param_class_casing(
                 && matches!(atomic, TAtomic::TResource)
                 && !param_type.from_docblock
             {
-                let resource_id = analyzer.interner.intern("resource");
+                let resource_id = analyzer
+                    .interner
+                    .find("resource")
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 if emitted.insert((start_offset, resource_id)) {
                     let (line, col) = analyzer.get_line_column(start_offset);
                     analysis_data.add_issue(Issue::new(
@@ -1723,7 +1734,8 @@ fn report_key_value_of_sentinel(
             function_info,
             analyzer
                 .interner
-                .intern(class_part.trim_start_matches('\\')),
+                .find(class_part.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY),
         )
     };
     let unresolvable = match resolved_class {
@@ -1731,8 +1743,14 @@ fn report_key_value_of_sentinel(
         Some(class_id) => !docblock_class_constant_exists(analyzer, class_id, constant_part),
     };
     if unresolvable {
-        let constant_id = analyzer.interner.intern(constant_part);
-        let class_key = analyzer.interner.intern(class_part);
+        let constant_id = analyzer
+            .interner
+            .find(constant_part)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
+        let class_key = analyzer
+            .interner
+            .find(class_part)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if emitted.insert((class_key, constant_id)) {
             let (line, col) = analyzer.get_line_column(function_info.start_offset);
             analysis_data.add_issue(Issue::new(
@@ -1862,7 +1880,10 @@ fn inspect_atomic_for_docblock_refs(
 
             if let Some((class_part, constant_part)) = raw_name.split_once("::") {
                 let class_name = class_part.trim().trim_start_matches('\\');
-                let class_id = analyzer.interner.intern(class_name);
+                let class_id = analyzer
+                    .interner
+                    .find(class_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 let Some(actual_class_id) =
                     resolve_docblock_class_id(analyzer, function_info, class_id)
                 else {
@@ -1880,7 +1901,10 @@ fn inspect_atomic_for_docblock_refs(
                 if !constant_name.eq_ignore_ascii_case("class")
                     && !docblock_class_constant_exists(analyzer, actual_class_id, constant_name)
                 {
-                    let constant_id = analyzer.interner.intern(constant_name);
+                    let constant_id = analyzer
+                        .interner
+                        .find(constant_name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
                     if emitted_constants.insert((actual_class_id, constant_id)) {
                         let (line, col) = analyzer.get_line_column(function_info.start_offset);
                         analysis_data.add_issue(Issue::new(
@@ -1900,7 +1924,10 @@ fn inspect_atomic_for_docblock_refs(
                 }
             } else {
                 let class_name = raw_name.trim_start_matches('\\');
-                let class_id = analyzer.interner.intern(class_name);
+                let class_id = analyzer
+                    .interner
+                    .find(class_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 if resolve_docblock_class_id(analyzer, function_info, class_id).is_none() {
                     emit_undefined_docblock_class_issue(
                         analyzer,
@@ -2074,7 +2101,8 @@ fn resolve_docblock_class_id(
     let namespace = function_name.rsplit_once('\\').map(|(ns, _)| ns)?;
     let namespaced_candidate = analyzer
         .interner
-        .intern(&format!("{namespace}\\{class_name}"));
+        .find(&format!("{namespace}\\{class_name}"))
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     analyzer
         .codebase
@@ -2111,7 +2139,10 @@ fn docblock_class_constant_exists(
                 return true;
             }
         } else {
-            let constant_id = analyzer.interner.intern(constant_name);
+            let constant_id = analyzer
+                .interner
+                .find(constant_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if class_info.constants.contains_key(&constant_id) {
                 return true;
             }

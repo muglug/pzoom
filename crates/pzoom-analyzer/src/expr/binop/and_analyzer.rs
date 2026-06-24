@@ -3,9 +3,9 @@
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::expression::Expression;
 
+use pzoom_code_info::TUnion;
 use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{Clause, get_truths_from_formula, simplify_cnf};
-use pzoom_code_info::TUnion;
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
@@ -214,7 +214,9 @@ pub fn analyze(
         for (var_id, count) in &context.assigned_var_ids {
             inner.assigned_var_ids.insert(var_id.clone(), *count);
         }
-        inner.reconciled_expression_clauses.extend(reconciled_clauses);
+        inner
+            .reconciled_expression_clauses
+            .extend(reconciled_clauses);
         inner
             .vars_possibly_in_scope
             .extend(context.vars_possibly_in_scope.iter().cloned());

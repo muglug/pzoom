@@ -202,7 +202,7 @@ fn expand_atomic(
                 && !inner.trim_start().get(..8).is_some_and(|prefix| prefix.eq_ignore_ascii_case("static::"))
                 && !inner.trim_start().starts_with("$this::")
                 && let Some(constant_types) = resolve_class_constant_token(
-                    interner.intern(inner),
+                    interner.find(inner).unwrap_or(pzoom_str::StrId::EMPTY),
                     codebase,
                     interner,
                     options,
@@ -288,9 +288,7 @@ fn expand_atomic(
                 }
             }
         }
-        TAtomic::TTemplateParam { as_type, .. }
-            if options.resolve_template_param_bounds =>
-        {
+        TAtomic::TTemplateParam { as_type, .. } if options.resolve_template_param_bounds => {
             // Resolve the template to its `as` bound (recursing so a nested
             // template bound is resolved too), then drop the param itself.
             expand_union(codebase, interner, as_type, options);
@@ -369,7 +367,7 @@ fn resolve_class_constant_token(
         },
         "parent" => options.parent_class?,
         // Already namespace/alias-resolved at scan time (names resolve once).
-        _ => interner.intern(class_part),
+        _ => interner.find(class_part).unwrap_or(pzoom_str::StrId::EMPTY),
     };
     let class_info = codebase.get_class(class_id)?;
 
@@ -386,7 +384,9 @@ fn resolve_class_constant_token(
             }
         }
     } else {
-        let constant_id = interner.intern(constant_part);
+        let constant_id = interner
+            .find(constant_part)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         resolved = class_info
             .constants
             .get(&constant_id)

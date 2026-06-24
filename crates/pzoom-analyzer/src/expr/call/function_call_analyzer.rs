@@ -237,7 +237,12 @@ pub fn analyze(
             let functionlike_id = pre_resolved_func_info
                 .map(|info| FunctionLikeIdentifier::Function(info.name))
                 .unwrap_or_else(|| {
-                    FunctionLikeIdentifier::Function(analyzer.interner.intern(name))
+                    FunctionLikeIdentifier::Function(
+                        analyzer
+                            .interner
+                            .find(name)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
                 });
             let return_type = add_function_call_dataflow(
                 analyzer,
@@ -644,7 +649,10 @@ pub fn analyze(
                 && let Some((class_part, method_part)) = value.split_once("::")
             {
                 let class_part = class_part.trim_start_matches('\\');
-                let class_id = analyzer.interner.intern(class_part);
+                let class_id = analyzer
+                    .interner
+                    .find(class_part)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 if let Some(class_info) = analyzer.codebase.get_class(class_id) {
                     if analyzer.config.find_unused_code && context.self_class != Some(class_id) {
                         analysis_data.referenced_classes.insert(class_id);
@@ -658,7 +666,10 @@ pub fn analyze(
                         callable_validation::get_method_info(analyzer, class_info, method_part)
                     {
                         if analyzer.config.find_unused_code {
-                            let method_lc = analyzer.interner.intern(&method_part.to_lowercase());
+                            let method_lc = analyzer
+                                .interner
+                                .find(&method_part.to_lowercase())
+                                .unwrap_or(pzoom_str::StrId::EMPTY);
                             analysis_data
                                 .referenced_class_members
                                 .insert((class_id, method_lc));
@@ -1060,7 +1071,12 @@ pub(crate) fn high_order_call_arg_raw_callable(
             let class_id = match static_call.class.unparenthesized() {
                 Expression::Identifier(class_name) => analyzer
                     .get_resolved_name(class_name.span().start.offset)
-                    .unwrap_or_else(|| analyzer.interner.intern(class_name.value())),
+                    .unwrap_or_else(|| {
+                        analyzer
+                            .interner
+                            .find(class_name.value())
+                            .unwrap_or(pzoom_str::StrId::EMPTY)
+                    }),
                 Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class()?,
                 _ => return None,
             };
@@ -1995,7 +2011,10 @@ pub(crate) fn resolve_function<'a>(
         let resolved_name = analyzer.interner.lookup(resolved_name);
         let trimmed = resolved_name.trim_start_matches('\\');
         if trimmed.len() != resolved_name.len() {
-            let func_id = analyzer.interner.intern(trimmed);
+            let func_id = analyzer
+                .interner
+                .find(trimmed)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if let Some(func_info) = analyzer.codebase.get_function(func_id) {
                 return Some(func_info);
             }
@@ -2005,7 +2024,10 @@ pub(crate) fn resolve_function<'a>(
     if is_fully_qualified {
         // Strip leading backslash and look up directly
         let clean_name = name.strip_prefix('\\').unwrap_or(name);
-        let func_id = analyzer.interner.intern(clean_name);
+        let func_id = analyzer
+            .interner
+            .find(clean_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         return analyzer.codebase.get_function(func_id);
     }
 
@@ -2013,14 +2035,20 @@ pub(crate) fn resolve_function<'a>(
     if let Some(ns_id) = context.namespace {
         let ns_str = analyzer.interner.lookup(ns_id);
         let qualified_name = format!("{}\\{}", ns_str, name);
-        let func_id = analyzer.interner.intern(&qualified_name);
+        let func_id = analyzer
+            .interner
+            .find(&qualified_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if let Some(func_info) = analyzer.codebase.get_function(func_id) {
             return Some(func_info);
         }
     }
 
     // Fall back to global namespace
-    let func_id = analyzer.interner.intern(name);
+    let func_id = analyzer
+        .interner
+        .find(name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     analyzer.codebase.get_function(func_id)
 }
 

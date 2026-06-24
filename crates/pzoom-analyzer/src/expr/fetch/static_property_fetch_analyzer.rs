@@ -151,7 +151,10 @@ pub fn analyze(
     if let pzoom_code_info::GraphKind::WholeProgram(_) = analysis_data.data_flow_graph.kind
         && let Some(class_id) = class_id
     {
-        let prop_id = analyzer.interner.intern(prop_name);
+        let prop_id = analyzer
+            .interner
+            .find(prop_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         let node_class = analyzer
             .codebase
             .get_class(class_id)
@@ -224,7 +227,10 @@ fn fetch_static_property(
     context: &BlockContext,
 ) -> Option<TUnion> {
     let class_name = analyzer.interner.lookup(class_id);
-    let prop_id = analyzer.interner.intern(prop_name);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     let Some(class_info) = analyzer.codebase.get_class(class_id) else {
         // Class not found
@@ -451,7 +457,12 @@ fn analyze_variable_static_property_fetch(
 
     for atomic in &class_type.types {
         let target_class_id = match atomic {
-            TAtomic::TLiteralClassString { name } => Some(analyzer.interner.intern(name.as_str())),
+            TAtomic::TLiteralClassString { name } => Some(
+                analyzer
+                    .interner
+                    .find(name.as_str())
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             TAtomic::TClassString {
                 as_type: Some(inner),
             } => match inner.as_ref() {
@@ -541,9 +552,14 @@ fn get_resolved_class_id(
                 })
             } else {
                 let offset = id.span().start.offset;
-                analyzer
-                    .get_resolved_name(offset)
-                    .or_else(|| Some(analyzer.interner.intern(value)))
+                analyzer.get_resolved_name(offset).or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .find(value)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
+                })
             }
         }
         Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),

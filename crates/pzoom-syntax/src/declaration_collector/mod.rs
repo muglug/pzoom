@@ -2541,12 +2541,17 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                                     .modifier
                                     .as_ref()
                                     .and_then(parse_visibility_modifier);
+                                let is_final = matches!(
+                                    alias_adaptation.modifier,
+                                    Some(Modifier::Final(_))
+                                );
 
                                 class_info.trait_method_aliases.push(TraitMethodAlias {
                                     trait_name,
                                     original_name,
                                     alias_name,
                                     visibility,
+                                    is_final,
                                 });
                             }
                         }

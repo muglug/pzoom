@@ -338,6 +338,18 @@ pub fn analyze(
             // An object with a `__toString` method returned where a string is
             // expected is implicitly cast to string. Report ImplicitToStringCast
             // (matching Psalm) and accept the return rather than flagging a mismatch.
+            //
+            // Psalm only reports the cast when the to-string conversion is
+            // actually required for containment: its `UnionTypeComparator` sets
+            // `to_string_cast` solely when a Stringable object is matched against
+            // a `string` target position. When the returned value already
+            // satisfies the declared type without any coercion — e.g. an array
+            // of `__toString` objects returned as `array<array-key, mixed>`,
+            // where the objects fit `mixed` directly — no cast happens and no
+            // issue is emitted. `union_cast_stringable_to_string` rewrites every
+            // nested Stringable to `string` unconditionally, so gate on the
+            // *original* type not already being contained; otherwise the rewrite
+            // fabricates a cast that never occurs.
             if let Some(casted) = union_cast_stringable_to_string(analyzer, &return_type)
                 && is_contained_without_coercion(
                     &casted,
@@ -345,6 +357,13 @@ pub fn analyze(
                     analyzer.codebase,
                     casted.ignore_nullable_issues,
                     casted.ignore_falsable_issues,
+                )
+                && !is_contained_without_coercion(
+                    &return_type,
+                    &comparison_expected_type,
+                    analyzer.codebase,
+                    return_type.ignore_nullable_issues,
+                    return_type.ignore_falsable_issues,
                 )
             {
                 if let Some((start, end)) = value_issue_pos(analysis_data) {

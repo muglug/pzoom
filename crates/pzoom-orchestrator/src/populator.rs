@@ -1102,12 +1102,45 @@ fn populate_documenting_method_ids(storage: &mut ClassLikeInfo, codebase: &Codeb
             continue;
         }
 
-        // Deterministic ancestor order for the interface tie-break below.
+        // Psalm iterates `overridden_method_ids` in insertion order: the parent
+        // class chain (nearest ancestor first) is accumulated before implemented
+        // interfaces, so the documenting *class* is always seen before any
+        // interface and the interface tie-break below only ever fires for two
+        // genuinely unrelated interfaces.
+        //
+        // `overridden_method_ids` is an unordered `FxHashSet` here, so that
+        // insertion order is lost. The previous `sort_by_key(class_id.0)` ordered
+        // by interning id — but strings are interned in parallel-scan order, so
+        // `StrId.0` is NOT stable across runs. That let an interface sort ahead
+        // of an implementing class non-deterministically, and the tie-break then
+        // *unset* the documenting id only on some runs (the jitter: a return type
+        // inherited from the documenting ancestor would intermittently fall back
+        // to the bare signature). Reconstruct Psalm's order deterministically
+        // from the inheritance shape instead: classes before interfaces, then
+        // most-derived (more ancestors) first.
         let mut declaring_classes: Vec<StrId> = storage.overridden_method_ids[&method_name]
             .iter()
             .copied()
             .collect();
-        declaring_classes.sort_by_key(|class_id| class_id.0);
+        let interface_rank = |class_id: &StrId| -> u8 {
+            match codebase.classlike_infos.get(class_id) {
+                Some(info) if info.kind == ClassLikeKind::Interface => 1,
+                _ => 0,
+            }
+        };
+        let ancestor_count = |class_id: &StrId| -> usize {
+            codebase
+                .classlike_infos
+                .get(class_id)
+                .map_or(0, |info| {
+                    info.all_parent_classes.len() + info.all_parent_interfaces.len()
+                })
+        };
+        declaring_classes.sort_by(|a, b| {
+            interface_rank(a)
+                .cmp(&interface_rank(b))
+                .then_with(|| ancestor_count(b).cmp(&ancestor_count(a)))
+        });
 
         for declaring_class in declaring_classes {
             if documenting_unset.contains(&method_name) {
@@ -1141,15 +1174,19 @@ fn populate_documenting_method_ids(storage: &mut ClassLikeInfo, codebase: &Codeb
                 }
                 Some(existing) if existing == declaring_method_id => {}
                 Some(existing) => {
-                    // A nearer declaring interface (the new declaring class
-                    // extends the current documenting class) supersedes it.
-                    if declaring_storage.interfaces.contains(&existing.0) {
+                    // A nearer declaring class supersedes the current documenting
+                    // entry when it extends/implements it. Psalm checks the
+                    // *transitive* `parent_interfaces`, so use `all_parent_interfaces`
+                    // (the direct `interfaces` set misses indirect inheritance).
+                    if declaring_storage.all_parent_interfaces.contains(&existing.0) {
                         storage
                             .documenting_method_ids
                             .insert(method_name, declaring_method_id);
                     } else if let Some(documenting_storage) =
                         codebase.classlike_infos.get(&existing.0)
-                        && !documenting_storage.interfaces.contains(&declaring_class)
+                        && !documenting_storage
+                            .all_parent_interfaces
+                            .contains(&declaring_class)
                         && documenting_storage.kind == ClassLikeKind::Interface
                     {
                         // Two unrelated interfaces disagree — cancel the

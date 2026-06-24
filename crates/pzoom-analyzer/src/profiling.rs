@@ -7,6 +7,14 @@
 //! `PZOOM_PARSE_STATS` env var).
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+// `std::time::Instant` is unsupported on wasm32-unknown-unknown: `Instant::now()`
+// panics there ("time not implemented on this platform"), which surfaces in the
+// browser as `RuntimeError: unreachable executed`. The playground (pzoom-wasm)
+// links this crate and runs `FileAnalyzer::analyze` on every snippet, so the
+// timer must degrade to a no-op on that target — the counters simply stay at
+// zero (profiling output is CLI-gated and never invoked from wasm).
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use std::time::Instant;
 
 /// Total worker-CPU time spent inside `FileAnalyzer::analyze` (summed across
@@ -26,29 +34,61 @@ pub static TRAIT_RESOLVE_NS: AtomicU64 = AtomicU64::new(0);
 /// Number of trait re-parses (one per (trait, using-class) pair).
 pub static TRAIT_PARSE_COUNT: AtomicU64 = AtomicU64::new(0);
 
+/// A timer start point. Wraps `std::time::Instant` where a monotonic clock
+/// exists; a zero-sized no-op on wasm32-unknown-unknown (see the import note),
+/// where [`elapsed_nanos`](Self::elapsed_nanos) always reports `0`.
+#[derive(Clone, Copy)]
+pub struct TimerStart {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    instant: Instant,
+}
+
+impl TimerStart {
+    #[inline]
+    pub fn now() -> Self {
+        Self {
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            instant: Instant::now(),
+        }
+    }
+
+    /// Nanoseconds elapsed since this start point (always `0` on the no-op target).
+    #[inline]
+    pub fn elapsed_nanos(&self) -> u64 {
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+        {
+            self.instant.elapsed().as_nanos() as u64
+        }
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+        {
+            0
+        }
+    }
+}
+
 /// Add `start.elapsed()` (ns) to `counter`.
 #[inline]
-pub fn record(counter: &AtomicU64, start: Instant) {
-    counter.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+pub fn record(counter: &AtomicU64, start: TimerStart) {
+    counter.fetch_add(start.elapsed_nanos(), Relaxed);
 }
 
 /// Records elapsed time into a counter on drop, covering every return path.
 pub struct ScopeTimer {
-    start: Instant,
+    start: TimerStart,
     counter: &'static AtomicU64,
 }
 
 impl ScopeTimer {
     #[inline]
     pub fn new(counter: &'static AtomicU64) -> Self {
-        Self { start: Instant::now(), counter }
+        Self { start: TimerStart::now(), counter }
     }
 }
 
 impl Drop for ScopeTimer {
     #[inline]
     fn drop(&mut self) {
-        self.counter.fetch_add(self.start.elapsed().as_nanos() as u64, Relaxed);
+        self.counter.fetch_add(self.start.elapsed_nanos(), Relaxed);
     }
 }
 

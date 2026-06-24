@@ -48,12 +48,12 @@ impl<'a> FileAnalyzer<'a> {
         let file_id = FileId::new(&*path_str);
 
         // Re-parse the file.
-        let _parse_start = std::time::Instant::now();
+        let _parse_start = crate::profiling::TimerStart::now();
         let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
         crate::profiling::record(&crate::profiling::PARSE_NS, _parse_start);
 
         // Resolve names (handle use statements, namespace aliases, etc.).
-        let _resolve_start = std::time::Instant::now();
+        let _resolve_start = crate::profiling::TimerStart::now();
         let resolved_names = resolve_names(&program, self.interner);
         crate::profiling::record(&crate::profiling::RESOLVE_NS, _resolve_start);
 

@@ -54,6 +54,39 @@ jobs:
       - name: Unit tests
         run: cargo test --workspace
 
+  # Build the playground WebAssembly package the way pages.yml deploys it and
+  # actually run it, so a wasm-only runtime panic (e.g. an `Instant::now()` that
+  # is unsupported on wasm32-unknown-unknown) fails CI instead of only breaking
+  # pzoom.dev. Uses the nodejs target -- the same wasm binary as the browser's
+  # `--target web` build, with glue that runs under Node.
+  wasm-playground:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout pzoom
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build playground WebAssembly package (nodejs target)
+        run: wasm-pack build crates/pzoom-wasm --target nodejs --release --out-dir pkg-node
+
+      - name: Smoke-test the playground engine
+        run: node crates/pzoom-wasm/tests/playground_smoke.cjs crates/pzoom-wasm/pkg-node
+
   # Inference tests consume the prebuilt pzoom-test binary.
   inference-tests:
     runs-on: ubuntu-latest

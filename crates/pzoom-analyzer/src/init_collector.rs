@@ -80,6 +80,30 @@ pub(crate) fn reanalyze_method_body_into(
         return;
     };
 
+    // Fast path: the method lives in the file `analyzer` is already analyzing,
+    // whose AST `FileAnalyzer` parsed once and stashed on the analyzer (with its
+    // arena, which outlives this whole call). Reuse that parse instead of
+    // re-parsing the entire file — the same-file case (the constructor's own body
+    // and same-file helpers). Cross-file follows fall through to a re-parse.
+    if method_info.file_path == analyzer.file_path
+        && let Some(statements) = analyzer.file_program
+    {
+        let Some(body_stmts) = find_method_body_by_offset(statements, method_info.start_offset)
+        else {
+            return;
+        };
+        // `analyzer` is already set up for this file (same source, resolved
+        // names, arena and stashed program); just rebind the function scope.
+        let method_analyzer = analyzer.for_nested_function(Some(method_info));
+        let _ = crate::stmt_analyzer::analyze_stmts(
+            &method_analyzer,
+            body_stmts,
+            analysis_data,
+            method_context,
+        );
+        return;
+    }
+
     let arena = Bump::new();
     let path_str = analyzer.interner.lookup(method_info.file_path);
     let file_id = FileId::new(&*path_str);
@@ -101,7 +125,8 @@ pub(crate) fn reanalyze_method_body_into(
         resolved_names,
         analyzer.config,
     )
-    .with_arena(&arena);
+    .with_arena(&arena)
+    .with_file_program(program.statements.as_slice());
     let method_analyzer = file_analyzer.for_nested_function(Some(method_info));
 
     let _ = crate::stmt_analyzer::analyze_stmts(

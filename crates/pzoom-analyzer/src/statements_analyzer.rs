@@ -41,6 +41,13 @@ pub struct StatementsAnalyzer<'a> {
     /// Psalm's AndAnalyzer from_stmt path).
     pub arena: Option<&'a bumpalo::Bump>,
 
+    /// The already-parsed top-level statements of `file_path`, when available
+    /// (set by `FileAnalyzer` from its own parse). Lets the constructor
+    /// property-init re-run (`init_collector`) reuse this AST for a *same-file*
+    /// method body instead of re-parsing the whole file — the AST and `arena`
+    /// outlive the entire `analyze_stmts` call, so the borrow is safe.
+    pub file_program: Option<&'a [mago_syntax::ast::ast::statement::Statement<'a>]>,
+
     /// Byte offset of each line start (`[0]` is 0), built once per file so
     /// line/column lookups are a binary search instead of an O(file) scan.
     line_starts: std::rc::Rc<Vec<u32>>,
@@ -91,10 +98,21 @@ impl<'a> StatementsAnalyzer<'a> {
             resolved_names,
             config,
             arena: None,
+            file_program: None,
             line_starts: std::rc::Rc::new(line_starts),
             file_uses_strict_types,
             inside_closure: false,
         }
+    }
+
+    /// Record the file's already-parsed top-level statements so a same-file
+    /// constructor-init re-run can reuse them instead of re-parsing.
+    pub fn with_file_program(
+        mut self,
+        statements: &'a [mago_syntax::ast::ast::statement::Statement<'a>],
+    ) -> Self {
+        self.file_program = Some(statements);
+        self
     }
 
     pub fn with_function(mut self, function_info: &'a FunctionLikeInfo) -> Self {
@@ -124,6 +142,7 @@ impl<'a> StatementsAnalyzer<'a> {
             resolved_names: self.resolved_names,
             config: self.config,
             arena: self.arena,
+            file_program: self.file_program,
             line_starts: std::rc::Rc::clone(&self.line_starts),
             file_uses_strict_types: self.file_uses_strict_types,
             inside_closure: false,

@@ -66,7 +66,10 @@ impl<'a> FileAnalyzer<'a> {
             resolved_names,
             self.config,
         )
-        .with_arena(&arena);
+        .with_arena(&arena)
+        // Stash this parse so the constructor property-init re-run reuses it for
+        // same-file method bodies (init_collector) instead of re-parsing.
+        .with_file_program(program.statements.as_slice());
 
         // Create analysis data and context.
         let mut analysis_data = FunctionAnalysisData::new();

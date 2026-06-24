@@ -4,6 +4,8 @@ A fast PHP static analyzer written in Rust — a port of [Psalm](https://github.
 
 Read the backstory: [From Psalm to Pzoom](https://mattbrown.dev/articles/from-psalm-to-pzoom).
 
+Pzoom uses the PHP Parser from Mago: https://github.com/carthage-software/mago
+
 > [!NOTE]
 > This is not something I ever intend to support — Caveat Emptor.
 
@@ -45,7 +47,7 @@ cargo test
 
 ## Differences to Psalm
 
-pzoom aims to broadly match Psalm's analysis, with a few deliberate divergences:
+Pzoom aims to broadly match Psalm's analysis, with a few deliberate divergences:
 
 - **Case-sensitive name resolution.** PHP and Psalm resolve class, function
   and method names case-insensitively. pzoom resolves them case-sensitively: a
@@ -76,6 +78,17 @@ pzoom aims to broadly match Psalm's analysis, with a few deliberate divergences:
   checks a generic trait), so a trait method's bad return is caught at the
   `return` without spurious `self`-vs-`static` or template-binding-width
   mismatches.
+
+## Differences to Mago
+
+Pzoom is slower than Mago on some codebases. The main contributors are the same
+reasons that make Psalm slightly slower than other PHP static analysis tools:
+
+ - More accurate analysis of conditional statements
+ - Property initialisation checks (which often requires the tool to re-parse files)
+
+These differences mean that Mago is faster, but emits false-positive errors on
+roughly a third of Psalm & Pzoom’s happy-path tests.
 
 ## License
 

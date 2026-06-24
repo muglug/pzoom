@@ -89,7 +89,10 @@ fn resolve_constant(
     context: &BlockContext,
 ) -> Option<TUnion> {
     let normalized_name = name.trim_start_matches('\\');
-    let runtime_const_id = analyzer.interner.intern(normalized_name);
+    let runtime_const_id = analyzer
+        .interner
+        .find(normalized_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     if let Some(runtime_type) = context.defined_constants.get(&runtime_const_id) {
         return Some(runtime_type.clone());
     }
@@ -102,7 +105,10 @@ fn resolve_constant(
         let resolved_name_str = analyzer.interner.lookup(resolved_name);
         let normalized_resolved = resolved_name_str.trim_start_matches('\\');
         if normalized_resolved != resolved_name_str.as_ref() {
-            let normalized_id = analyzer.interner.intern(normalized_resolved);
+            let normalized_id = analyzer
+                .interner
+                .find(normalized_resolved)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if let Some(const_info) = analyzer.codebase.constants.get(&normalized_id) {
                 return Some(const_info.constant_type.clone());
             }
@@ -116,7 +122,10 @@ fn resolve_constant(
     if !is_fully_qualified && let Some(ns_id) = context.namespace {
         let ns_str = analyzer.interner.lookup(ns_id);
         let qualified_name = format!("{}\\{}", ns_str, normalized_name);
-        let const_id = analyzer.interner.intern(&qualified_name);
+        let const_id = analyzer
+            .interner
+            .find(&qualified_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if let Some(const_info) = analyzer.codebase.constants.get(&const_id) {
             return Some(const_info.constant_type.clone());
         }
@@ -129,7 +138,10 @@ fn resolve_constant(
     if !is_fully_qualified && normalized_name.contains('\\') && context.namespace.is_some() {
         return None;
     }
-    let const_id = analyzer.interner.intern(normalized_name);
+    let const_id = analyzer
+        .interner
+        .find(normalized_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     analyzer
         .codebase
         .constants

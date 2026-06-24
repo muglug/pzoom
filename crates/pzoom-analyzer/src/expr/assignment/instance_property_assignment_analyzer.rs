@@ -323,7 +323,10 @@ pub fn analyze_with_known_type(
                 ));
             }
 
-            let prop_id = analyzer.interner.intern(prop_name);
+            let prop_id = analyzer
+                .interner
+                .find(prop_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let has_concrete_property_candidate = lookup_types.iter().any(|atomic| {
                 let TAtomic::TNamedObject { name, .. } = atomic else {
                     return false;
@@ -1239,7 +1242,10 @@ pub fn analyze_with_known_type(
                 && object_key == "$this"
                 && let Some(self_class) = context.self_class
             {
-                let property_name_id = analyzer.interner.intern(prop_name);
+                let property_name_id = analyzer
+                    .interner
+                    .find(prop_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 context
                     .initialized_prop_classes
                     .insert(property_name_id, self_class);
@@ -1286,7 +1292,8 @@ fn add_instance_property_assignment_dataflow(
     let var_str_id = pzoom_code_info::VarId(
         analyzer
             .interner
-            .intern(&pzoom_code_info::VarName::new(lhs_var_id)),
+            .find(&pzoom_code_info::VarName::new(lhs_var_id))
+            .unwrap_or(pzoom_str::StrId::EMPTY),
     );
     let var_node =
         DataFlowNode::get_for_lvar(var_str_id, make_data_flow_node_position(analyzer, var_pos));

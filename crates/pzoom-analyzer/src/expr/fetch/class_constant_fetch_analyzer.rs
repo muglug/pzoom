@@ -249,7 +249,10 @@ pub fn analyze(
     if let (Some(class_id), Some(class_name), Some(const_name)) =
         (class_id, classlike_name, const_name)
     {
-        let const_id = analyzer.interner.intern(const_name);
+        let const_id = analyzer
+            .interner
+            .find(const_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
             let (line, col) = analyzer.get_line_column(pos.0);
@@ -409,9 +412,14 @@ fn get_resolved_class_id(
     let class_id = match expr {
         Expression::Identifier(id) => {
             let offset = id.span().start.offset;
-            let mut resolved = analyzer
-                .get_resolved_name(offset)
-                .or_else(|| Some(analyzer.interner.intern(id.value())))?;
+            let mut resolved = analyzer.get_resolved_name(offset).or_else(|| {
+                Some(
+                    analyzer
+                        .interner
+                        .find(id.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                )
+            })?;
 
             if analyzer.codebase.get_class(resolved).is_none()
                 && id.value().eq_ignore_ascii_case("Attribute")

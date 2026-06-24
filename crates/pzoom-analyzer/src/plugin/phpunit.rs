@@ -61,7 +61,9 @@ const DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN: &str =
 /// (including a project's own intermediate base test class, and `TestCase`
 /// itself resolved on-demand from `vendor/`) is in `all_parent_classes`.
 fn is_test_case(interner: &Interner, class_id: StrId, class_info: &ClassLikeInfo) -> bool {
-    let test_case_id = interner.intern(TEST_CASE_FQN);
+    let test_case_id = interner
+        .find(TEST_CASE_FQN)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     class_id == test_case_id || class_info.all_parent_classes.contains(&test_case_id)
 }
 
@@ -74,9 +76,11 @@ fn is_test_method(interner: &Interner, method_id: StrId, method: &FunctionLikeIn
             .custom_docblock_tags
             .iter()
             .any(|(tag, _)| tag == "test")
-        || method
-            .attributes
-            .contains_key(&interner.intern(TEST_ATTRIBUTE_FQN))
+        || method.attributes.contains_key(
+            &interner
+                .find(TEST_ATTRIBUTE_FQN)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        )
 }
 
 /// The provider references of a method — from `@dataProvider` docblock tags
@@ -92,10 +96,11 @@ fn data_provider_refs(interner: &Interner, method: &FunctionLikeInfo) -> Vec<Str
         .collect();
 
     // `#[DataProvider('providerName')]` — a method on the test class.
-    if let Some(occurrences) = method
-        .attributes
-        .get(&interner.intern(DATA_PROVIDER_ATTRIBUTE_FQN))
-    {
+    if let Some(occurrences) = method.attributes.get(
+        &interner
+            .find(DATA_PROVIDER_ATTRIBUTE_FQN)
+            .unwrap_or(pzoom_str::StrId::EMPTY),
+    ) {
         for args in occurrences {
             if let Some(name) = args.first().and_then(literal_string) {
                 refs.push(name);
@@ -103,10 +108,11 @@ fn data_provider_refs(interner: &Interner, method: &FunctionLikeInfo) -> Vec<Str
         }
     }
     // `#[DataProviderExternal(OtherClass::class, 'providerName')]`.
-    if let Some(occurrences) = method
-        .attributes
-        .get(&interner.intern(DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN))
-    {
+    if let Some(occurrences) = method.attributes.get(
+        &interner
+            .find(DATA_PROVIDER_EXTERNAL_ATTRIBUTE_FQN)
+            .unwrap_or(pzoom_str::StrId::EMPTY),
+    ) {
         for args in occurrences {
             if let (Some(class), Some(name)) = (
                 args.first().and_then(literal_class_string),
@@ -142,11 +148,13 @@ fn literal_class_string(arg: &TUnion) -> Option<String> {
 /// leading `\`) to its interned id, if the class exists.
 fn resolve_class(codebase: &CodebaseInfo, interner: &Interner, name: &str) -> Option<StrId> {
     let name = name.trim_start_matches('\\');
-    let direct = interner.intern(name);
+    let direct = interner.find(name).unwrap_or(pzoom_str::StrId::EMPTY);
     if codebase.get_class(direct).is_some() {
         return Some(direct);
     }
-    let fq = interner.intern(&format!("\\{}", name));
+    let fq = interner
+        .find(&format!("\\{}", name))
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     codebase.get_class(fq).is_some().then_some(fq)
 }
 
@@ -169,7 +177,9 @@ fn resolve_provider_method(
         }
         None => (consumer_class, reference),
     };
-    let method_id = interner.intern(method_name);
+    let method_id = interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     codebase
         .get_class(class_id)?
         .methods
@@ -387,7 +397,9 @@ fn check_data_provider(
         None => (consumer_class, reference),
     };
 
-    let method_id = interner.intern(method_name);
+    let method_id = interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let Some(class_info) = codebase.get_class(class_id) else {
         return Vec::new();
     };
@@ -467,7 +479,9 @@ impl Plugin for PhpUnitPlugin {
     }
 
     fn after_populate(&self, codebase: &mut CodebaseInfo, interner: &Interner) -> Vec<Issue> {
-        let test_case_id = interner.intern(TEST_CASE_FQN);
+        let test_case_id = interner
+            .find(TEST_CASE_FQN)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         let test_cases: Vec<StrId> = codebase
             .classlike_infos

@@ -139,8 +139,10 @@ pub fn find_unused_definitions(
     // checkMethodParamReferences) by file. A candidate is reported only if no
     // implementation — its own body or any override that propagated up the
     // chain — referenced the param (`!isMethodParamUsed`).
-    let mut param_candidates_by_file: FxHashMap<StrId, Vec<&crate::function_analysis_data::ParamUnusedCandidate>> =
-        FxHashMap::default();
+    let mut param_candidates_by_file: FxHashMap<
+        StrId,
+        Vec<&crate::function_analysis_data::ParamUnusedCandidate>,
+    > = FxHashMap::default();
     for candidate in param_unused_candidates {
         if used_method_params.contains(&(candidate.class_id, candidate.method_lc, candidate.offset))
         {
@@ -386,7 +388,9 @@ fn report_unused_declarations(
                 }
                 let method_name = interner.lookup(*method_name_id).to_string();
                 let method_lc_name = method_name.to_lowercase();
-                let method_lc = interner.intern(&method_lc_name);
+                let method_lc = interner
+                    .find(&method_lc_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY);
                 // A private constructor that is never called (no `new`, no
                 // internal factory) is Psalm's UnusedConstructor — keep it in
                 // the pass; every other magic method is runtime-invoked.

@@ -517,7 +517,7 @@ fn analyze_namespace(
     let ns_name = ns.name.as_ref().map(|n| n.value());
 
     // Set namespace context for function resolution
-    let ns_id = ns_name.map(|n| analyzer.interner.intern(n));
+    let ns_id = ns_name.map(|n| analyzer.interner.find(n).unwrap_or(pzoom_str::StrId::EMPTY));
     let mut ns_context = context.clone();
     ns_context.namespace = ns_id;
 
@@ -613,7 +613,12 @@ fn apply_statement_var_annotations(
                     direct,
                 )) = assignment.lhs.unparenthesized()
                 {
-                    excluded_assignment_target = Some(analyzer.interner.intern(direct.name));
+                    excluded_assignment_target = Some(
+                        analyzer
+                            .interner
+                            .find(direct.name)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    );
                 }
                 // Assignment to a non-variable target (property/array path):
                 // the assignment analyzer consumes path-shaped annotations,

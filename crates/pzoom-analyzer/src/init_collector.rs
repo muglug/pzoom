@@ -25,7 +25,7 @@ use mago_syntax::ast::ast::statement::Statement;
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
 use pzoom_code_info::{CodebaseInfo, FunctionLikeInfo, TUnion, VarName};
 use pzoom_str::StrId;
-use pzoom_syntax::{FileId, parse_file_content, resolve_names};
+use pzoom_syntax::{FileId, parse_file_content};
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -84,7 +84,8 @@ pub(crate) fn reanalyze_method_body_into(
     let path_str = analyzer.interner.lookup(method_info.file_path);
     let file_id = FileId::new(&*path_str);
     let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
-    let resolved_names = resolve_names(&program, analyzer.interner);
+    // Reuse the method file's scan-time name resolution (analysis cannot intern).
+    let resolved_names = &file_info.resolved_names;
 
     let Some(body_stmts) =
         find_method_body_by_offset(program.statements.as_slice(), method_info.start_offset)
@@ -97,7 +98,7 @@ pub(crate) fn reanalyze_method_body_into(
         analyzer.interner,
         method_info.file_path,
         &file_info.contents,
-        &resolved_names,
+        resolved_names,
         analyzer.config,
     )
     .with_arena(&arena);

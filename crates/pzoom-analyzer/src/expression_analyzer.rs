@@ -718,9 +718,12 @@ fn infer_anonymous_class_object_type(
         .and_then(|extends| extends.types.first())
     {
         let offset = parent.span().start.offset;
-        let parent_id = analyzer
-            .get_resolved_name(offset)
-            .unwrap_or_else(|| analyzer.interner.intern(parent.value()));
+        let parent_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
+            analyzer
+                .interner
+                .find(parent.value())
+                .unwrap_or(pzoom_str::StrId::EMPTY)
+        });
         object_parts.push(TAtomic::TNamedObject {
             name: parent_id,
             type_params: None,
@@ -732,9 +735,12 @@ fn infer_anonymous_class_object_type(
     if let Some(implements) = &anonymous_class.implements {
         for interface in implements.types.iter() {
             let offset = interface.span().start.offset;
-            let interface_id = analyzer
-                .get_resolved_name(offset)
-                .unwrap_or_else(|| analyzer.interner.intern(interface.value()));
+            let interface_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
+                analyzer
+                    .interner
+                    .find(interface.value())
+                    .unwrap_or(pzoom_str::StrId::EMPTY)
+            });
             let interface_atomic = TAtomic::TNamedObject {
                 name: interface_id,
                 type_params: None,
@@ -778,12 +784,15 @@ fn anonymous_class_synthetic_id(
     analyzer: &StatementsAnalyzer<'_>,
     anonymous_class: &AnonymousClass<'_>,
 ) -> pzoom_str::StrId {
-    analyzer.interner.intern(&format!(
-        "{}:{}:{}",
-        ANONYMOUS_CLASS_PREFIX,
-        analyzer.interner.lookup(analyzer.file_path),
-        anonymous_class.span().start.offset
-    ))
+    analyzer
+        .interner
+        .find(&format!(
+            "{}:{}:{}",
+            ANONYMOUS_CLASS_PREFIX,
+            analyzer.interner.lookup(analyzer.file_path),
+            anonymous_class.span().start.offset
+        ))
+        .unwrap_or(pzoom_str::StrId::EMPTY)
 }
 
 fn analyze_anonymous_class_members(
@@ -874,7 +883,10 @@ fn analyze_anonymous_class_members(
         };
 
         let mut method_info = FunctionLikeInfo {
-            name: analyzer.interner.intern(method.name.value),
+            name: analyzer
+                .interner
+                .find(method.name.value)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
             start_offset: method.span().start.offset as u32,
             end_offset: method.span().end.offset as u32,
             ..FunctionLikeInfo::default()
@@ -906,7 +918,10 @@ fn analyze_anonymous_class_members(
         }
 
         for param in method.parameter_list.parameters.iter() {
-            let param_name = analyzer.interner.intern(param.variable.name);
+            let param_name = analyzer
+                .interner
+                .find(param.variable.name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             let mut param_type = param
                 .hint
                 .as_ref()
@@ -991,11 +1006,14 @@ fn resolve_unqualified_named_objects(
             continue;
         }
 
-        let candidate = analyzer.interner.intern(&format!(
-            "{}\\{}",
-            analyzer.interner.lookup(namespace),
-            analyzer.interner.lookup(*name)
-        ));
+        let candidate = analyzer
+            .interner
+            .find(&format!(
+                "{}\\{}",
+                analyzer.interner.lookup(namespace),
+                analyzer.interner.lookup(*name)
+            ))
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer.codebase.get_class(candidate).is_some() {
             *name = candidate;
         }

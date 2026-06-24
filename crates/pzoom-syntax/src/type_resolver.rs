@@ -272,10 +272,14 @@ fn resolve_class_name(
 ) -> StrId {
     let name = ident.value();
 
+    // Read-only resolution: every fully-qualified name reachable here was
+    // already interned by the scan-time `resolve_names` pass, so `find`
+    // succeeds. `StrId::EMPTY` is only returned for a name that was never
+    // interned (a non-existent class), which the analyzer treats as undefined.
     if ident.is_fully_qualified() {
         // Fully qualified - strip the leading backslash
         let stripped = name.strip_prefix('\\').unwrap_or(name);
-        return interner.intern(stripped);
+        return interner.find(stripped).unwrap_or(StrId::EMPTY);
     }
 
     let (first_segment, remainder) = match name.split_once('\\') {
@@ -288,7 +292,9 @@ fn resolve_class_name(
     {
         if let Some(remainder) = remainder {
             let target = interner.lookup(*alias_target);
-            return interner.intern(&format!("{}\\{}", target, remainder));
+            return interner
+                .find(&format!("{}\\{}", target, remainder))
+                .unwrap_or(StrId::EMPTY);
         }
 
         return *alias_target;
@@ -298,9 +304,9 @@ fn resolve_class_name(
         // Unqualified/qualified in a namespace - prepend namespace
         let ns_str = interner.lookup(ns);
         let full_name = format!("{}\\{}", ns_str, name);
-        return interner.intern(&full_name);
+        return interner.find(&full_name).unwrap_or(StrId::EMPTY);
     }
 
     // Global namespace
-    interner.intern(name)
+    interner.find(name).unwrap_or(StrId::EMPTY)
 }

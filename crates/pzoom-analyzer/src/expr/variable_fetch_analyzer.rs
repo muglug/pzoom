@@ -107,7 +107,12 @@ pub fn analyze(
                         || context.inside_isset)
                 {
                     let sink_node = DataFlowNode::get_for_variable_sink(
-                        VarId(analyzer.interner.intern(&var_id)),
+                        VarId(
+                            analyzer
+                                .interner
+                                .find(&var_id)
+                                .unwrap_or(pzoom_str::StrId::EMPTY),
+                        ),
                         make_data_flow_node_position(analyzer, pos),
                     );
                     analysis_data.data_flow_graph.add_node(sink_node.clone());
@@ -152,7 +157,12 @@ pub fn analyze(
                 {
                     let source_node = pzoom_code_info::DataFlowNode {
                         id: pzoom_code_info::data_flow::node::DataFlowNodeId::Var(
-                            pzoom_code_info::VarId(analyzer.interner.intern(var_name)),
+                            pzoom_code_info::VarId(
+                                analyzer
+                                    .interner
+                                    .find(var_name)
+                                    .unwrap_or(pzoom_str::StrId::EMPTY),
+                            ),
                             analyzer.file_path,
                             pos.0,
                             pos.1,
@@ -208,7 +218,12 @@ pub fn analyze(
                             .contains(&get_alternate_var_id(var_name)))
                 {
                     let use_node = DataFlowNode::get_for_variable_sink(
-                        VarId(analyzer.interner.intern(&var_id)),
+                        VarId(
+                            analyzer
+                                .interner
+                                .find(&var_id)
+                                .unwrap_or(pzoom_str::StrId::EMPTY),
+                        ),
                         make_data_flow_node_position(analyzer, pos),
                     );
                     analysis_data.data_flow_graph.add_node(use_node.clone());
@@ -576,7 +591,10 @@ fn connect_var_assignment_sources(
 ) {
     use pzoom_code_info::data_flow::node::DataFlowNodeId;
 
-    let var_str_id = analyzer.interner.intern(var_id);
+    let var_str_id = analyzer
+        .interner
+        .find(var_id)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let function_start = analyzer
         .function_info
         .map(|function_info| function_info.start_offset)

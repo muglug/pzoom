@@ -1453,9 +1453,7 @@ fn scrape_equality_assertions(
 
     // `gettype($x) === "integer"` / `get_debug_type($x) === "int"` narrows `$x`
     // to the named runtime type (Psalm's getGettype/GetdebugtypeEqualityAssertions).
-    if let Some((var_name, asserted_type)) =
-        get_type_check_comparison(binary.lhs, binary.rhs)
-    {
+    if let Some((var_name, asserted_type)) = get_type_check_comparison(binary.lhs, binary.rhs) {
         add_type_assertions(result, var_name, asserted_type, is_positive, cond_id);
         return;
     }
@@ -1766,7 +1764,13 @@ fn try_add_typed_value_comparison_assertions(
                 let value_is_null = matches!(right_type, TAtomic::TNull);
                 if is_strict {
                     if is_nonliteral_typed_value(&right_type) {
-                        add_equality_assertions(result, left_var_name, right_type, is_positive, cond_id);
+                        add_equality_assertions(
+                            result,
+                            left_var_name,
+                            right_type,
+                            is_positive,
+                            cond_id,
+                        );
                     } else {
                         add_generated_type_assertions(
                             result,
@@ -1802,7 +1806,13 @@ fn try_add_typed_value_comparison_assertions(
                 let value_is_null = matches!(left_type, TAtomic::TNull);
                 if is_strict {
                     if is_nonliteral_typed_value(&left_type) {
-                        add_equality_assertions(result, right_var_name, left_type, is_positive, cond_id);
+                        add_equality_assertions(
+                            result,
+                            right_var_name,
+                            left_type,
+                            is_positive,
+                            cond_id,
+                        );
                     } else {
                         add_generated_type_assertions(
                             result,
@@ -2353,7 +2363,12 @@ fn resolve_functionlike_for_call<'a>(
 
             let resolved = analyzer
                 .get_resolved_name(identifier.start_offset() as u32)
-                .unwrap_or_else(|| analyzer.interner.intern(identifier.value()));
+                .unwrap_or_else(|| {
+                    analyzer
+                        .interner
+                        .find(identifier.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY)
+                });
 
             let bare_name = identifier.value().trim_start_matches('\\');
 
@@ -2361,9 +2376,12 @@ fn resolve_functionlike_for_call<'a>(
                 .codebase
                 .get_function(resolved)
                 .or_else(|| {
-                    analyzer
-                        .codebase
-                        .get_function(analyzer.interner.intern(bare_name))
+                    analyzer.codebase.get_function(
+                        analyzer
+                            .interner
+                            .find(bare_name)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
                 })
                 .or_else(|| {
                     analyzer
@@ -2435,7 +2453,10 @@ fn resolve_methodlike_for_instance_call<'a>(
     }?;
 
     let class_info = analyzer.codebase.get_class(receiver.0)?;
-    let method_id = analyzer.interner.intern(method_identifier.value);
+    let method_id = analyzer
+        .interner
+        .find(method_identifier.value)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info
         .methods
         .get(&method_id)
@@ -2472,7 +2493,10 @@ fn resolve_methodlike_for_static_call<'a>(
         class_id = analyzer.get_declaring_class()?;
     }
     let class_info = analyzer.codebase.get_class(class_id)?;
-    let method_id = analyzer.interner.intern(method_identifier.value);
+    let method_id = analyzer
+        .interner
+        .find(method_identifier.value)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info.methods.get(&method_id).map(|method| &**method)
 }
 
@@ -3023,7 +3047,14 @@ fn resolve_class_expression(
 
             analyzer
                 .get_resolved_name(id.start_offset() as u32)
-                .or_else(|| Some(analyzer.interner.intern(id.value())))
+                .or_else(|| {
+                    Some(
+                        analyzer
+                            .interner
+                            .find(id.value())
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    )
+                })
         }
         Expression::Self_(_) => Some(StrId::SELF),
         Expression::Static(_) => Some(StrId::STATIC),
@@ -3369,7 +3400,10 @@ fn extract_classlike_from_class_string_union(
             TAtomic::TTemplateParamClass { as_type, .. } => return Some((**as_type).clone()),
             TAtomic::TLiteralClassString { name } => {
                 return Some(TAtomic::TNamedObject {
-                    name: analyzer.interner.intern(name),
+                    name: analyzer
+                        .interner
+                        .find(name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
                     type_params: None,
                     is_static: false,
                     remapped_params: false,
@@ -4124,9 +4158,12 @@ fn resolve_class_string_arg(
     }
 
     if let Expression::Literal(Literal::String(string_lit)) = expr.unparenthesized() {
-        return string_lit
-            .value
-            .map(|value| analyzer.interner.intern(value.trim_start_matches('\\')));
+        return string_lit.value.map(|value| {
+            analyzer
+                .interner
+                .find(value.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY)
+        });
     }
 
     resolve_class_expression(analyzer, expr)
@@ -4302,7 +4339,9 @@ fn get_i64_literal(expr: &Expression<'_>) -> Option<i64> {
         // Unary-signed integer literals (`-5`, `+3`) so `$i < -5` narrows to a
         // range. Mirrors Psalm treating `-5` as the literal `int(-5)`.
         Expression::UnaryPrefix(unary) => match &unary.operator {
-            UnaryPrefixOperator::Negation(_) => get_i64_literal(unary.operand).and_then(i64::checked_neg),
+            UnaryPrefixOperator::Negation(_) => {
+                get_i64_literal(unary.operand).and_then(i64::checked_neg)
+            }
             UnaryPrefixOperator::Plus(_) => get_i64_literal(unary.operand),
             _ => None,
         },
@@ -4469,17 +4508,17 @@ fn get_expression_assertion_type(
         // mis-reported as a redundant condition — see
         // `is_nonliteral_typed_value`.
         other @ (TAtomic::TInt
-            | TAtomic::TIntRange { .. }
-            | TAtomic::TFloat
-            | TAtomic::TNumeric
-            | TAtomic::TString
-            | TAtomic::TNonEmptyString
-            | TAtomic::TNumericString
-            | TAtomic::TNonEmptyNumericString
-            | TAtomic::TLowercaseString
-            | TAtomic::TNonEmptyLowercaseString
-            | TAtomic::TTruthyString
-            | TAtomic::TBool) => Some(other.clone()),
+        | TAtomic::TIntRange { .. }
+        | TAtomic::TFloat
+        | TAtomic::TNumeric
+        | TAtomic::TString
+        | TAtomic::TNonEmptyString
+        | TAtomic::TNumericString
+        | TAtomic::TNonEmptyNumericString
+        | TAtomic::TLowercaseString
+        | TAtomic::TNonEmptyLowercaseString
+        | TAtomic::TTruthyString
+        | TAtomic::TBool) => Some(other.clone()),
         _ => None,
     }
 }

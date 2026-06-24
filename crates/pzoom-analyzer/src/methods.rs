@@ -144,7 +144,10 @@ fn documenting_method_id_class(
     method_name: &str,
 ) -> Option<StrId> {
     let class_info = analyzer.codebase.get_class(class_id)?;
-    let method_name_id = analyzer.interner.intern(method_name);
+    let method_name_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info
         .documenting_method_ids
         .get(&method_name_id)
@@ -166,7 +169,10 @@ pub(crate) fn get_inherited_method_return_type(
 ) -> Option<TUnion> {
     let class_info = analyzer.codebase.get_class(class_id)?;
 
-    let method_name_id = analyzer.interner.intern(method_name);
+    let method_name_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let documenting_method_id = class_info.documenting_method_ids.get(&method_name_id)?;
     let candidate_class_id = documenting_method_id.0;
 

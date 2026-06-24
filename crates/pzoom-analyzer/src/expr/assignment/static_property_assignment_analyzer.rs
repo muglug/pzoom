@@ -107,10 +107,16 @@ pub fn analyze(
 
     // Verify property type if we can resolve it
     if let (Some(class_name), Some(prop_name)) = (class_name, prop_name) {
-        let class_id = analyzer.interner.intern(&class_name);
+        let class_id = analyzer
+            .interner
+            .find(&class_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         // Strip the leading $ from property name
         let prop_name_str = prop_name.trim_start_matches('$');
-        let prop_id = analyzer.interner.intern(prop_name_str);
+        let prop_id = analyzer
+            .interner
+            .find(prop_name_str)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
             if let Some(prop_info) = class_info.properties.get(&prop_id) {
@@ -350,8 +356,14 @@ pub fn analyze_with_known_type(
     };
     let prop_name_str = prop_name.trim_start_matches('$');
 
-    let class_id = analyzer.interner.intern(&class_name);
-    let prop_id = analyzer.interner.intern(prop_name_str);
+    let class_id = analyzer
+        .interner
+        .find(&class_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name_str)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     let Some((prop_type, declaring_class)) = analyzer
         .codebase
@@ -585,9 +597,12 @@ fn get_class_name(
         }
         Expression::Identifier(id) => {
             let offset = id.span().start.offset;
-            let class_id = analyzer
-                .get_resolved_name(offset)
-                .unwrap_or_else(|| analyzer.interner.intern(id.value()));
+            let class_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
+                analyzer
+                    .interner
+                    .find(id.value())
+                    .unwrap_or(pzoom_str::StrId::EMPTY)
+            });
             let class_id = resolve_alias(class_id);
             Some(analyzer.interner.lookup(class_id).to_string())
         }

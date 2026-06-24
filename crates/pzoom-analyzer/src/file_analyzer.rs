@@ -9,7 +9,7 @@ use bumpalo::Bump;
 
 use pzoom_code_info::{CodebaseInfo, Issue, IssueKind};
 use pzoom_str::{Interner, StrId};
-use pzoom_syntax::{FileId, parse_file_content, resolve_names};
+use pzoom_syntax::{FileId, parse_file_content};
 
 use crate::config::Config;
 use crate::context::BlockContext;
@@ -52,10 +52,10 @@ impl<'a> FileAnalyzer<'a> {
         let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
         crate::profiling::record(&crate::profiling::PARSE_NS, _parse_start);
 
-        // Resolve names (handle use statements, namespace aliases, etc.).
-        let _resolve_start = crate::profiling::TimerStart::now();
-        let resolved_names = resolve_names(&program, self.interner);
-        crate::profiling::record(&crate::profiling::RESOLVE_NS, _resolve_start);
+        // Name resolution was computed once during scanning; reuse it. Analysis
+        // holds a shared `&Interner` and cannot re-resolve (that would intern).
+        // The RESOLVE_NS profiling counter therefore stays at zero here.
+        let resolved_names = &file_info.resolved_names;
 
         // Create the analyzer context.
         let stmt_analyzer = StatementsAnalyzer::new(
@@ -63,7 +63,7 @@ impl<'a> FileAnalyzer<'a> {
             self.interner,
             file_path,
             &file_info.contents,
-            &resolved_names,
+            resolved_names,
             self.config,
         )
         .with_arena(&arena);
@@ -155,11 +155,14 @@ impl<'a> FileAnalyzer<'a> {
         // `@psalm-import-type` source validation (Psalm's ClassLikeNodeScanner):
         // the source class must exist and define the imported alias.
         for (source_class, imported_alias) in &file_info.type_alias_imports {
-            let scoped_alias = self.interner.intern(&format!(
-                "{}::{}",
-                self.interner.lookup(*source_class),
-                imported_alias
-            ));
+            let scoped_alias = self
+                .interner
+                .find(&format!(
+                    "{}::{}",
+                    self.interner.lookup(*source_class),
+                    imported_alias
+                ))
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if self.codebase.type_aliases.contains_key(&scoped_alias) {
                 continue;
             }
@@ -480,7 +483,10 @@ pub struct FileReferenceData {
 /// enclosing construct is a `for (` header (never `foreach`, where `as` is
 /// valid) — keeping unrelated `as` uses such as trait adaptations untouched.
 fn is_for_as_parse_error(contents: &str, offset: usize) -> bool {
-    let Some(after_as) = contents.get(offset..).and_then(|rest| rest.strip_prefix("as")) else {
+    let Some(after_as) = contents
+        .get(offset..)
+        .and_then(|rest| rest.strip_prefix("as"))
+    else {
         return false;
     };
     // Reject identifiers that merely start with "as" (e.g. `asort`).
@@ -578,7 +584,10 @@ fn report_complex_functions(
     let func_spans = N::Program(program).filter_map(|node| {
         let report = match node {
             N::Method(m) => Some((true, (m.name.span().start.offset, m.name.span().end.offset))),
-            N::Function(f) => Some((false, (f.name.span().start.offset, f.name.span().end.offset))),
+            N::Function(f) => Some((
+                false,
+                (f.name.span().start.offset, f.name.span().end.offset),
+            )),
             N::Closure(_) | N::ArrowFunction(_) => None,
             _ => return None,
         };
@@ -646,7 +655,12 @@ fn report_complex_functions(
                 && mean > MAX_AVG_PATH_LENGTH
                 && branch_ratio > MIN_BRANCH_RATIO
             {
-                emits.push((is_method, (name_start, name_end), count, mean.round() as i64));
+                emits.push((
+                    is_method,
+                    (name_start, name_end),
+                    count,
+                    mean.round() as i64,
+                ));
             }
         }
         emits
@@ -798,7 +812,9 @@ pub(crate) fn report_unused_variables(
                         continue;
                     }
                     let method_lc_name = interner.lookup(method_name_id).to_lowercase();
-                    let method_lc = interner.intern(&method_lc_name);
+                    let method_lc = interner
+                        .find(&method_lc_name)
+                        .unwrap_or(pzoom_str::StrId::EMPTY);
 
                     // A `$_`-prefixed param is treated as intentionally unused
                     // (Psalm's isIgnoredForUnusedParam path marks it used), and
@@ -835,12 +851,14 @@ pub(crate) fn report_unused_variables(
                     // of the using class, so candidates for trait methods are
                     // produced there (class_analyzer::analyze_methods_from_trait),
                     // not here against the bare trait.
-                    let class_is_trait = stmt_analyzer.codebase.get_class(class_id).is_some_and(
-                        |class_info| {
-                            class_info.kind
-                                == pzoom_code_info::class_like_info::ClassLikeKind::Trait
-                        },
-                    );
+                    let class_is_trait =
+                        stmt_analyzer
+                            .codebase
+                            .get_class(class_id)
+                            .is_some_and(|class_info| {
+                                class_info.kind
+                                    == pzoom_code_info::class_like_info::ClassLikeKind::Trait
+                            });
                     if _has_overrides || param.is_promoted || class_is_trait {
                         continue;
                     }

@@ -799,7 +799,12 @@ fn analyze_assignment_lhs(
                             } else {
                                 VariableSourceKind::Default
                             },
-                            VarId(analyzer.interner.intern(var_name)),
+                            VarId(
+                                analyzer
+                                    .interner
+                                    .find(var_name)
+                                    .unwrap_or(pzoom_str::StrId::EMPTY),
+                            ),
                             var_expr_pos,
                             false,
                             has_parent_nodes,
@@ -809,7 +814,12 @@ fn analyze_assignment_lhs(
                         )
                     } else {
                         DataFlowNode::get_for_lvar(
-                            VarId(analyzer.interner.intern(var_name)),
+                            VarId(
+                                analyzer
+                                    .interner
+                                    .find(var_name)
+                                    .unwrap_or(pzoom_str::StrId::EMPTY),
+                            ),
                             var_expr_pos,
                         )
                     };
@@ -1706,7 +1716,12 @@ fn analyze_reference_assignment(
 
         let binding_node = DataFlowNode::get_for_variable_source(
             VariableSourceKind::Default,
-            VarId(analyzer.interner.intern(&lhs_var_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(&lhs_var_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             node_pos,
             false,
             !rhs_type.parent_nodes.is_empty(),

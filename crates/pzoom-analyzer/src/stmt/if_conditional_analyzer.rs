@@ -11,7 +11,9 @@ use mago_syntax::ast::ast::literal::Literal;
 use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
 use mago_syntax::ast::ast::variable::Variable;
 
-use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarName};
+use pzoom_code_info::{
+    DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarName,
+};
 use rustc_hash::FxHashSet;
 
 use crate::context::BlockContext;
@@ -114,10 +116,16 @@ pub fn analyze(
         if_conditional_context.inside_conditional = true;
         expression_analyzer::analyze(analyzer, cond, analysis_data, &mut if_conditional_context);
         if_conditional_context.inside_conditional = was_inside_conditional;
-        more_cond_assigned = if_conditional_context.assigned_var_ids.keys().cloned().collect();
+        more_cond_assigned = if_conditional_context
+            .assigned_var_ids
+            .keys()
+            .cloned()
+            .collect();
         let full_cond_assigned = std::mem::take(&mut if_conditional_context.assigned_var_ids);
         if_conditional_context.assigned_var_ids = baseline_assigned;
-        if_conditional_context.assigned_var_ids.extend(full_cond_assigned);
+        if_conditional_context
+            .assigned_var_ids
+            .extend(full_cond_assigned);
     }
 
     add_branch_dataflow(analyzer, cond, analysis_data);
@@ -484,14 +492,15 @@ fn get_truthy_falsy_target_union(
     }
 
     analysis_data
-        .expr_types.get(&(
+        .expr_types
+        .get(&(
             unary.operand.start_offset() as u32,
             unary.operand.end_offset() as u32,
-        )).cloned()
+        ))
+        .cloned()
         .map(|union| (*union).clone())
         .or(Some(expr_type))
 }
-
 
 fn is_assignment_or_negated_assignment(expr: &Expression<'_>) -> bool {
     match expr.unparenthesized() {

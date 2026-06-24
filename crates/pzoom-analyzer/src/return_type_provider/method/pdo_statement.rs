@@ -147,8 +147,20 @@ fn pdo_fetch_class_name(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option
             TAtomic::TNamedObject { name, .. } => Some(*name),
             _ => None,
         },
-        Some(TAtomic::TLiteralClassString { name }) => Some(event.analyzer.interner.intern(name)),
-        Some(TAtomic::TLiteralString { value }) => Some(event.analyzer.interner.intern(value)),
+        Some(TAtomic::TLiteralClassString { name }) => Some(
+            event
+                .analyzer
+                .interner
+                .find(name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        ),
+        Some(TAtomic::TLiteralString { value }) => Some(
+            event
+                .analyzer
+                .interner
+                .find(value)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
+        ),
         _ => None,
     }
 }

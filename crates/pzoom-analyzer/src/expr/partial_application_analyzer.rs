@@ -208,8 +208,8 @@ pub fn analyze(
                         );
                     }
 
-                    let resolved = resolved_with_class
-                        .map(|(_, mut method_info, class_info, type_params)| {
+                    let resolved =
+                        resolved_with_class.map(|(_, mut method_info, class_info, type_params)| {
                             // Localize the declaring class's templates through
                             // the receiver's type params, so the resulting
                             // closure signature carries the receiver's bindings
@@ -228,39 +228,35 @@ pub fn analyze(
                             if !crate::template::template_result_is_empty(&template_result) {
                                 for param in method_info.params.iter_mut() {
                                     if let Some(param_type) = param.param_type.as_ref() {
-                                        param.param_type = Some(
-                                            crate::template::inferred_type_replacer::replace(
+                                        param.param_type =
+                                            Some(crate::template::inferred_type_replacer::replace(
                                                 param_type,
                                                 &template_result,
-                                            ),
-                                        );
+                                            ));
                                     }
                                     if let Some(signature_type) = param.signature_type.as_ref() {
-                                        param.signature_type = Some(
-                                            crate::template::inferred_type_replacer::replace(
+                                        param.signature_type =
+                                            Some(crate::template::inferred_type_replacer::replace(
                                                 signature_type,
                                                 &template_result,
-                                            ),
-                                        );
+                                            ));
                                     }
                                 }
                                 if let Some(return_type) = method_info.return_type.as_ref() {
-                                    method_info.return_type = Some(
-                                        crate::template::inferred_type_replacer::replace(
+                                    method_info.return_type =
+                                        Some(crate::template::inferred_type_replacer::replace(
                                             return_type,
                                             &template_result,
-                                        ),
-                                    );
+                                        ));
                                 }
                                 if let Some(signature_return) =
                                     method_info.signature_return_type.as_ref()
                                 {
-                                    method_info.signature_return_type = Some(
-                                        crate::template::inferred_type_replacer::replace(
+                                    method_info.signature_return_type =
+                                        Some(crate::template::inferred_type_replacer::replace(
                                             signature_return,
                                             &template_result,
-                                        ),
-                                    );
+                                        ));
                                 }
                             }
                             method_info
@@ -282,7 +278,10 @@ pub fn analyze(
                             let has_magic_call =
                                 crate::expr::call::existing_atomic_static_call_analyzer::class_has_magic_call(class_info);
                             let kind = if has_magic_call {
-                                let method_id = analyzer.interner.intern(&method_name);
+                                let method_id = analyzer
+                                    .interner
+                                    .find(&method_name)
+                                    .unwrap_or(pzoom_str::StrId::EMPTY);
                                 if class_info.pseudo_methods.contains_key(&method_id) {
                                     continue;
                                 }
@@ -317,7 +316,14 @@ pub fn analyze(
             let class_id = match static_pa.class.unparenthesized() {
                 Expression::Identifier(id) => analyzer
                     .get_resolved_name(id.span().start.offset)
-                    .or_else(|| Some(analyzer.interner.intern(id.value()))),
+                    .or_else(|| {
+                        Some(
+                            analyzer
+                                .interner
+                                .find(id.value())
+                                .unwrap_or(pzoom_str::StrId::EMPTY),
+                        )
+                    }),
                 Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class(),
                 // `$class::method(...)` — the receiver's class-string type
                 // names the class whose method signature the closure takes
@@ -344,9 +350,12 @@ pub fn analyze(
                                         None
                                     }
                                 }
-                                TAtomic::TLiteralClassString { name } => {
-                                    Some(analyzer.interner.intern(name.trim_start_matches('\\')))
-                                }
+                                TAtomic::TLiteralClassString { name } => Some(
+                                    analyzer
+                                        .interner
+                                        .find(name.trim_start_matches('\\'))
+                                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                                ),
                                 TAtomic::TNamedObject { name, .. } => Some(*name),
                                 _ => None,
                             })

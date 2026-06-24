@@ -41,7 +41,7 @@ use pzoom_code_info::functionlike_info::{
 use pzoom_code_info::t_atomic::PropertiesOfVisibility;
 use pzoom_code_info::type_resolution::TypeResolutionContext;
 use pzoom_code_info::{GenericParent, TAtomic, TUnion, combine_union_types};
-use pzoom_str::{Interner, StrId, ThreadedInterner};
+use pzoom_str::{StrId, ThreadedInterner};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::type_resolver::resolve_hint;
@@ -248,11 +248,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     if has_empty_shape_entry
                         || has_duplicate_shape_key
                         || references_itself
-                        || crate::docblock::parse_type_string(
-                            &type_definition,
-                            self.interner.parent_ref(),
-                        )
-                        .is_err()
+                        || crate::docblock::parse_type_string(&type_definition, self.interner)
+                            .is_err()
                     {
                         entries.push((
                             trivia.span.start.offset,
@@ -549,9 +546,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             return;
         }
 
-        let Ok(parsed_type) =
-            crate::docblock::parse_type_string(class_str, self.interner.parent_ref())
-        else {
+        let Ok(parsed_type) = crate::docblock::parse_type_string(class_str, self.interner) else {
             return;
         };
         let resolved =
@@ -608,9 +603,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             };
 
-            let parsed_type =
-                crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                    .unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -666,9 +660,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 };
 
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -694,9 +687,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     .and_then(|content| crate::docblock::extract_type_string_from_content(content))
             })
             .map(|type_str| {
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -860,9 +852,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let check_type = if rhs.is_empty() {
                     None
                 } else {
-                    let parsed_type =
-                        crate::docblock::parse_type_string(rhs, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(rhs, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     Some(self.resolve_docblock_union_type(parsed_type, None, None, None))
                 };
 
@@ -2306,7 +2297,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             &[],
                         )
                         && let Ok(parsed_type) =
-                            crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                            crate::docblock::parse_type_string(type_str, self.interner)
                     {
                         declared_const_type = Some(self.resolve_docblock_union_type(
                             parsed_type,
@@ -2457,7 +2448,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             for content in use_tags.values() {
                                 let parsed_type = match crate::docblock::parse_type_string(
                                     content,
-                                    self.interner.parent_ref(),
+                                    self.interner,
                                 ) {
                                     Ok(parsed_type) => parsed_type,
                                     Err(_) => {
@@ -2603,9 +2594,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 };
 
                 let prop_name = self.interner.intern(var_name.trim_start_matches('$'));
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -2692,9 +2682,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 }
 
-                let parsed_type =
-                    crate::docblock::parse_type_string(requirement, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(requirement, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -2761,7 +2750,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             }
 
-            let parsed_type = crate::docblock::parse_type_string(mixin, self.interner.parent_ref())
+            let parsed_type = crate::docblock::parse_type_string(mixin, self.interner)
                 .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
@@ -2801,9 +2790,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             return;
         }
 
-        let Ok(parsed_type) =
-            crate::docblock::parse_type_string(&type_str, self.interner.parent_ref())
-        else {
+        let Ok(parsed_type) = crate::docblock::parse_type_string(&type_str, self.interner) else {
             return;
         };
 
@@ -2906,23 +2893,22 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 // Psalm reports a malformed `@template-extends`/`@template-implements`/
                 // `@template-use` type as an `InvalidDocblock` rather than silently
                 // treating it as `mixed`.
-                let parsed_type =
-                    match crate::docblock::parse_type_string(content, self.interner.parent_ref()) {
-                        Ok(parsed_type) => parsed_type,
-                        Err(_) => {
-                            self.push_docblock_issue(
-                                class_info,
-                                format!(
-                                    "@{} annotation \"{}\" could not be parsed",
-                                    tag_name,
-                                    content.trim()
-                                ),
-                                class_info.start_offset,
-                                class_info.start_offset.saturating_add(1),
-                            );
-                            continue;
-                        }
-                    };
+                let parsed_type = match crate::docblock::parse_type_string(content, self.interner) {
+                    Ok(parsed_type) => parsed_type,
+                    Err(_) => {
+                        self.push_docblock_issue(
+                            class_info,
+                            format!(
+                                "@{} annotation \"{}\" could not be parsed",
+                                tag_name,
+                                content.trim()
+                            ),
+                            class_info.start_offset,
+                            class_info.start_offset.saturating_add(1),
+                        );
+                        continue;
+                    }
+                };
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -3075,11 +3061,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         }
 
         let return_type = if let Some(return_type_str) = return_type_str {
-            let parsed_type = crate::docblock::parse_type_string(
-                return_type_str.trim(),
-                self.interner.parent_ref(),
-            )
-            .unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type =
+                crate::docblock::parse_type_string(return_type_str.trim(), self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
             Some(self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -3188,7 +3172,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     None
                 } else {
                     let parsed_type =
-                        crate::docblock::parse_type_string(type_source, self.interner.parent_ref())
+                        crate::docblock::parse_type_string(type_source, self.interner)
                             .unwrap_or_else(|_| TUnion::mixed());
                     Some(self.resolve_docblock_union_type(
                         parsed_type,
@@ -3293,9 +3277,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 None,
                 &[],
             ) {
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     Some(class_info.name),
@@ -3474,7 +3457,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let default_type = param.default_value.as_ref().and_then(|default_value| {
                     simple_type_inferer::infer_param_default_type(
                         &default_value.value,
-                        self.interner.parent_ref(),
+                        self.interner,
                         self_class,
                         class_constants,
                     )
@@ -3510,9 +3493,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         &[],
                     )
                 {
-                    let parsed_type =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     param_type = Some(self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3770,9 +3752,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     class_constants,
                 )
                 .unwrap_or_else(|| {
-                    let parsed_type =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3876,9 +3857,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     class_constants,
                 )
                 .unwrap_or_else(|| {
-                    let parsed_type =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     let resolved_type = self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -3958,14 +3938,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let signature_keys: Vec<String> = signature_type
                         .types
                         .iter()
-                        .map(|atomic| loose_atomic_key(self.interner.parent_ref(), atomic))
+                        .map(|atomic| loose_atomic_key(self.interner, atomic))
                         .collect();
                     let mut unmatched_bits: u32 = 0;
                     let mut any_unmatched = false;
                     for (index, atomic) in docblock_type.types.iter().enumerate() {
-                        if !signature_keys
-                            .contains(&loose_atomic_key(self.interner.parent_ref(), atomic))
-                        {
+                        if !signature_keys.contains(&loose_atomic_key(self.interner, atomic)) {
                             any_unmatched = true;
                             if index < 32 {
                                 unmatched_bits |= 1 << index;
@@ -4177,7 +4155,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             }
         }
 
-        let parsed_inner = crate::docblock::parse_type_string(inner, self.interner.parent_ref())
+        let parsed_inner = crate::docblock::parse_type_string(inner, self.interner)
             .unwrap_or_else(|_| TUnion::mixed());
         let resolved_inner =
             self.resolve_docblock_union_type(parsed_inner, self_class, parent_class, template_map);
@@ -4495,9 +4473,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         ) {
             utility_type
         } else {
-            let parsed_type =
-                crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                    .unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -4546,9 +4523,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 };
 
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_type = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -4700,9 +4676,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             return utility_type;
         }
 
-        let parsed_branch_type =
-            crate::docblock::parse_type_string(branch_type, self.interner.parent_ref())
-                .unwrap_or_else(|_| TUnion::mixed());
+        let parsed_branch_type = crate::docblock::parse_type_string(branch_type, self.interner)
+            .unwrap_or_else(|_| TUnion::mixed());
         let resolved_branch_type = self.resolve_docblock_union_type(
             parsed_branch_type,
             self_class,
@@ -4892,9 +4867,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         continue;
                     };
 
-                    let parsed_type =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                            .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                        .unwrap_or_else(|_| TUnion::mixed());
                     let parsed_type = self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -5015,11 +4989,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     )
                 })
                 .unwrap_or_else(|| {
-                    let parsed_type = crate::docblock::parse_type_string(
-                        assertion_source,
-                        self.interner.parent_ref(),
-                    )
-                    .unwrap_or_else(|_| TUnion::mixed());
+                    let parsed_type =
+                        crate::docblock::parse_type_string(assertion_source, self.interner)
+                            .unwrap_or_else(|_| TUnion::mixed());
                     self.resolve_docblock_union_type(
                         parsed_type,
                         self_class,
@@ -5659,9 +5631,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             // class's alias must be imported first (Psalm).
             let previous_restrict =
                 std::mem::replace(&mut self.restrict_aliases_to_active, self_class.is_some());
-            let parsed_type =
-                crate::docblock::parse_type_string(&type_definition, self.interner.parent_ref())
-                    .unwrap_or_else(|_| TUnion::mixed());
+            let parsed_type = crate::docblock::parse_type_string(&type_definition, self.interner)
+                .unwrap_or_else(|_| TUnion::mixed());
             let resolved_type = self.resolve_docblock_union_type(
                 parsed_type,
                 self_class,
@@ -6518,7 +6489,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     .unwrap_or_else(|| {
                         let parsed_type = match crate::docblock::parse_type_string(
                             &template_bound,
-                            self.interner.parent_ref(),
+                            self.interner,
                         ) {
                             Ok(parsed_type) => parsed_type,
                             Err(parse_error) => {
@@ -6646,8 +6617,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let Some(token) = content.split_whitespace().next() else {
                     continue;
                 };
-                let name =
-                    token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\');
+                let name = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '\\');
                 if !name.is_empty() {
                     suppressed.push(name.to_string());
                 }
@@ -7126,7 +7096,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 })
                 .and_then(|content| crate::docblock::extract_type_string_from_content(content))
                 .and_then(|type_str| {
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref()).ok()
+                    crate::docblock::parse_type_string(type_str, self.interner).ok()
                 });
             let Some(param_tag_type) = param_tag_type else {
                 continue;
@@ -7140,11 +7110,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let signature_keys: Vec<String> = signature_type
                         .types
                         .iter()
-                        .map(|atomic| loose_atomic_key(self.interner.parent_ref(), atomic))
+                        .map(|atomic| loose_atomic_key(self.interner, atomic))
                         .collect();
                     !param_tag_type.types.iter().all(|atomic| {
-                        signature_keys
-                            .contains(&loose_atomic_key(self.interner.parent_ref(), atomic))
+                        signature_keys.contains(&loose_atomic_key(self.interner, atomic))
                     })
                 }
                 None => true,
@@ -7359,9 +7328,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     continue;
                 }
 
-                let parsed_type =
-                    crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
-                        .unwrap_or_else(|_| TUnion::mixed());
+                let parsed_type = crate::docblock::parse_type_string(type_str, self.interner)
+                    .unwrap_or_else(|_| TUnion::mixed());
                 let resolved_union = self.resolve_docblock_union_type(
                     parsed_type,
                     self_class,
@@ -7427,7 +7395,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         context.param_names = param_names.to_vec();
         let parsed_type = match crate::docblock::parse_type_string_with_context(
             type_str,
-            self.interner.parent_ref(),
+            self.interner,
             &context,
         ) {
             Ok(parsed) => parsed,
@@ -7552,7 +7520,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     ) -> TUnion {
         resolve_hint(
             hint,
-            self.interner.parent_ref(),
+            &self.interner.lock_parent(),
             self.current_namespace,
             self_class,
             parent_class,
@@ -9359,11 +9327,11 @@ impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, Vec<&'arena str>>
 
 /// Psalm `Atomic::getKey()` approximation for the duplicate-doc rule: array
 /// shapes/lists key as plain "array"; named objects key by class name.
-fn loose_atomic_key(interner: &Interner, atomic: &TAtomic) -> String {
+fn loose_atomic_key(interner: &ThreadedInterner, atomic: &TAtomic) -> String {
     match atomic {
         TAtomic::TArray { .. } => "array".to_string(),
         TAtomic::TNamedObject { name, .. } => interner.lookup(*name).to_string(),
-        other => other.get_id(Some(interner)),
+        other => other.get_id(Some(&*interner.lock_parent())),
     }
 }
 

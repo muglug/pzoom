@@ -693,11 +693,22 @@ pub(crate) fn add_storage_taint_dataflow(
     for proxy_call in &info.taints.proxy_calls {
         let proxy_id = if let Some((class_name, method_name)) = proxy_call.fqn.split_once("::") {
             FunctionLikeIdentifier::Method(
-                analyzer.interner.intern(class_name),
-                analyzer.interner.intern(method_name),
+                analyzer
+                    .interner
+                    .find(class_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+                analyzer
+                    .interner
+                    .find(method_name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
             )
         } else {
-            FunctionLikeIdentifier::Function(analyzer.interner.intern(&proxy_call.fqn))
+            FunctionLikeIdentifier::Function(
+                analyzer
+                    .interner
+                    .find(&proxy_call.fqn)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            )
         };
 
         let proxied_info: Option<&FunctionLikeInfo> = match proxy_id {

@@ -218,9 +218,15 @@ pub fn analyze_attribute_lists(
             "UndefinedAttributeClass",
         );
 
-        let mut attribute_name_id = analyzer
-            .get_resolved_name(attr_name_offset)
-            .unwrap_or_else(|| analyzer.interner.intern(attribute.name.value()));
+        let mut attribute_name_id =
+            analyzer
+                .get_resolved_name(attr_name_offset)
+                .unwrap_or_else(|| {
+                    analyzer
+                        .interner
+                        .find(attribute.name.value())
+                        .unwrap_or(pzoom_str::StrId::EMPTY)
+                });
         if analyzer.codebase.get_class(attribute_name_id).is_none()
             && attribute
                 .name

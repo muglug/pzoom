@@ -584,10 +584,7 @@ impl TAtomic {
     /// (matching the previous `TArray { never, never }`), not a list.
     #[inline]
     pub fn empty_array() -> Self {
-        TAtomic::array(
-            TUnion::new(TAtomic::TNever),
-            TUnion::new(TAtomic::TNever),
-        )
+        TAtomic::array(TUnion::new(TAtomic::TNever), TUnion::new(TAtomic::TNever))
     }
 
     /// General shape constructor. `sealed` drops the fallback; otherwise

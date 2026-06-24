@@ -46,7 +46,11 @@ impl MethodReturnTypeProvider for MockeryMockReturnTypeProvider {
             .cloned()?;
 
         let mocked_class_id = match first_arg_type.get_single()? {
-            TAtomic::TLiteralClassString { name } => event.analyzer.interner.intern(name),
+            TAtomic::TLiteralClassString { name } => event
+                .analyzer
+                .interner
+                .find(name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
             TAtomic::TLiteralString { value } => {
                 let name = value
                     .strip_prefix("alias:")
@@ -57,7 +61,11 @@ impl MethodReturnTypeProvider for MockeryMockReturnTypeProvider {
                 if name.is_empty() {
                     return None;
                 }
-                event.analyzer.interner.intern(name)
+                event
+                    .analyzer
+                    .interner
+                    .find(name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY)
             }
             _ => return None,
         };
@@ -66,7 +74,11 @@ impl MethodReturnTypeProvider for MockeryMockReturnTypeProvider {
             return None;
         }
 
-        let mock_interface_id = event.analyzer.interner.intern("Mockery\\MockInterface");
+        let mock_interface_id = event
+            .analyzer
+            .interner
+            .find("Mockery\\MockInterface")
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         Some(TUnion::new(TAtomic::TObjectIntersection {
             types: vec![

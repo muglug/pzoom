@@ -214,7 +214,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let type_str = content.trim();
                 if !type_str.is_empty()
                     && let Ok(parsed_type) =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        crate::docblock::parse_type_string(type_str, self.interner)
                 {
                     info.yield_type = Some(self.resolve_docblock_union_type(
                         parsed_type,
@@ -461,7 +461,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 let type_str = content.trim();
                 if !type_str.is_empty()
                     && let Ok(parsed_type) =
-                        crate::docblock::parse_type_string(type_str, self.interner.parent_ref())
+                        crate::docblock::parse_type_string(type_str, self.interner)
                 {
                     info.yield_type = Some(self.resolve_docblock_union_type(
                         parsed_type,

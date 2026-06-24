@@ -109,7 +109,10 @@ pub(crate) fn find_private_method_visibility_scope(
     class_id: StrId,
     method_name: &str,
 ) -> Option<StrId> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let mut current_class = analyzer
         .codebase
         .get_class(class_id)

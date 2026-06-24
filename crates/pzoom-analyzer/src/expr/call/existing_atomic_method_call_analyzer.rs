@@ -547,9 +547,17 @@ pub(crate) fn analyze(
             ));
         }
 
-        if !crate::internal_access::can_access_internal(analyzer, &class_info.internal, Some(context)) {
-            let scope_phrase = crate::internal_access::format_internal_scope_phrase(analyzer, &class_info.internal);
-            let caller_phrase = crate::internal_access::format_caller_context(analyzer, Some(context));
+        if !crate::internal_access::can_access_internal(
+            analyzer,
+            &class_info.internal,
+            Some(context),
+        ) {
+            let scope_phrase = crate::internal_access::format_internal_scope_phrase(
+                analyzer,
+                &class_info.internal,
+            );
+            let caller_phrase =
+                crate::internal_access::format_caller_context(analyzer, Some(context));
             let (line, col) = analyzer.get_line_column(pos.0);
             analysis_data.add_issue(Issue::new(
                 IssueKind::InternalMethod,
@@ -1026,7 +1034,9 @@ pub(crate) fn analyze(
     let method_is_mutation_free = analyzer
         .codebase
         .get_class(class_id)
-        .map(|class_info| super::method_call_purity_analyzer::method_is_mutation_free(&method_info, class_info))
+        .map(|class_info| {
+            super::method_call_purity_analyzer::method_is_mutation_free(&method_info, class_info)
+        })
         .unwrap_or(method_info.is_mutation_free);
 
     // Mirror Psalm's MethodCallPurityAnalyzer: a mutation-free method's
@@ -1100,7 +1110,10 @@ pub(crate) fn analyze(
         && let Some(object_key) = expression_identifier::get_expression_var_key(object_expr)
     {
         let call_key = format!("{}->{}()", object_key, method_name.to_ascii_lowercase());
-        let call_id = analyzer.interner.intern(&call_key);
+        let call_id = analyzer
+            .interner
+            .find(&call_key)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         context.locals.insert(
             VarName::new(&analyzer.interner.lookup(call_id)),
             localized_return_type.clone(),
@@ -1193,7 +1206,10 @@ pub(crate) fn analyze(
         // The receiver's class: taints route `Declaring::m → Receiver::m`
         // inside add_method_call_dataflow (Hakana get_tainted_method_node).
         receiver_class_id,
-        analyzer.interner.intern(method_name),
+        analyzer
+            .interner
+            .find(method_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY),
         Some(&method_info),
         arg_positions,
         analysis_data,
@@ -1213,4 +1229,3 @@ pub(crate) fn analyze(
 
     Some(localized_return_type)
 }
-

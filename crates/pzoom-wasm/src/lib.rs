@@ -33,8 +33,8 @@ impl ScannerAndAnalyzer {
 
         // Scan just the playground file (through a single-thread
         // ThreadedInterner handle, as the declaration collector requires).
-        let interner_arc = std::sync::Arc::new(self.interner.clone());
-        let threaded_interner = pzoom_str::ThreadedInterner::new(interner_arc.clone());
+        let shared_interner = self.interner.clone().into_shared();
+        let threaded_interner = pzoom_str::ThreadedInterner::new(shared_interner.clone());
         let file_path_id = threaded_interner.intern(PLAYGROUND_FILE);
         let file_id = pzoom_syntax::FileId::new(PLAYGROUND_FILE);
 
@@ -61,6 +61,8 @@ impl ScannerAndAnalyzer {
                     .or_insert(type_alias);
             }
         }
+
+        let resolved_names = pzoom_syntax::resolve_names(&program, &threaded_interner);
 
         let collector = pzoom_syntax::DeclarationCollector::new(
             &threaded_interner,
@@ -89,6 +91,7 @@ impl ScannerAndAnalyzer {
             is_in_project_dirs: true,
             inline_annotations,
             type_alias_imports: std::mem::take(&mut declarations.type_alias_imports),
+            resolved_names,
         };
         codebase.files.insert(file_path_id, file_info);
 
@@ -120,8 +123,7 @@ impl ScannerAndAnalyzer {
         }
 
         drop(threaded_interner);
-        let interner = std::sync::Arc::try_unwrap(interner_arc)
-            .expect("single-thread interner handle dropped above");
+        let mut interner = pzoom_str::unwrap_shared(shared_interner);
 
         let mut config = Config::default();
         config.php_version = PHP_VERSION.to_string();
@@ -131,7 +133,7 @@ impl ScannerAndAnalyzer {
         // constructor, so only populate remains. Populating the base once at
         // startup means this pass only touches the playground file's symbols.
         {
-            let mut populator = Populator::new(&mut codebase, &interner);
+            let mut populator = Populator::new(&mut codebase, &mut interner);
             populator.populate();
         }
 
@@ -179,22 +181,27 @@ impl Default for ScannerAndAnalyzer {
             let minor: u32 = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
             major * 10_000 + minor * 100
         };
-        pzoom_orchestrator::apply_call_map(
-            &mut scan_result.codebase,
-            &scan_result.interner,
-            php_version_id,
-        );
+        let shared_interner = scan_result.interner.into_shared();
+        {
+            let threaded = pzoom_str::ThreadedInterner::new(shared_interner.clone());
+            pzoom_orchestrator::apply_call_map(
+                &mut scan_result.codebase,
+                &threaded,
+                php_version_id,
+            );
+        }
+        let mut interner = pzoom_str::unwrap_shared(shared_interner);
 
         // Populate the stub codebase once here: per-run populate then only
         // touches the playground file's own symbols.
         {
-            let mut populator = Populator::new(&mut scan_result.codebase, &scan_result.interner);
+            let mut populator = Populator::new(&mut scan_result.codebase, &mut interner);
             populator.populate();
         }
 
         Self {
             codebase: scan_result.codebase,
-            interner: scan_result.interner,
+            interner,
         }
     }
 }

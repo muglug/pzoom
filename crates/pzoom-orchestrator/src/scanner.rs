@@ -11,9 +11,11 @@ use glob::Pattern;
 use pzoom_code_info::CodebaseInfo;
 use pzoom_code_info::class_type_alias::ClassTypeAlias;
 use pzoom_code_info::codebase_info::FileInfo;
-use pzoom_str::{Interner, StrId, ThreadedInterner};
+use pzoom_str::{Interner, SharedInterner, StrId, ThreadedInterner};
 use pzoom_syntax::declaration_collector::CollectedDeclarations;
-use pzoom_syntax::{DeclarationCollector, FileId, parse_file_content, resolve_names};
+use pzoom_syntax::{
+    DeclarationCollector, FileId, ResolvedNames, parse_file_content, resolve_names,
+};
 use rust_embed::Embed;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
@@ -70,7 +72,7 @@ pub struct ScanError {
 
 /// The scanner phase of the pipeline.
 pub struct Scanner {
-    interner: Arc<Interner>,
+    interner: SharedInterner,
     codebase: CodebaseInfo,
     errors: Vec<ScanError>,
     file_count: usize,
@@ -88,7 +90,7 @@ pub struct Scanner {
 impl Scanner {
     pub fn new() -> Self {
         Self {
-            interner: Arc::new(Interner::new()),
+            interner: pzoom_str::shared_interner(),
             codebase: CodebaseInfo::new(),
             errors: Vec::new(),
             file_count: 0,
@@ -155,12 +157,11 @@ impl Scanner {
             }
 
             // Parse + name-resolve every pending file to discover the class
-            // names it references. Each file is independent and `Interner` is
-            // `Sync` (RwLock-backed), so fan the work across worker threads
-            // (mirroring `scan_contents_parallel`). `resolve_names` interns into
-            // the shared parent, so the ids the workers return are already
+            // names it references. Each file is independent, so fan the work
+            // across worker threads (mirroring `scan_contents_parallel`), each
+            // with its own `ThreadedInterner` over the shared parent. The ids
+            // the workers return come from that parent, so they are already
             // global - no remapping needed.
-            let interner: &Interner = &self.interner;
             let worker_count = if cfg!(target_arch = "wasm32") {
                 // Threads are unavailable on wasm32; resolve inline.
                 1
@@ -173,13 +174,21 @@ impl Scanner {
             };
 
             let referenced: FxHashSet<StrId> = if worker_count == 1 {
-                harvest_referenced_ids(interner, &pending)
+                let interner = ThreadedInterner::new(self.interner.clone());
+                harvest_referenced_ids(&interner, &pending)
             } else {
                 let chunk_size = pending.len().div_ceil(worker_count);
+                let parent = &self.interner;
                 std::thread::scope(|scope| {
                     let handles: Vec<_> = pending
                         .chunks(chunk_size)
-                        .map(|chunk| scope.spawn(move || harvest_referenced_ids(interner, chunk)))
+                        .map(|chunk| {
+                            let parent = parent.clone();
+                            scope.spawn(move || {
+                                let interner = ThreadedInterner::new(parent);
+                                harvest_referenced_ids(&interner, chunk)
+                            })
+                        })
                         .collect();
                     let mut referenced: FxHashSet<StrId> = FxHashSet::default();
                     for handle in handles {
@@ -207,7 +216,7 @@ impl Scanner {
                 if defined_by_real_file {
                     continue;
                 }
-                let name = self.interner.lookup(name_id);
+                let name = self.interner.lock().lookup(name_id);
                 let Some(file) = autoload.resolve_class(&name) else {
                     continue; // not an autoloadable class (function/const/builtin)
                 };
@@ -217,6 +226,7 @@ impl Scanner {
                     .unwrap_or_else(|_| file.to_string_lossy().into_owned());
                 if self
                     .interner
+                    .lock()
                     .find(&canonical)
                     .is_some_and(|id| self.codebase.files.contains_key(&id))
                 {
@@ -411,7 +421,8 @@ impl Scanner {
     /// Finish scanning and return the result.
     pub fn finish(self) -> ScanResult {
         let interner = Arc::try_unwrap(self.interner)
-            .expect("all ThreadedInterner handles are dropped when scanning ends");
+            .expect("all ThreadedInterner handles are dropped when scanning ends")
+            .into_inner();
         ScanResult {
             codebase: self.codebase,
             interner,
@@ -658,6 +669,7 @@ impl Scanner {
             mut declarations,
             file_parse_errors,
             scan_errors,
+            resolved_names,
         } = collected;
 
         self.errors.extend(scan_errors);
@@ -688,6 +700,7 @@ impl Scanner {
                 is_in_project_dirs: !is_stub && !self.scanning_dependencies,
                 inline_annotations,
                 type_alias_imports,
+                resolved_names,
             },
         );
 
@@ -756,6 +769,9 @@ struct CollectedFile {
     declarations: CollectedDeclarations,
     file_parse_errors: Vec<(u32, String)>,
     scan_errors: Vec<ScanError>,
+    /// Full name resolution (offset -> resolved id) for the file, computed
+    /// once here so analysis never has to re-resolve (and thus never interns).
+    resolved_names: ResolvedNames,
 }
 
 /// Parse + name-resolve a chunk of pending files and return every class-name
@@ -763,7 +779,10 @@ struct CollectedFile {
 /// harvest. Each file is independent and `Interner` is `Sync`, so callers run
 /// this across worker threads sharing one `&Interner`; the resolved ids are
 /// interned into that shared interner, so they need no remapping.
-fn harvest_referenced_ids(interner: &Interner, files: &[(StrId, String)]) -> FxHashSet<StrId> {
+fn harvest_referenced_ids(
+    interner: &ThreadedInterner,
+    files: &[(StrId, String)],
+) -> FxHashSet<StrId> {
     let mut found = FxHashSet::default();
     for (file_id, contents) in files {
         let arena = Bump::new();
@@ -810,6 +829,11 @@ fn collect_file(
         });
     }
 
+    // Resolve every name in the file now (interning through the threaded
+    // interner), and persist the offset -> id map so analysis can reuse it
+    // without re-resolving (analysis only holds a shared `&Interner`).
+    let resolved_names = resolve_names(&program, interner);
+
     // Collect declarations
     let collector = DeclarationCollector::new(
         interner,
@@ -826,6 +850,7 @@ fn collect_file(
         declarations,
         file_parse_errors,
         scan_errors,
+        resolved_names,
     }
 }
 

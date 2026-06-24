@@ -31,7 +31,10 @@ fn attach_property_fetch_dataflow(
     in_assignment: bool,
     prop_type: TUnion,
 ) -> TUnion {
-    let prop_id = analyzer.interner.intern(prop_name);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let lookup_types = expand_intersection_lookup_types(&expand_template_object_union(obj_type));
 
     for atomic in &lookup_types {
@@ -104,7 +107,10 @@ fn record_property_read_for_unused(
     if !analyzer.config.find_unused_code {
         return;
     }
-    let prop_id = analyzer.interner.intern(prop_name);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let lookup_types = expand_intersection_lookup_types(&expand_template_object_union(obj_type));
     for atomic in &lookup_types {
         let TAtomic::TNamedObject { name, .. } = atomic else {
@@ -234,7 +240,10 @@ pub fn analyze(
                 .vars_possibly_in_scope
                 .contains(property_key.as_str())
         {
-            let property_id = analyzer.interner.intern(prop_name);
+            let property_id = analyzer
+                .interner
+                .find(prop_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY);
             if !analysis_data
                 .collected_uninitialized_reads
                 .iter()

@@ -31,7 +31,8 @@ pub fn analyze(
     // Psalm ConcatAnalyzer type-coverage: mixed if either operand has mixed.
     analysis_data.record_mixedness(
         context,
-        left_type.as_deref().is_some_and(|t| t.is_mixed()) || right_type.as_deref().is_some_and(|t| t.is_mixed()),
+        left_type.as_deref().is_some_and(|t| t.is_mixed())
+            || right_type.as_deref().is_some_and(|t| t.is_mixed()),
     );
 
     analysis_data.expr_types.insert(

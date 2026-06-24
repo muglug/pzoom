@@ -41,7 +41,10 @@ pub(crate) fn analyze_magic_property_method_call(
         else {
             return None;
         };
-        let prop_id = analyzer.interner.intern(&prop_name);
+        let prop_id = analyzer
+            .interner
+            .find(&prop_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if let Some(pseudo_property_type) = class_info.pseudo_property_get_types.get(&prop_id) {
             return Some(localize_class_union_type(
@@ -86,7 +89,10 @@ pub(crate) fn analyze_magic_property_method_call(
         else {
             return None;
         };
-        let prop_id = analyzer.interner.intern(&prop_name);
+        let prop_id = analyzer
+            .interner
+            .find(&prop_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if let Some(pseudo_property_type) = class_info.pseudo_property_set_types.get(&prop_id) {
             if let Some(second_arg_pos) = arg_positions.get(1) {
@@ -197,7 +203,10 @@ pub(crate) fn get_pseudo_method_info<'a>(
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.pseudo_methods.get(&method_id)
 }
@@ -207,7 +216,10 @@ pub(crate) fn get_method_info<'a>(
     class_info: &'a ClassLikeInfo,
     method_name: &str,
 ) -> Option<&'a pzoom_code_info::FunctionLikeInfo> {
-    let method_id = analyzer.interner.intern(method_name);
+    let method_id = analyzer
+        .interner
+        .find(method_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     class_info.methods.get(&method_id).map(|method| &**method)
 }

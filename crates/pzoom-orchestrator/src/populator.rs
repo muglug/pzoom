@@ -68,7 +68,7 @@ pub fn register_global_defined_constants(codebase: &mut CodebaseInfo) {
 
 /// Main entry point for the population phase.
 /// Follows hakana's `populate_codebase` function.
-pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &Interner) {
+pub fn populate_codebase(codebase: &mut CodebaseInfo, interner: &mut Interner) {
     // First, reset population state for classlikes that need repopulation
     let classlike_names: Vec<_> = codebase
         .classlike_infos
@@ -699,15 +699,21 @@ fn resolve_unresolved_class_constants(codebase: &mut CodebaseInfo, interner: &In
                     (
                         Some(TAtomic::TLiteralFloat { value: lhs_value }),
                         Some(TAtomic::TLiteralFloat { value: rhs_value }),
-                    ) => TUnion::new(TAtomic::TLiteralFloat { value: lhs_value + rhs_value }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat {
+                        value: lhs_value + rhs_value,
+                    }),
                     (
                         Some(TAtomic::TLiteralInt { value: lhs_value }),
                         Some(TAtomic::TLiteralFloat { value: rhs_value }),
-                    ) => TUnion::new(TAtomic::TLiteralFloat { value: *lhs_value as f64 + rhs_value }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat {
+                        value: *lhs_value as f64 + rhs_value,
+                    }),
                     (
                         Some(TAtomic::TLiteralFloat { value: lhs_value }),
                         Some(TAtomic::TLiteralInt { value: rhs_value }),
-                    ) => TUnion::new(TAtomic::TLiteralFloat { value: lhs_value + *rhs_value as f64 }),
+                    ) => TUnion::new(TAtomic::TLiteralFloat {
+                        value: lhs_value + *rhs_value as f64,
+                    }),
                     _ => TUnion::mixed(),
                 }
             }
@@ -2046,11 +2052,11 @@ pub fn populate_atomic_type(t_atomic: &mut TAtomic) {
 /// Wraps the `populate_codebase` function.
 pub struct Populator<'a> {
     codebase: &'a mut CodebaseInfo,
-    interner: &'a Interner,
+    interner: &'a mut Interner,
 }
 
 impl<'a> Populator<'a> {
-    pub fn new(codebase: &'a mut CodebaseInfo, interner: &'a Interner) -> Self {
+    pub fn new(codebase: &'a mut CodebaseInfo, interner: &'a mut Interner) -> Self {
         Self { codebase, interner }
     }
 

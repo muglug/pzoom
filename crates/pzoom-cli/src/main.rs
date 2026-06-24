@@ -331,12 +331,19 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
 
     // Psalm types builtins through its per-version CallMap, with its own
     // stubs overriding a curated subset; apply the same over the scanned
-    // stub functions for the analysis PHP version.
-    pzoom_orchestrator::apply_call_map(
-        &mut scan_result.codebase,
-        &scan_result.interner,
-        config.php_version_id(),
-    );
+    // stub functions for the analysis PHP version. This post-scan build pass
+    // still interns builtin signature types, so run it through a threaded
+    // interner over the (now owned) scan interner, then recover the owned form.
+    let shared_interner = scan_result.interner.into_shared();
+    {
+        let threaded = pzoom_str::ThreadedInterner::new(shared_interner.clone());
+        pzoom_orchestrator::apply_call_map(
+            &mut scan_result.codebase,
+            &threaded,
+            config.php_version_id(),
+        );
+    }
+    let mut interner = pzoom_str::unwrap_shared(shared_interner);
 
     if !scan_result.errors.is_empty() {
         for error in &scan_result.errors {
@@ -357,10 +364,9 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // Phase 2: Populate
     println!("Resolving types...");
     let mut codebase = scan_result.codebase;
-    let interner = scan_result.interner;
     let stub_files = scan_result.stub_files;
     {
-        let mut populator = Populator::new(&mut codebase, &interner);
+        let mut populator = Populator::new(&mut codebase, &mut interner);
         populator.populate();
     }
     if phase_timing {
@@ -542,11 +548,20 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         format_number(peak_memory_bytes() as f64 / (1024.0 * 1024.0), 3),
     );
 
-    if matches!(std::env::var("PZOOM_TYPE_COVERAGE").as_deref(), Ok("1") | Ok("true")) {
+    if matches!(
+        std::env::var("PZOOM_TYPE_COVERAGE").as_deref(),
+        Ok("1") | Ok("true")
+    ) {
         let (mixed, non_mixed) = pzoom_analyzer::type_coverage::snapshot();
         let total = mixed + non_mixed;
-        let pct = if total > 0 { non_mixed as f64 / total as f64 * 100.0 } else { 0.0 };
-        eprintln!("PZOOM-TYPE-COVERAGE mixed={mixed} non_mixed={non_mixed} total={total} coverage={pct:.4}%");
+        let pct = if total > 0 {
+            non_mixed as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        eprintln!(
+            "PZOOM-TYPE-COVERAGE mixed={mixed} non_mixed={non_mixed} total={total} coverage={pct:.4}%"
+        );
     }
 
     if error_count > 0 {

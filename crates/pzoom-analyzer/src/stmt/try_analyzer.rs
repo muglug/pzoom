@@ -139,7 +139,12 @@ pub fn analyze(
             let new_parent_node = if analysis_data.data_flow_graph.kind == GraphKind::FunctionBody {
                 DataFlowNode::get_for_variable_source(
                     VariableSourceKind::Default,
-                    VarId(analyzer.interner.intern(&var_name_id)),
+                    VarId(
+                        analyzer
+                            .interner
+                            .find(&var_name_id)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    ),
                     var_pos,
                     false,
                     true,
@@ -148,7 +153,15 @@ pub fn analyze(
                     false,
                 )
             } else {
-                DataFlowNode::get_for_lvar(VarId(analyzer.interner.intern(&var_name_id)), var_pos)
+                DataFlowNode::get_for_lvar(
+                    VarId(
+                        analyzer
+                            .interner
+                            .find(&var_name_id)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    ),
+                    var_pos,
+                )
             };
 
             analysis_data
@@ -558,7 +571,10 @@ fn named_object_is_throwable(analyzer: &StatementsAnalyzer<'_>, name: StrId) -> 
 
     let normalized = analyzer.interner.lookup(name);
     if let Some(stripped) = normalized.strip_prefix('\\') {
-        let stripped_id = analyzer.interner.intern(stripped);
+        let stripped_id = analyzer
+            .interner
+            .find(stripped)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         return stripped_id == StrId::THROWABLE
             || object_type_comparator::is_class_subtype_of(
                 stripped_id,

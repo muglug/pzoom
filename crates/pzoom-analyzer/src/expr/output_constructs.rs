@@ -88,7 +88,10 @@ pub(crate) fn add_construct_argument_dataflow(
     crate::expr::call::argument_analyzer::add_dataflow(
         analyzer,
         &pzoom_code_info::FunctionLikeIdentifier::Function(
-            analyzer.interner.intern(construct_name),
+            analyzer
+                .interner
+                .find(construct_name)
+                .unwrap_or(pzoom_str::StrId::EMPTY),
         ),
         argument_offset,
         value_pos,

@@ -226,7 +226,12 @@ pub fn analyze(
                     {
                         let base_span = access.array.span();
                         let sink_node = DataFlowNode::get_for_variable_sink(
-                            pzoom_code_info::VarId(analyzer.interner.intern(base_key)),
+                            pzoom_code_info::VarId(
+                                analyzer
+                                    .interner
+                                    .find(base_key)
+                                    .unwrap_or(pzoom_str::StrId::EMPTY),
+                            ),
                             make_data_flow_node_position(
                                 analyzer,
                                 (base_span.start.offset, base_span.end.offset),
@@ -303,8 +308,10 @@ pub fn analyze(
     if let Some(at) = array_type.as_ref() {
         let offset_mixed = index_type.as_ref().is_some_and(|it| it.is_mixed());
         for atomic in &at.types {
-            let atom_mixed =
-                matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset);
+            let atom_mixed = matches!(
+                atomic,
+                TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+            );
             analysis_data.record_mixedness(context, atom_mixed || offset_mixed);
         }
     }
@@ -312,8 +319,10 @@ pub fn analyze(
     // (the nested loop over the offset union in getArrayAccessTypeGivenOffset).
     if let Some(it) = index_type.as_ref() {
         for atomic in &it.types {
-            let atom_mixed =
-                matches!(atomic, TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset);
+            let atom_mixed = matches!(
+                atomic,
+                TAtomic::TMixed | TAtomic::TNonEmptyMixed | TAtomic::TMixedFromLoopIsset
+            );
             analysis_data.record_mixedness(context, atom_mixed);
         }
     }
@@ -1543,7 +1552,10 @@ fn class_string_map_offset_replacement(
         } => Some((**as_type).clone()),
         TAtomic::TClassString { as_type: None } => Some(TAtomic::TObject),
         TAtomic::TLiteralClassString { name } => Some(TAtomic::named_object(
-            analyzer.interner.intern(name.trim_start_matches('\\')),
+            analyzer
+                .interner
+                .find(name.trim_start_matches('\\'))
+                .unwrap_or(pzoom_str::StrId::EMPTY),
         )),
         _ => None,
     }
@@ -1711,7 +1723,10 @@ pub(crate) fn resolve_array_access_method_types(
     } else {
         "offsetGet"
     };
-    let offset_get_id = analyzer.interner.intern(accessor);
+    let offset_get_id = analyzer
+        .interner
+        .find(accessor)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let method_info = class_info
         .methods
         .get(&offset_get_id)

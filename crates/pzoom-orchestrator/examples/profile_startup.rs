@@ -8,12 +8,13 @@ fn startup() {
     let mut scanner = Scanner::new();
     scanner.scan_stubs(&rustc_hash::FxHashSet::default());
     let mut scan_result = scanner.finish();
-    apply_call_map(
-        &mut scan_result.codebase,
-        &scan_result.interner,
-        PHP_VERSION_ID,
-    );
-    let mut populator = Populator::new(&mut scan_result.codebase, &scan_result.interner);
+    let shared_interner = scan_result.interner.into_shared();
+    {
+        let threaded = pzoom_str::ThreadedInterner::new(shared_interner.clone());
+        apply_call_map(&mut scan_result.codebase, &threaded, PHP_VERSION_ID);
+    }
+    let mut interner = pzoom_str::unwrap_shared(shared_interner);
+    let mut populator = Populator::new(&mut scan_result.codebase, &mut interner);
     populator.populate();
     std::hint::black_box(&scan_result.codebase);
 }

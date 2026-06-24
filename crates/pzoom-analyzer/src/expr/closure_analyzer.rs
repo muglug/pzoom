@@ -235,7 +235,12 @@ pub fn analyze(
             } else {
                 VariableSourceKind::ClosureParam
             },
-            VarId(analyzer.interner.intern(&param_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(&param_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             crate::data_flow::make_data_flow_node_position(
                 analyzer,
                 (param_span.start.offset, param_span.end.offset),
@@ -663,7 +668,12 @@ pub fn analyze_arrow_function(
             } else {
                 VariableSourceKind::ClosureParam
             },
-            VarId(analyzer.interner.intern(&param_id)),
+            VarId(
+                analyzer
+                    .interner
+                    .find(&param_id)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             crate::data_flow::make_data_flow_node_position(
                 analyzer,
                 (param_span.start.offset, param_span.end.offset),
@@ -1049,7 +1059,12 @@ where
     parameters
         .into_iter()
         .map(|param| FunctionLikeParameter {
-            name: Some(analyzer.interner.intern(param.variable.name)),
+            name: Some(
+                analyzer
+                    .interner
+                    .find(param.variable.name)
+                    .unwrap_or(pzoom_str::StrId::EMPTY),
+            ),
             param_type: param
                 .hint
                 .as_ref()

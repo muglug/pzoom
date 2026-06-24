@@ -203,13 +203,19 @@ fn resolve_clone_target_class_id(
     let normalized_name = class_name.trim_start_matches('\\');
 
     if normalized_name != class_name.as_ref() {
-        let normalized_id = analyzer.interner.intern(normalized_name);
+        let normalized_id = analyzer
+            .interner
+            .find(normalized_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer.codebase.get_class(normalized_id).is_some() {
             return Some(normalized_id);
         }
     } else {
         let prefixed_name = format!("\\{}", class_name);
-        let prefixed_id = analyzer.interner.intern(&prefixed_name);
+        let prefixed_id = analyzer
+            .interner
+            .find(&prefixed_name)
+            .unwrap_or(pzoom_str::StrId::EMPTY);
         if analyzer.codebase.get_class(prefixed_id).is_some() {
             return Some(prefixed_id);
         }

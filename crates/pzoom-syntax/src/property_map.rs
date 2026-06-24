@@ -49,8 +49,7 @@ pub(crate) fn apply_property_map(class_info: &mut ClassLikeInfo, interner: &Thre
     };
 
     for (property_name, type_string) in mapped_properties {
-        let Ok(mut property_type) =
-            crate::docblock::parse_type_string(type_string, interner.parent_ref())
+        let Ok(mut property_type) = crate::docblock::parse_type_string(type_string, interner)
         else {
             continue;
         };

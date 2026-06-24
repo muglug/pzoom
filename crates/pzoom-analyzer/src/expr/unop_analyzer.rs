@@ -478,7 +478,12 @@ fn update_var_type_for_increment(
             // The reported position stays on the operand, matching Psalm.
             let assignment_node = pzoom_code_info::DataFlowNode {
                 id: pzoom_code_info::data_flow::node::DataFlowNodeId::Var(
-                    pzoom_code_info::VarId(analyzer.interner.intern(&var_id)),
+                    pzoom_code_info::VarId(
+                        analyzer
+                            .interner
+                            .find(&var_id)
+                            .unwrap_or(pzoom_str::StrId::EMPTY),
+                    ),
                     analyzer.file_path,
                     full_pos.0,
                     full_pos.1,

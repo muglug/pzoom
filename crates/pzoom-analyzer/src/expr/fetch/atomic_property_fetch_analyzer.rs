@@ -36,11 +36,21 @@ pub(crate) fn add_property_dataflow(
         if let (Some(lhs_var_id), Some(lhs_pos)) = (lhs_var_id, lhs_pos) {
             let var_id = VarName::new(lhs_var_id);
             let var_node = DataFlowNode::get_for_lvar(
-                VarId(analyzer.interner.intern(&var_id)),
+                VarId(
+                    analyzer
+                        .interner
+                        .find(&var_id)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                ),
                 make_data_flow_node_position(analyzer, lhs_pos),
             );
             let property_node = DataFlowNode::get_for_local_property_fetch(
-                VarId(analyzer.interner.intern(&var_id)),
+                VarId(
+                    analyzer
+                        .interner
+                        .find(&var_id)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                ),
                 property_id.1,
                 make_data_flow_node_position(analyzer, name_pos),
             );
@@ -73,7 +83,12 @@ pub(crate) fn add_property_dataflow(
         let var_id = VarName::new(lhs_var_id);
         stmt_type = add_unspecialized_property_fetch_dataflow(
             DataFlowNode::get_for_local_property_fetch(
-                VarId(analyzer.interner.intern(&var_id)),
+                VarId(
+                    analyzer
+                        .interner
+                        .find(&var_id)
+                        .unwrap_or(pzoom_str::StrId::EMPTY),
+                ),
                 property_id.1,
                 make_data_flow_node_position(analyzer, name_pos),
             ),
@@ -145,8 +160,14 @@ pub fn analyze_property(
     _context: &mut BlockContext,
     _in_assignment: bool,
 ) -> Option<TUnion> {
-    let class_id = analyzer.interner.intern(class_name);
-    let prop_id = analyzer.interner.intern(prop_name);
+    let class_id = analyzer
+        .interner
+        .find(class_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // Look up the class in the codebase
     if let Some(class_info) = analyzer.codebase.get_class(class_id) {
@@ -453,7 +474,10 @@ fn get_property_type_inner(
     context: &BlockContext,
     is_static_access: bool,
 ) -> Option<TUnion> {
-    let prop_id = analyzer.interner.intern(prop_name);
+    let prop_id = analyzer
+        .interner
+        .find(prop_name)
+        .unwrap_or(pzoom_str::StrId::EMPTY);
     let expanded_obj_type = expand_template_object_union(obj_type);
     let mut lookup_types = expand_intersection_lookup_types(&expanded_obj_type);
 

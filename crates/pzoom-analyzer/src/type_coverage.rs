@@ -19,7 +19,12 @@ static NON_MIXED: AtomicU64 = AtomicU64::new(0);
 #[inline]
 pub fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| matches!(std::env::var("PZOOM_TYPE_COVERAGE").as_deref(), Ok("1") | Ok("true")))
+    *ENABLED.get_or_init(|| {
+        matches!(
+            std::env::var("PZOOM_TYPE_COVERAGE").as_deref(),
+            Ok("1") | Ok("true")
+        )
+    })
 }
 
 /// Fold one file's `[mixed, non_mixed]` tally into the global totals.
@@ -33,5 +38,8 @@ pub fn add(mixed: u32, non_mixed: u32) {
 
 /// Returns `(mixed, non_mixed)` global totals.
 pub fn snapshot() -> (u64, u64) {
-    (MIXED.load(Ordering::Relaxed), NON_MIXED.load(Ordering::Relaxed))
+    (
+        MIXED.load(Ordering::Relaxed),
+        NON_MIXED.load(Ordering::Relaxed),
+    )
 }

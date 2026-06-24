@@ -26,7 +26,7 @@
 //! (`name'1`) are not applied yet.
 
 use pzoom_code_info::CodebaseInfo;
-use pzoom_str::Interner;
+use pzoom_str::ThreadedInterner;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 static CALLMAP_85: &str = include_str!("../../../dictionaries/callmap_85.json");
@@ -107,7 +107,11 @@ fn composed_map(version: u32) -> std::sync::Arc<FxHashMap<String, RawEntry>> {
 }
 
 /// Apply the CallMap for the analysis PHP version over the scanned codebase.
-pub fn apply_call_map(codebase: &mut CodebaseInfo, interner: &Interner, php_version_id: u32) {
+pub fn apply_call_map(
+    codebase: &mut CodebaseInfo,
+    interner: &ThreadedInterner,
+    php_version_id: u32,
+) {
     let map = composed_map(callmap_version(php_version_id));
     // Functions whose pzoom stubs stand in for Psalm's own stubs or its
     // dedicated machinery (ReturnTypeProviders, closure-argument special

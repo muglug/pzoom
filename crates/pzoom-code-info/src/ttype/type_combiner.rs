@@ -1724,9 +1724,10 @@ fn handle_keyed_array_entries(
     {
         for atomic in &generic_key_type.types {
             if let TAtomic::TLiteralString { value } = atomic {
-                combination
-                    .objectlike_entries
-                    .insert(ArrayKey::String(value.clone()), (false, generic_value_type.clone()));
+                combination.objectlike_entries.insert(
+                    ArrayKey::String(value.clone()),
+                    (false, generic_value_type.clone()),
+                );
             }
         }
         combination.array_type_params = None;

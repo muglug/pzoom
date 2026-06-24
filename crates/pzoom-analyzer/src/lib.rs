@@ -42,7 +42,7 @@ pub mod type_expander;
 pub mod unused_symbols;
 pub(crate) mod unused_variable_analyzer;
 
-pub use config::Config;
+pub use config::{Config, ErrorLevel, ReportingLevel};
 pub use context::{BlockContext, FunctionContext, FunctionContextInfo, FunctionLikeId};
 pub use function_analysis_data::FunctionAnalysisData;
 pub use psalm_baseline::{PsalmBaseline, load_psalm_baseline};

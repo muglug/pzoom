@@ -616,10 +616,79 @@ impl Issue {
     }
 }
 
+impl IssueKind {
+    /// Psalm's per-issue `ERROR_LEVEL` constant (the value declared on each
+    /// `Psalm\Issue\*` class).
+    ///
+    /// This drives Psalm's `--errorLevel`/`<psalm errorLevel="N">` behaviour:
+    /// `Config::getReportingLevelForFile` downgrades an issue to *info* when its
+    /// `ERROR_LEVEL` is a positive value strictly below the configured level
+    /// (`issue_level > 0 && issue_level < config_level`). Non-positive levels
+    /// (`-1`, the `CodeIssue` base, and `-2`) are never downgraded — they are
+    /// always reported when emitted.
+    ///
+    /// Issue kinds that have no direct `Psalm\Issue\*` counterpart inherit the
+    /// base `-1`, matching Psalm's fallback for an unknown issue class
+    /// (`getReportingLevelForFile` returns `REPORT_ERROR`).
+    pub fn error_level(&self) -> i8 {
+        use IssueKind::*;
+        match self {
+            MixedClone | RedundantFlag | MixedAssignment | MixedArgument | MixedReturnStatement | MixedReturnTypeCoercion | MixedPropertyFetch | MixedMethodCall | MixedArrayAccess | MixedArrayOffset | MixedArrayAssignment | MixedStringOffsetAssignment | LessSpecificReturnType | MixedArgumentTypeCoercion | PossiblyNullOperand | InvalidClassConstantType | LessSpecificClassConstantType | MixedPropertyTypeCoercion | MutableDependency | Trace | IncompatibleTypeParameters | MixedOperand | MixedFunctionCall | MixedArrayTypeCoercion | MixedPropertyAssignment => 1,
+            MissingReturnType | MissingParamType | MissingPropertyType | MissingClassConstType | MissingConstructor | MissingClosureReturnType | MissingClosureParamType | ClassMustBeFinal | RedundantConditionGivenDocblockType | RedundantFunctionCallGivenDocblockType | InvalidDocblockParamName | MismatchingDocblockPropertyType | DeprecatedClass | DeprecatedInterface | DeprecatedTrait | DeprecatedMethod | DeprecatedProperty | DeprecatedFunction | DeprecatedConstant | DocblockTypeContradiction | RiskyTruthyFalsyComparison | RawObjectIteration | InvalidFalsableReturnType | NullOperand | UnsafeInstantiation | UnsafeGenericInstantiation | PrivateFinalMethod | UnresolvableInclude | PropertyNotSetInConstructor | DirectConstructorCall | ReferenceConstraintViolation | UnsupportedReferenceUsage | InvalidStringClass | UndefinedTrace | RedundantCastGivenDocblockType => 2,
+            PossiblyInvalidArgument | PossiblyInvalidFunctionCall | PossiblyInvalidMethodCall | PossiblyInvalidPropertyFetch | PossiblyInvalidArrayAccess | PossiblyInvalidArrayOffset | PossiblyInvalidClone | PossiblyNullArgument | PossiblyNullReference | PossiblyFalseReference | PossiblyNullPropertyFetch | PossiblyNullArrayAccess | PossiblyNullFunctionCall | PossiblyUndefinedArrayOffset | PossiblyUndefinedVariable | PossiblyUndefinedGlobalVariable | PossiblyInvalidArrayAssignment | PossiblyUndefinedMethod | MoreSpecificReturnType | PossiblyInvalidIterator | LessSpecificReturnStatement | ArgumentTypeCoercion | PossiblyInvalidOperand | PossiblyInvalidPropertyAssignment | PossiblyNullPropertyAssignment | PossiblyInvalidPropertyAssignmentValue | PropertyTypeCoercion | NonInvariantDocblockPropertyType | PossiblyFalseArgument | PossiblyFalseOperand | PossiblyFalseIterator | PossiblyFalsePropertyAssignmentValue | PossiblyNullIterator | PossiblyNullArrayOffset | PossiblyNullArrayAssignment | PossiblyNullPropertyAssignmentValue | PossiblyInvalidCast | RiskyCast => 3,
+            UndefinedMagicMethod | UndefinedMagicPropertyFetch | UndefinedMagicPropertyAssignment | RedundantCondition | RedundantFunctionCall | RedundantCast | RedundantPropertyInitializationCheck | ImplementedReturnTypeMismatch | ImplementedParamTypeMismatch | InvalidDocblock | PossiblyInvalidDocblockTag | MismatchingDocblockParamType | MismatchingDocblockReturnType | ForbiddenCode | InternalClass | InternalMethod | InternalProperty | TypeDoesNotContainType | TypeDoesNotContainNull | PossibleRawObjectIteration | MissingDocblockType | InvalidOperand | FalseOperand | InheritorViolation | NoInterfaceProperties | ReferenceReusedFromConfusingScope | InvalidScalarArgument | StringIncrement | ImplicitToStringCast | InvalidToString | IfThisIsMismatch | TooManyArguments | InvalidLiteralArgument => 4,
+            UndefinedInterfaceMethod | UndefinedThisPropertyAssignment | LessSpecificImplementedReturnType | InvalidNullableReturnType | NullableReturnStatement | FalsableReturnStatement | ConstructorSignatureMismatch | MoreSpecificImplementedParamType => 5,
+            InvalidArgument | InvalidReturnType | InvalidReturnStatement | InvalidPropertyAssignmentValue | InvalidArrayAccess | InvalidFunctionCall | InvalidMethodCall | InvalidPropertyFetch | InvalidClass | InvalidCast | InvalidClone | InvalidCatch | InvalidArrayOffset | InvalidArrayAssignment | UndefinedMethod | UndefinedThisPropertyFetch | InvalidIterator | InvalidNamedArgument | TraitMethodSignatureMismatch | AmbiguousConstantInheritance | InvalidConstantAssignmentValue | OverriddenFinalConstant | OverriddenInterfaceConstant | InvalidPropertyAssignment | UndefinedPropertyAssignment | UndefinedPropertyFetch | NullArgument | InvalidTemplateParam | TooManyTemplateParams | NullArrayOffset => 6,
+            NamedArgumentNotAllowed | AbstractInstantiation | AssignmentToVoid | CircularReference | InvalidTypeImport | InvalidTraversableImplementation | UnhandledMatchCondition | InvalidOverride | MethodSignatureMismatch | ParamNameMismatch | OverriddenMethodAccess | UninitializedProperty | ReservedWord | ConflictingReferenceConstraint | NonVariableReferenceReturn | ContinueOutsideLoop => 7,
+            CheckType => 8,
+            PossiblyUndefinedIntArrayOffset | PossiblyUndefinedStringArrayOffset | UnusedVariable | UnusedParam | UnusedProperty | UnusedMethod | UnusedClass | UnusedClosureParam | UnusedPsalmSuppress | UnusedForeachValue | UnnecessaryVarAnnotation | PossiblyUnusedMethod | PossiblyUnusedProperty | PossiblyUnusedParam | PossiblyUnusedReturnValue | UnusedReturnValue | UnusedConstructor | UnusedDocblockParam | UnevaluatedCode | TaintedInput | TaintedSql | TaintedHtml | TaintedShell | TaintedFile | TaintedHeader | TaintedInclude | TaintedEval | TaintedUnserialize | TaintedCallable | TaintedCookie | TaintedExtract | TaintedLdap | TaintedSleep | TaintedSSRF | TaintedXpath | TaintedTextWithQuotes | TaintedUserSecret | TaintedSystemSecret | MissingOverrideAttribute => -2,
+            // Everything else inherits Psalm's CodeIssue base (-1):
+            // always reported (never downgraded by --level).
+            _ => -1,
+        }
+    }
+}
+
 /// Severity level for issues.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum IssueSeverity {
     Info,
     Warning,
     Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IssueKind;
+
+    #[test]
+    fn error_level_matches_psalm_constants() {
+        // Representative samples across every Psalm ERROR_LEVEL bucket. Values
+        // come straight from the `Psalm\Issue\*::ERROR_LEVEL` constants.
+        assert_eq!(IssueKind::MixedAssignment.error_level(), 1);
+        assert_eq!(IssueKind::LessSpecificReturnType.error_level(), 1);
+        assert_eq!(IssueKind::MissingReturnType.error_level(), 2);
+        assert_eq!(IssueKind::DeprecatedMethod.error_level(), 2);
+        assert_eq!(IssueKind::PossiblyInvalidArgument.error_level(), 3);
+        assert_eq!(IssueKind::ArgumentTypeCoercion.error_level(), 3);
+        assert_eq!(IssueKind::ForbiddenCode.error_level(), 4);
+        assert_eq!(IssueKind::InvalidNullableReturnType.error_level(), 5);
+        assert_eq!(IssueKind::InvalidArgument.error_level(), 6);
+        assert_eq!(IssueKind::UndefinedMethod.error_level(), 6);
+        assert_eq!(IssueKind::MethodSignatureMismatch.error_level(), 7);
+        assert_eq!(IssueKind::CheckType.error_level(), 8);
+    }
+
+    #[test]
+    fn negative_levels_are_never_downgraded() {
+        // `-2` (info-by-default families: unused code, taint) and the `-1`
+        // `CodeIssue` base are reported regardless of the configured level.
+        assert_eq!(IssueKind::UnusedVariable.error_level(), -2);
+        assert_eq!(IssueKind::TaintedSql.error_level(), -2);
+        assert_eq!(IssueKind::MissingOverrideAttribute.error_level(), -2);
+        // No direct Psalm counterpart -> inherits the base -1.
+        assert_eq!(IssueKind::UndefinedClass.error_level(), -1);
+        assert_eq!(IssueKind::InternalError.error_level(), -1);
+        assert_eq!(IssueKind::ParseError.error_level(), -1);
+    }
 }

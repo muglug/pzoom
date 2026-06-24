@@ -1,7 +1,7 @@
 //! Arithmetic operation analyzer.
 
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::{TAtomic, TUnion};
 

@@ -2,8 +2,8 @@
 //! a subsequent fixpoint iteration. Mirrors Hakana's `tast_cleaner::clean_nodes`.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::node::Node;
+use mago_syntax::cst::cst::statement::Statement;
+use mago_syntax::cst::node::Node;
 
 use crate::function_analysis_data::FunctionAnalysisData;
 

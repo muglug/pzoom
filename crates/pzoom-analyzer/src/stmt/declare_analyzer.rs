@@ -5,10 +5,10 @@
 //! directives, invalid directive values, and `strict_types` in block mode.
 
 use mago_span::{HasSpan, Span};
-use mago_syntax::ast::ast::declare::{Declare, DeclareBody, DeclareItem};
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::declare::{Declare, DeclareBody, DeclareItem};
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::statement::Statement;
 use pzoom_code_info::{Issue, IssueKind};
 
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -21,7 +21,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
 ) -> Result<(), AnalysisError> {
     for declaration in stmt.items.iter() {
-        let declaration_key = declaration.name.value;
+        let declaration_key = pzoom_syntax::bytes_to_str(declaration.name.value);
 
         if declaration_key == "strict_types" {
             // Psalm flags `$stmt->stmts !== null`: php-parser only leaves the

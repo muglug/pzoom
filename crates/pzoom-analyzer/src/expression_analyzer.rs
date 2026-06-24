@@ -1,12 +1,12 @@
 //! Expression analyzer - dispatches to specific expression type analyzers.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::class_like::AnonymousClass;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::method::MethodBody;
-use mago_syntax::ast::ast::construct::Construct;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::string::{CompositeString, StringPart};
+use mago_syntax::cst::cst::class_like::AnonymousClass;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::method::MethodBody;
+use mago_syntax::cst::cst::construct::Construct;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::string::{CompositeString, StringPart};
 use std::rc::Rc;
 
 use pzoom_code_info::VarName;
@@ -153,7 +153,9 @@ pub fn analyze(
                 // Constructor arguments evaluate in the enclosing scope.
                 if let Some(argument_list) = &anonymous_class.argument_list {
                     for argument in argument_list.arguments.iter() {
-                        analyze(analyzer, argument.value(), analysis_data, context);
+                        if let Some(argument_value) = argument.value() {
+                            analyze(analyzer, argument_value, analysis_data, context);
+                        }
                     }
                 }
 
@@ -410,12 +412,12 @@ fn analyze_construct(
 
 /// Analyze a literal expression.
 fn analyze_literal(
-    lit: &mago_syntax::ast::ast::literal::Literal<'_>,
+    lit: &mago_syntax::cst::cst::literal::Literal<'_>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     max_string_length: usize,
 ) {
-    use mago_syntax::ast::ast::literal::Literal;
+    use mago_syntax::cst::cst::literal::Literal;
 
     let expr_type = match lit {
         Literal::Integer(int_lit) => {
@@ -443,13 +445,15 @@ fn analyze_literal(
                 // the value from the raw token for double-quoted strings.
                 let value = if matches!(
                     string_lit.kind,
-                    Some(mago_syntax::ast::ast::literal::LiteralStringKind::DoubleQuoted)
+                    mago_syntax::cst::cst::literal::LiteralStringKind::DoubleQuoted
                 ) && string_lit.raw.len() >= 2
-                    && string_lit.raw.contains('\\')
+                    && pzoom_syntax::bytes_to_str(string_lit.raw).contains('\\')
                 {
-                    php_unescape_double_quoted(&string_lit.raw[1..string_lit.raw.len() - 1])
+                    php_unescape_double_quoted(pzoom_syntax::bytes_to_str(
+                        &string_lit.raw[1..string_lit.raw.len() - 1],
+                    ))
                 } else {
-                    value.to_string()
+                    pzoom_syntax::bytes_to_str(value).to_string()
                 };
                 TUnion::new(TAtomic::string_from_literal(value, max_string_length))
             } else {
@@ -467,11 +471,11 @@ fn analyze_literal(
 /// Analyze a magic constant.
 fn analyze_magic_constant(
     analyzer: &StatementsAnalyzer<'_>,
-    mc: &mago_syntax::ast::ast::magic_constant::MagicConstant<'_>,
+    mc: &mago_syntax::cst::cst::magic_constant::MagicConstant<'_>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    use mago_syntax::ast::ast::magic_constant::MagicConstant;
+    use mago_syntax::cst::cst::magic_constant::MagicConstant;
 
     let expr_type = match mc {
         MagicConstant::Line(_) => TUnion::int(),
@@ -520,12 +524,12 @@ fn analyze_magic_constant(
 /// Analyze legacy array (array(...) syntax).
 fn analyze_legacy_array(
     analyzer: &StatementsAnalyzer<'_>,
-    array: &mago_syntax::ast::ast::array::LegacyArray<'_>,
+    array: &mago_syntax::cst::cst::array::LegacyArray<'_>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    use mago_syntax::ast::ast::array::ArrayElement;
+    use mago_syntax::cst::cst::array::ArrayElement;
     use pzoom_code_info::t_atomic::ArrayKey;
     use rustc_hash::FxHashMap;
 
@@ -655,12 +659,12 @@ fn analyze_legacy_array(
 /// Analyze property/array access.
 fn analyze_access(
     analyzer: &StatementsAnalyzer<'_>,
-    access: &mago_syntax::ast::ast::access::Access<'_>,
+    access: &mago_syntax::cst::cst::access::Access<'_>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    use mago_syntax::ast::ast::access::Access;
+    use mago_syntax::cst::cst::access::Access;
 
     match access {
         Access::Property(prop_access) => {
@@ -721,7 +725,7 @@ fn infer_anonymous_class_object_type(
         let parent_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
             analyzer
                 .interner
-                .find(parent.value())
+                .find(pzoom_syntax::bytes_to_str(parent.value()))
                 .unwrap_or(pzoom_str::StrId::EMPTY)
         });
         object_parts.push(TAtomic::TNamedObject {
@@ -738,7 +742,7 @@ fn infer_anonymous_class_object_type(
             let interface_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
                 analyzer
                     .interner
-                    .find(interface.value())
+                    .find(pzoom_syntax::bytes_to_str(interface.value()))
                     .unwrap_or(pzoom_str::StrId::EMPTY)
             });
             let interface_atomic = TAtomic::TNamedObject {
@@ -821,7 +825,7 @@ fn analyze_anonymous_class_members(
     for member in anonymous_class.members.iter() {
         match member {
             ClassLikeMember::Property(property) => {
-                if let mago_syntax::ast::ast::class_like::property::Property::Plain(plain) =
+                if let mago_syntax::cst::cst::class_like::property::Property::Plain(plain) =
                     property
                 {
                     let property_type = plain
@@ -841,13 +845,17 @@ fn analyze_anonymous_class_members(
                         .unwrap_or_else(TUnion::mixed);
                     for item in plain.items.iter() {
                         anon_property_types.push((
-                            item.variable().name.trim_start_matches('$').to_string(),
+                            pzoom_syntax::bytes_to_str(item.variable().name)
+                                .trim_start_matches('$')
+                                .to_string(),
                             property_type.clone(),
                         ));
                     }
                 }
             }
-            ClassLikeMember::Method(method) if method.name.value == "__construct" => {
+            ClassLikeMember::Method(method)
+                if pzoom_syntax::bytes_to_str(method.name.value) == "__construct" =>
+            {
                 for param in method.parameter_list.parameters.iter() {
                     if !param.is_promoted_property() {
                         continue;
@@ -868,7 +876,9 @@ fn analyze_anonymous_class_members(
                         })
                         .unwrap_or_else(TUnion::mixed);
                     anon_property_types.push((
-                        param.variable.name.trim_start_matches('$').to_string(),
+                        pzoom_syntax::bytes_to_str(param.variable.name)
+                            .trim_start_matches('$')
+                            .to_string(),
                         property_type,
                     ));
                 }
@@ -885,7 +895,7 @@ fn analyze_anonymous_class_members(
         let mut method_info = FunctionLikeInfo {
             name: analyzer
                 .interner
-                .find(method.name.value)
+                .find(pzoom_syntax::bytes_to_str(method.name.value))
                 .unwrap_or(pzoom_str::StrId::EMPTY),
             start_offset: method.span().start.offset as u32,
             end_offset: method.span().end.offset as u32,
@@ -920,7 +930,7 @@ fn analyze_anonymous_class_members(
         for param in method.parameter_list.parameters.iter() {
             let param_name = analyzer
                 .interner
-                .find(param.variable.name)
+                .find(pzoom_syntax::bytes_to_str(param.variable.name))
                 .unwrap_or(pzoom_str::StrId::EMPTY);
             let mut param_type = param
                 .hint
@@ -1195,10 +1205,12 @@ fn analyze_composite_string(
                 context,
             )),
             StringPart::Literal(literal) => {
-                if let Some(accumulated) = literal_string.as_mut() {
-                    accumulated.push_str(literal.value);
+                if let Some(accumulated) = literal_string.as_mut()
+                    && let Some(value) = literal.value
+                {
+                    accumulated.push_str(pzoom_syntax::bytes_to_str(value));
                 }
-                non_empty = non_empty || !literal.value.is_empty();
+                non_empty = non_empty || literal.value.is_some_and(|value| !value.is_empty());
                 None
             }
         };

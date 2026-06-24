@@ -1,6 +1,6 @@
 //! Missing/magic method-call handling (`__call`, pseudo-methods). Mirrors Psalm `MissingMethodCallHandler`.
 
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::class_like_info::ClassLikeInfo;
 use pzoom_code_info::{Issue, IssueKind, TUnion};
@@ -26,7 +26,7 @@ pub(crate) fn analyze_magic_property_method_call(
     object_type_params: Option<&[TUnion]>,
     method_name: &str,
     object_expr: &Expression<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,

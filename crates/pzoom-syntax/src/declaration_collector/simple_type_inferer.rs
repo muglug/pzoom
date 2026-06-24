@@ -6,13 +6,13 @@
 //! scanning, without running the full analyzer. Used for constant values,
 //! enum case values and parameter defaults. The entry point is [`infer`].
 
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
 use rustc_hash::FxHashMap;
 
 use pzoom_code_info::class_constant_info::{ClassConstantInfo, UnresolvedConstExpr};
@@ -53,12 +53,11 @@ pub(crate) fn infer_param_default_type(
                 .next()
                 .unwrap_or(declared_class_name.as_ref());
 
-            identifier
-                .value()
+            crate::bytes_to_str(identifier.value())
                 .eq_ignore_ascii_case(declared_class_name.as_ref())
-                || identifier.value().eq_ignore_ascii_case(declared_short_name)
-                || identifier
-                    .value()
+                || crate::bytes_to_str(identifier.value())
+                    .eq_ignore_ascii_case(declared_short_name)
+                || crate::bytes_to_str(identifier.value())
                     .trim_start_matches('\\')
                     .eq_ignore_ascii_case(declared_class_name.trim_start_matches('\\').as_ref())
         }),
@@ -69,7 +68,7 @@ pub(crate) fn infer_param_default_type(
         return None;
     }
 
-    let const_name = interner.intern(constant_name.value);
+    let const_name = interner.intern(crate::bytes_to_str(constant_name.value));
     class_constants
         .get(&const_name)
         .map(|const_info| const_info.constant_type.clone())
@@ -132,14 +131,14 @@ pub(crate) fn infer_with_context(
         }
         // A heredoc/nowdoc with only literal parts is a literal string
         // (Psalm's SimpleTypeInferer resolves these for constants).
-        Expression::CompositeString(mago_syntax::ast::ast::string::CompositeString::Document(
+        Expression::CompositeString(mago_syntax::cst::cst::string::CompositeString::Document(
             document,
         )) => {
             let mut value = String::new();
             for part in document.parts.iter() {
                 match part {
-                    mago_syntax::ast::ast::string::StringPart::Literal(literal) => {
-                        value.push_str(literal.value);
+                    mago_syntax::cst::cst::string::StringPart::Literal(literal) => {
+                        value.push_str(crate::bytes_to_str(literal.value.unwrap_or_default()));
                     }
                     _ => return Some(TUnion::string()),
                 }
@@ -152,7 +151,7 @@ pub(crate) fn infer_with_context(
         // Psalm's SimpleTypeInferer: __DIR__/__FILE__ are non-empty strings,
         // __LINE__ is int<1, max>, the name constants are strings.
         Expression::MagicConstant(magic_constant) => {
-            use mago_syntax::ast::ast::magic_constant::MagicConstant;
+            use mago_syntax::cst::cst::magic_constant::MagicConstant;
             Some(match magic_constant {
                 MagicConstant::Directory(_) | MagicConstant::File(_) => {
                     TUnion::new(TAtomic::TNonEmptyString)
@@ -343,13 +342,13 @@ pub(crate) fn infer_with_context(
         // (Psalm's ConstantTypeResolver EnumNameFetch/EnumValueFetch).
         Expression::Access(Access::Property(property_access)) => {
             let resolver = infer_context.enum_case_resolver?;
-            let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+            let mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                 property_name,
             ) = &property_access.property
             else {
                 return None;
             };
-            let wants_name = match property_name.value {
+            let wants_name = match crate::bytes_to_str(property_name.value) {
                 "name" => true,
                 "value" => false,
                 _ => return None,
@@ -364,7 +363,7 @@ pub(crate) fn infer_with_context(
             };
             let class_name = match case_access.class.unparenthesized() {
                 Expression::Identifier(class_identifier) => {
-                    let raw = class_identifier.value();
+                    let raw = crate::bytes_to_str(class_identifier.value());
                     if let Some(stripped) = raw.strip_prefix('\\') {
                         stripped.to_string()
                     } else if let Some(class_resolver) = infer_context.class_resolver {
@@ -376,7 +375,7 @@ pub(crate) fn infer_with_context(
                 Expression::Self_(_) | Expression::Static(_) => self_class?.to_string(),
                 _ => return None,
             };
-            resolver(&class_name, case_name.value, wants_name)
+            resolver(&class_name, crate::bytes_to_str(case_name.value), wants_name)
         }
         Expression::Access(Access::ClassConstant(class_constant_access)) => {
             let ClassLikeConstantSelector::Identifier(constant_name) =
@@ -385,13 +384,13 @@ pub(crate) fn infer_with_context(
                 return None;
             };
 
-            if !constant_name.value.eq_ignore_ascii_case("class") {
+            if !crate::bytes_to_str(constant_name.value).eq_ignore_ascii_case("class") {
                 return None;
             }
 
             let class_name = match class_constant_access.class.unparenthesized() {
                 Expression::Identifier(class_identifier) => {
-                    let raw = class_identifier.value();
+                    let raw = crate::bytes_to_str(class_identifier.value());
                     if let Some(stripped) = raw.strip_prefix('\\') {
                         stripped.to_string()
                     } else if let Some(resolver) = infer_context.class_resolver {
@@ -418,7 +417,7 @@ pub(crate) fn infer_with_context(
         // context (Psalm's SimpleTypeInferer `$existing_constants`), runtime
         // constants through the shared table.
         Expression::ConstantAccess(constant_access) => {
-            let raw = constant_access.name.value().trim_start_matches('\\');
+            let raw = crate::bytes_to_str(constant_access.name.value()).trim_start_matches('\\');
             if let Some(resolver) = infer_context.global_constant_resolver
                 && let Some(resolved) = resolver(raw)
             {
@@ -545,7 +544,7 @@ pub(crate) fn build_unresolved_const_expr(
 
             let class_name = match class_constant_access.class.unparenthesized() {
                 Expression::Identifier(class_identifier) => {
-                    let raw = class_identifier.value();
+                    let raw = crate::bytes_to_str(class_identifier.value());
                     if let Some(stripped) = raw.strip_prefix('\\') {
                         stripped.to_string()
                     } else if let Some(resolver) = infer_context.class_resolver {
@@ -563,7 +562,7 @@ pub(crate) fn build_unresolved_const_expr(
 
             Some(UnresolvedConstExpr::ClassConstant {
                 class: interner(class_name.trim_start_matches('\\')),
-                constant: interner(constant_name.value),
+                constant: interner(crate::bytes_to_str(constant_name.value)),
             })
         }
         // `self::KEYS['hi']` — Psalm's UnresolvedConstant ArrayOffsetFetch.
@@ -669,7 +668,7 @@ pub(crate) fn build_unresolved_const_expr(
         }),
         // A bare global constant reference (`JSON_PRETTY_PRINT`).
         Expression::ConstantAccess(constant_access) => {
-            let raw = constant_access.name.value();
+            let raw = crate::bytes_to_str(constant_access.name.value());
             Some(UnresolvedConstExpr::GlobalConstant(interner(
                 raw.trim_start_matches('\\'),
             )))
@@ -677,13 +676,13 @@ pub(crate) fn build_unresolved_const_expr(
         // `Other::CASE->value` / `->name` (Psalm's EnumValueFetch /
         // EnumNameFetch) — deferred when the enum isn't collected yet.
         Expression::Access(Access::Property(property_access)) => {
-            let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+            let mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                 property_name,
             ) = &property_access.property
             else {
                 return None;
             };
-            let fetch_name = match property_name.value {
+            let fetch_name = match crate::bytes_to_str(property_name.value) {
                 "name" => true,
                 "value" => false,
                 _ => return None,
@@ -698,7 +697,7 @@ pub(crate) fn build_unresolved_const_expr(
             };
             let class_name = match case_access.class.unparenthesized() {
                 Expression::Identifier(class_identifier) => {
-                    let raw = class_identifier.value();
+                    let raw = crate::bytes_to_str(class_identifier.value());
                     if let Some(stripped) = raw.strip_prefix('\\') {
                         stripped.to_string()
                     } else if let Some(class_resolver) = infer_context.class_resolver {
@@ -714,7 +713,7 @@ pub(crate) fn build_unresolved_const_expr(
             };
             Some(UnresolvedConstExpr::EnumCasePropertyFetch {
                 class: interner(class_name.trim_start_matches('\\')),
-                case: interner(case_name.value),
+                case: interner(crate::bytes_to_str(case_name.value)),
                 fetch_name,
             })
         }

@@ -8,10 +8,10 @@
 use super::function_call_analyzer;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::argument::{Argument, ArgumentList};
-use mago_syntax::ast::ast::call::{Call, FunctionCall};
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::argument::{Argument, ArgumentList};
+use mago_syntax::cst::cst::call::{Call, FunctionCall};
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_code_info::VarName;
 use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_code_info::{
@@ -198,7 +198,7 @@ fn unpacked_element_value_type_for_param(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_unpacked_argument_element_types(
     analyzer: &StatementsAnalyzer<'_>,
-    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg: &mago_syntax::cst::cst::argument::Argument<'_>,
     arg_pos: Pos,
     arg_type: &TUnion,
     params: &[ParamInfo],
@@ -244,7 +244,7 @@ pub(crate) fn verify_unpacked_argument_element_types(
 
 pub(crate) fn check_arguments_match(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     function_info: &FunctionLikeInfo,
     callable_name: &str,
@@ -579,7 +579,7 @@ fn resolve_argument_param_indices(
 
                 let named_param_index = params
                     .iter()
-                    .position(|param| matches_named_argument(analyzer, param, named_arg.name.value))
+                    .position(|param| matches_named_argument(analyzer, param, pzoom_syntax::bytes_to_str(named_arg.name.value)))
                     .or(variadic_param_index);
 
                 let Some(param_index) = named_param_index else {
@@ -590,7 +590,7 @@ fn resolve_argument_param_indices(
                         IssueKind::InvalidNamedArgument,
                         format!(
                             "Invalid named argument {} passed to {}",
-                            named_arg.name.value, callable_name
+                            pzoom_syntax::bytes_to_str(named_arg.name.value), callable_name
                         ),
                     );
                     continue;
@@ -607,7 +607,7 @@ fn resolve_argument_param_indices(
                         IssueKind::InvalidNamedArgument,
                         format!(
                             "Parameter {} of {} is already specified",
-                            named_arg.name.value, callable_name
+                            pzoom_syntax::bytes_to_str(named_arg.name.value), callable_name
                         ),
                     );
                     continue;
@@ -948,11 +948,11 @@ fn maybe_generalize_argument_type_after_call(
         return;
     };
 
-    if direct_var.name == "this" {
+    if pzoom_syntax::bytes_to_str(direct_var.name) == "this" {
         return;
     }
 
-    let var_id = VarName::new(direct_var.name);
+    let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct_var.name));
 
     if let (
         Some(TAtomic::TNamedObject {
@@ -967,7 +967,7 @@ fn maybe_generalize_argument_type_after_call(
         && arg_class_name == param_class_name
     {
         context.set_var_type_for_inference(var_id, param_type.clone());
-        invalidate_property_narrowings_for_argument(context, direct_var.name);
+        invalidate_property_narrowings_for_argument(context, pzoom_syntax::bytes_to_str(direct_var.name));
         return;
     }
 
@@ -976,7 +976,7 @@ fn maybe_generalize_argument_type_after_call(
         && &intersection != arg_type
     {
         context.set_var_type_for_inference(var_id, intersection);
-        invalidate_property_narrowings_for_argument(context, direct_var.name);
+        invalidate_property_narrowings_for_argument(context, pzoom_syntax::bytes_to_str(direct_var.name));
         return;
     }
 
@@ -994,7 +994,7 @@ fn maybe_generalize_argument_type_after_call(
 
     let widened = combine_union_types(arg_type, param_type, false);
     context.set_var_type_for_inference(var_id, widened);
-    invalidate_property_narrowings_for_argument(context, direct_var.name);
+    invalidate_property_narrowings_for_argument(context, pzoom_syntax::bytes_to_str(direct_var.name));
 }
 
 fn invalidate_property_narrowings_for_argument(context: &mut BlockContext, var_name: &str) {
@@ -1197,9 +1197,9 @@ fn infer_array_filter_mode(mode_arg: &Argument<'_>, mode_type: Option<&TUnion>) 
     }
 
     let normalized_name = match mode_arg.value().unparenthesized() {
-        Expression::Identifier(identifier) => identifier.value().trim_start_matches('\\'),
+        Expression::Identifier(identifier) => pzoom_syntax::bytes_to_str(identifier.value()).trim_start_matches('\\'),
         Expression::ConstantAccess(constant_access) => {
-            constant_access.name.value().trim_start_matches('\\')
+            pzoom_syntax::bytes_to_str(constant_access.name.value()).trim_start_matches('\\')
         }
         _ => return None,
     }
@@ -1261,9 +1261,9 @@ pub(crate) fn predeclare_by_ref_argument_vars(
     analyzer: &StatementsAnalyzer<'_>,
     function_name: Option<&str>,
     func_info: Option<&pzoom_code_info::FunctionLikeInfo>,
-    args: &mago_syntax::ast::sequence::TokenSeparatedSequence<
+    args: &mago_syntax::cst::sequence::TokenSeparatedSequence<
         '_,
-        mago_syntax::ast::ast::argument::Argument<'_>,
+        mago_syntax::cst::cst::argument::Argument<'_>,
     >,
     context: &mut BlockContext,
 ) {
@@ -1294,18 +1294,18 @@ pub(crate) fn predeclare_by_ref_argument_vars(
             continue;
         }
 
-        if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+        if let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
             arg.value().unparenthesized()
         {
             // Superglobals are always defined (and taint sources) — masking
             // them with a placeholder would swallow `extract($_POST)` taints.
             if crate::expr::variable_fetch_analyzer::is_superglobal(
-                direct.name.trim_start_matches('$'),
+                pzoom_syntax::bytes_to_str(direct.name).trim_start_matches('$'),
             ) {
                 continue;
             }
 
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             if !context.locals.contains_key(&var_id) {
                 // Psalm leaves these variables typeless and skips argument
                 // verification for them; mark the placeholder so verify_type
@@ -1340,7 +1340,7 @@ pub(crate) fn apply_param_out_types(
     analyzer: &StatementsAnalyzer<'_>,
     function_id: StrId,
     functionlike_template_types: &[pzoom_code_info::functionlike_info::FunctionTemplateType],
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
     analysis_data: &mut FunctionAnalysisData,
@@ -1454,9 +1454,9 @@ pub(crate) fn apply_param_out_types(
                 "krsort" | "asort" | "arsort" | "natcasesort" | "natsort"
             )
         {
-            if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+            if let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
                 arg.value().unparenthesized()
-                && let Some(existing) = context.get_var_type(direct.name)
+                && let Some(existing) = context.get_var_type(pzoom_syntax::bytes_to_str(direct.name))
             {
                 let mut array_atomics: Vec<TAtomic> = Vec::new();
                 for atomic in &existing.types {
@@ -1514,7 +1514,7 @@ pub(crate) fn apply_param_out_types(
                     by_ref_type.parent_nodes = existing.parent_nodes.clone();
                     context
                         .locals
-                        .insert(VarName::new(direct.name), by_ref_type);
+                        .insert(VarName::new(pzoom_syntax::bytes_to_str(direct.name)), by_ref_type);
                 }
             }
             continue;
@@ -1585,10 +1585,10 @@ pub(crate) fn apply_param_out_types(
         );
         resolved_out_type.parent_nodes = vec![assignment_node];
 
-        if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+        if let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
             arg.value().unparenthesized()
         {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
 
             // Psalm's $constrain_type: by-ref params of CallMap (builtin)
             // functions don't constrain the variable — `shuffle($a)` leaves
@@ -1763,7 +1763,7 @@ fn resolve_param_index_for_argument(
                     .as_ref()
                     .strip_prefix('$')
                     .unwrap_or(param_name.as_ref())
-                    == named_arg.name.value
+                    == pzoom_syntax::bytes_to_str(named_arg.name.value)
             })
             .or(variadic_param_index),
         Argument::Positional(_) => {
@@ -1801,7 +1801,7 @@ pub(crate) fn collect_call_by_ref_assignments(
         return assigned;
     };
 
-    let raw_name = function_identifier.value();
+    let raw_name = pzoom_syntax::bytes_to_str(function_identifier.value());
     let resolved_name_id = analyzer
         .get_resolved_name(function_identifier.start_offset() as u32)
         .unwrap_or_else(|| {
@@ -1841,7 +1841,7 @@ pub(crate) fn collect_call_by_ref_assignments(
         let treat_as_by_ref = by_ref_from_signature.unwrap_or(false)
             || function_info.is_some_and(|info| is_preg_match_out_param(info.name, idx));
         if treat_as_by_ref {
-            assigned.insert(VarName::new(direct.name));
+            assigned.insert(VarName::new(pzoom_syntax::bytes_to_str(direct.name)));
         }
     }
 

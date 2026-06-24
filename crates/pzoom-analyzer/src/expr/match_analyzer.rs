@@ -1,7 +1,8 @@
 //! Match expression analyzer.
 
+use mago_allocator::Arena;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::control_flow::r#match::{Match, MatchArm};
+use mago_syntax::cst::cst::control_flow::r#match::{Match, MatchArm};
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 
@@ -56,8 +57,8 @@ pub fn analyze(
     // impossible by the preceding narrowing is reported.
     let match_on_true = matches!(
         match_expr.expression.unparenthesized(),
-        mago_syntax::ast::ast::expression::Expression::Literal(
-            mago_syntax::ast::ast::literal::Literal::True(_)
+        mago_syntax::cst::cst::expression::Expression::Literal(
+            mago_syntax::cst::cst::literal::Literal::True(_)
         )
     );
     let mut running_context = context.clone();
@@ -408,8 +409,8 @@ fn match_literals_equal(subject: &TAtomic, condition: &TAtomic) -> bool {
 fn build_match_condition_clauses(
     analyzer: &StatementsAnalyzer<'_>,
     match_on_true: bool,
-    subject: &mago_syntax::ast::ast::expression::Expression<'_>,
-    condition: &mago_syntax::ast::ast::expression::Expression<'_>,
+    subject: &mago_syntax::cst::cst::expression::Expression<'_>,
+    condition: &mago_syntax::cst::cst::expression::Expression<'_>,
     cond_id: (u32, u32),
     analysis_data: &mut FunctionAnalysisData,
 ) -> Vec<pzoom_code_info::algebra::Clause> {
@@ -429,11 +430,11 @@ fn build_match_condition_clauses(
         return Vec::new();
     };
 
-    let equality_expr: &mago_syntax::ast::ast::expression::Expression =
-        arena.alloc(mago_syntax::ast::ast::expression::Expression::Binary(
-            mago_syntax::ast::ast::binary::Binary {
+    let equality_expr: &mago_syntax::cst::cst::expression::Expression =
+        arena.alloc(mago_syntax::cst::cst::expression::Expression::Binary(
+            mago_syntax::cst::cst::binary::Binary {
                 lhs: subject,
-                operator: mago_syntax::ast::ast::binary::BinaryOperator::Identical(
+                operator: mago_syntax::cst::cst::binary::BinaryOperator::Identical(
                     condition.span(),
                 ),
                 rhs: condition,

@@ -15,8 +15,8 @@
 use std::rc::Rc;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::statement::Statement;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use pzoom_code_info::VarName;

@@ -1,14 +1,15 @@
 //! Expression statement analyzer.
 
+use mago_allocator::Arena;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::control_flow::r#if::{If, IfBody, IfStatementBody};
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::keyword::Keyword;
-use mago_syntax::ast::ast::statement::{ExpressionStatement, Statement};
-use mago_syntax::ast::ast::terminator::Terminator;
-use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
-use mago_syntax::ast::sequence::Sequence;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::control_flow::r#if::{If, IfBody, IfStatementBody};
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::keyword::Keyword;
+use mago_syntax::cst::cst::statement::{ExpressionStatement, Statement};
+use mago_syntax::cst::cst::terminator::Terminator;
+use mago_syntax::cst::cst::unary::{UnaryPrefix, UnaryPrefixOperator};
+use mago_syntax::cst::sequence::Sequence;
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -58,14 +59,14 @@ pub fn analyze(
                 let synthetic_if = If {
                     r#if: Keyword {
                         span: cond_span,
-                        value: arena.alloc_str("if"),
+                        value: b"if",
                     },
                     left_parenthesis: cond_span,
                     condition,
                     right_parenthesis: cond_span,
                     body: IfBody::Statement(IfStatementBody {
                         statement: body_statement,
-                        else_if_clauses: Sequence::empty(arena),
+                        else_if_clauses: Sequence::empty(),
                         else_clause: None,
                     }),
                 };

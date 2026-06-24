@@ -1,12 +1,12 @@
 //! Isset expression analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::construct::IssetConstruct;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::construct::IssetConstruct;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::{Issue, IssueKind, TUnion, VarName};
 
@@ -109,11 +109,11 @@ fn as_this_property_fetch<'a>(expr: &'a Expression<'_>) -> Option<&'a str> {
     else {
         return None;
     };
-    if object_var.name != "$this" {
+    if pzoom_syntax::bytes_to_str(object_var.name) != "$this" {
         return None;
     }
     match &prop_access.property {
-        ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value)),
         _ => None,
     }
 }

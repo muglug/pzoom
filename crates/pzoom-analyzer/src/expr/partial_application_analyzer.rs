@@ -7,8 +7,8 @@
 //! placeholders (PHP 8.5) is not modeled yet and stays mixed.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::partial_application::PartialApplication;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::partial_application::PartialApplication;
 
 use pzoom_code_info::{TAtomic, TUnion};
 
@@ -42,7 +42,7 @@ pub fn analyze(
             let (name, is_fully_qualified, name_offset) =
                 match function_pa.function.unparenthesized() {
                     Expression::Identifier(id) => (
-                        Some(id.value()),
+                        Some(pzoom_syntax::bytes_to_str(id.value())),
                         id.is_fully_qualified(),
                         Some(id.span().start.offset),
                     ),
@@ -142,12 +142,12 @@ pub fn analyze(
                 .cloned()
                 .map(|t| (*t).clone());
             let method_name = match &method_pa.method {
-                mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+                mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                     id,
-                ) => Some(id.value.to_string()),
+                ) => Some(pzoom_syntax::bytes_to_str(id.value).to_string()),
                 // `$test->$name(...)` — a literal-string selector resolves
                 // like an identifier (Psalm's getSingleStringLiteral).
-                mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Variable(
+                mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Variable(
                     var,
                 ) => {
                     let var_pos = expression_analyzer::analyze(
@@ -320,7 +320,7 @@ pub fn analyze(
                         Some(
                             analyzer
                                 .interner
-                                .find(id.value())
+                                .find(pzoom_syntax::bytes_to_str(id.value()))
                                 .unwrap_or(pzoom_str::StrId::EMPTY),
                         )
                     }),
@@ -363,12 +363,12 @@ pub fn analyze(
                 }
             };
             let method_name = match &static_pa.method {
-                mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+                mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                     id,
-                ) => Some(id.value.to_string()),
+                ) => Some(pzoom_syntax::bytes_to_str(id.value).to_string()),
                 // `Test::$name(...)` — a literal-string selector resolves
                 // like an identifier.
-                mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Variable(
+                mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Variable(
                     var,
                 ) => {
                     let var_pos = expression_analyzer::analyze(

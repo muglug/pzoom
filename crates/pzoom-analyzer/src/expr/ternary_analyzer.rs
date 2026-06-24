@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::conditional::Conditional;
-use mago_syntax::ast::ast::construct::Construct;
+use mago_syntax::cst::cst::conditional::Conditional;
+use mago_syntax::cst::cst::construct::Construct;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::VarName;
@@ -36,7 +36,7 @@ pub fn analyze(
     context: &mut BlockContext,
 ) {
     if let Some(if_expr) = cond.then {
-        if let mago_syntax::ast::ast::expression::Expression::Construct(Construct::Isset(isset)) =
+        if let mago_syntax::cst::cst::expression::Expression::Construct(Construct::Isset(isset)) =
             cond.condition.unparenthesized()
         {
             if isset.values.len() == 1 {
@@ -405,7 +405,7 @@ pub fn analyze(
 
 fn emit_ternary_condition_paradox_if_needed(
     analyzer: &StatementsAnalyzer<'_>,
-    condition: &mago_syntax::ast::ast::expression::Expression<'_>,
+    condition: &mago_syntax::cst::cst::expression::Expression<'_>,
     entry_clauses: &[std::rc::Rc<Clause>],
     true_formula: &[Clause],
     analysis_data: &mut FunctionAnalysisData,

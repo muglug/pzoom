@@ -8,13 +8,13 @@
 //! inline and uses `elseif_analyzer`/`else_analyzer` for the rest).
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::construct::Construct;
-use mago_syntax::ast::ast::control_flow::r#if::If;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::construct::Construct;
+use mago_syntax::cst::cst::control_flow::r#if::If;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::variable::Variable;
 use std::collections::BTreeMap;
 
 use pzoom_code_info::VarName;
@@ -1194,7 +1194,7 @@ fn collect_guaranteed_assignments(
             let mut rhs = collect_guaranteed_assignments(analyzer, assignment.rhs);
             if let Expression::Variable(Variable::Direct(direct)) = assignment.lhs.unparenthesized()
             {
-                let var_id = VarName::new(direct.name);
+                let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
                 rhs.when_true.insert(var_id.clone());
                 rhs.when_false.insert(var_id);
             }

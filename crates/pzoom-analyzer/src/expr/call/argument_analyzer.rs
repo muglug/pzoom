@@ -1,6 +1,6 @@
 //! Single argument analyzer.
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 
 use pzoom_code_info::{
     DataFlowNode, DataFlowNodeId, DataFlowNodeKind, FunctionLikeIdentifier, GraphKind, Issue,
@@ -15,7 +15,7 @@ use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
 use crate::type_comparator::type_comparison_result::TypeComparisonResult;
 use crate::type_comparator::union_type_comparator;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 use pzoom_code_info::combine_union_types;
 use pzoom_code_info::functionlike_info::ParamInfo;
 
@@ -189,14 +189,14 @@ pub fn verify_type(
                 analysis_data.data_flow_graph.kind,
                 pzoom_code_info::GraphKind::WholeProgram(_)
             )
-            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+            && let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
                 arg.value().unparenthesized()
         {
             let mut untainted_type = arg_type.clone();
             untainted_type.parent_nodes = vec![];
             analysis_data
                 .pending_gatekeeper_coercions
-                .push((pzoom_code_info::VarName::new(direct.name), untainted_type));
+                .push((pzoom_code_info::VarName::new(pzoom_syntax::bytes_to_str(direct.name)), untainted_type));
         }
     }
 
@@ -233,7 +233,7 @@ pub fn verify_type(
             arg.value().unparenthesized(),
             Expression::ConstantAccess(_)
                 | Expression::MagicConstant(_)
-                | Expression::Access(mago_syntax::ast::ast::access::Access::ClassConstant(_))
+                | Expression::Access(mago_syntax::cst::cst::access::Access::ClassConstant(_))
         )
     {
         let chars: Vec<char> = value.chars().collect();
@@ -856,7 +856,7 @@ pub fn verify_type(
         if arg_type.is_nullable()
             && !param.by_ref
             && analyzer.file_uses_strict_types
-            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+            && let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
                 arg.value().unparenthesized()
         {
             let mut narrowed = arg_type.clone();
@@ -866,7 +866,7 @@ pub fn verify_type(
             if !narrowed.types.is_empty() {
                 analysis_data
                     .pending_gatekeeper_coercions
-                    .push((pzoom_code_info::VarName::new(direct.name), narrowed));
+                    .push((pzoom_code_info::VarName::new(pzoom_syntax::bytes_to_str(direct.name)), narrowed));
             }
         }
     }
@@ -1335,7 +1335,7 @@ fn coerce_value_after_gatekeeper_argument(
         return;
     };
 
-    let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+    let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
         arg.value().unparenthesized()
     else {
         return;
@@ -1348,7 +1348,7 @@ fn coerce_value_after_gatekeeper_argument(
     // The verification chain holds the context immutably — queue the
     // narrowing for the call analyzer to apply once arguments are done.
     let _ = context;
-    let var_id = pzoom_code_info::VarName::new(direct.name);
+    let var_id = pzoom_code_info::VarName::new(pzoom_syntax::bytes_to_str(direct.name));
     analysis_data
         .pending_gatekeeper_coercions
         .push((var_id, narrowed));

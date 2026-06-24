@@ -1,9 +1,9 @@
 //! Include/require expression analyzer.
 
-use mago_syntax::ast::ast::construct::{
+use mago_syntax::cst::cst::construct::{
     IncludeConstruct, IncludeOnceConstruct, RequireConstruct, RequireOnceConstruct,
 };
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
@@ -151,9 +151,9 @@ pub(crate) fn get_path_to(
     expr: &Expression<'_>,
     analysis_data: &FunctionAnalysisData,
 ) -> Option<String> {
-    use mago_syntax::ast::ast::binary::BinaryOperator;
-    use mago_syntax::ast::ast::call::Call;
-    use mago_syntax::ast::ast::magic_constant::MagicConstant;
+    use mago_syntax::cst::cst::binary::BinaryOperator;
+    use mago_syntax::cst::cst::call::Call;
+    use mago_syntax::cst::cst::magic_constant::MagicConstant;
 
     let expr = expr.unparenthesized();
 
@@ -180,7 +180,7 @@ pub(crate) fn get_path_to(
         Expression::Call(Call::Function(func_call))
             if matches!(
                 func_call.function.unparenthesized(),
-                Expression::Identifier(id) if id.value().eq_ignore_ascii_case("dirname")
+                Expression::Identifier(id) if pzoom_syntax::bytes_to_str(id.value()).eq_ignore_ascii_case("dirname")
             ) =>
         {
             let args: Vec<_> = func_call.argument_list.arguments.iter().collect();

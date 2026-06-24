@@ -1,6 +1,6 @@
 //! Cast expression analyzer.
 
-use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
+use mago_syntax::cst::cst::unary::{UnaryPrefix, UnaryPrefixOperator};
 
 use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_code_info::ttype::type_combiner;

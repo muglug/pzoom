@@ -2,10 +2,10 @@
 
 use crate::type_expander::localize_special_class_type_union;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::call::StaticMethodCall;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::call::StaticMethodCall;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
@@ -942,7 +942,7 @@ fn get_self_static_or_parent_keyword(
         Expression::Static(_) => Some("static"),
         Expression::Parent(_) => Some("parent"),
         Expression::Identifier(id) => {
-            let value = id.value();
+            let value = pzoom_syntax::bytes_to_str(id.value());
             if value.eq_ignore_ascii_case("self") {
                 return Some("self");
             }
@@ -989,7 +989,7 @@ pub(crate) fn get_resolved_class_id(
                     Some(
                         analyzer
                             .interner
-                            .find(id.value().trim_start_matches('\\'))
+                            .find(pzoom_syntax::bytes_to_str(id.value()).trim_start_matches('\\'))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
@@ -1033,7 +1033,7 @@ pub(crate) fn get_resolved_class_id(
 /// Get the method name from a method selector.
 fn get_method_name<'a>(selector: &'a ClassLikeMemberSelector<'a>) -> Option<&'a str> {
     match selector {
-        ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value)),
         _ => None,
     }
 }
@@ -1121,7 +1121,7 @@ fn pre_resolve_static_method_info<'a>(
                     Some(
                         analyzer
                             .interner
-                            .find(id.value())
+                            .find(pzoom_syntax::bytes_to_str(id.value()))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })?,
@@ -1137,7 +1137,7 @@ fn pre_resolve_static_method_info<'a>(
 
     let method_id = analyzer
         .interner
-        .find(method_identifier.value)
+        .find(pzoom_syntax::bytes_to_str(method_identifier.value))
         .unwrap_or(pzoom_str::StrId::EMPTY);
     let mut current = Some(class_id);
     while let Some(current_id) = current {

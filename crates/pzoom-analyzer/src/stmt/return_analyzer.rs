@@ -1,11 +1,11 @@
 //! Return statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::r#return::Return;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::r#return::Return;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{DataFlowNode, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
@@ -1347,7 +1347,7 @@ pub(crate) fn get_inline_return_annotation_type(
         Expression::Variable(Variable::Direct(direct)) => Some(
             analyzer
                 .interner
-                .find(direct.name)
+                .find(pzoom_syntax::bytes_to_str(direct.name))
                 .unwrap_or(pzoom_str::StrId::EMPTY),
         ),
         _ => None,
@@ -1462,8 +1462,8 @@ fn infer_explicit_special_return_type_name(
 ) -> Option<StrId> {
     match expr.unparenthesized() {
         Expression::Variable(Variable::Direct(direct))
-            if direct.name.eq_ignore_ascii_case("this")
-                || direct.name.eq_ignore_ascii_case("$this") =>
+            if pzoom_syntax::bytes_to_str(direct.name).eq_ignore_ascii_case("this")
+                || pzoom_syntax::bytes_to_str(direct.name).eq_ignore_ascii_case("$this") =>
         {
             Some(StrId::STATIC)
         }
@@ -1493,7 +1493,7 @@ fn infer_special_class_type_name(
         Expression::Static(_) => Some(StrId::STATIC),
         Expression::Parent(_) => Some(StrId::PARENT),
         Expression::Identifier(id) => {
-            let value = id.value();
+            let value = pzoom_syntax::bytes_to_str(id.value());
             if value.eq_ignore_ascii_case("self") {
                 Some(StrId::SELF)
             } else if value.eq_ignore_ascii_case("static") {
@@ -1625,7 +1625,7 @@ fn atomic_contains_named_class(atomic: &TAtomic, class_name: StrId) -> bool {
 
 fn should_emit_mixed_return_statement(expr: &Expression<'_>, context: &BlockContext) -> bool {
     if let Expression::Variable(Variable::Direct(direct)) = expr.unparenthesized() {
-        let var_id = VarName::new(direct.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
         if context.static_var_ids.contains(&var_id) {
             return true;
         }
@@ -1639,8 +1639,7 @@ fn should_emit_mixed_return_statement(expr: &Expression<'_>, context: &BlockCont
         return false;
     };
 
-    identifier
-        .value()
+    pzoom_syntax::bytes_to_str(identifier.value())
         .trim_start_matches('\\')
         .eq_ignore_ascii_case("array_pop")
 }

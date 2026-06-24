@@ -5,7 +5,6 @@
 //! analyzer over the program, and return the (non line-suppressed) issues. The
 //! orchestrator delegates per-file analysis here.
 
-use bumpalo::Bump;
 
 use pzoom_code_info::{CodebaseInfo, Issue, IssueKind};
 use pzoom_str::{Interner, StrId};
@@ -44,12 +43,12 @@ impl<'a> FileAnalyzer<'a> {
         let path_str = self.interner.lookup(file_path);
 
         // Create arena for parsing.
-        let arena = Bump::new();
-        let file_id = FileId::new(&*path_str);
+        let arena = pzoom_syntax::LocalArena::new();
+        let file_id = FileId::new(path_str.as_bytes());
 
         // Re-parse the file.
         let _parse_start = crate::profiling::TimerStart::now();
-        let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
+        let program = parse_file_content(&arena, file_id, file_info.contents.as_bytes());
         crate::profiling::record(&crate::profiling::PARSE_NS, _parse_start);
 
         // Name resolution was computed once during scanning; reuse it. Analysis
@@ -407,8 +406,11 @@ impl<'a> FileAnalyzer<'a> {
             // string-span filtering required.
             let comment_spans: Vec<(usize, &str)> = program
                 .trivia
-                .comments()
-                .map(|comment| (comment.span.start.offset as usize, comment.value))
+                .iter()
+                .filter(|trivia| trivia.kind.is_comment())
+                .map(|comment| {
+                    (comment.span.start.offset as usize, pzoom_syntax::bytes_to_str(comment.value))
+                })
                 .collect();
             for candidate in collect_suppression_candidates(&comment_spans) {
                 if used_suppressions.contains(&candidate.offset) {
@@ -567,14 +569,14 @@ fn is_ignored_for_unused_param(var_name: &str) -> bool {
 /// the innermost function-like containing both endpoints; closures/arrows never
 /// report themselves.
 fn report_complex_functions(
-    program: &mago_syntax::ast::Program<'_>,
+    program: &mago_syntax::cst::Program<'_>,
     analysis_data: &mut FunctionAnalysisData,
     file_path: StrId,
     stmt_analyzer: &StatementsAnalyzer<'_>,
 ) {
     use mago_span::HasSpan as _;
     use pzoom_code_info::data_flow::node::DataFlowNodeId;
-    type N<'a, 'b> = mago_syntax::ast::node::Node<'a, 'b>;
+    type N<'a, 'b> = mago_syntax::cst::node::Node<'a, 'b>;
 
     // Calibrated to pzoom's (denser) graph; see the doc comment above.
     const MAX_GRAPH_SIZE: usize = 800;

@@ -15,7 +15,7 @@ use std::rc::Rc;
 /// Analyze clone expression.
 pub fn analyze(
     analyzer: &StatementsAnalyzer<'_>,
-    clone_expr: &mago_syntax::ast::ast::clone::Clone<'_>,
+    clone_expr: &mago_syntax::cst::cst::clone::Clone<'_>,
     pos: Pos,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,

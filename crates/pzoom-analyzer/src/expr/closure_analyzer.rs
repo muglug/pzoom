@@ -1,9 +1,9 @@
 //! Closure and arrow function analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::function_like::arrow_function::ArrowFunction;
-use mago_syntax::ast::ast::function_like::closure::Closure;
-use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter as MagoParameter;
+use mago_syntax::cst::cst::function_like::arrow_function::ArrowFunction;
+use mago_syntax::cst::cst::function_like::closure::Closure;
+use mago_syntax::cst::cst::function_like::parameter::FunctionLikeParameter as MagoParameter;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{
@@ -70,13 +70,13 @@ pub fn analyze(
         .parameter_list
         .parameters
         .iter()
-        .map(|param| VarName::new(param.variable.name))
+        .map(|param| VarName::new(pzoom_syntax::bytes_to_str(param.variable.name)))
         .collect();
 
     // Handle use() clause for captured variables
     if let Some(ref use_clause) = closure.use_clause {
         for use_var in use_clause.variables.iter() {
-            let var_name = use_var.variable.name;
+            let var_name = pzoom_syntax::bytes_to_str(use_var.variable.name);
             let var_id = VarName::new(var_name);
             let normalized_name = var_name.trim_start_matches('$');
 
@@ -190,7 +190,7 @@ pub fn analyze(
                     span.start.offset,
                     span.end.offset,
                     IssueKind::MissingClosureParamType,
-                    format!("Parameter {} has no provided type", param.variable.name),
+                    format!("Parameter {} has no provided type", pzoom_syntax::bytes_to_str(param.variable.name)),
                 );
             }
         }
@@ -219,7 +219,7 @@ pub fn analyze(
         .zip(params.iter())
         .enumerate()
     {
-        let param_name = param.variable.name;
+        let param_name = pzoom_syntax::bytes_to_str(param.variable.name);
         let param_id = VarName::new(param_name);
         let mut param_type = param_info.param_type.clone();
         // A variadic param collects its arguments (Psalm wraps in
@@ -357,7 +357,7 @@ pub fn analyze(
                 .variables
                 .iter()
                 .filter(|use_var| use_var.ampersand.is_some())
-                .map(|use_var| VarName::new(use_var.variable.name))
+                .map(|use_var| VarName::new(pzoom_syntax::bytes_to_str(use_var.variable.name)))
                 .collect()
         })
         .unwrap_or_default();
@@ -652,7 +652,7 @@ pub fn analyze_arrow_function(
         .zip(params.iter())
         .enumerate()
     {
-        let param_name = param.variable.name;
+        let param_name = pzoom_syntax::bytes_to_str(param.variable.name);
         let param_id = VarName::new(param_name);
         let mut param_type = param_info.param_type.clone();
         // A variadic param collects its arguments (Psalm wraps in
@@ -898,7 +898,7 @@ fn apply_inline_callable_param_types<'a, I>(
     I: IntoIterator<Item = &'a MagoParameter<'a>>,
 {
     for (index, (param, param_info)) in parameters.into_iter().zip(params.iter_mut()).enumerate() {
-        let param_id = VarName::new(param.variable.name);
+        let param_id = VarName::new(pzoom_syntax::bytes_to_str(param.variable.name));
         let by_name = inline_annotation.params.iter().find(|inline_param| {
             inline_param
                 .param_name
@@ -1062,7 +1062,7 @@ where
             name: Some(
                 analyzer
                     .interner
-                    .find(param.variable.name)
+                    .find(pzoom_syntax::bytes_to_str(param.variable.name))
                     .unwrap_or(pzoom_str::StrId::EMPTY),
             ),
             param_type: param

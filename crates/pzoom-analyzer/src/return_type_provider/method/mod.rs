@@ -11,7 +11,7 @@ mod mockery_mock;
 mod pdo_statement;
 mod simple_xml_element;
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::TUnion;
 use pzoom_str::StrId;
 

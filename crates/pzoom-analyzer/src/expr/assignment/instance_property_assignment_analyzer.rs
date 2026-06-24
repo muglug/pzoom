@@ -1,10 +1,10 @@
 //! Instance property assignment analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::PropertyAccess;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::PropertyAccess;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
@@ -58,8 +58,9 @@ pub fn analyze(
         let annotations = analyzer.get_inline_var_annotations(stmt_start)?;
         let prop_key = match &access.property {
             ClassLikeMemberSelector::Identifier(id) => {
-                expression_identifier::get_expression_var_key(access.object)
-                    .map(|object_key| format!("{}->{}", object_key, id.value))
+                expression_identifier::get_expression_var_key(access.object).map(|object_key| {
+                    format!("{}->{}", object_key, pzoom_syntax::bytes_to_str(id.value))
+                })
             }
             _ => None,
         };
@@ -130,6 +131,7 @@ pub fn analyze_with_known_type(
     // `$name` counts as used.
     let prop_name = match &access.property {
         ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Missing(_) => None,
         ClassLikeMemberSelector::Variable(selector_var) => {
             let was_inside_general_use = context.inside_general_use;
             context.inside_general_use = true;
@@ -161,7 +163,7 @@ pub fn analyze_with_known_type(
     // Check if this is $this->prop
     let is_this_assignment = matches!(
         access.object,
-        Expression::Variable(Variable::Direct(v)) if v.name == "$this"
+        Expression::Variable(Variable::Direct(v)) if pzoom_syntax::bytes_to_str(v.name) == "$this"
     );
 
     // Psalm `InstancePropertyAssignmentAnalyzer`: assigning to a property is
@@ -210,7 +212,7 @@ pub fn analyze_with_known_type(
 
     // Verify property type if we can resolve it
     if let Some(obj_type) = obj_type {
-        if let Some(prop_name) = prop_name {
+        if let Some(prop_name) = prop_name.map(pzoom_syntax::bytes_to_str) {
             // A `false`/`null` member the receiver marks ignorable
             // (`@psalm-ignore-falsable-return` / `-nullable-return`) is not a
             // real non-object case — Psalm runs the assignment containment with
@@ -1206,6 +1208,7 @@ pub fn analyze_with_known_type(
     }
 
     if let Some(object_key) = expression_identifier::get_expression_var_key(access.object) {
+        let prop_name = prop_name.map(pzoom_syntax::bytes_to_str);
         // Pre-existence must be sampled before the member-tracking clear:
         // Psalm's removeDescendents gate checks vars_in_scope at assignment
         // time.

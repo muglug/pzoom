@@ -2,9 +2,9 @@
 
 use crate::type_expander::localize_special_class_type_union;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::call::{MethodCall, NullSafeMethodCall};
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::call::{MethodCall, NullSafeMethodCall};
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
@@ -89,12 +89,12 @@ pub fn analyze(
     // treating it as undefined.
     if resolved_method_info.is_none() {
         for arg in &args {
-            let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) =
+            let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) =
                 arg.value().unparenthesized()
             else {
                 continue;
             };
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             if context.locals.contains_key(&var_id) {
                 continue;
             }
@@ -105,7 +105,7 @@ pub fn analyze(
                     IssueKind::PossiblyUndefinedVariable,
                     format!(
                         "Variable {} must be defined prior to use within an unknown function or method",
-                        direct.name
+                        pzoom_syntax::bytes_to_str(direct.name)
                     ),
                     analyzer.file_path,
                     span.start.offset,
@@ -179,8 +179,8 @@ pub fn analyze(
 /// remaining chain, so the null introduced by an upstream `?->` never reaches
 /// this call — Psalm suppresses PossiblyNullReference in that case.
 pub(crate) fn has_nullsafe(expr: &Expression<'_>) -> bool {
-    use mago_syntax::ast::ast::access::Access;
-    use mago_syntax::ast::ast::call::Call;
+    use mago_syntax::cst::cst::access::Access;
+    use mago_syntax::cst::cst::call::Call;
 
     match expr.unparenthesized() {
         Expression::Call(Call::Method(method_call)) => has_nullsafe(method_call.object),
@@ -325,10 +325,11 @@ fn analyze_dynamic_selector(
     context.inside_general_use = true;
     match selector {
         ClassLikeMemberSelector::Identifier(_) => {}
+        ClassLikeMemberSelector::Missing(_) => {}
         ClassLikeMemberSelector::Variable(var) => {
             let _ = crate::expression_analyzer::analyze(
                 analyzer,
-                &mago_syntax::ast::ast::expression::Expression::Variable(var.clone()),
+                &mago_syntax::cst::cst::expression::Expression::Variable(var.clone()),
                 analysis_data,
                 context,
             );
@@ -348,7 +349,7 @@ fn analyze_dynamic_selector(
 /// Get the method name from a method selector.
 pub(crate) fn get_method_name<'a>(selector: &'a ClassLikeMemberSelector<'a>) -> Option<&'a str> {
     match selector {
-        ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value)),
         _ => None,
     }
 }
@@ -431,13 +432,13 @@ fn emit_invalid_dynamic_method_name_issues(
 }
 
 pub(crate) fn is_closure_like_argument(
-    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg: &mago_syntax::cst::cst::argument::Argument<'_>,
 ) -> bool {
     get_closure_like_argument_offset(arg).is_some()
 }
 
 pub(crate) fn get_closure_like_argument_offset(
-    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg: &mago_syntax::cst::cst::argument::Argument<'_>,
 ) -> Option<u32> {
     match arg.value().unparenthesized() {
         Expression::Closure(closure) => Some(closure.span().start.offset),
@@ -448,7 +449,7 @@ pub(crate) fn get_closure_like_argument_offset(
 
 fn analyze_closure_args_without_context(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
@@ -513,7 +514,7 @@ pub(crate) struct InheritedParamType {
 
 pub(crate) fn analyze_pending_closure_args_for_method(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     method_info: &pzoom_code_info::FunctionLikeInfo,
     class_info: &pzoom_code_info::ClassLikeInfo,

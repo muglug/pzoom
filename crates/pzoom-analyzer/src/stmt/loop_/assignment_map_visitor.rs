@@ -2,12 +2,12 @@
 //! assignment depends on. Used by the loop analyzer to bound the number of
 //! fixpoint iterations. Mirrors Hakana's `assignment_map_visitor`.
 
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::assignment::Assignment;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::ast::unary::{UnaryPostfixOperator, UnaryPrefixOperator};
-use mago_syntax::ast::node::Node;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::assignment::Assignment;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::statement::Statement;
+use mago_syntax::cst::cst::unary::{UnaryPostfixOperator, UnaryPrefixOperator};
+use mago_syntax::cst::node::Node;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::expression_identifier;
@@ -80,7 +80,7 @@ impl Scanner {
     /// (recorded as `receiver -> isset`, like Psalm).
     fn record_call_args(
         &mut self,
-        argument_list: &mago_syntax::ast::ast::argument::ArgumentList<'_>,
+        argument_list: &mago_syntax::cst::cst::argument::ArgumentList<'_>,
     ) {
         for argument in argument_list.arguments.iter() {
             if let Some(arg_var_id) = get_root_var_id(argument.value()) {

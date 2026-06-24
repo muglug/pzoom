@@ -1,6 +1,6 @@
 //! Empty expression analyzer.
 
-use mago_syntax::ast::ast::construct::EmptyConstruct;
+use mago_syntax::cst::cst::construct::EmptyConstruct;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 

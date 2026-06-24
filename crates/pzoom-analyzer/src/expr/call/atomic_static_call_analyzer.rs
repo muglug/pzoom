@@ -8,8 +8,8 @@
 
 use crate::type_expander::localize_special_class_type_union;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::call::StaticMethodCall;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::call::StaticMethodCall;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::class_like_info::Visibility;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
@@ -68,7 +68,7 @@ pub(crate) fn get_called_class_type_name(
         Expression::Static(_) => current_static,
         Expression::Parent(_) => current_static,
         Expression::Identifier(id) => {
-            let value = id.value();
+            let value = pzoom_syntax::bytes_to_str(id.value());
             if value.eq_ignore_ascii_case("self")
                 || value.eq_ignore_ascii_case("static")
                 || value.eq_ignore_ascii_case("parent")

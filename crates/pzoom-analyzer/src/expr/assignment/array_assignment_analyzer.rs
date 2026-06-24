@@ -1,13 +1,13 @@
 //! Array assignment analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::array::{ArrayAccess, ArrayAppend};
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::array::{ArrayAccess, ArrayAppend};
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_str::StrId;
 
 use pzoom_code_info::VarName;
@@ -158,11 +158,11 @@ fn analyze_assignment_chain<'a>(
     // genuinely-undeclared direct-variable roots.
     let root_is_direct_variable = matches!(
         root_expr.unparenthesized(),
-        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(_))
+        Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(_))
     );
     let suppress_undefined_root = match root_expr.unparenthesized() {
-        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) => {
-            let root_var_id = VarName::new(direct.name);
+        Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) => {
+            let root_var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             // A superglobal (`$GLOBALS`, `$_GET`, …) is always defined with a
             // known type, even on first use — don't reseed it as a fresh empty
             // array, or `$GLOBALS['foo'][0] = …` would miss the mixed offset
@@ -170,7 +170,9 @@ fn analyze_assignment_chain<'a>(
             // superglobal type below).
             !context.locals.contains_key(&root_var_id)
                 && !crate::expr::variable_fetch_analyzer::is_superglobal(
-                    direct.name.strip_prefix('$').unwrap_or(direct.name),
+                    pzoom_syntax::bytes_to_str(direct.name)
+                        .strip_prefix('$')
+                        .unwrap_or(pzoom_syntax::bytes_to_str(direct.name)),
                 )
         }
         _ => false,
@@ -298,7 +300,9 @@ fn analyze_assignment_chain<'a>(
     context.inside_assignment = true;
     let root_is_plain_var = match root_expr.unparenthesized() {
         Expression::Variable(Variable::Direct(direct)) => {
-            !crate::expr::variable_fetch_analyzer::is_superglobal(direct.name)
+            !crate::expr::variable_fetch_analyzer::is_superglobal(pzoom_syntax::bytes_to_str(
+                direct.name,
+            ))
         }
         _ => false,
     };
@@ -402,7 +406,7 @@ fn analyze_assignment_chain<'a>(
                     Expression::Variable(Variable::Direct(key_direct))
                         if context
                             .list_key_dependencies
-                            .get(&VarName::new(key_direct.name))
+                            .get(&VarName::new(pzoom_syntax::bytes_to_str(key_direct.name)))
                             == root_var_key.as_ref()
                 )
             });
@@ -506,7 +510,7 @@ fn analyze_assignment_chain<'a>(
         .insert(root_pos, Rc::new(updated_child_type.clone()));
 
     if let Expression::Variable(Variable::Direct(direct)) = root_expr.unparenthesized() {
-        let var_id = VarName::new(direct.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
 
         // Hakana marks the root variable as a variable-use source after a nested
         // array assignment (function-body graphs only). The updated container's
@@ -601,11 +605,11 @@ fn analyze_assignment_chain<'a>(
             updated_child_type.clone()
         };
 
-        clear_dependent_property_types(context, direct.name);
-        clear_array_path_types_for_base_var(context, direct.name);
-        clear_dependent_array_access_types(context, direct.name);
+        clear_dependent_property_types(context, pzoom_syntax::bytes_to_str(direct.name));
+        clear_array_path_types_for_base_var(context, pzoom_syntax::bytes_to_str(direct.name));
+        clear_dependent_array_access_types(context, pzoom_syntax::bytes_to_str(direct.name));
         context.invalidate_dependent_types(&var_id);
-        remove_var_clauses_from_context(context, direct.name);
+        remove_var_clauses_from_context(context, pzoom_syntax::bytes_to_str(direct.name));
         context.set_var_type(var_id.clone(), stored_type);
         // Assigning to an offset modifies the base variable, so mark it possibly
         // assigned (mirroring Psalm marking the root var in
@@ -621,7 +625,7 @@ fn analyze_assignment_chain<'a>(
             root_supports_offset_set && !union_has_array_like(&root_type);
 
         if stores_array_path_types && !stores_object_offset_path_types {
-            let mut running_key = direct.name.to_string();
+            let mut running_key = pzoom_syntax::bytes_to_str(direct.name).to_string();
 
             for dim in &resolved_dims {
                 let Some(index_repr) = dim.key_repr.as_ref() else {
@@ -730,6 +734,7 @@ fn get_assignment_index_key(expr: &Expression<'_>) -> Option<String> {
             int_lit.value.map(|value| value.to_string())
         }
         Expression::Literal(Literal::String(string_lit)) => string_lit.value.map(|value| {
+            let value = pzoom_syntax::bytes_to_str(value);
             if let Ok(int_value) = value.parse::<i64>() {
                 int_value.to_string()
             } else {
@@ -737,10 +742,14 @@ fn get_assignment_index_key(expr: &Expression<'_>) -> Option<String> {
                 format!("'{}'", escaped)
             }
         }),
-        Expression::Variable(Variable::Direct(direct)) => Some(direct.name.to_string()),
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(pzoom_syntax::bytes_to_str(direct.name).to_string())
+        }
         Expression::Access(Access::ClassConstant(class_const_access)) => {
             let class_name = match class_const_access.class.unparenthesized() {
-                Expression::Identifier(identifier) => identifier.value().to_string(),
+                Expression::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value()).to_string()
+                }
                 Expression::Self_(_) => "self".to_string(),
                 Expression::Static(_) => "static".to_string(),
                 Expression::Parent(_) => "parent".to_string(),
@@ -748,7 +757,9 @@ fn get_assignment_index_key(expr: &Expression<'_>) -> Option<String> {
             };
 
             let constant_name = match &class_const_access.constant {
-                ClassLikeConstantSelector::Identifier(identifier) => identifier.value,
+                ClassLikeConstantSelector::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value)
+                }
                 _ => return None,
             };
 

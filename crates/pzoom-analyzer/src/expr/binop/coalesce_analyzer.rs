@@ -4,9 +4,9 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::Assertion;
@@ -37,8 +37,8 @@ pub fn analyze(
     // expression the right operand's type outright (the left contributes
     // nothing), rather than the mixed placeholder our variable fetch returns.
     let left_var_undefined = match left.unparenthesized() {
-        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(direct)) => {
-            !is_superglobal(direct.name) && !context.locals.contains_key(&VarName::new(direct.name))
+        Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(direct)) => {
+            !is_superglobal(pzoom_syntax::bytes_to_str(direct.name)) && !context.locals.contains_key(&VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
         }
         _ => false,
     };
@@ -106,7 +106,7 @@ pub fn analyze(
     // null"); array/property accesses legitimately probe existence.
     let left_is_plain_variable = matches!(
         left.unparenthesized(),
-        Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(_))
+        Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(_))
     ) && !left_var_undefined;
     if let Some(left_type) = left_type.as_ref()
         && (!use_isset_context || left_is_plain_variable)

@@ -1,7 +1,7 @@
 //! Constant fetch analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::ConstantAccess;
+use mago_syntax::cst::cst::access::ConstantAccess;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
@@ -20,7 +20,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    let const_name = constant.name.value();
+    let const_name = pzoom_syntax::bytes_to_str(constant.name.value());
     let name_offset = constant.name.span().start.offset;
 
     // The standard streams are hardcoded as resources (Psalm's
@@ -89,9 +89,25 @@ fn resolve_constant(
     context: &BlockContext,
 ) -> Option<TUnion> {
     let normalized_name = name.trim_start_matches('\\');
+    // A relative-qualified name (`A\B`, not `\A\B`) inside a namespace resolves
+    // solely to `<ns>\A\B` — it never falls back to a global `define()`d constant
+    // (the same rule the namespace/global block below applies to declared
+    // constants). Looking up the bare `A\B` here would wrongly match a global
+    // `define("A\B", …)`.
+    let is_relative_qualified = !name.starts_with('\\') && normalized_name.contains('\\');
+    let runtime_lookup_name: std::borrow::Cow<'_, str> =
+        if is_relative_qualified && let Some(ns_id) = context.namespace {
+            std::borrow::Cow::Owned(format!(
+                "{}\\{}",
+                analyzer.interner.lookup(ns_id),
+                normalized_name
+            ))
+        } else {
+            std::borrow::Cow::Borrowed(normalized_name)
+        };
     let runtime_const_id = analyzer
         .interner
-        .find(normalized_name)
+        .find(&runtime_lookup_name)
         .unwrap_or(pzoom_str::StrId::EMPTY);
     if let Some(runtime_type) = context.defined_constants.get(&runtime_const_id) {
         return Some(runtime_type.clone());

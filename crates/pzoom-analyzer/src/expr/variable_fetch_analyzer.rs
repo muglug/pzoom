@@ -1,6 +1,6 @@
 //! Variable fetch analyzer.
 
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{DataFlowNode, GraphKind, Issue, IssueKind, TAtomic, TUnion, VarId};
@@ -24,7 +24,7 @@ pub fn analyze(
     match var {
         Variable::Direct(direct) => {
             // Get the variable name from the identifier
-            let var_name = direct.name;
+            let var_name = pzoom_syntax::bytes_to_str(direct.name);
             let var_id = VarName::new(var_name);
 
             if var_id == "$this" && context.get_var_type("$this").is_none() {

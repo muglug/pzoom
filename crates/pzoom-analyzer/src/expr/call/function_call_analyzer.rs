@@ -1,9 +1,9 @@
 //! Function call analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::call::FunctionCall;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::call::FunctionCall;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{
@@ -830,7 +830,7 @@ fn infer_function_template_replacements(
 
 pub(crate) fn infer_template_replacements_from_args(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
     template_result: &mut TemplateResult,
@@ -1024,8 +1024,8 @@ pub(crate) fn high_order_call_arg_raw_callable(
     arg_expr: &Expression<'_>,
     context: &BlockContext,
 ) -> Option<TUnion> {
-    use mago_syntax::ast::ast::call::Call;
-    use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
+    use mago_syntax::cst::cst::call::Call;
+    use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
 
     let return_type = match arg_expr.unparenthesized() {
         Expression::Call(Call::Function(function_call)) => {
@@ -1034,7 +1034,7 @@ pub(crate) fn high_order_call_arg_raw_callable(
             };
             let function_info = resolve_function(
                 analyzer,
-                function_name.value(),
+                pzoom_syntax::bytes_to_str(function_name.value()),
                 function_name.is_fully_qualified(),
                 Some(function_name.span().start.offset),
                 context,
@@ -1057,7 +1057,7 @@ pub(crate) fn high_order_call_arg_raw_callable(
                     analyzer,
                     class_info,
                     None,
-                    method_name.value,
+                    pzoom_syntax::bytes_to_str(method_name.value),
                     None,
                 )
                 .map(|(_, _, method_info)| method_info)
@@ -1074,7 +1074,7 @@ pub(crate) fn high_order_call_arg_raw_callable(
                     .unwrap_or_else(|| {
                         analyzer
                             .interner
-                            .find(class_name.value())
+                            .find(pzoom_syntax::bytes_to_str(class_name.value()))
                             .unwrap_or(pzoom_str::StrId::EMPTY)
                     }),
                 Expression::Self_(_) | Expression::Static(_) => analyzer.get_declaring_class()?,
@@ -1085,7 +1085,7 @@ pub(crate) fn high_order_call_arg_raw_callable(
                 crate::expr::call::existing_atomic_static_call_analyzer::resolve_named_object_static_method(
                     analyzer,
                     class_info,
-                    method_name.value,
+                    pzoom_syntax::bytes_to_str(method_name.value),
                 )?;
             method_info.get_return_type()?.clone()
         }
@@ -1166,7 +1166,7 @@ fn reanalyze_high_order_call_args(
     context: &mut BlockContext,
 ) -> bool {
     use mago_span::HasSpan;
-    use mago_syntax::ast::ast::call::Call;
+    use mago_syntax::cst::cst::call::Call;
 
     if template_result.template_types.is_empty() {
         return false;
@@ -1197,7 +1197,7 @@ fn reanalyze_high_order_call_args(
         };
         let Some(inner_info) = resolve_function(
             analyzer,
-            inner_name.value(),
+            pzoom_syntax::bytes_to_str(inner_name.value()),
             inner_name.is_fully_qualified(),
             Some(inner_name.span().start.offset),
             context,
@@ -2057,7 +2057,7 @@ pub(crate) fn resolve_function<'a>(
 fn get_function_name<'a>(expr: &'a Expression<'a>) -> (Option<&'a str>, bool, Option<u32>) {
     match expr.unparenthesized() {
         Expression::Identifier(id) => (
-            Some(id.value()),
+            Some(pzoom_syntax::bytes_to_str(id.value())),
             id.is_fully_qualified(),
             Some(id.span().start.offset),
         ),
@@ -2457,7 +2457,7 @@ fn call_uses_by_reference_arguments(
                 super::arguments_analyzer::matches_named_argument(
                     analyzer,
                     param,
-                    named_arg.name.value,
+                    pzoom_syntax::bytes_to_str(named_arg.name.value),
                 )
             }),
             Argument::Positional(_) => func_info.params.get(index),

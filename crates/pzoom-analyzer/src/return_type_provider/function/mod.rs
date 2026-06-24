@@ -40,7 +40,7 @@ mod trigger_error;
 mod type_check;
 mod var_export;
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::TUnion;
 
 use crate::context::BlockContext;

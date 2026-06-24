@@ -8,13 +8,13 @@
 //! - Destructuring: list($a, $b) = $arr or [$a, $b] = $arr
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::assignment::{Assignment, AssignmentOperator};
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::assignment::{Assignment, AssignmentOperator};
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_str::StrId;
 
 use pzoom_code_info::VarName;
@@ -52,7 +52,7 @@ pub fn analyze(
 ) {
     // Check if this is a property assignment - handle specially
     if let Expression::Access(access) = assignment.lhs {
-        use mago_syntax::ast::ast::access::Access;
+        use mago_syntax::cst::cst::access::Access;
 
         match access {
             Access::Property(prop_access) => {
@@ -153,7 +153,7 @@ pub fn analyze(
             .iter()
             .any(|use_var| use_var.ampersand.is_some() && use_var.variable.name == direct_var.name)
     {
-        let var_id = VarName::new(direct_var.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct_var.name));
         context.locals.insert(
             var_id.clone(),
             TUnion::new(TAtomic::TClosure {
@@ -190,7 +190,7 @@ pub fn analyze(
             .iter()
             .any(|atomic| matches!(atomic, TAtomic::TLiteralInt { .. }))
     {
-        let var_name = VarName::new(direct_var.name);
+        let var_name = VarName::new(pzoom_syntax::bytes_to_str(direct_var.name));
         if analysis_data
             .loop_scopes
             .iter()
@@ -202,7 +202,7 @@ pub fn analyze(
                 IssueKind::LoopInvalidation,
                 format!(
                     "Variable {} has already been assigned in a for/foreach loop",
-                    direct_var.name
+                    pzoom_syntax::bytes_to_str(direct_var.name)
                 ),
                 analyzer.file_path,
                 span.start.offset,
@@ -226,7 +226,7 @@ pub fn analyze(
             .add_node(decision_node.clone());
 
         if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
-            && let Some(lhs_type) = context.get_var_type(direct_var.name)
+            && let Some(lhs_type) = context.get_var_type(pzoom_syntax::bytes_to_str(direct_var.name))
         {
             concat_type.parent_nodes.push(decision_node.clone());
 
@@ -281,7 +281,7 @@ pub fn analyze(
             .add_node(decision_node.clone());
 
         if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs
-            && let Some(lhs_type) = context.get_var_type(direct_var.name)
+            && let Some(lhs_type) = context.get_var_type(pzoom_syntax::bytes_to_str(direct_var.name))
         {
             for old_parent_node in &lhs_type.parent_nodes {
                 analysis_data.data_flow_graph.add_path(
@@ -318,7 +318,7 @@ pub fn analyze(
         let (line, col) = analyzer.get_line_column(pos.0);
         analysis_data.add_issue(Issue::new(
             IssueKind::AssignmentToVoid,
-            format!("Cannot assign {} to type void", direct_var.name),
+            format!("Cannot assign {} to type void", pzoom_syntax::bytes_to_str(direct_var.name)),
             analyzer.file_path,
             pos.0,
             pos.1,
@@ -352,7 +352,7 @@ pub fn analyze(
     if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs {
         analysis_data
             .first_var_appearances
-            .entry(VarName::new(direct_var.name))
+            .entry(VarName::new(pzoom_syntax::bytes_to_str(direct_var.name)))
             .or_insert(pos.0);
     }
 
@@ -383,7 +383,7 @@ pub fn analyze(
     if let Expression::Variable(Variable::Direct(direct_var)) = assignment.lhs {
         handle_assignment_with_boolean_logic(
             analyzer,
-            direct_var.name,
+            pzoom_syntax::bytes_to_str(direct_var.name),
             assignment.lhs,
             assignment.rhs,
             &rhs_type,
@@ -415,7 +415,7 @@ fn coalesce_assignment_type(
     let Expression::Variable(Variable::Direct(direct_var)) = lhs else {
         return rhs_type.clone();
     };
-    let Some(old_type) = context.get_var_type(direct_var.name) else {
+    let Some(old_type) = context.get_var_type(pzoom_syntax::bytes_to_str(direct_var.name)) else {
         return rhs_type.clone();
     };
 
@@ -433,7 +433,7 @@ fn infer_concat_assignment_type(
     const MAX_LITERAL_CONCAT_COMBINATIONS: usize = 64;
 
     let lhs_type = match lhs {
-        Expression::Variable(Variable::Direct(direct_var)) => context.get_var_type(direct_var.name),
+        Expression::Variable(Variable::Direct(direct_var)) => context.get_var_type(pzoom_syntax::bytes_to_str(direct_var.name)),
         _ => None,
     };
 
@@ -527,11 +527,11 @@ fn emit_mixed_assignment_issue_if_needed(
         return;
     };
 
-    if direct_var.name.starts_with("$_") {
+    if pzoom_syntax::bytes_to_str(direct_var.name).starts_with("$_") {
         return;
     }
 
-    let var_id = VarName::new(direct_var.name);
+    let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct_var.name));
     let has_inline_annotation = get_inline_var_annotation_type(analyzer, pos.0, &var_id)
         .or_else(|| {
             analysis_data.current_stmt_start.and_then(|stmt_start| {
@@ -562,7 +562,7 @@ fn emit_mixed_assignment_issue_if_needed(
             IssueKind::MixedAssignment,
             format!(
                 "Unable to determine the type that {} is being assigned to",
-                direct_var.name
+                pzoom_syntax::bytes_to_str(direct_var.name)
             ),
             analyzer.file_path,
             pos.0,
@@ -623,7 +623,7 @@ fn analyze_assignment_lhs(
                 }
             }
             if let Variable::Direct(direct) = var {
-                let var_name = direct.name;
+                let var_name = pzoom_syntax::bytes_to_str(direct.name);
 
                 // Intern the variable name
                 let var_id = VarName::new(var_name);
@@ -743,7 +743,7 @@ fn analyze_assignment_lhs(
                             format!(
                                 "The @var {} annotation for {} is unnecessary",
                                 annotation_type.get_id(Some(analyzer.interner)),
-                                direct.name
+                                pzoom_syntax::bytes_to_str(direct.name)
                             ),
                             analyzer.file_path,
                             assignment_offset,
@@ -921,7 +921,7 @@ fn analyze_assignment_lhs(
             }
         }
         Expression::Access(access) => {
-            use mago_syntax::ast::ast::access::Access;
+            use mago_syntax::cst::cst::access::Access;
 
             match access {
                 Access::Property(prop_access) => {
@@ -1446,7 +1446,7 @@ fn extract_destructuring_key(expr: &Expression<'_>) -> Option<DestructuringLooku
             .map(|value| DestructuringLookupKey::Int(value as i64)),
         Expression::Literal(Literal::String(string_lit)) => string_lit
             .value
-            .map(|value| DestructuringLookupKey::String(value.to_string())),
+            .map(|value| DestructuringLookupKey::String(pzoom_syntax::bytes_to_str(value).to_string())),
         _ => None,
     }
 }
@@ -1745,14 +1745,14 @@ fn analyze_reference_assignment(
 
     if let Expression::Variable(Variable::Direct(direct)) = lhs_expr.unparenthesized() {
         let var_existed = context.locals.contains_key(&lhs_var_id);
-        clear_dependent_property_types(context, direct.name);
-        clear_array_path_types_for_base_var(context, direct.name);
-        clear_dependent_array_access_types(context, direct.name);
+        clear_dependent_property_types(context, pzoom_syntax::bytes_to_str(direct.name));
+        clear_array_path_types_for_base_var(context, pzoom_syntax::bytes_to_str(direct.name));
+        clear_dependent_array_access_types(context, pzoom_syntax::bytes_to_str(direct.name));
         context.invalidate_dependent_types(&lhs_var_id);
         if var_existed {
-            remove_var_clauses_from_context(context, direct.name);
+            remove_var_clauses_from_context(context, pzoom_syntax::bytes_to_str(direct.name));
         } else {
-            context.remove_var_name_clauses(direct.name);
+            context.remove_var_name_clauses(pzoom_syntax::bytes_to_str(direct.name));
         }
     }
 
@@ -1991,7 +1991,7 @@ pub(crate) fn is_possibly_undefined_direct_var(
         return false;
     };
 
-    let var_id = VarName::new(var_name);
+    let var_id = VarName::new(pzoom_syntax::bytes_to_str(var_name));
     context.possibly_assigned_var_ids.contains(&var_id)
         && !context.assigned_var_ids.contains_key(&var_id)
 }

@@ -1,8 +1,8 @@
 //! Array expression analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::array::{Array, ArrayElement, List};
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::array::{Array, ArrayElement, List};
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::data_flow::path::ArrayDataKind;
 use pzoom_code_info::issue::{Issue, IssueKind};

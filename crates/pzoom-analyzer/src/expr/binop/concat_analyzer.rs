@@ -1,6 +1,6 @@
 //! String concatenation (.) operator analyzer.
 
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::{
     Issue, IssueKind, TAtomic, TUnion, t_atomic::NON_SPECIFIC_LITERAL_STRING_VALUE,

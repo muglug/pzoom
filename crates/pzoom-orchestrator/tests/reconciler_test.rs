@@ -82,9 +82,9 @@ impl Fixture {
         let source = "<?php\n".to_string();
         let threaded = ThreadedInterner::new(interner.clone());
         let file_path = threaded.intern("reconciler-test.php");
-        let arena = bumpalo::Bump::new();
-        let file_id = FileId::new("reconciler-test.php");
-        let (program, _err) = parse_file_content(&arena, file_id, &source);
+        let arena = pzoom_syntax::LocalArena::new();
+        let file_id = FileId::new(b"reconciler-test.php");
+        let program = parse_file_content(&arena, file_id, source.as_bytes());
         let resolved_names = resolve_names(program, &threaded);
         drop(threaded);
 
@@ -140,10 +140,10 @@ impl Fixture {
 fn register_php(codebase: &mut CodebaseInfo, interner: &SharedInterner, path: &str, source: &str) {
     let threaded = ThreadedInterner::new(interner.clone());
     let file_path_id = threaded.intern(path);
-    let file_id = FileId::new(path);
+    let file_id = FileId::new(path.as_bytes());
 
-    let arena = bumpalo::Bump::new();
-    let (program, _err) = parse_file_content(&arena, file_id, source);
+    let arena = pzoom_syntax::LocalArena::new();
+    let program = parse_file_content(&arena, file_id, source.as_bytes());
     let resolved_names = resolve_names(program, &threaded);
 
     let collector = DeclarationCollector::new(

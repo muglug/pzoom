@@ -1,10 +1,10 @@
 //! Instance property fetch analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::{NullSafePropertyAccess, PropertyAccess};
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::{NullSafePropertyAccess, PropertyAccess};
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::{TAtomic, TUnion};
 
@@ -162,7 +162,8 @@ pub fn analyze(
     // property directly (Psalm's `$stmt_name_type->isSingleStringLiteral()`).
     let mut dynamic_prop_name: Option<String> = None;
     let prop_name = match &access.property {
-        ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value)),
+        ClassLikeMemberSelector::Missing(_) => None,
         ClassLikeMemberSelector::Variable(var) => {
             let var_pos = expression_analyzer::analyze(
                 analyzer,
@@ -186,7 +187,7 @@ pub fn analyze(
     // Check if this is $this->prop
     let is_this_fetch = matches!(
         access.object,
-        Expression::Variable(Variable::Direct(v)) if v.name == "$this"
+        Expression::Variable(Variable::Direct(v)) if pzoom_syntax::bytes_to_str(v.name) == "$this"
     );
 
     if let Some(prop_name) = prop_name {
@@ -436,7 +437,7 @@ pub fn analyze_nullsafe(
 
     // Get the property name
     let prop_name = match &access.property {
-        ClassLikeMemberSelector::Identifier(id) => Some(id.value),
+        ClassLikeMemberSelector::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value)),
         _ => None,
     };
 

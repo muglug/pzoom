@@ -19,7 +19,7 @@
 //! skipped — the Psalm equivalent returns `null` params on bail-out, which
 //! disables downstream argument checking the same way.
 
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 

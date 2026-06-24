@@ -4,7 +4,7 @@
 //! the supplied arguments, emitting RedundantFunctionCall / TooFewArguments /
 //! TooManyArguments / InvalidArgument. The return type is left to the stub.
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::{
     Issue, IssueKind, TAtomic, TUnion, t_atomic::NON_SPECIFIC_LITERAL_STRING_VALUE,
 };

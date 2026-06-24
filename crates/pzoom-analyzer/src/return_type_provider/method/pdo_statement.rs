@@ -1,7 +1,7 @@
 //! PDOStatement::fetch/fetchAll return-type provider (mirrors Psalm's
 //! PdoStatementReturnTypeProvider).
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::{TAtomic, TUnion};
 use pzoom_str::StrId;
 
@@ -83,7 +83,7 @@ fn handle_fetch(event: &MethodReturnTypeProviderEvent<'_, '_>) -> Option<TUnion>
     let mut fetch_mode = 0;
     for (arg, arg_pos) in event.args.iter().zip(event.arg_positions) {
         if let Argument::Named(named_arg) = arg
-            && named_arg.name.value != "mode"
+            && pzoom_syntax::bytes_to_str(named_arg.name.value) != "mode"
         {
             continue;
         }

@@ -1,9 +1,9 @@
 //! Static property fetch analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::StaticPropertyAccess;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::StaticPropertyAccess;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, Visibility};
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
@@ -36,7 +36,7 @@ pub fn analyze(
 
     // Get the property name from the Variable
     let prop_name = match &access.property {
-        Variable::Direct(direct) => Some(direct.name.trim_start_matches('$')),
+        Variable::Direct(direct) => Some(pzoom_syntax::bytes_to_str(direct.name).trim_start_matches('$')),
         other => {
             // Dynamic property names (`static::${$var}`) consume their inner
             // expression (general use).
@@ -82,7 +82,9 @@ pub fn analyze(
     // type: a narrowed static-property type (e.g. from `if (self::$instance)`)
     // wins. The key matches expression_identifier::get_expression_var_key.
     let class_key_part = match access.class.unparenthesized() {
-        Expression::Identifier(identifier) => Some(identifier.value().to_string()),
+        Expression::Identifier(identifier) => {
+            Some(pzoom_syntax::bytes_to_str(identifier.value()).to_string())
+        }
         Expression::Self_(_) => Some("self".to_string()),
         Expression::Static(_) => Some("static".to_string()),
         Expression::Parent(_) => Some("parent".to_string()),
@@ -540,7 +542,7 @@ fn get_resolved_class_id(
 
     let class_id = match expr.unparenthesized() {
         Expression::Identifier(id) => {
-            let value = id.value();
+            let value = pzoom_syntax::bytes_to_str(id.value());
             if value.eq_ignore_ascii_case("self") || value.eq_ignore_ascii_case("static") {
                 analyzer.get_declaring_class()
             } else if value.eq_ignore_ascii_case("parent") {

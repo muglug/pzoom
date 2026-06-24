@@ -3,7 +3,7 @@
 //! Modeled after Psalm's ThrowAnalyzer - handles throw expressions and sets
 //! the appropriate context flags for control flow analysis.
 
-use mago_syntax::ast::ast::throw::Throw;
+use mago_syntax::cst::cst::throw::Throw;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;

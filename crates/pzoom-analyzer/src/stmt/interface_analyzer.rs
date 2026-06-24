@@ -7,8 +7,8 @@
 //! checks. The shared class-like checks live in [`crate::stmt::class_analyzer`]
 //! (pzoom's de-facto `ClassLikeAnalyzer` base) and are reused here.
 
-use mago_syntax::ast::ast::class_like::Interface;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::Interface;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
 
 use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_code_info::{Issue, IssueKind};
@@ -37,7 +37,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    let interface_name = interface_stmt.name.value;
+    let interface_name = pzoom_syntax::bytes_to_str(interface_stmt.name.value);
     let fqn = match context.namespace {
         Some(namespace) => {
             format!(
@@ -117,8 +117,8 @@ fn check_interface_property_declarations(
     analysis_data: &mut FunctionAnalysisData,
 ) {
     use mago_span::HasSpan;
-    use mago_syntax::ast::ast::class_like::property::Property;
-    use mago_syntax::ast::ast::modifier::Modifier;
+    use mago_syntax::cst::cst::class_like::property::Property;
+    use mago_syntax::cst::cst::modifier::Modifier;
 
     for member in interface_stmt.members.iter() {
         let ClassLikeMember::Property(property) = member else {

@@ -5,7 +5,7 @@
 //! included), giving the validated success type, the failure default, and
 //! FILTER_FORCE_ARRAY wrapping.
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 
 use pzoom_code_info::{TAtomic, TUnion};
 
@@ -198,7 +198,7 @@ fn named_arg_pos(
     for (index, argument) in event.args.iter().enumerate() {
         match argument {
             Argument::Named(named) => {
-                if named.name.value.eq_ignore_ascii_case(param_name) {
+                if pzoom_syntax::bytes_to_str(named.name.value).eq_ignore_ascii_case(param_name) {
                     return event.arg_positions.get(index).copied();
                 }
             }

@@ -1,28 +1,28 @@
 //! Declaration collector - extracts class, function, and constant declarations from AST.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::attribute::AttributeList;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::class_like::enum_case::EnumCaseItem;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::class_like::property::{Property, PropertyItem};
-use mago_syntax::ast::ast::class_like::trait_use::{
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::attribute::AttributeList;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::class_like::enum_case::EnumCaseItem;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::class_like::property::{Property, PropertyItem};
+use mago_syntax::cst::cst::class_like::trait_use::{
     TraitUseAdaptation, TraitUseMethodReference, TraitUseSpecification,
 };
-use mago_syntax::ast::ast::constant::Constant;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter;
-use mago_syntax::ast::ast::identifier::Identifier;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::modifier::Modifier;
-use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
-use mago_syntax::ast::ast::type_hint::Hint;
-use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems};
-use mago_syntax::ast::sequence::TokenSeparatedSequence;
-use mago_syntax::ast::{Program, Sequence, Statement, Trivia, TriviaKind};
+use mago_syntax::cst::cst::constant::Constant;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::function_like::parameter::FunctionLikeParameter;
+use mago_syntax::cst::cst::identifier::Identifier;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::modifier::Modifier;
+use mago_syntax::cst::cst::namespace::{Namespace, NamespaceBody};
+use mago_syntax::cst::cst::type_hint::Hint;
+use mago_syntax::cst::cst::r#use::{Use, UseItem, UseItems};
+use mago_syntax::cst::sequence::TokenSeparatedSequence;
+use mago_syntax::cst::{Program, Sequence, Statement, Trivia, TriviaKind};
 
 use pzoom_code_info::class_like_info::{
     ClassConstantInfo, ClassLikeInfo, ClassLikeKind, DocblockIssue, DuplicatePropertyIssue,
@@ -179,7 +179,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             if trivia.kind != TriviaKind::DocBlockComment {
                 continue;
             }
-            let parsed = crate::docblock::parse(trivia.value, 0);
+            let parsed = crate::docblock::parse(crate::bytes_to_str(trivia.value), 0);
             // Definitions resolve sequentially (Psalm's ClassLikeNodeScanner
             // feeds each alias the map built so far): a reference to an alias
             // defined LATER in the same docblock is undefined at that point.
@@ -315,7 +315,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
         run.into_iter()
             .rev()
-            .map(|trivia| crate::docblock::parse(trivia.value, 0))
+            .map(|trivia| crate::docblock::parse(crate::bytes_to_str(trivia.value), 0))
             .collect()
     }
 
@@ -338,7 +338,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         // gap check — rather than scanning the gap of every preceding docblock.
         let best_match = self.closest_preceding_docblock(start_offset)?;
         let gap = &self.source[best_match.span.end.offset as usize..start_offset as usize];
-        Self::gap_is_ignorable(gap).then_some(best_match.value)
+        Self::gap_is_ignorable(gap).then_some(crate::bytes_to_str(best_match.value))
     }
 
     /// Like [`Self::find_preceding_docblock`], also yielding the docblock's
@@ -346,7 +346,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     fn find_preceding_docblock_with_offset(&self, start_offset: u32) -> Option<(u32, &'p str)> {
         let best_match = self.closest_preceding_docblock(start_offset)?;
         let gap = &self.source[best_match.span.end.offset as usize..start_offset as usize];
-        Self::gap_is_ignorable(gap).then_some((best_match.span.start.offset, best_match.value))
+        Self::gap_is_ignorable(gap).then_some((best_match.span.start.offset, crate::bytes_to_str(best_match.value)))
     }
 
     /// The docblock-comment trivia ending closest before `start_offset` (largest
@@ -384,11 +384,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .filter(|trivia| {
                 (trivia.kind == TriviaKind::DocBlockComment
                     || trivia.kind == TriviaKind::MultiLineComment)
-                    && trivia.value.contains('@')
+                    && crate::bytes_to_str(trivia.value).contains('@')
                     && trivia.span.start.offset >= body_start
                     && trivia.span.end.offset <= body_end
             })
-            .map(|trivia| (trivia.span.end.offset, trivia.value))
+            .map(|trivia| (trivia.span.end.offset, crate::bytes_to_str(trivia.value)))
             .collect();
 
         for (doc_end, docblock) in docblocks {
@@ -466,9 +466,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .filter(|trivia| {
                 (trivia.kind == TriviaKind::DocBlockComment
                     || trivia.kind == TriviaKind::MultiLineComment)
-                    && trivia.value.contains('@')
+                    && crate::bytes_to_str(trivia.value).contains('@')
             })
-            .map(|trivia| (trivia.span.end.offset, trivia.value))
+            .map(|trivia| (trivia.span.end.offset, crate::bytes_to_str(trivia.value)))
             .collect();
 
         for (doc_end, docblock) in docblocks {
@@ -807,7 +807,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             .trivia
             .iter()
             .filter(|trivia| trivia.kind == TriviaKind::DocBlockComment)
-            .map(|trivia| (trivia.span.end.offset, trivia.value))
+            .map(|trivia| (trivia.span.end.offset, crate::bytes_to_str(trivia.value)))
             .collect();
         for (end, comment) in docblocks {
             if comment.contains("@psalm-check-type") {
@@ -926,7 +926,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     self.visit_nested_function_declarations(block.statements.as_slice());
                 }
                 Statement::If(if_stmt) => {
-                    use mago_syntax::ast::ast::control_flow::r#if::IfBody;
+                    use mago_syntax::cst::cst::control_flow::r#if::IfBody;
                     match &if_stmt.body {
                         IfBody::Statement(body) => {
                             self.visit_nested_function_declarations(std::slice::from_ref(
@@ -1013,7 +1013,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     /// branch reachable. This is what lets a function declared inside `if
     /// (defined('GLOB_BRACE')) { ... } else { ... }` (e.g. `glob` in
     /// CoreGenericFunctions) be collected at all.
-    fn visit_if(&mut self, if_stmt: &mago_syntax::ast::ast::control_flow::r#if::If<'_>) {
+    fn visit_if(&mut self, if_stmt: &mago_syntax::cst::cst::control_flow::r#if::If<'_>) {
         // Whether a preceding branch was statically true (so the remaining branches
         // are unreachable). Mirrors Psalm's `skip_if_descendants` bookkeeping.
         let mut entered_definite_branch = false;
@@ -1080,14 +1080,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             Expression::UnaryPrefix(unary)
                 if matches!(
                     unary.operator,
-                    mago_syntax::ast::ast::unary::UnaryPrefixOperator::Not(_)
+                    mago_syntax::cst::cst::unary::UnaryPrefixOperator::Not(_)
                 ) =>
             {
-                if let Expression::Call(mago_syntax::ast::ast::call::Call::Function(func_call)) =
+                if let Expression::Call(mago_syntax::cst::cst::call::Call::Function(func_call)) =
                     unary.operand.unparenthesized()
                     && let Expression::Identifier(callee) = func_call.function.unparenthesized()
-                    && callee
-                        .value()
+                    && crate::bytes_to_str(callee.value())
                         .trim_start_matches('\\')
                         .eq_ignore_ascii_case("function_exists")
                     && let Some(name_arg) = func_call.argument_list.arguments.first()
@@ -1096,7 +1095,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     && let Some(name) = name_literal.value
                 {
                     self.current_not_exists_function_guards
-                        .push(name.trim_start_matches('\\').to_ascii_lowercase());
+                        .push(crate::bytes_to_str(name).trim_start_matches('\\').to_ascii_lowercase());
                     1
                 } else {
                     0
@@ -1119,12 +1118,12 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             {
                 self.collect_guard_classes(binary.lhs) + self.collect_guard_classes(binary.rhs)
             }
-            Expression::Call(mago_syntax::ast::ast::call::Call::Function(func_call)) => {
+            Expression::Call(mago_syntax::cst::cst::call::Call::Function(func_call)) => {
                 let Expression::Identifier(identifier) = func_call.function.unparenthesized()
                 else {
                     return 0;
                 };
-                let name = identifier.value().trim_start_matches('\\');
+                let name = crate::bytes_to_str(identifier.value()).trim_start_matches('\\');
                 if !matches!(
                     name,
                     "class_exists" | "interface_exists" | "trait_exists" | "enum_exists"
@@ -1135,21 +1134,23 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     return 0;
                 };
                 let guard_class = match arg.value().unparenthesized() {
-                    Expression::Literal(mago_syntax::ast::ast::literal::Literal::String(
+                    Expression::Literal(mago_syntax::cst::cst::literal::Literal::String(
                         string_lit,
                     )) => string_lit
                         .value
-                        .map(|value| self.interner.intern(value.trim_start_matches('\\'))),
+                        .map(|value| self.interner.intern(crate::bytes_to_str(value).trim_start_matches('\\'))),
                     Expression::Access(Access::ClassConstant(class_constant_access)) => {
                         if let ClassLikeConstantSelector::Identifier(constant) =
                             &class_constant_access.constant
-                            && constant.value.eq_ignore_ascii_case("class")
+                            && crate::bytes_to_str(constant.value).eq_ignore_ascii_case("class")
                             && let Expression::Identifier(class_identifier) =
                                 class_constant_access.class.unparenthesized()
                         {
                             Some(
-                                self.interner
-                                    .intern(class_identifier.value().trim_start_matches('\\')),
+                                self.interner.intern(
+                                    crate::bytes_to_str(class_identifier.value())
+                                        .trim_start_matches('\\'),
+                                ),
                             )
                         } else {
                             None
@@ -1209,7 +1210,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let previous_use_aliases = std::mem::take(&mut self.use_aliases);
 
         // Set current namespace
-        let ns_name = ns.name.as_ref().map(|n| self.interner.intern(n.value()));
+        let ns_name = ns
+            .name
+            .as_ref()
+            .map(|n| self.interner.intern(crate::bytes_to_str(n.value())));
         self.current_namespace = ns_name;
 
         // Visit statements in namespace
@@ -1253,13 +1257,13 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     return;
                 }
 
-                let namespace = normalize_use_name(list.namespace.value());
+                let namespace = normalize_use_name(crate::bytes_to_str(list.namespace.value()));
                 for item in &list.items {
                     self.register_use_alias(item, Some(namespace.as_str()));
                 }
             }
             UseItems::MixedList(list) => {
-                let namespace = normalize_use_name(list.namespace.value());
+                let namespace = normalize_use_name(crate::bytes_to_str(list.namespace.value()));
                 for item in &list.items {
                     if item
                         .r#type
@@ -1276,7 +1280,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     }
 
     fn register_use_alias(&mut self, item: &UseItem<'_>, namespace_prefix: Option<&str>) {
-        let item_name = normalize_use_name(item.name.value());
+        let item_name = normalize_use_name(crate::bytes_to_str(item.name.value()));
         let full_name = if let Some(prefix) = namespace_prefix {
             format!("{}\\{}", prefix, item_name)
         } else {
@@ -1286,7 +1290,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let alias = item
             .alias
             .as_ref()
-            .map(|a| a.identifier.value.to_string())
+            .map(|a| crate::bytes_to_str(a.identifier.value).to_string())
             .unwrap_or_else(|| {
                 full_name
                     .rsplit('\\')
@@ -1302,7 +1306,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
     fn visit_constant(&mut self, constant: &Constant<'_>) {
         for item in &constant.items {
-            let name = self.make_fqn(item.name.value);
+            let name = self.make_fqn(crate::bytes_to_str(item.name.value));
             let span = item.span();
             let resolve_class = |raw: &str| self.resolve_scanned_class_string(raw);
             let resolve_enum_case = |class_name: &str, case_name: &str, wants_name: bool| {
@@ -1334,7 +1338,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             // hardcodes PHP_INT_SIZE & co.); other constants infer from the
             // initializer.
             let constant_type = pzoom_code_info::runtime_constants::runtime_global_constant_type(
-                &item.name.value.to_ascii_lowercase(),
+                &crate::bytes_to_str(item.name.value).to_ascii_lowercase(),
             )
             .or_else(|| {
                 simple_type_inferer::infer_with_context(
@@ -1411,7 +1415,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 .map(|hint| self.resolve_type(hint, self_class, parent_class));
 
             for item in &class_const.items {
-                let const_name = self.interner.intern(item.name.value);
+                let const_name = self.interner.intern(crate::bytes_to_str(item.name.value));
                 let span = item.span();
                 let self_class_name =
                     self_class.map(|class_id| self.interner.lookup(class_id).to_string());
@@ -1508,7 +1512,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 continue;
             };
 
-            let case_name = self.interner.intern(enum_case.item.name().value);
+            let case_name = self.interner.intern(crate::bytes_to_str(enum_case.item.name().value));
             let case_name_span = enum_case.item.name().span();
             let case_type = TUnion::new(TAtomic::TEnumCase {
                 enum_name: class_info.name,
@@ -1615,7 +1619,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             );
 
             case_name_types.push(TAtomic::TLiteralString {
-                value: enum_case.item.name().value.to_string(),
+                value: crate::bytes_to_str(enum_case.item.name().value).to_string(),
             });
         }
 
@@ -1815,7 +1819,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         for member in members {
             match member {
                 ClassLikeMember::Method(method) => {
-                    let method_name = self.interner.intern(method.name.value);
+                    let method_name = self.interner.intern(crate::bytes_to_str(method.name.value));
                     let span = method.span();
 
                     let mut signature_return_type = method.return_type_hint.as_ref().map(|rth| {
@@ -2096,7 +2100,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut uses_variadic_builtin_args = false;
                     let mut this_property_mutations = Vec::new();
                     let mut defined_constants = Vec::new();
-                    if let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(body) =
+                    if let mago_syntax::cst::cst::class_like::method::MethodBody::Concrete(body) =
                         &method.body
                     {
                         // Function declarations nested in a method body are
@@ -2149,7 +2153,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                         );
 
                         if !params.is_empty()
-                            && let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(
+                            && let mago_syntax::cst::cst::class_like::method::MethodBody::Concrete(
                                 body,
                             ) = &method.body
                         {
@@ -2175,7 +2179,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     let mut mutation_free_inferred = false;
                     if !is_pure
                         && !is_mutation_free
-                        && let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(body) =
+                        && let mago_syntax::cst::cst::class_like::method::MethodBody::Concrete(body) =
                             &method.body
                     {
                         let stmts = body.statements.as_slice();
@@ -2308,7 +2312,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     }
 
                     for item in &class_const.items {
-                        let const_name = self.interner.intern(item.name.value);
+                        let const_name = self.interner.intern(crate::bytes_to_str(item.name.value));
                         let span = item.span();
                         let class_fqn = self.interner.lookup(class_info.name).to_string();
                         let alias_map: rustc_hash::FxHashMap<String, String> = self
@@ -2516,31 +2520,38 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                             if let TraitUseAdaptation::Alias(alias_adaptation) = adaptation {
                                 let (trait_name, original_name) =
                                     match &alias_adaptation.method_reference {
-                                        TraitUseMethodReference::Identifier(method_name) => {
-                                            (None, self.interner.intern(method_name.value))
-                                        }
+                                        TraitUseMethodReference::Identifier(method_name) => (
+                                            None,
+                                            self.interner.intern(crate::bytes_to_str(method_name.value)),
+                                        ),
                                         TraitUseMethodReference::Absolute(method_ref) => (
                                             Some(self.resolve_identifier(&method_ref.trait_name)),
-                                            self.interner.intern(method_ref.method_name.value),
+                                            self.interner
+                                                .intern(crate::bytes_to_str(method_ref.method_name.value)),
                                         ),
                                     };
 
                                 let alias_name = alias_adaptation
                                     .alias
                                     .as_ref()
-                                    .map(|a| self.interner.intern(a.value))
+                                    .map(|a| self.interner.intern(crate::bytes_to_str(a.value)))
                                     .unwrap_or(original_name);
 
                                 let visibility = alias_adaptation
-                                    .visibility
+                                    .modifier
                                     .as_ref()
                                     .and_then(parse_visibility_modifier);
+                                let is_final = matches!(
+                                    alias_adaptation.modifier,
+                                    Some(Modifier::Final(_))
+                                );
 
                                 class_info.trait_method_aliases.push(TraitMethodAlias {
                                     trait_name,
                                     original_name,
                                     alias_name,
                                     visibility,
+                                    is_final,
                                 });
                             }
                         }
@@ -3388,7 +3399,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     ) {
         let variable = item.variable();
         // Strip the leading $ from property names to match how they're referenced
-        let prop_name_str = variable.name.strip_prefix('$').unwrap_or(variable.name);
+        let variable_name = crate::bytes_to_str(variable.name);
+        let prop_name_str = variable_name.strip_prefix('$').unwrap_or(variable_name);
         let prop_name = self.interner.intern(prop_name_str);
         let span = item.span();
         let has_default = matches!(item, PropertyItem::Concrete(_));
@@ -3448,7 +3460,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         params
             .iter()
             .map(|param| {
-                let name = self.interner.intern(param.variable.name);
+                let name = self.interner.intern(crate::bytes_to_str(param.variable.name));
                 // Native PHP type hint is the signature_type
                 let mut signature_type = param
                     .hint
@@ -3515,7 +3527,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     by_ref: param.ampersand.is_some(),
                     is_promoted: param.is_promoted_property(),
                     expect_variable: in_internal_stub
-                        && param.variable.name.trim_start_matches('$') == "haystack",
+                        && crate::bytes_to_str(param.variable.name).trim_start_matches('$')
+                            == "haystack",
                     default_type,
                     description: None,
                     start_offset: param.span().start.offset,
@@ -3537,9 +3550,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         stmts: &[Statement<'_>],
         params: &[ParamInfo],
     ) {
-        use mago_syntax::ast::ast::access::Access;
-        use mago_syntax::ast::ast::assignment::AssignmentOperator;
-        use mago_syntax::ast::ast::variable::Variable;
+        use mago_syntax::cst::cst::access::Access;
+        use mago_syntax::cst::cst::assignment::AssignmentOperator;
+        use mago_syntax::cst::cst::variable::Variable;
 
         if stmts.is_empty() {
             return;
@@ -3569,10 +3582,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 else {
                     return None;
                 };
-                if object_var.name.trim_start_matches('$') != "this" {
+                if crate::bytes_to_str(object_var.name).trim_start_matches('$') != "this" {
                     return None;
                 }
-                let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+                let mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                     property_identifier,
                 ) = &prop_access.property
                 else {
@@ -3584,8 +3597,8 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     return None;
                 };
                 Some((
-                    property_identifier.value,
-                    value_var.name.trim_start_matches('$'),
+                    crate::bytes_to_str(property_identifier.value),
+                    crate::bytes_to_str(value_var.name).trim_start_matches('$'),
                 ))
             })();
 
@@ -3656,11 +3669,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let readonly_allow_private_mutation = param_docblock
                 .as_ref()
                 .is_some_and(|parsed| self.is_docblock_readonly_allow_private_mutation(parsed));
-            let prop_name_str = ast_param
-                .variable
-                .name
+            let ast_param_variable_name = crate::bytes_to_str(ast_param.variable.name);
+            let prop_name_str = ast_param_variable_name
                 .strip_prefix('$')
-                .unwrap_or(ast_param.variable.name);
+                .unwrap_or(ast_param_variable_name);
             let prop_name = self.interner.intern(prop_name_str);
 
             if class_info.properties.contains_key(&prop_name) {
@@ -5087,11 +5099,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     /// keep global (unspecialized) taint nodes.
     fn method_body_accesses_static_property(
         &self,
-        body: &mago_syntax::ast::ast::class_like::method::MethodBody<'_>,
+        body: &mago_syntax::cst::cst::class_like::method::MethodBody<'_>,
     ) -> bool {
         use mago_syntax::walker::Walker;
 
-        let mago_syntax::ast::ast::class_like::method::MethodBody::Concrete(block) = body else {
+        let mago_syntax::cst::cst::class_like::method::MethodBody::Concrete(block) = body else {
             return false;
         };
 
@@ -5130,7 +5142,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 Some(php_unescape_string_literal(name_literal))
             }
             Expression::MagicConstant(
-                mago_syntax::ast::ast::magic_constant::MagicConstant::Namespace(_),
+                mago_syntax::cst::cst::magic_constant::MagicConstant::Namespace(_),
             ) => Some(match self.current_namespace {
                 Some(namespace) => self.interner.lookup(namespace).to_string(),
                 None => String::new(),
@@ -5138,7 +5150,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             Expression::Binary(binary)
                 if matches!(
                     binary.operator,
-                    mago_syntax::ast::ast::binary::BinaryOperator::StringConcat(_)
+                    mago_syntax::cst::cst::binary::BinaryOperator::StringConcat(_)
                 ) =>
             {
                 let lhs = self.resolve_define_name_expression(binary.lhs)?;
@@ -5176,7 +5188,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             let Statement::Expression(expr_stmt) = statement else {
                 continue;
             };
-            let Expression::Call(mago_syntax::ast::ast::call::Call::Function(function_call)) =
+            let Expression::Call(mago_syntax::cst::cst::call::Call::Function(function_call)) =
                 expr_stmt.expression.unparenthesized()
             else {
                 continue;
@@ -5185,7 +5197,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             else {
                 continue;
             };
-            if !function_name.value().eq_ignore_ascii_case("define") {
+            if !crate::bytes_to_str(function_name.value()).eq_ignore_ascii_case("define") {
                 continue;
             }
 
@@ -5272,9 +5284,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         parent_class: Option<StrId>,
     ) -> GlobalDefineValue {
         match value.unparenthesized() {
-            Expression::Call(mago_syntax::ast::ast::call::Call::Function(value_call)) => {
+            Expression::Call(mago_syntax::cst::cst::call::Call::Function(value_call)) => {
                 if let Expression::Identifier(callee) = value_call.function.unparenthesized() {
-                    let callee_name = callee.value().trim_start_matches('\\');
+                    let callee_name = crate::bytes_to_str(callee.value()).trim_start_matches('\\');
                     if !callee_name.is_empty() {
                         return GlobalDefineValue::FunctionReturn(
                             self.interner.intern(callee_name),
@@ -5283,7 +5295,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 }
                 GlobalDefineValue::Resolved(TUnion::mixed())
             }
-            Expression::Call(mago_syntax::ast::ast::call::Call::StaticMethod(static_call)) => {
+            Expression::Call(mago_syntax::cst::cst::call::Call::StaticMethod(static_call)) => {
                 let class_id =
                     self.resolve_class_expression(static_call.class, self_class, parent_class);
                 if let (Some(class_id), ClassLikeMemberSelector::Identifier(method)) =
@@ -5291,7 +5303,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 {
                     return GlobalDefineValue::MethodReturn(
                         class_id,
-                        self.interner.intern(method.value),
+                        self.interner.intern(crate::bytes_to_str(method.value)),
                     );
                 }
                 GlobalDefineValue::Resolved(TUnion::mixed())
@@ -5447,11 +5459,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
 
     fn extract_builtin_call_assertions(
         &mut self,
-        call: &mago_syntax::ast::ast::call::Call<'_>,
+        call: &mago_syntax::cst::cst::call::Call<'_>,
         _self_class: Option<StrId>,
         _parent_class: Option<StrId>,
     ) -> Vec<Assertion> {
-        let mago_syntax::ast::ast::call::Call::Function(function_call) = call else {
+        let mago_syntax::cst::cst::call::Call::Function(function_call) = call else {
             return Vec::new();
         };
 
@@ -5466,7 +5478,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
             return Vec::new();
         };
 
-        let asserted_type = match function_name.value().to_ascii_lowercase().as_str() {
+        let asserted_type = match crate::bytes_to_str(function_name.value()).to_ascii_lowercase().as_str() {
             "is_string" => TAtomic::TString,
             "is_int" | "is_integer" | "is_long" => TAtomic::TInt,
             "is_float" | "is_double" | "is_real" => TAtomic::TFloat,
@@ -5524,7 +5536,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 trivia.kind == TriviaKind::DocBlockComment
                     && trivia.span.end.offset < stmt_start_offset
             })
-            .map(|trivia| trivia.value)
+            .map(|trivia| crate::bytes_to_str(trivia.value))
             .collect();
 
         for docblock in docblocks {
@@ -6875,8 +6887,9 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                 return Some(63);
             };
 
-            let bits = self
-                .eval_attribute_flag_expression(first_argument.value())
+            let bits = first_argument
+                .value()
+                .and_then(|expr| self.eval_attribute_flag_expression(expr))
                 .and_then(|v| u8::try_from(v).ok())
                 .unwrap_or(127);
 
@@ -6925,7 +6938,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     return None;
                 };
 
-                match constant_name.value.to_ascii_uppercase().as_str() {
+                match crate::bytes_to_str(constant_name.value).to_ascii_uppercase().as_str() {
                     "TARGET_CLASS" => Some(1),
                     "TARGET_FUNCTION" => Some(2),
                     "TARGET_METHOD" => Some(4),
@@ -6975,7 +6988,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
                     .arguments
                     .iter()
                     .map(|argument| {
-                        simple_type_inferer::infer_with_context(argument.value(), &infer_context)
+                        argument
+                            .value()
+                            .and_then(|expr| {
+                                simple_type_inferer::infer_with_context(expr, &infer_context)
+                            })
                             .unwrap_or_else(|| {
                                 pzoom_code_info::TUnion::new(pzoom_code_info::TAtomic::TMixed)
                             })
@@ -7603,10 +7620,11 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     fn resolve_identifier(&mut self, ident: &Identifier<'_>) -> StrId {
         if ident.is_fully_qualified() {
             // Strip leading backslash
-            let value = ident.value().strip_prefix('\\').unwrap_or(ident.value());
+            let value = crate::bytes_to_str(ident.value());
+            let value = value.strip_prefix('\\').unwrap_or(value);
             self.interner.intern(value)
         } else {
-            let value = ident.value();
+            let value = crate::bytes_to_str(ident.value());
             let (first_segment, remainder) = match value.split_once('\\') {
                 Some((first, rest)) => (first, Some(rest)),
                 None => (value, None),
@@ -7640,8 +7658,8 @@ struct ParsedFunctionAssertions {
 fn extract_direct_var(expr: &Expression<'_>) -> Option<String> {
     match expr.unparenthesized() {
         Expression::Variable(variable) => match variable {
-            mago_syntax::ast::ast::variable::Variable::Direct(direct) => {
-                Some(direct.name.to_string())
+            mago_syntax::cst::cst::variable::Variable::Direct(direct) => {
+                Some(crate::bytes_to_str(direct.name).to_string())
             }
             _ => None,
         },
@@ -7652,7 +7670,7 @@ fn extract_direct_var(expr: &Expression<'_>) -> Option<String> {
 fn is_null_expression(expr: &Expression<'_>) -> bool {
     matches!(
         expr.unparenthesized(),
-        Expression::Literal(mago_syntax::ast::ast::literal::Literal::Null(_))
+        Expression::Literal(mago_syntax::cst::cst::literal::Literal::Null(_))
     )
 }
 
@@ -9146,15 +9164,15 @@ fn expression_is_this_property_fetch(expr: &Expression<'_>) -> bool {
     let Expression::Access(Access::Property(property_access)) = expr.unparenthesized() else {
         return false;
     };
-    let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(var)) =
+    let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(var)) =
         property_access.object.unparenthesized()
     else {
         return false;
     };
-    var.name == "$this"
+    crate::bytes_to_str(var.name) == "$this"
         && matches!(
             property_access.property,
-            mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(_)
+            mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(_)
         )
 }
 
@@ -9164,9 +9182,7 @@ fn statements_are_simple_property_getter(stmts: &[Statement<'_>]) -> bool {
     let [Statement::Return(ret)] = stmts else {
         return false;
     };
-    ret.value
-        .as_ref()
-        .is_some_and(expression_is_this_property_fetch)
+    ret.value.is_some_and(expression_is_this_property_fetch)
 }
 
 /// Whether a constructor body only assigns simple, non-external-mutating values
@@ -9239,7 +9255,7 @@ fn merge_intersected_shapes(members: &[TAtomic]) -> Option<TAtomic> {
 }
 
 fn constructor_is_external_mutation_free(stmts: &[Statement<'_>]) -> bool {
-    use mago_syntax::ast::ast::assignment::AssignmentOperator;
+    use mago_syntax::cst::cst::assignment::AssignmentOperator;
 
     stmts.iter().all(|stmt| {
         let Statement::Expression(expr_stmt) = stmt else {
@@ -9273,13 +9289,13 @@ impl<'ast, 'arena>
     mago_syntax::walker::Walker<
         'ast,
         'arena,
-        Vec<&'ast mago_syntax::ast::ast::class_like::AnonymousClass<'arena>>,
+        Vec<&'ast mago_syntax::cst::cst::class_like::AnonymousClass<'arena>>,
     > for AnonymousClassCollectorWalker
 {
     fn walk_in_anonymous_class(
         &self,
-        anonymous_class: &'ast mago_syntax::ast::ast::class_like::AnonymousClass<'arena>,
-        context: &mut Vec<&'ast mago_syntax::ast::ast::class_like::AnonymousClass<'arena>>,
+        anonymous_class: &'ast mago_syntax::cst::cst::class_like::AnonymousClass<'arena>,
+        context: &mut Vec<&'ast mago_syntax::cst::cst::class_like::AnonymousClass<'arena>>,
     ) {
         context.push(anonymous_class);
     }
@@ -9293,7 +9309,7 @@ struct StaticPropertyAccessWalker;
 impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, bool> for StaticPropertyAccessWalker {
     fn walk_in_static_property_access(
         &self,
-        _access: &'ast mago_syntax::ast::ast::access::StaticPropertyAccess<'arena>,
+        _access: &'ast mago_syntax::cst::cst::access::StaticPropertyAccess<'arena>,
         context: &mut bool,
     ) {
         *context = true;
@@ -9307,20 +9323,20 @@ impl<'ast, 'arena> mago_syntax::walker::Walker<'ast, 'arena, Vec<&'arena str>>
 {
     fn walk_in_assignment(
         &self,
-        assignment: &'ast mago_syntax::ast::ast::assignment::Assignment<'arena>,
+        assignment: &'ast mago_syntax::cst::cst::assignment::Assignment<'arena>,
         context: &mut Vec<&'arena str>,
     ) {
         if let Expression::Access(Access::Property(property_access)) =
             assignment.lhs.unparenthesized()
-            && let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(var)) =
+            && let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(var)) =
                 property_access.object.unparenthesized()
-            && var.name == "$this"
-            && let mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector::Identifier(
+            && crate::bytes_to_str(var.name) == "$this"
+            && let mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector::Identifier(
                 identifier,
             ) = &property_access.property
-            && !context.contains(&identifier.value)
+            && !context.contains(&crate::bytes_to_str(identifier.value))
         {
-            context.push(identifier.value);
+            context.push(crate::bytes_to_str(identifier.value));
         }
     }
 }
@@ -9471,9 +9487,9 @@ fn remove_used_templates_atomic(template_readonly: &mut FxHashSet<StrId>, atomic
 /// backslash for unknown escapes, which corrupts namespaced constant names in
 /// `define("ns\\const", ...)`.
 pub(crate) fn php_unescape_string_literal(
-    literal: &mago_syntax::ast::ast::literal::LiteralString<'_>,
+    literal: &mago_syntax::cst::cst::literal::LiteralString<'_>,
 ) -> String {
-    use mago_syntax::ast::ast::literal::LiteralStringKind;
+    use mago_syntax::cst::cst::literal::LiteralStringKind;
 
     let raw = literal.raw;
     let inner = if raw.len() >= 2 {
@@ -9482,9 +9498,9 @@ pub(crate) fn php_unescape_string_literal(
         raw
     };
 
-    let double_quoted = matches!(literal.kind, Some(LiteralStringKind::DoubleQuoted));
+    let double_quoted = matches!(literal.kind, LiteralStringKind::DoubleQuoted);
     let mut result = String::with_capacity(inner.len());
-    let mut chars = inner.chars().peekable();
+    let mut chars = crate::bytes_to_str(inner).chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '\\' {
             result.push(ch);

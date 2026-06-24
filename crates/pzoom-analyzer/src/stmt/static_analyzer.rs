@@ -1,7 +1,7 @@
 //! Static statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::r#static::Static;
+use mago_syntax::cst::cst::r#static::Static;
 use pzoom_code_info::VarName;
 use pzoom_code_info::{Issue, IssueKind, TUnion};
 
@@ -38,7 +38,7 @@ pub fn analyze(
     }
 
     for item in static_stmt.items.iter() {
-        let var_id = VarName::new(item.variable().name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(item.variable().name));
         context.static_var_ids.insert(var_id.clone());
 
         let default_type = if let Some(default_expr) = item.value() {

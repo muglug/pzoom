@@ -1,13 +1,13 @@
 //! Unset statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::array::ArrayAccess;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unset::Unset;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::array::ArrayAccess;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unset::Unset;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::ttype::type_combiner;
@@ -31,7 +31,7 @@ pub fn analyze(
         context.inside_unset = was_inside_unset;
 
         if let Expression::Variable(Variable::Direct(direct)) = value.unparenthesized() {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             context.remove_var(&var_id);
             continue;
         }
@@ -44,7 +44,7 @@ pub fn analyze(
                 if analysis_data.data_flow_graph.kind == pzoom_code_info::GraphKind::FunctionBody
                     && let Expression::Variable(Variable::Direct(base_direct)) =
                         array_access.array.unparenthesized()
-                    && let Some(base_type) = context.get_var_type(base_direct.name)
+                    && let Some(base_type) = context.get_var_type(pzoom_syntax::bytes_to_str(base_direct.name))
                 {
                     let span = array_access.array.span();
                     let unset_sink = pzoom_code_info::DataFlowNode::get_for_unlabelled_sink(
@@ -90,7 +90,7 @@ pub fn analyze(
 
         let property_id = analyzer
             .interner
-            .find(property_name.value)
+            .find(pzoom_syntax::bytes_to_str(property_name.value))
             .unwrap_or(pzoom_str::StrId::EMPTY);
 
         for atomic in &object_type.types {
@@ -113,7 +113,7 @@ pub fn analyze(
                     IssueKind::InaccessibleProperty,
                     format!(
                         "Cannot unset restricted property {}::${}",
-                        class_name, property_name.value
+                        class_name, pzoom_syntax::bytes_to_str(property_name.value)
                     ),
                     analyzer.file_path,
                     value.span().start.offset,
@@ -307,14 +307,14 @@ fn get_literal_array_key(expr: &Expression<'_>) -> Option<ArrayKey> {
             .map(ArrayKey::Int),
         Expression::Literal(Literal::String(string_lit)) => string_lit
             .value
-            .map(|value| ArrayKey::String(value.to_string())),
+            .map(|value| ArrayKey::String(pzoom_syntax::bytes_to_str(value).to_string())),
         _ => None,
     }
 }
 
 fn get_root_array_base_var_name<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
     match expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => Some(direct.name),
+        Expression::Variable(Variable::Direct(direct)) => Some(pzoom_syntax::bytes_to_str(direct.name)),
         Expression::ArrayAccess(array_access) => get_root_array_base_var_name(array_access.array),
         _ => None,
     }

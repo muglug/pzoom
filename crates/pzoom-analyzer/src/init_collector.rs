@@ -14,13 +14,12 @@
 //! [`follow_instance_init_call`] / [`follow_static_init_call`] while collecting,
 //! and [`reanalyze_method_body_into`] re-parses and re-runs the callee body.
 
-use bumpalo::Bump;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::method::MethodBody;
-use mago_syntax::ast::ast::namespace::NamespaceBody;
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::method::MethodBody;
+use mago_syntax::cst::cst::namespace::NamespaceBody;
+use mago_syntax::cst::cst::statement::Statement;
 
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
 use pzoom_code_info::{CodebaseInfo, FunctionLikeInfo, TUnion, VarName};
@@ -104,10 +103,10 @@ pub(crate) fn reanalyze_method_body_into(
         return;
     }
 
-    let arena = Bump::new();
+    let arena = pzoom_syntax::LocalArena::new();
     let path_str = analyzer.interner.lookup(method_info.file_path);
-    let file_id = FileId::new(&*path_str);
-    let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
+    let file_id = FileId::new(path_str.as_bytes());
+    let program = parse_file_content(&arena, file_id, file_info.contents.as_bytes());
     // Reuse the method file's scan-time name resolution (analysis cannot intern).
     let resolved_names = &file_info.resolved_names;
 

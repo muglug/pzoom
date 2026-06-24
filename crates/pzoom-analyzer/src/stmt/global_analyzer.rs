@@ -1,8 +1,8 @@
 //! Global statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::global::Global;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::global::Global;
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_code_info::VarName;
 use pzoom_code_info::{Issue, IssueKind, TUnion};
 
@@ -38,7 +38,7 @@ pub fn analyze(
             continue;
         };
 
-        let var_id = VarName::new(direct.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
 
         // Psalm treats imported globals as in-scope references to external state.
         // Without a shared global context, use mixed to avoid false undefined-variable reports.
@@ -63,13 +63,13 @@ pub fn analyze(
                 .global_types
                 .iter()
                 .find(|(global_var_name, _)| {
-                    analyzer.interner.lookup(*global_var_name).as_ref() == direct.name
+                    analyzer.interner.lookup(*global_var_name).as_ref() == pzoom_syntax::bytes_to_str(direct.name)
                 })
                 .map(|(_, global_type)| global_type.clone())
         });
         let mut var_type = comment_type
             .or(global_docblock_type)
-            .or_else(|| get_superglobal_default_type(direct.name))
+            .or_else(|| get_superglobal_default_type(pzoom_syntax::bytes_to_str(direct.name)))
             .or_else(|| analysis_data.file_global_types.get(&var_id).cloned())
             .unwrap_or_else(TUnion::mixed);
 
@@ -77,7 +77,7 @@ pub fn analyze(
         // one that is never subsequently read reports UnusedVariable (Psalm's
         // unusedUndeclaredGlobalVariable).
         if analysis_data.data_flow_graph.kind == pzoom_code_info::GraphKind::FunctionBody
-            && get_superglobal_default_type(direct.name).is_none()
+            && get_superglobal_default_type(pzoom_syntax::bytes_to_str(direct.name)).is_none()
         {
             let span = variable.span();
             let decl_node = pzoom_code_info::DataFlowNode::get_for_variable_source(

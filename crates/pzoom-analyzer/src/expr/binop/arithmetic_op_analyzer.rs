@@ -1,6 +1,6 @@
 //! Arithmetic operation helpers for binary operators.
 
-use mago_syntax::ast::ast::binary::BinaryOperator;
+use mago_syntax::cst::cst::binary::BinaryOperator;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};

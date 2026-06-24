@@ -4,16 +4,17 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use mago_allocator::Arena;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::{Access, ClassConstantAccess};
-use mago_syntax::ast::ast::binary::{Binary, BinaryOperator};
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::control_flow::switch::SwitchCase;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::{Access, ClassConstantAccess};
+use mago_syntax::cst::cst::binary::{Binary, BinaryOperator};
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::control_flow::switch::SwitchCase;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unary::{UnaryPrefix, UnaryPrefixOperator};
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{Clause, combine_ored_clauses, negate_formula, simplify_cnf};
 use pzoom_code_info::{Assertion, Issue, IssueKind, TAtomic, TUnion, combine_union_types};
@@ -715,7 +716,7 @@ pub(crate) fn is_get_class_call(expr: &Expression<'_>) -> bool {
         return false;
     };
 
-    function_name.value().eq_ignore_ascii_case("get_class")
+    pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("get_class")
 }
 
 pub(crate) fn union_all_literals(union: &TUnion) -> bool {
@@ -727,7 +728,7 @@ fn get_case_string_literal(expr: &Expression<'_>) -> Option<String> {
         return None;
     };
 
-    string_lit.value.map(|value| value.to_string())
+    string_lit.value.map(|value| pzoom_syntax::bytes_to_str(value).to_string())
 }
 
 /// get_debug_type() label resolution: PHP type spellings, or a class name.
@@ -797,7 +798,7 @@ pub(crate) fn get_switch_class_string_origin(expr: &Expression<'_>) -> Option<Va
             else {
                 return None;
             };
-            if !function_name.value().eq_ignore_ascii_case("get_class") {
+            if !pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("get_class") {
                 return None;
             }
             let arg = function_call.argument_list.arguments.first()?;
@@ -805,7 +806,7 @@ pub(crate) fn get_switch_class_string_origin(expr: &Expression<'_>) -> Option<Va
             else {
                 return None;
             };
-            Some(VarName::new(direct.name))
+            Some(VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
         }
         _ => None,
     }
@@ -838,8 +839,8 @@ pub(crate) fn get_switch_gettype_origin(expr: &Expression<'_>) -> Option<(VarNam
         return None;
     };
 
-    let is_debug_type = function_name.value().eq_ignore_ascii_case("get_debug_type");
-    if !is_debug_type && !function_name.value().eq_ignore_ascii_case("gettype") {
+    let is_debug_type = pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("get_debug_type");
+    if !is_debug_type && !pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("gettype") {
         return None;
     }
 
@@ -848,7 +849,7 @@ pub(crate) fn get_switch_gettype_origin(expr: &Expression<'_>) -> Option<(VarNam
         return None;
     };
 
-    Some((VarName::new(direct.name), is_debug_type))
+    Some((VarName::new(pzoom_syntax::bytes_to_str(direct.name)), is_debug_type))
 }
 
 fn get_case_class_id(analyzer: &StatementsAnalyzer<'_>, expr: &Expression<'_>) -> Option<StrId> {
@@ -861,7 +862,7 @@ fn get_case_class_id(analyzer: &StatementsAnalyzer<'_>, expr: &Expression<'_>) -
         return None;
     };
 
-    if !constant.value.eq_ignore_ascii_case("class") {
+    if !pzoom_syntax::bytes_to_str(constant.value).eq_ignore_ascii_case("class") {
         return None;
     }
 
@@ -879,7 +880,7 @@ pub(crate) fn resolve_class_expression(
                 Some(
                     analyzer
                         .interner
-                        .find(id.value())
+                        .find(pzoom_syntax::bytes_to_str(id.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY),
                 )
             }),

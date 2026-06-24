@@ -1,8 +1,8 @@
 //! Type hint resolution - converts mago AST type hints to pzoom types.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::identifier::Identifier;
-use mago_syntax::ast::ast::type_hint::Hint;
+use mago_syntax::cst::cst::identifier::Identifier;
+use mago_syntax::cst::cst::type_hint::Hint;
 use pzoom_code_info::{TAtomic, TUnion};
 use pzoom_str::{Interner, StrId};
 use rustc_hash::FxHashMap;
@@ -187,7 +187,7 @@ fn resolve_identifier_hint(
     use_aliases: Option<&FxHashMap<String, StrId>>,
     resolved_names: Option<&ResolvedNames>,
 ) -> TUnion {
-    let name = ident.value();
+    let name = crate::bytes_to_str(ident.value());
 
     // Check for built-in type names (case-insensitive)
     match name.to_lowercase().as_str() {
@@ -270,7 +270,7 @@ fn resolve_class_name(
     current_namespace: Option<StrId>,
     use_aliases: Option<&FxHashMap<String, StrId>>,
 ) -> StrId {
-    let name = ident.value();
+    let name = crate::bytes_to_str(ident.value());
 
     // Read-only resolution: every fully-qualified name reachable here was
     // already interned by the scan-time `resolve_names` pass, so `find`

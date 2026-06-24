@@ -4,12 +4,12 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::{
     DataFlowNode, GraphKind, Issue, IssueKind, PathKind, TAtomic, TUnion, VarName,
@@ -518,7 +518,7 @@ fn should_check_risky_truthy_falsy(
 ) -> bool {
     match expr.unparenthesized() {
         Expression::Variable(Variable::Direct(direct)) => {
-            analyzer.interner.find(direct.name).is_some_and(|var_id| {
+            analyzer.interner.find(pzoom_syntax::bytes_to_str(direct.name)).is_some_and(|var_id| {
                 analyzer.function_info.is_some_and(|function_info| {
                     function_info.params.iter().any(|p| p.name == var_id)
                 })

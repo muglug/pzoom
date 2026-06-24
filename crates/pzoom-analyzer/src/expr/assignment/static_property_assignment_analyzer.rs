@@ -1,8 +1,8 @@
 //! Static property assignment analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::StaticPropertyAccess;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::access::StaticPropertyAccess;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::Visibility;
@@ -42,8 +42,8 @@ pub fn analyze(
 
     // Get the property name from the Variable
     let prop_name = match &access.property {
-        mago_syntax::ast::ast::variable::Variable::Direct(direct) => Some(direct.name),
-        mago_syntax::ast::ast::variable::Variable::Indirect(indirect) => {
+        mago_syntax::cst::cst::variable::Variable::Direct(direct) => Some(direct.name),
+        mago_syntax::cst::cst::variable::Variable::Indirect(indirect) => {
             // Dynamic property names (`static::${$var} = …`) consume their
             // inner expression (general use).
             let was_inside_general_use = context.inside_general_use;
@@ -78,7 +78,7 @@ pub fn analyze(
             format!(
                 "{}::${}",
                 static_class_key(access),
-                prop_name.trim_start_matches('$')
+                pzoom_syntax::bytes_to_str(prop_name).trim_start_matches('$')
             )
         });
         let mut unnamed_match = None;
@@ -112,7 +112,7 @@ pub fn analyze(
             .find(&class_name)
             .unwrap_or(pzoom_str::StrId::EMPTY);
         // Strip the leading $ from property name
-        let prop_name_str = prop_name.trim_start_matches('$');
+        let prop_name_str = pzoom_syntax::bytes_to_str(prop_name).trim_start_matches('$');
         let prop_id = analyzer
             .interner
             .find(prop_name_str)
@@ -299,7 +299,9 @@ pub fn analyze(
     // subsequent reads in this scope see the narrowed type. The key matches
     // expression_identifier::get_expression_var_key.
     let class_key_part = match access.class.unparenthesized() {
-        Expression::Identifier(identifier) => Some(identifier.value().to_string()),
+        Expression::Identifier(identifier) => {
+            Some(pzoom_syntax::bytes_to_str(identifier.value()).to_string())
+        }
         Expression::Self_(_) => Some("self".to_string()),
         Expression::Static(_) => Some("static".to_string()),
         Expression::Parent(_) => Some("parent".to_string()),
@@ -309,7 +311,7 @@ pub fn analyze(
         let var_id = VarName::new(&format!(
             "{}::${}",
             class_key_part,
-            prop_name.trim_start_matches('$')
+            pzoom_syntax::bytes_to_str(prop_name).trim_start_matches('$')
         ));
         context.set_var_type(var_id, value_type.clone());
     }
@@ -323,7 +325,7 @@ pub fn analyze(
 /// "parent", or the literal class name).
 fn static_class_key(access: &StaticPropertyAccess<'_>) -> String {
     match access.class.unparenthesized() {
-        Expression::Identifier(identifier) => identifier.value().to_string(),
+        Expression::Identifier(identifier) => pzoom_syntax::bytes_to_str(identifier.value()).to_string(),
         Expression::Self_(_) => "self".to_string(),
         Expression::Static(_) => "static".to_string(),
         Expression::Parent(_) => "parent".to_string(),
@@ -351,10 +353,10 @@ pub fn analyze_with_known_type(
     };
 
     let prop_name = match &access.property {
-        mago_syntax::ast::ast::variable::Variable::Direct(direct) => direct.name,
+        mago_syntax::cst::cst::variable::Variable::Direct(direct) => direct.name,
         _ => return,
     };
-    let prop_name_str = prop_name.trim_start_matches('$');
+    let prop_name_str = pzoom_syntax::bytes_to_str(prop_name).trim_start_matches('$');
 
     let class_id = analyzer
         .interner
@@ -600,7 +602,7 @@ fn get_class_name(
             let class_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
                 analyzer
                     .interner
-                    .find(id.value())
+                    .find(pzoom_syntax::bytes_to_str(id.value()))
                     .unwrap_or(pzoom_str::StrId::EMPTY)
             });
             let class_id = resolve_alias(class_id);

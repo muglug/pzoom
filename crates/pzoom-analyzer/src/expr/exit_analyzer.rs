@@ -1,6 +1,6 @@
 //! Exit/die expression analyzer.
 
-use mago_syntax::ast::ast::construct::{DieConstruct, ExitConstruct};
+use mago_syntax::cst::cst::construct::{DieConstruct, ExitConstruct};
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 

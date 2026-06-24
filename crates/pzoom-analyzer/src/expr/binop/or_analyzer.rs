@@ -1,9 +1,9 @@
 //! Or (||) operator analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::TUnion;
 use pzoom_code_info::VarName;
@@ -346,8 +346,8 @@ pub fn analyze(
         right.unparenthesized(),
         Expression::Construct(construct) if matches!(
             construct,
-            mago_syntax::ast::ast::construct::Construct::Exit(_)
-                | mago_syntax::ast::ast::construct::Construct::Die(_)
+            mago_syntax::cst::cst::construct::Construct::Exit(_)
+                | mago_syntax::cst::cst::construct::Construct::Die(_)
         )
     );
     for (var_id, right_type) in &right_context.locals {
@@ -468,7 +468,7 @@ pub(crate) fn apply_recorded_assignments(
                     .cloned()
                 {
                     replay_context
-                        .set_var_type(VarName::new(direct.name), assigned_type.as_ref().clone());
+                        .set_var_type(VarName::new(pzoom_syntax::bytes_to_str(direct.name)), assigned_type.as_ref().clone());
                 }
             }
         }

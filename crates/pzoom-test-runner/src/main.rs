@@ -344,16 +344,18 @@ fn run_test_with_base(
     let shared_interner = interner.into_shared();
     let threaded_interner = pzoom_str::ThreadedInterner::new(shared_interner.clone());
     let file_path_id = threaded_interner.intern(&input_path);
-    let file_id = pzoom_syntax::FileId::new(&input_path);
+    let file_id = pzoom_syntax::FileId::new(input_path.as_bytes());
 
-    let arena = bumpalo::Bump::new();
-    let (program, parse_error) = pzoom_syntax::parse_file_content(&arena, file_id, &input_contents);
-    let parse_errors: Vec<(u32, String)> = parse_error
-        .map(|error| {
-            use pzoom_syntax::HasSpan;
-            vec![(error.span().start.offset, format!("{}", error))]
-        })
-        .unwrap_or_default();
+    let arena = pzoom_syntax::LocalArena::new();
+    let program = pzoom_syntax::parse_file_content(&arena, file_id, input_contents.as_bytes());
+    let parse_errors: Vec<(u32, String)> = {
+        use pzoom_syntax::HasSpan;
+        program
+            .errors
+            .iter()
+            .map(|error| (error.span().start.offset, format!("{}", error)))
+            .collect()
+    };
 
     // Pre-wave (mirrors Scanner::scan_file): harvest type-alias definitions
     // first so `@psalm-import-type` resolves even when the defining class
@@ -375,7 +377,7 @@ fn run_test_with_base(
         }
     }
 
-    let resolved_names = pzoom_syntax::resolve_names(&program, &threaded_interner);
+    let resolved_names = pzoom_syntax::resolve_names(program, &threaded_interner);
 
     let collector = pzoom_syntax::DeclarationCollector::new(
         &threaded_interner,

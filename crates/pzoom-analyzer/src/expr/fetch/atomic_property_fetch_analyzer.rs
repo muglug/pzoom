@@ -331,7 +331,7 @@ pub(crate) fn get_reconciled_property_type(
 ) -> Option<TUnion> {
     let object_key = expression_identifier::get_expression_var_key(object_expr)?;
     let property_key = format!("{}->{}", object_key, prop_name);
-    context.locals.get(property_key.as_str()).cloned()
+    context.locals.get(property_key.as_str()).map(|__t| (**__t).clone())
 }
 
 /// Psalm's AtomicPropertyFetchAnalyzer: a property missing on the receiver

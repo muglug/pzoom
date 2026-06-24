@@ -1460,7 +1460,7 @@ pub(crate) fn apply_post_call_assertions(
                 let existing_type = context
                     .locals
                     .get(&var_id)
-                    .cloned()
+                    .map(|__t| (**__t).clone())
                     .or_else(|| crate::reconciler::resolve_key_type(&full_key, context, analyzer))
                     .unwrap_or_else(TUnion::mixed);
                 let narrowed_type =
@@ -1629,7 +1629,7 @@ fn apply_assertion_to_expression(
     let existing_type = context
         .locals
         .get(&var_id)
-        .cloned()
+        .map(|__t| (**__t).clone())
         .unwrap_or_else(TUnion::mixed);
     let narrowed_type = apply_functionlike_assertion_to_union(&existing_type, assertion_type);
     context.locals.insert(var_id, narrowed_type);

@@ -1,5 +1,6 @@
 //! Try/catch statement analyzer.
 
+use std::rc::Rc;
 use mago_span::HasSpan;
 use mago_syntax::ast::ast::r#try::Try;
 use mago_syntax::ast::ast::type_hint::Hint;
@@ -91,7 +92,7 @@ pub fn analyze(
     // VariableFetchAnalyzer gates the in-scope PossiblyUndefinedVariable report
     // on, so set it too — otherwise the read passes silently.
     for var_id in &newly_assigned_in_try {
-        if let Some(var_type) = finally_entry_context.locals.get_mut(var_id) {
+        if let Some(var_type) = finally_entry_context.locals.get_mut_owned(var_id) {
             var_type.possibly_undefined_from_try = true;
         }
     }
@@ -109,7 +110,7 @@ pub fn analyze(
         // catch entry — the catch runs after a throw that may have preceded
         // the assignment.
         for var_id in &newly_assigned_in_try {
-            if let Some(var_type) = catch_context.locals.get_mut(var_id) {
+            if let Some(var_type) = catch_context.locals.get_mut_owned(var_id) {
                 var_type.possibly_undefined_from_try = true;
             }
         }
@@ -239,7 +240,7 @@ pub fn analyze(
         finally_entry_context.merge(&catch_context);
         for (var_id, var_type) in finally_entry_context.locals.iter_mut() {
             if !vars_before_catch_merge.contains(var_id) {
-                var_type.possibly_undefined_from_try = true;
+                Rc::make_mut(var_type).possibly_undefined_from_try = true;
             }
         }
 
@@ -267,7 +268,7 @@ pub fn analyze(
                 if definitely_newly_assigned.contains(var_id) {
                     continue;
                 }
-                if let Some(var_type) = context.locals.get_mut(var_id) {
+                if let Some(var_type) = context.locals.get_mut_owned(var_id) {
                     var_type.possibly_undefined_from_try = true;
                 }
             }
@@ -337,7 +338,7 @@ pub fn analyze(
                     }
                     context.locals.insert(var_id.clone(), combined);
                 } else {
-                    context.locals.insert(var_id.clone(), finally_type.clone());
+                    context.locals.insert(var_id.clone(), finally_type.as_ref().clone());
                     context.possibly_assigned_var_ids.insert(var_id.clone());
                 }
             }

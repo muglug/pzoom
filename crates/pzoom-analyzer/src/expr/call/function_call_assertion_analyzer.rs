@@ -156,7 +156,7 @@ pub(crate) fn apply_post_call_assertions(
                     }
 
                     // Template-expanded union rule.
-                    let Some(existing_type) = context.locals.get(&var_id).cloned() else {
+                    let Some(existing_type) = context.locals.get(&var_id).map(|__t| (**__t).clone()) else {
                         continue;
                     };
                     match &assertion.assertion_type {
@@ -287,7 +287,7 @@ pub(crate) fn apply_post_call_assertions(
         // later redundancies report the *GivenDocblockType kinds (and operand
         // checks stay quiet) exactly as before.
         for var_id in type_assertions.keys() {
-            if let Some(narrowed) = context.locals.get_mut(var_id) {
+            if let Some(narrowed) = context.locals.get_mut_owned(var_id) {
                 narrowed.from_docblock = true;
             }
         }
@@ -648,7 +648,7 @@ pub(crate) fn apply_assert_builtin_assertions(
 
         // Psalm stamps every changed var as docblock-sourced after an assert.
         for var_id in &changed_var_ids {
-            if let Some(narrowed) = context.locals.get_mut(var_id) {
+            if let Some(narrowed) = context.locals.get_mut_owned(var_id) {
                 narrowed.from_docblock = true;
                 narrowed.sync_docblock_bits_from_union_flag();
             }

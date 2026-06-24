@@ -1723,7 +1723,7 @@ fn analyze_reference_assignment(
             &binding_node,
         );
         analysis_data.data_flow_graph.add_node(binding_node.clone());
-        if let Some(lhs_type) = context.locals.get_mut(&lhs_var_id) {
+        if let Some(lhs_type) = context.locals.get_mut_owned(&lhs_var_id) {
             lhs_type.parent_nodes = vec![binding_node];
         }
     }

@@ -178,7 +178,7 @@ pub fn analyze(
     {
         let narrowed = crate::reconciler::assertion_reconciler::reconcile(
             &pzoom_code_info::Assertion::NonEmpty,
-            foreach_context.locals.get(iterable_var_key.as_str()),
+            foreach_context.locals.get(iterable_var_key.as_str()).map(|t| &**t),
             false,
             None,
             analyzer,

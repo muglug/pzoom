@@ -131,7 +131,7 @@ pub fn analyze(
                     );
                 }
             } else {
-                context.locals.insert(var_id, var_type);
+                context.locals.insert(var_id, std::rc::Rc::unwrap_or_clone(var_type));
             }
         }
     }

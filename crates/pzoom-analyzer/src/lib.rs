@@ -25,6 +25,7 @@ pub(crate) mod issue_suppression;
 pub mod methods;
 pub mod params_provider;
 pub mod plugin;
+pub mod profiling;
 pub mod psalm_baseline;
 pub mod psalm_config;
 pub mod reconciler;

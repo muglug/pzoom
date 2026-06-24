@@ -776,7 +776,7 @@ pub fn analyze(
                 let combined = combine_union_types(existing, var_type, false);
                 finally_scope.vars_in_scope.insert(var_id.clone(), combined);
             } else {
-                let mut possibly_undefined = var_type.clone();
+                let mut possibly_undefined = (**var_type).clone();
                 possibly_undefined.possibly_undefined_from_try = true;
                 finally_scope
                     .vars_in_scope

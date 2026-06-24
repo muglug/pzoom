@@ -173,9 +173,9 @@ pub fn reconcile_keyed_types(
         let mut possibly_undefined = false;
 
         let existing_type = if let Some(t) = context.locals.get(&var_id) {
-            Some(t.clone())
+            Some((**t).clone())
         } else if let Some(alt_var_id) = &alt_var_id {
-            context.locals.get(alt_var_id).cloned()
+            context.locals.get(alt_var_id).map(|__t| (**__t).clone())
         } else if var_name.contains('[') || var_name.contains("->") || var_name.contains("::$") {
             // Try to get value for nested key (including `Foo::$prop` static
             // properties, whose declared type Psalm's getValueForKey loads from
@@ -1002,7 +1002,7 @@ fn get_value_for_key(
         let var_type = context.locals.get(key).or_else(|| {
             get_alternate_var_id(context, key).and_then(|alt| context.locals.get(&alt))
         });
-        return var_type.cloned();
+        return var_type.map(|__t| (**__t).clone());
     }
 
     key_parts.reverse();
@@ -1022,10 +1022,10 @@ fn get_value_for_key(
     let mut base_type = context
         .locals
         .get(base_key.as_str())
-        .cloned()
+        .map(|__t| (**__t).clone())
         .or_else(|| {
             get_alternate_var_id(context, &base_key)
-                .and_then(|alt| context.locals.get(&alt).cloned())
+                .and_then(|alt| context.locals.get(&alt).map(|__t| (**__t).clone()))
         })
         .or_else(|| resolve_class_constant_type_from_key(&base_key, analyzer))
         .or_else(|| resolve_static_property_type_from_key(&base_key, analyzer))?;
@@ -1041,7 +1041,7 @@ fn get_value_for_key(
             key_parts.pop(); // Pop the closing "]"
             composed_key = format!("{composed_key}[{array_key}]");
             if let Some(existing) = context.locals.get(composed_key.as_str()) {
-                base_type = existing.clone();
+                base_type = (**existing).clone();
                 continue;
             }
             base_type = apply_array_access_to_base_type(
@@ -1059,7 +1059,7 @@ fn get_value_for_key(
             let property_name = key_parts.pop()?;
             composed_key = format!("{composed_key}->{property_name}");
             if let Some(existing) = context.locals.get(composed_key.as_str()) {
-                base_type = existing.clone();
+                base_type = (**existing).clone();
                 continue;
             }
             let method_name = property_name.strip_suffix("()");
@@ -1687,7 +1687,7 @@ fn resolve_variable_key_type(
     if let Some(var_type) = context.locals.get(array_key_var).or_else(|| {
         get_alternate_var_id(context, array_key_var).and_then(|alt| context.locals.get(&alt))
     }) {
-        return Some(var_type.clone());
+        return Some(var_type.as_ref().clone());
     }
 
     if array_key_var.contains('[') || array_key_var.contains("->") {
@@ -2016,7 +2016,7 @@ fn adjust_tkeyed_array_type(
     let nested_path_id = VarName::from(format!("{}[{}]", base_key, array_key));
 
     for offset in &array_key_offsets {
-        let Some(existing_type) = context.locals.get(&base_var_id).cloned() else {
+        let Some(existing_type) = context.locals.get(&base_var_id).map(|__t| (**__t).clone()) else {
             return;
         };
 

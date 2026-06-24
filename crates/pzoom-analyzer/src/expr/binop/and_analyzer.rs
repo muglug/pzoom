@@ -69,7 +69,7 @@ pub fn analyze(
     // assigned (Psalm: `if (isset($left_context->assigned_var_ids[$var_id]))`).
     for (var_id, var_type) in &left_context.locals {
         if left_context.assigned_var_ids.contains_key(var_id) {
-            context.locals.insert(var_id.clone(), var_type.clone());
+            context.locals.insert(var_id.clone(), var_type.as_ref().clone());
         }
     }
 

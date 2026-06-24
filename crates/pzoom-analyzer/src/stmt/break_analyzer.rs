@@ -62,7 +62,7 @@ pub fn analyze(
 
             let combined = match loop_scope.possibly_redefined_loop_parent_vars.get(var_id) {
                 Some(existing) => combine_union_types(var_type, existing, false),
-                None => var_type.clone(),
+                None => var_type.as_ref().clone(),
             };
             loop_scope
                 .possibly_redefined_loop_parent_vars
@@ -74,7 +74,7 @@ pub fn analyze(
                 if !loop_scope.parent_context_vars.contains_key(var_id) {
                     let combined = match loop_scope.possibly_defined_loop_parent_vars.get(var_id) {
                         Some(existing) => combine_union_types(var_type, existing, false),
-                        None => var_type.clone(),
+                        None => var_type.as_ref().clone(),
                     };
                     loop_scope
                         .possibly_defined_loop_parent_vars

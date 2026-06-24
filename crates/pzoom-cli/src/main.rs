@@ -213,6 +213,10 @@ fn collect_stub_files(dir: &Path) -> Vec<PathBuf> {
 
 fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     let start_time = std::time::Instant::now();
+    // Per-phase wall-time breakdown, for perf work. Quiet by default; opt in
+    // with PZOOM_PHASE_TIMING=1 (also implied by PZOOM_PARSE_STATS).
+    let phase_timing =
+        std::env::var("PZOOM_PHASE_TIMING").is_ok() || std::env::var("PZOOM_PARSE_STATS").is_ok();
 
     println!("Scanning files...");
 
@@ -345,6 +349,10 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     }
 
     println!("Scanned {} files", scan_result.file_count);
+    if phase_timing {
+        eprintln!("[phase] scan: {:.2?}", start_time.elapsed());
+    }
+    let t_after_scan = std::time::Instant::now();
 
     // Phase 2: Populate
     println!("Resolving types...");
@@ -355,6 +363,10 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         let mut populator = Populator::new(&mut codebase, &interner);
         populator.populate();
     }
+    if phase_timing {
+        eprintln!("[phase] populate: {:.2?}", t_after_scan.elapsed());
+    }
+    let t_after_populate = std::time::Instant::now();
 
     // Let active plugins record framework knowledge on the populated codebase
     // (e.g. the PHPUnit plugin flags TestCase subclasses + their test methods)
@@ -443,6 +455,12 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
 
         analyzer.analyze_files(&files_to_analyze)
     };
+    if phase_timing {
+        eprintln!("[phase] analyze: {:.2?}", t_after_populate.elapsed());
+    }
+    if std::env::var("PZOOM_PARSE_STATS").is_ok() {
+        pzoom_analyzer::profiling::dump();
+    }
 
     // Plugin diagnostics from the post-populate hook join the analysis issues so
     // they share the same stub/global/baseline suppression below.

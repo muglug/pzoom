@@ -201,7 +201,7 @@ pub fn analyze(
             let full_key_id = VarName::new(&full_key);
             // The narrowed dim-path type is captured BEFORE the base
             // re-analysis below can re-derive (and widen) it.
-            if let Some(existing_type) = context.locals.get(&full_key_id).cloned() {
+            if let Some(existing_type) = context.locals.get(&full_key_id).map(|__t| (**__t).clone()) {
                 let has_asserted_dim =
                     context_asserts_isset_state(context, &full_key) == Some(true);
                 let base_has_nullable_or_falsable_access = context
@@ -344,7 +344,7 @@ pub fn analyze(
                         pos,
                         array_pos,
                         keyed_array_var_id.clone(),
-                        existing_type.clone(),
+                        existing_type.as_ref().clone(),
                         index_type.as_ref(),
                     );
                     return;
@@ -358,7 +358,7 @@ pub fn analyze(
                                 pos,
                                 array_pos,
                                 keyed_array_var_id.clone(),
-                                existing_type.clone(),
+                                existing_type.as_ref().clone(),
                                 index_type.as_ref(),
                             );
                             return;
@@ -372,7 +372,7 @@ pub fn analyze(
                         pos,
                         array_pos,
                         keyed_array_var_id.clone(),
-                        existing_type.clone(),
+                        existing_type.as_ref().clone(),
                         index_type.as_ref(),
                     );
                     return;

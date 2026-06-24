@@ -38,6 +38,9 @@ impl<'a> FileAnalyzer<'a> {
             return (Vec::new(), FileReferenceData::default());
         };
 
+        let _total = crate::profiling::ScopeTimer::new(&crate::profiling::ANALYZE_TOTAL_NS);
+        crate::profiling::FILE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         let path_str = self.interner.lookup(file_path);
 
         // Create arena for parsing.
@@ -45,10 +48,14 @@ impl<'a> FileAnalyzer<'a> {
         let file_id = FileId::new(&*path_str);
 
         // Re-parse the file.
+        let _parse_start = std::time::Instant::now();
         let (program, _parse_error) = parse_file_content(&arena, file_id, &file_info.contents);
+        crate::profiling::record(&crate::profiling::PARSE_NS, _parse_start);
 
         // Resolve names (handle use statements, namespace aliases, etc.).
+        let _resolve_start = std::time::Instant::now();
         let resolved_names = resolve_names(&program, self.interner);
+        crate::profiling::record(&crate::profiling::RESOLVE_NS, _resolve_start);
 
         // Create the analyzer context.
         let stmt_analyzer = StatementsAnalyzer::new(

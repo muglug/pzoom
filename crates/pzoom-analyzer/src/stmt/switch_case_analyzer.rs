@@ -229,7 +229,7 @@ pub(crate) fn analyze(
                             remapped_params: false,
                         };
                         if let Some(existing_type) =
-                            case_context.locals.get(&origin_var_id).cloned()
+                            case_context.locals.get(&origin_var_id).map(|__t| (**__t).clone())
                         {
                             let narrowed = assertion_reconciler::intersect_union_with_atomic(
                                 &existing_type,
@@ -321,7 +321,7 @@ pub(crate) fn analyze(
                 case_context.merge(&fallthrough_context);
                 for (var_id, var_type) in case_context.locals.iter_mut() {
                     if !vars_before_fallthrough.contains(var_id) {
-                        var_type.possibly_undefined_from_try = true;
+                        Rc::make_mut(var_type).possibly_undefined_from_try = true;
                     }
                 }
             }
@@ -643,7 +643,7 @@ fn narrow_var_to_type(
     asserted_type: &TUnion,
 ) {
     let Some(asserted_atomic) = asserted_type.get_single().cloned() else {
-        if let Some(existing_type) = context.locals.get(var_id.as_str()).cloned() {
+        if let Some(existing_type) = context.locals.get(var_id.as_str()).map(|__t| (**__t).clone()) {
             if let Some(intersection) =
                 assertion_reconciler::intersect_union_with_union(&existing_type, asserted_type)
             {
@@ -653,7 +653,7 @@ fn narrow_var_to_type(
         return;
     };
 
-    if let Some(existing_type) = context.locals.get(var_id.as_str()).cloned() {
+    if let Some(existing_type) = context.locals.get(var_id.as_str()).map(|__t| (**__t).clone()) {
         let narrowed = assertion_reconciler::intersect_union_with_atomic(
             &existing_type,
             &asserted_atomic,

@@ -473,7 +473,7 @@ pub(crate) fn get_cached_no_arg_method_call_type(
     context
         .locals
         .get(format!("{}->{}()", object_key, method_name.to_ascii_lowercase()).as_str())
-        .cloned()
+        .map(|__t| (**__t).clone())
 }
 
 pub(crate) fn get_reconciled_receiver_type_for_expression(
@@ -481,7 +481,7 @@ pub(crate) fn get_reconciled_receiver_type_for_expression(
     object_expr: &Expression<'_>,
 ) -> Option<TUnion> {
     let object_key = expression_identifier::get_expression_var_key(object_expr)?;
-    context.locals.get(object_key.as_str()).cloned()
+    context.locals.get(object_key.as_str()).map(|__t| (**__t).clone())
 }
 
 /// Look up the return type of a method on a type.

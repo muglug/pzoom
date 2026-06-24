@@ -233,13 +233,13 @@ fn follow_init_call(
     if let Some(this_type) = context.locals.get("$this") {
         call_context
             .locals
-            .insert(VarName::new_static("$this"), this_type.clone());
+            .insert(VarName::new_static("$this"), this_type.as_ref().clone());
     }
     for (var_name, var_type) in context.locals.iter() {
         if var_name.as_str().starts_with("$this->") {
             call_context
                 .locals
-                .insert(var_name.clone(), var_type.clone());
+                .insert(var_name.clone(), var_type.as_ref().clone());
         }
     }
 
@@ -253,7 +253,7 @@ fn follow_init_call(
     // getMethodMutations writeback).
     for (var_name, var_type) in call_context.locals.iter() {
         if var_name.as_str().starts_with("$this->") {
-            context.locals.insert(var_name.clone(), var_type.clone());
+            context.locals.insert(var_name.clone(), var_type.as_ref().clone());
         }
     }
     for (property_name, assigning_class) in &call_context.initialized_prop_classes {

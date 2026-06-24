@@ -92,7 +92,7 @@ pub fn analyze(
         && let Some(narrowed_type) = context
             .locals
             .get(format!("{}::${}", class_key_part, prop_name).as_str())
-            .cloned()
+            .map(|__t| (**__t).clone())
     {
         analysis_data.expr_types.insert(pos, Rc::new(narrowed_type));
         return;

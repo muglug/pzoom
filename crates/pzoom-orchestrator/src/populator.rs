@@ -1739,19 +1739,12 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
             continue;
         };
 
-        // `use T { foo as public; }` / `use T { foo as final; }` mutates the
-        // original method in place (visibility and/or final-ness).
+        // `use T { foo as public; }` mutates the original method visibility.
         if alias.alias_name == alias.original_name {
-            if (alias.visibility.is_some() || alias.is_final)
+            if let Some(visibility) = alias.visibility
                 && let Some(existing_method) = storage.methods.get_mut(&alias.original_name)
             {
-                let method = std::sync::Arc::make_mut(existing_method);
-                if let Some(visibility) = alias.visibility {
-                    method.visibility = visibility;
-                }
-                if alias.is_final {
-                    method.is_final = true;
-                }
+                std::sync::Arc::make_mut(existing_method).visibility = visibility;
             }
             continue;
         }
@@ -1765,9 +1758,6 @@ fn apply_trait_method_aliases(storage: &mut ClassLikeInfo, trait_name: &StrId) {
 
         if let Some(visibility) = alias.visibility {
             aliased_method.visibility = visibility;
-        }
-        if alias.is_final {
-            aliased_method.is_final = true;
         }
 
         storage

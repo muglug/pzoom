@@ -403,8 +403,4 @@ pub struct TraitMethodAlias {
     pub alias_name: StrId,
     /// Optional visibility override from the adaptation (`as private`, etc).
     pub visibility: Option<Visibility>,
-    /// Whether the adaptation marks the alias `final` (`as final foo`). The
-    /// aliased method becomes final, which lets constructor-init analysis follow
-    /// it (a final method can't be overridden, so its writes are guaranteed).
-    pub is_final: bool,
 }

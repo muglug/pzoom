@@ -6890,10 +6890,10 @@ fn analyze_methods_from_trait(
     let arena = Bump::new();
     let file_id = FileId::new(&*trait_path);
     crate::profiling::TRAIT_PARSE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _trait_parse_start = std::time::Instant::now();
+    let _trait_parse_start = crate::profiling::TimerStart::now();
     let (program, _parse_error) = parse_file_content(&arena, file_id, &trait_file_info.contents);
     crate::profiling::record(&crate::profiling::TRAIT_PARSE_NS, _trait_parse_start);
-    let _trait_resolve_start = std::time::Instant::now();
+    let _trait_resolve_start = crate::profiling::TimerStart::now();
     let resolved_names = resolve_names(&program, analyzer.interner);
     crate::profiling::record(&crate::profiling::TRAIT_RESOLVE_NS, _trait_resolve_start);
 

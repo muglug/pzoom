@@ -39,14 +39,14 @@ pub struct StatementsAnalyzer<'a> {
     /// The parse arena, when available. Used to synthesize AST nodes during analysis
     /// (e.g. rewriting a statement-level `A && B` to `if (A) { B; }`, mirroring
     /// Psalm's AndAnalyzer from_stmt path).
-    pub arena: Option<&'a bumpalo::Bump>,
+    pub arena: Option<&'a pzoom_syntax::LocalArena>,
 
     /// The already-parsed top-level statements of `file_path`, when available
     /// (set by `FileAnalyzer` from its own parse). Lets the constructor
     /// property-init re-run (`init_collector`) reuse this AST for a *same-file*
     /// method body instead of re-parsing the whole file — the AST and `arena`
     /// outlive the entire `analyze_stmts` call, so the borrow is safe.
-    pub file_program: Option<&'a [mago_syntax::ast::ast::statement::Statement<'a>]>,
+    pub file_program: Option<&'a [mago_syntax::cst::cst::statement::Statement<'a>]>,
 
     /// Byte offset of each line start (`[0]` is 0), built once per file so
     /// line/column lookups are a binary search instead of an O(file) scan.
@@ -109,7 +109,7 @@ impl<'a> StatementsAnalyzer<'a> {
     /// constructor-init re-run can reuse them instead of re-parsing.
     pub fn with_file_program(
         mut self,
-        statements: &'a [mago_syntax::ast::ast::statement::Statement<'a>],
+        statements: &'a [mago_syntax::cst::cst::statement::Statement<'a>],
     ) -> Self {
         self.file_program = Some(statements);
         self
@@ -149,7 +149,7 @@ impl<'a> StatementsAnalyzer<'a> {
         }
     }
 
-    pub fn with_arena(mut self, arena: &'a bumpalo::Bump) -> Self {
+    pub fn with_arena(mut self, arena: &'a pzoom_syntax::LocalArena) -> Self {
         self.arena = Some(arena);
         self
     }

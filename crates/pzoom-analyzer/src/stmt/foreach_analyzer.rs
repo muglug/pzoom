@@ -1,12 +1,12 @@
 //! Foreach statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::r#loop::foreach::{Foreach, ForeachTarget};
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::r#loop::foreach::{Foreach, ForeachTarget};
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::t_atomic::ArrayKey;
@@ -97,7 +97,7 @@ pub fn analyze(
                     safe_var_ids.push(
                         analyzer
                             .interner
-                            .find(direct.name)
+                            .find(pzoom_syntax::bytes_to_str(direct.name))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     );
                 }
@@ -347,7 +347,7 @@ pub fn analyze(
             else {
                 continue;
             };
-            let var_name = VarName::new(direct.name);
+            let var_name = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             if analysis_data
                 .loop_scopes
                 .iter()
@@ -359,7 +359,7 @@ pub fn analyze(
                     IssueKind::LoopInvalidation,
                     format!(
                         "Variable {} has already been assigned in a for/foreach loop",
-                        direct.name
+                        pzoom_syntax::bytes_to_str(direct.name)
                     ),
                     analyzer.file_path,
                     span.start.offset,
@@ -385,7 +385,7 @@ pub fn analyze(
         if let Expression::Variable(Variable::Direct(direct)) =
             unwrap_reference_target(value_target_expr).unparenthesized()
         {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             let annotation = analysis_data.current_stmt_start.and_then(|stmt_start| {
                 crate::expr::variable_fetch_analyzer::get_inline_var_annotation_type(
                     analyzer, stmt_start, &var_id,
@@ -411,7 +411,7 @@ pub fn analyze(
             && let Expression::Variable(Variable::Direct(key_direct)) =
                 kv_target.key.unparenthesized()
         {
-            let key_var_id = VarName::new(key_direct.name);
+            let key_var_id = VarName::new(pzoom_syntax::bytes_to_str(key_direct.name));
             let key_annotation = analysis_data.current_stmt_start.and_then(|stmt_start| {
                 crate::expr::variable_fetch_analyzer::get_inline_var_annotation_type(
                     analyzer,
@@ -438,7 +438,7 @@ pub fn analyze(
             && key_type.is_mixed()
             && let Expression::Variable(Variable::Direct(key_direct)) =
                 kv_target.key.unparenthesized()
-            && !key_direct.name.starts_with("$_")
+            && !pzoom_syntax::bytes_to_str(key_direct.name).starts_with("$_")
         {
             let span = kv_target.key.span();
             let (line, col) = analyzer.get_line_column(span.start.offset);
@@ -453,7 +453,7 @@ pub fn analyze(
                     IssueKind::MixedAssignment,
                     format!(
                         "Unable to determine the type that {} is being assigned to",
-                        key_direct.name
+                        pzoom_syntax::bytes_to_str(key_direct.name)
                     ),
                     analyzer.file_path,
                     span.start.offset,
@@ -468,7 +468,7 @@ pub fn analyze(
             && !value_target_has_annotation
             && let Expression::Variable(Variable::Direct(direct)) =
                 value_target_expr.unparenthesized()
-            && !direct.name.starts_with("$_")
+            && !pzoom_syntax::bytes_to_str(direct.name).starts_with("$_")
         {
             let span = value_target_expr.span();
             let (line, col) = analyzer.get_line_column(span.start.offset);
@@ -483,7 +483,7 @@ pub fn analyze(
                     IssueKind::MixedAssignment,
                     format!(
                         "Unable to determine the type that {} is being assigned to",
-                        direct.name
+                        pzoom_syntax::bytes_to_str(direct.name)
                     ),
                     analyzer.file_path,
                     span.start.offset,
@@ -505,7 +505,7 @@ pub fn analyze(
         };
         if let Expression::Variable(Variable::Direct(direct)) = value_target_expr.unparenthesized()
         {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             let annotation = analysis_data.current_stmt_start.and_then(|stmt_start| {
                 crate::expr::variable_fetch_analyzer::get_inline_var_annotation_type(
                     analyzer, stmt_start, &var_id,
@@ -523,7 +523,7 @@ pub fn analyze(
                     format!(
                         "The @var {} annotation for {} is unnecessary",
                         annotation_type.get_id(Some(analyzer.interner)),
-                        direct.name
+                        pzoom_syntax::bytes_to_str(direct.name)
                     ),
                     analyzer.file_path,
                     span.start.offset,
@@ -564,7 +564,7 @@ pub fn analyze(
             pzoom_code_info::VarId(
                 analyzer
                     .interner
-                    .find(direct.name)
+                    .find(pzoom_syntax::bytes_to_str(direct.name))
                     .unwrap_or(pzoom_str::StrId::EMPTY),
             ),
             crate::data_flow::make_data_flow_node_position(
@@ -599,7 +599,7 @@ pub fn analyze(
             if let Expression::Variable(Variable::Direct(direct)) = target.unparenthesized() {
                 analysis_data
                     .first_var_appearances
-                    .entry(VarName::new(direct.name))
+                    .entry(VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
                     .or_insert(target.span().start.offset);
             }
         };
@@ -646,7 +646,7 @@ pub fn analyze(
                     {
                         foreach_context
                             .list_key_dependencies
-                            .insert(VarName::new(key_direct.name), iterable_var_key);
+                            .insert(VarName::new(pzoom_syntax::bytes_to_str(key_direct.name)), iterable_var_key);
                     }
                 }
             }
@@ -688,7 +688,7 @@ pub fn analyze(
         |target: &Expression<'_>, target_type: &TUnion, context: &mut BlockContext| {
             if !always_non_empty_array
                 && let Expression::Variable(Variable::Direct(direct)) = target.unparenthesized()
-                && context.locals.contains_key(&VarName::new(direct.name))
+                && context.locals.contains_key(&VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
             {
                 return;
             }
@@ -1335,7 +1335,7 @@ fn set_expression_var_type(
 
     match target.unparenthesized() {
         Expression::Variable(Variable::Direct(direct)) => {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             context.set_var_type(var_id, var_type.clone());
         }
         Expression::List(list) => {
@@ -1389,7 +1389,7 @@ fn extract_destructuring_key(expr: &Expression<'_>) -> Option<DestructuringLooku
             .map(|value| DestructuringLookupKey::Int(value as i64)),
         Expression::Literal(Literal::String(string_lit)) => string_lit
             .value
-            .map(|value| DestructuringLookupKey::String(value.to_string())),
+            .map(|value| DestructuringLookupKey::String(pzoom_syntax::bytes_to_str(value).to_string())),
         _ => None,
     }
 }
@@ -1489,7 +1489,7 @@ fn collect_destructuring_safe_var_ids(
                 safe_var_ids.push(
                     analyzer
                         .interner
-                        .find(direct.name)
+                        .find(pzoom_syntax::bytes_to_str(direct.name))
                         .unwrap_or(pzoom_str::StrId::EMPTY),
                 );
             }
@@ -1520,7 +1520,7 @@ fn mark_foreach_reference_target(expr: &Expression<'_>, context: &mut BlockConte
         return;
     };
 
-    let var_id = VarName::new(direct.name);
+    let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
     context.clear_confusing_reference(&var_id);
     context.mark_external_reference(var_id);
 }

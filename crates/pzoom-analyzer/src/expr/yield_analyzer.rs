@@ -1,7 +1,7 @@
 //! Yield expression analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::r#yield::Yield;
+use mago_syntax::cst::cst::r#yield::Yield;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 use pzoom_str::StrId;

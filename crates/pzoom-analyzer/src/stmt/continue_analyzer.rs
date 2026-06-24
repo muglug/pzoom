@@ -14,12 +14,12 @@ use crate::stmt::scope_analyzer::ControlAction;
 
 /// The literal level of a `break N`/`continue N` (default 1).
 pub(crate) fn break_level(
-    level: Option<&mago_syntax::ast::ast::expression::Expression<'_>>,
+    level: Option<&mago_syntax::cst::cst::expression::Expression<'_>>,
 ) -> usize {
     level
         .and_then(|level_expr| {
-            if let mago_syntax::ast::ast::expression::Expression::Literal(
-                mago_syntax::ast::ast::literal::Literal::Integer(int_lit),
+            if let mago_syntax::cst::cst::expression::Expression::Literal(
+                mago_syntax::cst::cst::literal::Literal::Integer(int_lit),
             ) = level_expr
             {
                 int_lit.value.map(|v| v as usize)
@@ -37,7 +37,7 @@ pub(crate) fn break_level(
 pub(crate) fn loop_scope_index_for_level(
     break_types: &[crate::stmt::scope_analyzer::BreakContext],
     loop_scopes_len: usize,
-    level: Option<&mago_syntax::ast::ast::expression::Expression<'_>>,
+    level: Option<&mago_syntax::cst::cst::expression::Expression<'_>>,
 ) -> Option<usize> {
     let count = break_level(level);
     let loops_among = if count <= break_types.len() {
@@ -56,14 +56,14 @@ pub(crate) fn loop_scope_index_for_level(
 
 pub fn analyze(
     _analyzer: &StatementsAnalyzer<'_>,
-    continue_stmt: &mago_syntax::ast::ast::r#loop::Continue<'_>,
+    continue_stmt: &mago_syntax::cst::cst::r#loop::Continue<'_>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
     let scope_index = loop_scope_index_for_level(
         &context.break_types,
         analysis_data.loop_scopes.len(),
-        continue_stmt.level.as_ref(),
+        continue_stmt.level,
     );
     if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index))
     {

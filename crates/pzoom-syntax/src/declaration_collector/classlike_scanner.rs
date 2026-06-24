@@ -4,8 +4,8 @@
 //! to [`DeclarationCollector`]; split out of the module root for organization.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
-use mago_syntax::ast::ast::modifier::Modifier;
+use mago_syntax::cst::cst::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
+use mago_syntax::cst::cst::modifier::Modifier;
 use pzoom_str::StrId;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, TemplateType};
@@ -17,7 +17,7 @@ use super::DeclarationCollector;
 
 impl<'a, 'p> DeclarationCollector<'a, 'p> {
     pub(crate) fn visit_class(&mut self, class: &Class<'_>) {
-        let name = self.make_fqn(class.name.value);
+        let name = self.make_fqn(crate::bytes_to_str(class.name.value));
         let span = class.span();
         let mut class_docblock_type_aliases: FxHashMap<String, TUnion> = FxHashMap::default();
 
@@ -304,7 +304,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     }
 
     pub(crate) fn visit_interface(&mut self, iface: &Interface<'_>) {
-        let name = self.make_fqn(iface.name.value);
+        let name = self.make_fqn(crate::bytes_to_str(iface.name.value));
         let span = iface.span();
         let mut class_docblock_type_aliases: FxHashMap<String, TUnion> = FxHashMap::default();
 
@@ -495,7 +495,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     }
 
     pub(crate) fn visit_trait(&mut self, tr: &Trait<'_>) {
-        let name = self.make_fqn(tr.name.value);
+        let name = self.make_fqn(crate::bytes_to_str(tr.name.value));
         let span = tr.span();
         let mut class_docblock_type_aliases: FxHashMap<String, TUnion> = FxHashMap::default();
 
@@ -650,7 +650,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
     }
 
     pub(crate) fn visit_enum(&mut self, en: &Enum<'_>) {
-        let name = self.make_fqn(en.name.value);
+        let name = self.make_fqn(crate::bytes_to_str(en.name.value));
         let span = en.span();
 
         let enum_backing_atomic = en.backing_type_hint.as_ref().and_then(|backing| {

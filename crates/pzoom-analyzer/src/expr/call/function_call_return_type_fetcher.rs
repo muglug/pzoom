@@ -3,7 +3,7 @@
 //! Mirrors Psalm/Hakana's dedicated function return-type fetcher flow:
 //! special-case builtins first, then function storage return type.
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use rustc_hash::FxHashMap;
 
 use pzoom_code_info::data_flow::node::SinkType;

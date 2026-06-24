@@ -13,14 +13,14 @@ use crate::stmt::scope_analyzer::{BreakContext, ControlAction};
 
 pub fn analyze(
     _analyzer: &StatementsAnalyzer<'_>,
-    break_stmt: &mago_syntax::ast::ast::r#loop::Break<'_>,
+    break_stmt: &mago_syntax::cst::cst::r#loop::Break<'_>,
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
     // Psalm: a break leaves the switch only when its level is < 2
     // (`break 2` inside a switch exits the enclosing loop instead).
     let leaving_switch = matches!(context.break_types.last(), Some(BreakContext::Switch))
-        && crate::stmt::continue_analyzer::break_level(break_stmt.level.as_ref()) < 2;
+        && crate::stmt::continue_analyzer::break_level(break_stmt.level) < 2;
 
     // A break that leaves a switch carries its context to the post-switch
     // merge (Hakana's case_scope.break_vars).
@@ -31,7 +31,7 @@ pub fn analyze(
     let scope_index = crate::stmt::continue_analyzer::loop_scope_index_for_level(
         &context.break_types,
         analysis_data.loop_scopes.len(),
-        break_stmt.level.as_ref(),
+        break_stmt.level,
     );
     if let Some(loop_scope) = scope_index.and_then(|index| analysis_data.loop_scopes.get_mut(index))
     {

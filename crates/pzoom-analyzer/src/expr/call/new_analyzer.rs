@@ -1,9 +1,9 @@
 //! New (object instantiation) analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::instantiation::Instantiation;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::instantiation::Instantiation;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, Visibility};
@@ -37,7 +37,7 @@ pub fn analyze(
     // `new stdClass(...)` parses as `new (stdClass(...))` — PHP rejects
     // first-class callable syntax in new expressions at compile time
     // ("Cannot create Closure for new expression"); Psalm reports ParseError.
-    if let mago_syntax::ast::ast::expression::Expression::PartialApplication(partial) =
+    if let mago_syntax::cst::cst::expression::Expression::PartialApplication(partial) =
         instantiation.class.unparenthesized()
         && partial.is_first_class_callable()
     {
@@ -1097,7 +1097,7 @@ fn get_resolved_class_id(
                     Some(
                         analyzer
                             .interner
-                            .find(id.value().trim_start_matches('\\'))
+                            .find(pzoom_syntax::bytes_to_str(id.value()).trim_start_matches('\\'))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
@@ -1236,12 +1236,12 @@ fn get_instantiated_type_name_id(
     concrete_class_id
 }
 
-fn is_closure_like_argument(arg: &mago_syntax::ast::ast::argument::Argument<'_>) -> bool {
+fn is_closure_like_argument(arg: &mago_syntax::cst::cst::argument::Argument<'_>) -> bool {
     get_closure_like_argument_offset(arg).is_some()
 }
 
 fn get_closure_like_argument_offset(
-    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg: &mago_syntax::cst::cst::argument::Argument<'_>,
 ) -> Option<u32> {
     match arg.value().unparenthesized() {
         Expression::Closure(closure) => Some(closure.span().start.offset),
@@ -1438,8 +1438,8 @@ fn verify_constructor_arguments(
         }
 
         match arg {
-            mago_syntax::ast::ast::argument::Argument::Named(named) => {
-                named_arg_names.push(named.name.value.to_string());
+            mago_syntax::cst::cst::argument::Argument::Named(named) => {
+                named_arg_names.push(pzoom_syntax::bytes_to_str(named.name.value).to_string());
             }
             _ => positional_count += 1,
         }
@@ -1666,7 +1666,7 @@ fn verify_constructor_arguments(
         if effective_param.by_ref
             && let Expression::Variable(Variable::Direct(direct)) = arg.value().unparenthesized()
         {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             if let Some(constraint_type) = effective_param.get_type()
                 && !constraint_type.is_mixed()
                 && var_id != "$this"
@@ -1993,13 +1993,13 @@ fn emit_unknown_class_constructor_arg_issues(
     };
 
     for arg in args.arguments.iter() {
-        let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(variable)) =
+        let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(variable)) =
             arg.value().unparenthesized()
         else {
             continue;
         };
 
-        let var_id = VarName::new(variable.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(variable.name));
         if context.get_var_type(&var_id).is_some() {
             continue;
         }
@@ -2019,7 +2019,7 @@ fn emit_unknown_class_constructor_arg_issues(
             IssueKind::UndefinedVariable,
             format!(
                 "Undefined variable ${}",
-                variable.name.trim_start_matches('$')
+                pzoom_syntax::bytes_to_str(variable.name).trim_start_matches('$')
             ),
             analyzer.file_path,
             span.start.offset,
@@ -2142,9 +2142,9 @@ fn get_dynamic_class_var_id(
     class_expr: &Expression<'_>,
 ) -> Option<VarName> {
     match class_expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(variable)) => Some(VarName::new(variable.name)),
-        Expression::Identifier(identifier) if identifier.value().starts_with('$') => {
-            Some(VarName::new(identifier.value()))
+        Expression::Variable(Variable::Direct(variable)) => Some(VarName::new(pzoom_syntax::bytes_to_str(variable.name))),
+        Expression::Identifier(identifier) if pzoom_syntax::bytes_to_str(identifier.value()).starts_with('$') => {
+            Some(VarName::new(pzoom_syntax::bytes_to_str(identifier.value())))
         }
         _ => None,
     }

@@ -8,7 +8,7 @@
 
 use crate::type_expander::localize_special_class_type_union;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
@@ -73,7 +73,7 @@ pub(crate) fn get_method_return_type(
     method_name: &str,
     pos: Pos,
     method_name_pos: Pos,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     enforce_mutation_free: bool,
     suppress_possibly_null_reference_issue: bool,
@@ -824,7 +824,7 @@ pub(crate) fn get_method_return_type(
                     // location.
                     let mut origin_secondary = None;
                     let message = if let Expression::Variable(
-                        mago_syntax::ast::ast::variable::Variable::Direct(direct),
+                        mago_syntax::cst::cst::variable::Variable::Direct(direct),
                     ) = object_expr.unparenthesized()
                     {
                         origin_secondary = analysis_data
@@ -844,7 +844,7 @@ pub(crate) fn get_method_return_type(
                             });
                         format!(
                             "Cannot determine the type of {} when calling method {}",
-                            direct.name, method_name
+                            pzoom_syntax::bytes_to_str(direct.name), method_name
                         )
                     } else {
                         format!("Cannot call method {} on mixed type", method_name)
@@ -1205,7 +1205,7 @@ fn collect_receiver_named_types_in_atomic(atomic: &TAtomic, target: &mut Vec<TAt
 
 pub(crate) fn verify_method_arguments(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     method_info: &pzoom_code_info::FunctionLikeInfo,
     class_name: &str,
@@ -1419,7 +1419,7 @@ pub(crate) fn apply_post_call_assertions(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
     object_expr: &Expression<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     method_info: &pzoom_code_info::FunctionLikeInfo,
     context: &mut BlockContext,
     template_result: &TemplateResult,
@@ -1502,7 +1502,7 @@ pub(crate) fn apply_post_call_assertions(
 pub(crate) fn apply_post_static_call_assertions(
     analyzer: &StatementsAnalyzer<'_>,
     analysis_data: &mut FunctionAnalysisData,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     method_info: &pzoom_code_info::FunctionLikeInfo,
     context: &mut BlockContext,
     template_result: &TemplateResult,

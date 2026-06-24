@@ -1,6 +1,6 @@
 //! Non-comparison binary operator analyzer (Psalm `NonComparisonOpAnalyzer` equivalent).
 
-use mago_syntax::ast::ast::binary::BinaryOperator;
+use mago_syntax::cst::cst::binary::BinaryOperator;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};
 

@@ -1,8 +1,8 @@
 //! Echo statement analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::echo::{Echo, EchoTag};
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::echo::{Echo, EchoTag};
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::{Issue, IssueKind};
 
@@ -22,7 +22,7 @@ pub fn analyze(
     let span = echo.span();
     analyze_values(
         analyzer,
-        echo.values.iter(),
+        echo.values.iter().copied(),
         (span.start.offset, span.end.offset),
         analysis_data,
         context,
@@ -40,7 +40,7 @@ pub fn analyze_tag(
     let span = tag.span();
     analyze_values(
         analyzer,
-        tag.values.iter(),
+        tag.values.iter().copied(),
         (span.start.offset, span.end.offset),
         analysis_data,
         context,

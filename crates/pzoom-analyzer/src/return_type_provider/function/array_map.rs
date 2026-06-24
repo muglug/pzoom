@@ -32,7 +32,7 @@ impl FunctionReturnTypeProvider for ArrayMapReturnTypeProvider {
 
 fn infer_array_map_return_type(
     analyzer: &StatementsAnalyzer<'_>,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,

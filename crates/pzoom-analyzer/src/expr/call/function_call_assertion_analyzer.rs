@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::call::FunctionCall;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::call::FunctionCall;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::algebra::{get_truths_from_formula, simplify_cnf};

@@ -12,7 +12,7 @@
 //! analyzing the body. This module owns that reconstruction so closures, arrow
 //! functions and (eventually) named functions/methods share one implementation.
 
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::statement::Statement;
 
 use pzoom_code_info::IssueKind;
 

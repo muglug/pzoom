@@ -1,11 +1,11 @@
 //! Binary operation analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::Binary;
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::binary::Binary;
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::ClassLikeKind;
@@ -71,7 +71,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    use mago_syntax::ast::ast::binary::BinaryOperator;
+    use mago_syntax::cst::cst::binary::BinaryOperator;
 
     match &binop.operator {
         BinaryOperator::And(_) | BinaryOperator::LowAnd(_) => {
@@ -129,7 +129,7 @@ pub fn analyze(
         operands_are_general_use
             || !matches!(
                 operand.unparenthesized(),
-                Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(_))
+                Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(_))
             )
     };
     let left_pos = analyze_binary_operand_marked(
@@ -328,8 +328,8 @@ fn analyze_binary_operand_marked(
     operand_pos
 }
 
-fn is_comparison_operator(operator: &mago_syntax::ast::ast::binary::BinaryOperator) -> bool {
-    use mago_syntax::ast::ast::binary::BinaryOperator;
+fn is_comparison_operator(operator: &mago_syntax::cst::cst::binary::BinaryOperator) -> bool {
+    use mago_syntax::cst::cst::binary::BinaryOperator;
 
     matches!(
         operator,
@@ -355,7 +355,7 @@ fn analyze_comparison_operation(
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,
 ) -> TUnion {
-    use mago_syntax::ast::ast::binary::BinaryOperator;
+    use mago_syntax::cst::cst::binary::BinaryOperator;
 
     if matches!(
         &binop.operator,
@@ -634,7 +634,7 @@ fn check_instanceof_class_exists(
     let Expression::Identifier(identifier) = rhs.unparenthesized() else {
         return;
     };
-    let raw = identifier.value();
+    let raw = pzoom_syntax::bytes_to_str(identifier.value());
     if raw.eq_ignore_ascii_case("self")
         || raw.eq_ignore_ascii_case("static")
         || raw.eq_ignore_ascii_case("parent")
@@ -790,7 +790,7 @@ fn expression_has_external_reference(
             expression_has_external_reference(analyzer, parenthesized.expression, context)
         }
         Expression::Variable(Variable::Direct(direct)) => {
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             context.references_to_external_scope.contains(&var_id)
                 || context.references_in_scope.contains_key(&var_id)
         }
@@ -807,8 +807,8 @@ fn is_get_class_call(expr: &Expression<'_>) -> bool {
         return false;
     };
 
-    function_name.value().eq_ignore_ascii_case("get_class")
-        || function_name.value().eq_ignore_ascii_case("\\get_class")
+    pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("get_class")
+        || pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("\\get_class")
 }
 
 fn has_deterministic_strict_identity(atomic: &TAtomic) -> bool {
@@ -950,7 +950,7 @@ fn union_is_definitely_non_object(union: &TUnion) -> bool {
 }
 
 pub(crate) fn infer_bitwise_type(
-    operator: &mago_syntax::ast::ast::binary::BinaryOperator,
+    operator: &mago_syntax::cst::cst::binary::BinaryOperator,
     left: Option<&TUnion>,
     right: Option<&TUnion>,
 ) -> TUnion {
@@ -980,22 +980,22 @@ pub(crate) fn infer_bitwise_type(
     for left_value in &left_values {
         for right_value in &right_values {
             let result = match operator {
-                mago_syntax::ast::ast::binary::BinaryOperator::BitwiseAnd(_) => {
+                mago_syntax::cst::cst::binary::BinaryOperator::BitwiseAnd(_) => {
                     left_value & right_value
                 }
-                mago_syntax::ast::ast::binary::BinaryOperator::BitwiseOr(_) => {
+                mago_syntax::cst::cst::binary::BinaryOperator::BitwiseOr(_) => {
                     left_value | right_value
                 }
-                mago_syntax::ast::ast::binary::BinaryOperator::BitwiseXor(_) => {
+                mago_syntax::cst::cst::binary::BinaryOperator::BitwiseXor(_) => {
                     left_value ^ right_value
                 }
-                mago_syntax::ast::ast::binary::BinaryOperator::LeftShift(_) => {
+                mago_syntax::cst::cst::binary::BinaryOperator::LeftShift(_) => {
                     if *right_value < 0 {
                         return TUnion::int();
                     }
                     left_value.wrapping_shl(*right_value as u32)
                 }
-                mago_syntax::ast::ast::binary::BinaryOperator::RightShift(_) => {
+                mago_syntax::cst::cst::binary::BinaryOperator::RightShift(_) => {
                     if *right_value < 0 {
                         return TUnion::int();
                     }
@@ -1173,8 +1173,7 @@ fn get_positive_literal_substr_length(expr: &Expression<'_>) -> Option<i64> {
         return None;
     };
 
-    if !function_name
-        .value()
+    if !pzoom_syntax::bytes_to_str(function_name.value())
         .trim_start_matches('\\')
         .eq_ignore_ascii_case("substr")
     {

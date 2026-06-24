@@ -6,7 +6,7 @@
 
 mod pdo_statement_set_fetch_mode;
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::functionlike_info::ParamInfo;
 use pzoom_str::StrId;
 

@@ -24,9 +24,9 @@
 use std::collections::BTreeMap;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::unary::UnaryPrefixOperator;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::unary::UnaryPrefixOperator;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::Assertion;

@@ -6,9 +6,9 @@ use super::{FunctionReturnTypeProvider, FunctionReturnTypeProviderEvent};
 use crate::expr::call::function_call_analyzer as fca;
 use crate::function_analysis_data::{FunctionAnalysisData, Pos};
 use crate::statements_analyzer::StatementsAnalyzer;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::statement::Statement;
 pub(super) struct ArrayFilterReturnTypeProvider;
 
 impl FunctionReturnTypeProvider for ArrayFilterReturnTypeProvider {
@@ -151,10 +151,10 @@ fn callback_param_assertions(
     // A literal-string callback naming a type-check function asserts that
     // type on the values (Psalm routes these through
     // getFunctionIdsFromCallableArg + the function's effects).
-    if let Expression::Literal(mago_syntax::ast::ast::literal::Literal::String(string_lit)) =
+    if let Expression::Literal(mago_syntax::cst::cst::literal::Literal::String(string_lit)) =
         callback_expr
     {
-        let assertion_type = match string_lit.value?.trim_start_matches('\\') {
+        let assertion_type = match pzoom_syntax::bytes_to_str(string_lit.value?).trim_start_matches('\\') {
             "is_string" => TAtomic::TString,
             "is_int" | "is_integer" | "is_long" => TAtomic::TInt,
             "is_float" | "is_double" | "is_real" => TAtomic::TFloat,
@@ -191,7 +191,7 @@ fn callback_param_assertions(
             };
             (
                 closure.parameter_list.parameters.first()?,
-                return_stmt.value.as_ref()?,
+                return_stmt.value?,
             )
         }
         _ => return None,
@@ -204,7 +204,7 @@ fn callback_param_assertions(
     let assertions = crate::assertion_finder::get_assertions(analyzer, return_expr, analysis_data);
     let param_assertions = assertions
         .if_true
-        .get(&VarName::new(first_param.variable.name))?;
+        .get(&VarName::new(pzoom_syntax::bytes_to_str(first_param.variable.name)))?;
 
     if param_assertions.is_empty() {
         return None;

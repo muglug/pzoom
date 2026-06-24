@@ -1,6 +1,6 @@
 //! Switch statement analyzer.
 
-use mago_syntax::ast::ast::control_flow::switch::{Switch, SwitchBody};
+use mago_syntax::cst::cst::control_flow::switch::{Switch, SwitchBody};
 use pzoom_code_info::{TUnion, VarName};
 use rustc_hash::FxHashSet;
 

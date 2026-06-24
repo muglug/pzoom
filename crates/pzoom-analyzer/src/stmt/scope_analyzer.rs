@@ -3,9 +3,9 @@
 //! Modeled after Psalm's ScopeAnalyzer and Hakana's scope_analyzer.
 //! This analyzes statements to determine if they return, exit, break, continue, etc.
 
-use mago_syntax::ast::ast::construct::Construct;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::statement::Statement;
+use mago_syntax::cst::cst::construct::Construct;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::statement::Statement;
 use rustc_hash::FxHashSet;
 
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -66,7 +66,7 @@ fn condition_is_always_truthy(
 
     matches!(
         condition.unparenthesized(),
-        Expression::Literal(mago_syntax::ast::ast::literal::Literal::True(_))
+        Expression::Literal(mago_syntax::cst::cst::literal::Literal::True(_))
     )
 }
 
@@ -132,7 +132,7 @@ pub fn get_control_actions(
                     .as_ref()
                     .and_then(|level| {
                         if let Expression::Literal(lit) = level {
-                            if let mago_syntax::ast::ast::literal::Literal::Integer(int_lit) = lit {
+                            if let mago_syntax::cst::cst::literal::Literal::Integer(int_lit) = lit {
                                 int_lit.value.map(|v| v as usize)
                             } else {
                                 None
@@ -170,7 +170,7 @@ pub fn get_control_actions(
                     .as_ref()
                     .and_then(|level| {
                         if let Expression::Literal(lit) = level {
-                            if let mago_syntax::ast::ast::literal::Literal::Integer(int_lit) = lit {
+                            if let mago_syntax::cst::cst::literal::Literal::Integer(int_lit) = lit {
                                 int_lit.value.map(|v| v as usize)
                             } else {
                                 None

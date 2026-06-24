@@ -9,18 +9,18 @@
 use std::collections::BTreeMap;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::{Access, ClassConstantAccess};
-use mago_syntax::ast::ast::binary::{Binary, BinaryOperator};
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::call::{NullSafeMethodCall, StaticMethodCall};
-use mago_syntax::ast::ast::class_like::member::{
+use mago_syntax::cst::cst::access::{Access, ClassConstantAccess};
+use mago_syntax::cst::cst::binary::{Binary, BinaryOperator};
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::call::{NullSafeMethodCall, StaticMethodCall};
+use mago_syntax::cst::cst::class_like::member::{
     ClassLikeConstantSelector, ClassLikeMemberSelector,
 };
-use mago_syntax::ast::ast::construct::Construct;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::unary::{UnaryPrefix, UnaryPrefixOperator};
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::construct::Construct;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::unary::{UnaryPrefix, UnaryPrefixOperator};
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_code_info::AssertionSet;
 use pzoom_code_info::VarName;
 
@@ -408,7 +408,7 @@ fn scrape_function_call_assertions(
         Call::Function(func_call) => {
             // Get the function name
             let raw_func_name = match &func_call.function {
-                Expression::Identifier(id) => Some(id.value()),
+                Expression::Identifier(id) => Some(pzoom_syntax::bytes_to_str(id.value())),
                 _ => None,
             };
 
@@ -1254,7 +1254,7 @@ fn scrape_instanceof_assertions(
     // IsIdentical assertion on `static` bound to the declaring class
     // (`$x = A&static`), an equality so impossibilities never report.
     if let Expression::Variable(Variable::Direct(direct)) = binary.rhs.unparenthesized()
-        && direct.name == "$this"
+        && pzoom_syntax::bytes_to_str(direct.name) == "$this"
     {
         if let Some(declaring_class) = analyzer.get_declaring_class() {
             let assertion_type = TAtomic::TNamedObject {
@@ -2366,11 +2366,11 @@ fn resolve_functionlike_for_call<'a>(
                 .unwrap_or_else(|| {
                     analyzer
                         .interner
-                        .find(identifier.value())
+                        .find(pzoom_syntax::bytes_to_str(identifier.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY)
                 });
 
-            let bare_name = identifier.value().trim_start_matches('\\');
+            let bare_name = pzoom_syntax::bytes_to_str(identifier.value()).trim_start_matches('\\');
 
             analyzer
                 .codebase
@@ -2430,9 +2430,13 @@ fn resolve_methodlike_for_instance_call<'a>(
     };
 
     let receiver = match object.unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) if direct.name == "$this" => analyzer
-            .get_declaring_class()
-            .map(|class_id| (class_id, None)),
+        Expression::Variable(Variable::Direct(direct))
+            if pzoom_syntax::bytes_to_str(direct.name) == "$this" =>
+        {
+            analyzer
+                .get_declaring_class()
+                .map(|class_id| (class_id, None))
+        }
         other => {
             // Non-$this receivers: use the inferred expression type, so class
             // templates in the assertion resolve through the receiver's type
@@ -2455,7 +2459,7 @@ fn resolve_methodlike_for_instance_call<'a>(
     let class_info = analyzer.codebase.get_class(receiver.0)?;
     let method_id = analyzer
         .interner
-        .find(method_identifier.value)
+        .find(pzoom_syntax::bytes_to_str(method_identifier.value))
         .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info
         .methods
@@ -2495,7 +2499,7 @@ fn resolve_methodlike_for_static_call<'a>(
     let class_info = analyzer.codebase.get_class(class_id)?;
     let method_id = analyzer
         .interner
-        .find(method_identifier.value)
+        .find(pzoom_syntax::bytes_to_str(method_identifier.value))
         .unwrap_or(pzoom_str::StrId::EMPTY);
     class_info.methods.get(&method_id).map(|method| &**method)
 }
@@ -2522,7 +2526,7 @@ fn apply_callsite_assertions(
     function_info: &pzoom_code_info::FunctionLikeInfo,
     receiver: CallReceiver,
     receiver_var_key: Option<&str>,
-    args: &[mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[mago_syntax::cst::cst::argument::Argument<'_>],
     analysis_data: &FunctionAnalysisData,
     result: &mut AssertionResult,
     cond_id: (u32, u32),
@@ -2631,7 +2635,7 @@ fn apply_assertion_list(
     analyzer: &StatementsAnalyzer<'_>,
     params: &[pzoom_code_info::functionlike_info::ParamInfo],
     assertions: &[FunctionLikeAssertion],
-    args: &[mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[mago_syntax::cst::cst::argument::Argument<'_>],
     receiver_var_key: Option<&str>,
     template_result: &TemplateResult,
     negate: bool,
@@ -3035,13 +3039,13 @@ fn resolve_class_expression(
 ) -> Option<StrId> {
     match expr.unparenthesized() {
         Expression::Identifier(id) => {
-            if id.value().eq_ignore_ascii_case("self") {
+            if pzoom_syntax::bytes_to_str(id.value()).eq_ignore_ascii_case("self") {
                 return Some(StrId::SELF);
             }
-            if id.value().eq_ignore_ascii_case("static") {
+            if pzoom_syntax::bytes_to_str(id.value()).eq_ignore_ascii_case("static") {
                 return Some(StrId::STATIC);
             }
-            if id.value().eq_ignore_ascii_case("parent") {
+            if pzoom_syntax::bytes_to_str(id.value()).eq_ignore_ascii_case("parent") {
                 return Some(StrId::PARENT);
             }
 
@@ -3051,7 +3055,7 @@ fn resolve_class_expression(
                     Some(
                         analyzer
                             .interner
-                            .find(id.value())
+                            .find(pzoom_syntax::bytes_to_str(id.value()))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
@@ -3071,13 +3075,13 @@ fn resolve_class_expression(
 /// Gets the variable name from a variable.
 fn get_var_name(var: &Variable<'_>) -> Option<VarName> {
     match var {
-        Variable::Direct(direct) => Some(VarName::new(direct.name)),
+        Variable::Direct(direct) => Some(VarName::new(pzoom_syntax::bytes_to_str(direct.name))),
         _ => None,
     }
 }
 
 /// Gets the variable name from an argument.
-fn get_argument_var_name(arg: &mago_syntax::ast::ast::argument::Argument<'_>) -> Option<VarName> {
+fn get_argument_var_name(arg: &mago_syntax::cst::cst::argument::Argument<'_>) -> Option<VarName> {
     expression_identifier::get_expression_var_key(arg.value())
         .or_else(|| extract_class_constant_origin_var_name(arg.value()))
 }
@@ -3606,6 +3610,7 @@ fn get_literal_array_key(expr: &Expression<'_>) -> Option<ArrayKey> {
             .and_then(|value| i64::try_from(value).ok())
             .map(ArrayKey::Int),
         Expression::Literal(Literal::String(string_lit)) => string_lit.value.map(|value| {
+            let value = pzoom_syntax::bytes_to_str(value);
             if let Ok(int_value) = value.parse::<i64>() {
                 // Match PHP array key juggling for canonical integer strings.
                 if value == int_value.to_string() {
@@ -4027,7 +4032,7 @@ fn extract_get_class_origin_var_name(expr: &Expression<'_>) -> Option<VarName> {
         return None;
     };
 
-    if !function_name.value().eq_ignore_ascii_case("get_class") {
+    if !pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("get_class") {
         return None;
     }
 
@@ -4045,7 +4050,7 @@ fn extract_class_constant_origin_var_name(expr: &Expression<'_>) -> Option<VarNa
         return None;
     };
 
-    if !constant.value.eq_ignore_ascii_case("class") {
+    if !pzoom_syntax::bytes_to_str(constant.value).eq_ignore_ascii_case("class") {
         return None;
     }
 
@@ -4073,7 +4078,7 @@ fn extract_class_constant_id(
         return None;
     };
 
-    if !constant.value.eq_ignore_ascii_case("class") {
+    if !pzoom_syntax::bytes_to_str(constant.value).eq_ignore_ascii_case("class") {
         return None;
     }
 
@@ -4111,7 +4116,7 @@ fn extract_literal_string_name(
         return None;
     };
 
-    let mut normalized = string_lit.value?.to_string();
+    let mut normalized = pzoom_syntax::bytes_to_str(string_lit.value?).to_string();
     if !normalized.contains('\\') {
         let span = string_lit.span();
         let raw_literal =
@@ -4145,7 +4150,7 @@ fn extract_literal_function_name(expr: &Expression<'_>) -> Option<String> {
         return None;
     };
 
-    let value = string_lit.value?;
+    let value = pzoom_syntax::bytes_to_str(string_lit.value?);
     Some(value.trim_start_matches('\\').to_ascii_lowercase())
 }
 
@@ -4161,7 +4166,7 @@ fn resolve_class_string_arg(
         return string_lit.value.map(|value| {
             analyzer
                 .interner
-                .find(value.trim_start_matches('\\'))
+                .find(pzoom_syntax::bytes_to_str(value).trim_start_matches('\\'))
                 .unwrap_or(pzoom_str::StrId::EMPTY)
         });
     }
@@ -4305,10 +4310,9 @@ fn get_count_arg_expression<'a>(expr: &'a Expression<'_>) -> Option<&'a Expressi
         return None;
     };
 
-    let normalized_name = function_name
-        .value()
+    let normalized_name = pzoom_syntax::bytes_to_str(function_name.value())
         .strip_prefix('\\')
-        .unwrap_or(function_name.value())
+        .unwrap_or(pzoom_syntax::bytes_to_str(function_name.value()))
         .to_ascii_lowercase();
 
     if normalized_name != "count" {
@@ -4382,7 +4386,7 @@ fn get_literal_assertion_type(expr: &Expression<'_>) -> Option<TAtomic> {
         }),
         Expression::Literal(Literal::String(string_lit)) => {
             string_lit.value.map(|value| TAtomic::TLiteralString {
-                value: value.to_string(),
+                value: pzoom_syntax::bytes_to_str(value).to_string(),
             })
         }
         _ => None,
@@ -4429,9 +4433,12 @@ fn extract_type_check_call_var(expr: &Expression<'_>) -> Option<(VarName, bool)>
     let Expression::Identifier(function_name) = function_call.function.unparenthesized() else {
         return None;
     };
-    let is_debug = if function_name.value().eq_ignore_ascii_case("gettype") {
+    let is_debug = if pzoom_syntax::bytes_to_str(function_name.value()).eq_ignore_ascii_case("gettype")
+    {
         false
-    } else if function_name.value().eq_ignore_ascii_case("get_debug_type") {
+    } else if pzoom_syntax::bytes_to_str(function_name.value())
+        .eq_ignore_ascii_case("get_debug_type")
+    {
         true
     } else {
         return None;
@@ -4443,7 +4450,9 @@ fn extract_type_check_call_var(expr: &Expression<'_>) -> Option<(VarName, bool)>
 
 fn extract_string_literal_value(expr: &Expression<'_>) -> Option<String> {
     if let Expression::Literal(Literal::String(string_lit)) = expr.unparenthesized() {
-        return string_lit.value.map(|value| value.to_string());
+        return string_lit
+            .value
+            .map(|value| pzoom_syntax::bytes_to_str(value).to_string());
     }
     None
 }

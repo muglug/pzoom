@@ -2,18 +2,17 @@
 //!
 //! Analyzes method bodies with proper context.
 
-use bumpalo::Bump;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::class_like::enum_case::EnumCaseItem;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::method::{Method, MethodBody};
-use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Trait};
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::namespace::NamespaceBody;
-use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::ast::type_hint::Hint;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::class_like::enum_case::EnumCaseItem;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::method::{Method, MethodBody};
+use mago_syntax::cst::cst::class_like::{AnonymousClass, Class, Enum, Trait};
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::namespace::NamespaceBody;
+use mago_syntax::cst::cst::statement::Statement;
+use mago_syntax::cst::cst::type_hint::Hint;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassLikeKind, TemplateVariance, Visibility};
@@ -71,7 +70,7 @@ fn analyze_class(
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     // Get the class name - use FQN if in a namespace
-    let class_name = class.name.value;
+    let class_name = pzoom_syntax::bytes_to_str(class.name.value);
     let fqn = match context.namespace {
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), class_name),
         None => class_name.to_string(),
@@ -528,7 +527,7 @@ fn analyze_enum(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
-    let enum_name = enum_stmt.name.value;
+    let enum_name = pzoom_syntax::bytes_to_str(enum_stmt.name.value);
     let fqn = match context.namespace {
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), enum_name),
         None => enum_name.to_string(),
@@ -635,7 +634,7 @@ fn check_property_defaults(
     class_info: &pzoom_code_info::ClassLikeInfo,
     analysis_data: &mut FunctionAnalysisData,
 ) {
-    use mago_syntax::ast::ast::class_like::property::{Property, PropertyItem};
+    use mago_syntax::cst::cst::class_like::property::{Property, PropertyItem};
 
     let class_fqn = analyzer.interner.lookup(class_info.name);
 
@@ -651,7 +650,7 @@ fn check_property_defaults(
             let PropertyItem::Concrete(concrete) = item else {
                 continue;
             };
-            let prop_name_str = concrete.variable.name.trim_start_matches('$');
+            let prop_name_str = pzoom_syntax::bytes_to_str(concrete.variable.name).trim_start_matches('$');
             let prop_name = analyzer
                 .interner
                 .find(prop_name_str)
@@ -777,7 +776,7 @@ fn check_enum_declaration_issues(
                 ));
             }
             ClassLikeMember::Method(method) => {
-                if !is_invalid_enum_method_name(method.name.value, backing_type.is_some()) {
+                if !is_invalid_enum_method_name(pzoom_syntax::bytes_to_str(method.name.value), backing_type.is_some()) {
                     continue;
                 }
 
@@ -785,7 +784,7 @@ fn check_enum_declaration_issues(
                 let (line, col) = analyzer.get_line_column(span.start.offset);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::InvalidEnumMethod,
-                    format!("Enums cannot define {}", method.name.value),
+                    format!("Enums cannot define {}", pzoom_syntax::bytes_to_str(method.name.value)),
                     analyzer.file_path,
                     span.start.offset,
                     span.end.offset,
@@ -794,7 +793,7 @@ fn check_enum_declaration_issues(
                 ));
             }
             ClassLikeMember::EnumCase(enum_case) => {
-                let case_name = enum_case.item.name().value;
+                let case_name = pzoom_syntax::bytes_to_str(enum_case.item.name().value);
                 let case_name_id = analyzer
                     .interner
                     .find(case_name)
@@ -979,13 +978,13 @@ fn resolve_enum_case_value_kind(
     case_name_id: StrId,
     value_expr: &Expression<'_>,
 ) -> Option<EnumValueKind> {
-    use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
+    use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
 
     match value_expr.unparenthesized() {
         // A global constant (`\PHP_BINARY`): its collected type decides
         // (runtime constants are typed non-literal at collection).
         Expression::ConstantAccess(const_access) => {
-            let name = const_access.name.value();
+            let name = pzoom_syntax::bytes_to_str(const_access.name.value());
             let trimmed = name.trim_start_matches('\\');
             let const_id = analyzer
                 .interner
@@ -1006,7 +1005,7 @@ fn resolve_enum_case_value_kind(
                     Expression::Identifier(class_identifier) => Some(
                         analyzer
                             .interner
-                            .find(class_identifier.value().trim_start_matches('\\'))
+                            .find(pzoom_syntax::bytes_to_str(class_identifier.value()).trim_start_matches('\\'))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     ),
                     _ => None,
@@ -1014,7 +1013,7 @@ fn resolve_enum_case_value_kind(
             let class_info = analyzer.codebase.get_class(class_id)?;
             let const_name_id = analyzer
                 .interner
-                .find(const_name.value)
+                .find(pzoom_syntax::bytes_to_str(const_name.value))
                 .unwrap_or(pzoom_str::StrId::EMPTY);
             let const_info = class_info.constants.get(&const_name_id)?;
             union_enum_value_kind(&const_info.constant_type)
@@ -1024,7 +1023,7 @@ fn resolve_enum_case_value_kind(
         _ => {
             let enum_id = analyzer
                 .interner
-                .find(enum_stmt.name.value)
+                .find(pzoom_syntax::bytes_to_str(enum_stmt.name.value))
                 .unwrap_or(pzoom_str::StrId::EMPTY);
             let scanned = analyzer
                 .codebase
@@ -1042,7 +1041,7 @@ fn resolve_enum_case_value_kind(
                                     .lookup(class_info.name)
                                     .rsplit('\\')
                                     .next()
-                                    == Some(enum_stmt.name.value)
+                                    == Some(pzoom_syntax::bytes_to_str(enum_stmt.name.value))
                         })
                 })?;
             let case_value = scanned
@@ -1062,7 +1061,7 @@ fn get_enum_case_literal_value(expr: &Expression<'_>) -> Option<EnumCaseLiteralV
             .map(EnumCaseLiteralValue::Int),
         Expression::Literal(Literal::String(string_literal)) => string_literal
             .value
-            .map(|value| EnumCaseLiteralValue::String(value.to_string())),
+            .map(|value| EnumCaseLiteralValue::String(pzoom_syntax::bytes_to_str(value).to_string())),
         _ => None,
     }
 }
@@ -1273,16 +1272,16 @@ fn union_is_string_return_type(return_type: &TUnion) -> bool {
 /// trait-requirement issues at the specific name node, not the class body.
 pub(crate) fn collect_dependency_name_spans(
     analyzer: &StatementsAnalyzer<'_>,
-    extends: Option<&mago_syntax::ast::ast::class_like::inheritance::Extends<'_>>,
-    implements: Option<&mago_syntax::ast::ast::class_like::inheritance::Implements<'_>>,
-    members: &[mago_syntax::ast::ast::class_like::member::ClassLikeMember<'_>],
+    extends: Option<&mago_syntax::cst::cst::class_like::inheritance::Extends<'_>>,
+    implements: Option<&mago_syntax::cst::cst::class_like::inheritance::Implements<'_>>,
+    members: &[mago_syntax::cst::cst::class_like::member::ClassLikeMember<'_>],
     context: &BlockContext,
 ) -> Vec<(StrId, (u32, u32))> {
     let mut spans = Vec::new();
-    let mut add = |identifier: &mago_syntax::ast::ast::identifier::Identifier<'_>| {
+    let mut add = |identifier: &mago_syntax::cst::cst::identifier::Identifier<'_>| {
         let id = analyzer
             .interner
-            .find(identifier.value().trim_start_matches('\\'))
+            .find(pzoom_syntax::bytes_to_str(identifier.value()).trim_start_matches('\\'))
             .unwrap_or(pzoom_str::StrId::EMPTY);
         let span = identifier.span();
         spans.push((
@@ -1301,7 +1300,7 @@ pub(crate) fn collect_dependency_name_spans(
         }
     }
     for member in members {
-        if let mago_syntax::ast::ast::class_like::member::ClassLikeMember::TraitUse(trait_use) =
+        if let mago_syntax::cst::cst::class_like::member::ClassLikeMember::TraitUse(trait_use) =
             member
         {
             for identifier in trait_use.trait_names.iter() {
@@ -6771,7 +6770,7 @@ fn check_unimplemented_abstract_methods(
                         IssueKind::UnimplementedAbstractMethod,
                         format!(
                             "Class {} does not implement abstract method {}::{}",
-                            class.name.value, parent_name_str, method_name_str
+                            pzoom_syntax::bytes_to_str(class.name.value), parent_name_str, method_name_str
                         ),
                         analyzer.file_path,
                         span.start.offset,
@@ -6812,7 +6811,7 @@ fn check_unimplemented_abstract_methods(
                         IssueKind::UnimplementedInterfaceMethod,
                         format!(
                             "Class {} does not implement interface method {}::{}",
-                            class.name.value, iface_name_str, method_name_str
+                            pzoom_syntax::bytes_to_str(class.name.value), iface_name_str, method_name_str
                         ),
                         analyzer.file_path,
                         span.start.offset,
@@ -6920,11 +6919,11 @@ fn analyze_methods_from_trait(
     };
 
     let trait_path = analyzer.interner.lookup(trait_info.file_path);
-    let arena = Bump::new();
-    let file_id = FileId::new(&*trait_path);
+    let arena = pzoom_syntax::LocalArena::new();
+    let file_id = FileId::new(trait_path.as_bytes());
     crate::profiling::TRAIT_PARSE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let _trait_parse_start = crate::profiling::TimerStart::now();
-    let (program, _parse_error) = parse_file_content(&arena, file_id, &trait_file_info.contents);
+    let program = parse_file_content(&arena, file_id, trait_file_info.contents.as_bytes());
     crate::profiling::record(&crate::profiling::TRAIT_PARSE_NS, _trait_parse_start);
     // Reuse the trait file's scan-time name resolution (analysis cannot intern).
     // The TRAIT_RESOLVE_NS profiling counter therefore stays at zero here.
@@ -6958,7 +6957,7 @@ fn analyze_methods_from_trait(
 
         let method_name_id = analyzer
             .interner
-            .find(method.name.value)
+            .find(pzoom_syntax::bytes_to_str(method.name.value))
             .unwrap_or(pzoom_str::StrId::EMPTY);
         // A method the class redeclares is analysed as the class's own method;
         // don't analyse the trait's copy on top of it.
@@ -7043,7 +7042,7 @@ fn find_trait_statement_by_offset<'a>(
             Statement::Namespace(namespace_stmt) => {
                 let next_namespace = namespace_stmt.name.as_ref().map(|name| {
                     interner
-                        .find(name.value())
+                        .find(pzoom_syntax::bytes_to_str(name.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY)
                 });
                 let nested_statements = match &namespace_stmt.body {
@@ -7076,7 +7075,7 @@ pub(crate) fn analyze_method(
     analysis_data: &mut FunctionAnalysisData,
 ) -> Result<(), AnalysisError> {
     // Get the method name
-    let method_name = method.name.value;
+    let method_name = pzoom_syntax::bytes_to_str(method.name.value);
     let method_name_id = analyzer
         .interner
         .find(method_name)
@@ -7323,7 +7322,7 @@ pub(crate) fn analyze_method(
     // Add parameters to context
     let no_named_arguments = method_info.is_some_and(|info| info.no_named_arguments);
     for (param_index, param) in method.parameter_list.parameters.iter().enumerate() {
-        let param_name = param.variable.name;
+        let param_name = pzoom_syntax::bytes_to_str(param.variable.name);
         let param_name_id = VarName::new(param_name);
 
         // Get parameter info from method info

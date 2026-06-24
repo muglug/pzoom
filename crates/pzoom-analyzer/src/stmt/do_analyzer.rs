@@ -5,9 +5,9 @@
 //! fixpoint with `is_do = true`, mirroring Hakana's do-loop handling.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::r#loop::do_while::DoWhile;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::r#loop::do_while::DoWhile;
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;

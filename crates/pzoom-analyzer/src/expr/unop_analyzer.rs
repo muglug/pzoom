@@ -3,9 +3,9 @@
 use std::collections::BTreeMap;
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::unary::{UnaryPostfix, UnaryPrefix, UnaryPrefixOperator};
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::unary::{UnaryPostfix, UnaryPrefix, UnaryPrefixOperator};
+use mago_syntax::cst::cst::variable::Variable;
 use rustc_hash::FxHashSet;
 
 use pzoom_code_info::VarName;
@@ -195,7 +195,7 @@ pub fn analyze_prefix(
             // its dataflow node so `if (++$i > 10)` counts as a use.
             let mut result_type = result_type;
             if let Expression::Variable(Variable::Direct(direct)) = unary.operand.unparenthesized()
-                && let Some(stored) = context.get_var_type(direct.name)
+                && let Some(stored) = context.get_var_type(pzoom_syntax::bytes_to_str(direct.name))
             {
                 result_type.parent_nodes = stored.parent_nodes.clone();
             }
@@ -255,7 +255,7 @@ pub fn analyze_postfix(
 
     let is_increment = matches!(
         unary.operator,
-        mago_syntax::ast::ast::unary::UnaryPostfixOperator::PostIncrement(_)
+        mago_syntax::cst::cst::unary::UnaryPostfixOperator::PostIncrement(_)
     );
     maybe_emit_increment_operand_issue(
         analyzer,
@@ -464,7 +464,7 @@ fn update_var_type_for_increment(
     context: &mut BlockContext,
 ) {
     if let Expression::Variable(Variable::Direct(direct)) = expr.unparenthesized() {
-        let var_id = VarName::new(direct.name);
+        let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
         let mut stored_type = new_type.clone();
         // `++$i` reads and rewrites the variable (Hakana's `$i = $i + 1`
         // rewrite): the old value's dataflow parents feed a fresh assignment
@@ -525,10 +525,10 @@ fn update_var_type_for_increment(
         }
         context.set_var_type(var_id, stored_type);
 
-        clear_dependent_property_types(context, direct.name);
-        clear_dependent_array_access_types(context, direct.name);
-        context.invalidate_dependent_types(direct.name);
-        remove_var_clauses_from_context(context, direct.name);
+        clear_dependent_property_types(context, pzoom_syntax::bytes_to_str(direct.name));
+        clear_dependent_array_access_types(context, pzoom_syntax::bytes_to_str(direct.name));
+        context.invalidate_dependent_types(pzoom_syntax::bytes_to_str(direct.name));
+        remove_var_clauses_from_context(context, pzoom_syntax::bytes_to_str(direct.name));
         return;
     }
 
@@ -606,11 +606,11 @@ fn maybe_emit_undefined_increment_variable(
         return;
     };
 
-    if !should_emit_undefined_variable(direct.name) {
+    if !should_emit_undefined_variable(pzoom_syntax::bytes_to_str(direct.name)) {
         return;
     }
 
-    let is_defined = context.locals.contains_key(direct.name);
+    let is_defined = context.locals.contains_key(pzoom_syntax::bytes_to_str(direct.name));
 
     if is_defined {
         return;
@@ -620,7 +620,7 @@ fn maybe_emit_undefined_increment_variable(
     let (line, col) = analyzer.get_line_column(span.start.offset);
     analysis_data.add_issue(Issue::new(
         IssueKind::UndefinedVariable,
-        format!("Undefined variable ${}", normalize_var_name(direct.name)),
+        format!("Undefined variable ${}", normalize_var_name(pzoom_syntax::bytes_to_str(direct.name))),
         analyzer.file_path,
         span.start.offset,
         span.end.offset,

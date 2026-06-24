@@ -2,8 +2,8 @@
 //! template context, visibility, argument verification. Mirrors Psalm `ExistingAtomicStaticCallAnalyzer`.
 
 use crate::type_expander::localize_special_class_type_union;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind};
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, combine_union_types};

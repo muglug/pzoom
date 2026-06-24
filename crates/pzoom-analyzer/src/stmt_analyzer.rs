@@ -1,9 +1,9 @@
 //! Statement analyzer - dispatches to specific statement type analyzers.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
-use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::node::{Node, NodeKind};
+use mago_syntax::cst::cst::namespace::{Namespace, NamespaceBody};
+use mago_syntax::cst::cst::statement::Statement;
+use mago_syntax::cst::node::{Node, NodeKind};
 use pzoom_code_info::{Issue, IssueKind};
 
 use crate::context::BlockContext;
@@ -514,7 +514,7 @@ fn analyze_namespace(
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     // Get the namespace name
-    let ns_name = ns.name.as_ref().map(|n| n.value());
+    let ns_name = ns.name.as_ref().map(|n| pzoom_syntax::bytes_to_str(n.value()));
 
     // Set namespace context for function resolution
     let ns_id = ns_name.map(|n| analyzer.interner.find(n).unwrap_or(pzoom_str::StrId::EMPTY));
@@ -602,21 +602,21 @@ fn apply_statement_var_annotations(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    use mago_syntax::ast::ast::expression::Expression;
+    use mago_syntax::cst::cst::expression::Expression;
 
     let mut excluded_assignment_target: Option<pzoom_str::StrId> = None;
     match stmt {
         Statement::Foreach(_) | Statement::Return(_) => return,
         Statement::Expression(expr_stmt) => {
             if let Expression::Assignment(assignment) = expr_stmt.expression {
-                if let Expression::Variable(mago_syntax::ast::ast::variable::Variable::Direct(
+                if let Expression::Variable(mago_syntax::cst::cst::variable::Variable::Direct(
                     direct,
                 )) = assignment.lhs.unparenthesized()
                 {
                     excluded_assignment_target = Some(
                         analyzer
                             .interner
-                            .find(direct.name)
+                            .find(pzoom_syntax::bytes_to_str(direct.name))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     );
                 }

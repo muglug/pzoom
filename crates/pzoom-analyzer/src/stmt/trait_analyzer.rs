@@ -7,8 +7,8 @@
 //! `ClassLikeAnalyzer` base) and are reused here.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::class_like::Trait;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::Trait;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
 
 use pzoom_code_info::{Issue, IssueKind};
 use pzoom_str::StrId;
@@ -36,7 +36,7 @@ pub fn analyze(
     context: &mut BlockContext,
 ) -> Result<(), AnalysisError> {
     // Get the trait name - use FQN if in a namespace
-    let trait_name = trait_stmt.name.value;
+    let trait_name = pzoom_syntax::bytes_to_str(trait_stmt.name.value);
     let fqn = match context.namespace {
         Some(namespace) => format!("{}\\{}", analyzer.interner.lookup(namespace), trait_name),
         None => trait_name.to_string(),
@@ -165,7 +165,7 @@ pub fn analyze(
         };
         let method_name_id = analyzer
             .interner
-            .find(method.name.value)
+            .find(pzoom_syntax::bytes_to_str(method.name.value))
             .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if direct_users.is_empty() {

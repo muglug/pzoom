@@ -1,11 +1,12 @@
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::attribute::AttributeList;
-use mago_syntax::ast::ast::class_like::Class;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::method::Method;
-use mago_syntax::ast::ast::class_like::property::Property;
-use mago_syntax::ast::ast::function_like::function::Function;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::argument::PartialArgument;
+use mago_syntax::cst::cst::attribute::AttributeList;
+use mago_syntax::cst::cst::class_like::Class;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::method::Method;
+use mago_syntax::cst::cst::class_like::property::Property;
+use mago_syntax::cst::cst::function_like::function::Function;
 
 use pzoom_code_info::class_like_info::{ClassLikeInfo, ClassLikeKind, Visibility};
 use pzoom_code_info::{Issue, IssueKind};
@@ -92,9 +93,7 @@ pub fn analyze_class_attributes(
             .iter()
             .flat_map(|attribute_list| attribute_list.attributes.iter())
         {
-            if attribute
-                .name
-                .value()
+            if pzoom_syntax::bytes_to_str(attribute.name.value())
                 .trim_start_matches('\\')
                 .eq_ignore_ascii_case("AllowDynamicProperties")
             {
@@ -224,13 +223,11 @@ pub fn analyze_attribute_lists(
                 .unwrap_or_else(|| {
                     analyzer
                         .interner
-                        .find(attribute.name.value())
+                        .find(pzoom_syntax::bytes_to_str(attribute.name.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY)
                 });
         if analyzer.codebase.get_class(attribute_name_id).is_none()
-            && attribute
-                .name
-                .value()
+            && pzoom_syntax::bytes_to_str(attribute.name.value())
                 .trim_start_matches('\\')
                 .eq_ignore_ascii_case("Attribute")
         {
@@ -243,12 +240,13 @@ pub fn analyze_attribute_lists(
             .next()
             .is_some_and(|name| name.eq_ignore_ascii_case("Attribute"));
 
+        let attribute_arguments = attribute
+            .argument_list
+            .as_ref()
+            .map(|a| partial_args_to_arguments(a.arguments.as_slice()));
         analyze_attribute_arguments(
             analyzer,
-            attribute
-                .argument_list
-                .as_ref()
-                .map(|a| a.arguments.as_slice()),
+            attribute_arguments.as_deref(),
             context,
             is_attribute_attribute,
             analysis_data,
@@ -259,7 +257,7 @@ pub fn analyze_attribute_lists(
                 let (line, col) = analyzer.get_line_column(name_span.start.offset);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::UndefinedAttributeClass,
-                    format!("Attribute class {} not found", attribute.name.value()),
+                    format!("Attribute class {} not found", pzoom_syntax::bytes_to_str(attribute.name.value())),
                     analyzer.file_path,
                     name_span.start.offset,
                     name_span.end.offset,
@@ -284,10 +282,7 @@ pub fn analyze_attribute_lists(
 
         validate_attribute_constructor_call(
             analyzer,
-            attribute
-                .argument_list
-                .as_ref()
-                .map(|a| a.arguments.as_slice()),
+            attribute_arguments.as_deref(),
             attribute_class_info,
             context,
             analysis_data,
@@ -382,7 +377,7 @@ pub fn analyze_reflection_get_attributes_call(
 
     let arg_index = match args[0] {
         Argument::Positional(_) => Some(0),
-        Argument::Named(named) if named.name.value.eq_ignore_ascii_case("name") => Some(0),
+        Argument::Named(named) if pzoom_syntax::bytes_to_str(named.name.value).eq_ignore_ascii_case("name") => Some(0),
         _ => None,
     };
     let Some(arg_index) = arg_index else {
@@ -534,6 +529,21 @@ fn analyze_method_attributes(
     }
 }
 
+/// Attribute argument lists are parsed as `PartialArgument`s (sharing the
+/// partial-function-application grammar), but attributes cannot use placeholders.
+/// Lower them to plain `Argument`s, dropping any placeholder entries.
+fn partial_args_to_arguments<'arena>(args: &[PartialArgument<'arena>]) -> Vec<Argument<'arena>> {
+    args.iter()
+        .filter_map(|arg| match arg {
+            PartialArgument::Positional(p) => Some(Argument::Positional(p.clone())),
+            PartialArgument::Named(n) => Some(Argument::Named(n.clone())),
+            PartialArgument::NamedPlaceholder(_)
+            | PartialArgument::Placeholder(_)
+            | PartialArgument::VariadicPlaceholder(_) => None,
+        })
+        .collect()
+}
+
 fn analyze_attribute_arguments(
     analyzer: &StatementsAnalyzer<'_>,
     args: Option<&[Argument<'_>]>,
@@ -683,7 +693,7 @@ fn validate_attribute_constructor_call(
                         .interner
                         .lookup(param.name)
                         .trim_start_matches('$')
-                        .eq_ignore_ascii_case(named_arg.name.value)
+                        .eq_ignore_ascii_case(pzoom_syntax::bytes_to_str(named_arg.name.value))
                 })
                 .unwrap_or(usize::MAX),
         };

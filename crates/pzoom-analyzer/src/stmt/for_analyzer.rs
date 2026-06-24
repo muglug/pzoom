@@ -3,9 +3,9 @@
 //! Delegates to the shared [`loop_analyzer`] fixpoint, mirroring Hakana's
 //! `for_analyzer`.
 
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::r#loop::r#for::For;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::r#loop::r#for::For;
 
 use crate::context::BlockContext;
 use crate::expression_analyzer;
@@ -33,7 +33,7 @@ pub fn analyze(
         Some(condition) => vec![condition],
         None => vec![],
     };
-    let post_expressions: Vec<&Expression<'_>> = for_stmt.increments.iter().collect();
+    let post_expressions: Vec<&Expression<'_>> = for_stmt.increments.iter().copied().collect();
 
     // A `for` loop is infinite when it has no guard or its guard is always true
     // (`for (;;)`, `for (; true;)`, `for ($i = 0;; $i++)`). In that case the body
@@ -104,8 +104,8 @@ fn does_enter_loop(
     pre_conditions: &[&Expression<'_>],
     context: &BlockContext,
 ) -> bool {
-    use mago_syntax::ast::ast::binary::BinaryOperator;
-    use mago_syntax::ast::ast::variable::Variable;
+    use mago_syntax::cst::cst::binary::BinaryOperator;
+    use mago_syntax::cst::cst::variable::Variable;
 
     if for_stmt.initializations.len() != 1 || for_stmt.conditions.len() != 1 {
         return false;
@@ -130,8 +130,8 @@ fn does_enter_loop(
     // is its current local type.
     let init_value = context
         .locals
-        .get(direct.name)
-        .or_else(|| context.locals.get(direct.name.trim_start_matches('$')))
+        .get(pzoom_syntax::bytes_to_str(direct.name))
+        .or_else(|| context.locals.get(pzoom_syntax::bytes_to_str(direct.name).trim_start_matches('$')))
         .and_then(|var_type| match var_type.types.as_slice() {
             [pzoom_code_info::TAtomic::TLiteralInt { value }] => Some(*value),
             _ => None,
@@ -152,7 +152,7 @@ fn does_enter_loop(
 /// The variable directly assigned/incremented by a for-init or increment
 /// expression (`$i = 0`, `$i++`, `++$i`, `$i += 1`).
 fn directly_assigned_var_name(expr: &Expression<'_>) -> Option<pzoom_code_info::VarName> {
-    use mago_syntax::ast::ast::variable::Variable;
+    use mago_syntax::cst::cst::variable::Variable;
     let target = match expr.unparenthesized() {
         Expression::Assignment(assignment) => assignment.lhs.unparenthesized(),
         Expression::UnaryPostfix(postfix) => postfix.operand.unparenthesized(),
@@ -160,7 +160,7 @@ fn directly_assigned_var_name(expr: &Expression<'_>) -> Option<pzoom_code_info::
         _ => return None,
     };
     if let Expression::Variable(Variable::Direct(direct)) = target {
-        Some(pzoom_code_info::VarName::new(direct.name))
+        Some(pzoom_code_info::VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
     } else {
         None
     }

@@ -4,15 +4,15 @@ use super::function_call_analyzer;
 use super::{argument_analyzer, arguments_analyzer};
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::argument::Argument;
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::class_like::member::ClassLikeMemberSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::argument::Argument;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::class_like::member::ClassLikeMemberSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::Visibility;
@@ -2231,7 +2231,7 @@ fn callable_issue_priority(kind: IssueKind) -> u8 {
 
 fn get_literal_string<'a>(expr: &'a Expression<'a>) -> Option<&'a str> {
     match expr {
-        Expression::Literal(Literal::String(s)) => s.value,
+        Expression::Literal(Literal::String(s)) => s.value.map(pzoom_syntax::bytes_to_str),
         _ => None,
     }
 }
@@ -2255,17 +2255,17 @@ fn get_class_from_class_const_expr(
         return None;
     };
 
-    let mago_syntax::ast::ast::access::Access::ClassConstant(const_access) = access else {
+    let mago_syntax::cst::cst::access::Access::ClassConstant(const_access) = access else {
         return None;
     };
 
-    let mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector::Identifier(id) =
+    let mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector::Identifier(id) =
         &const_access.constant
     else {
         return None;
     };
 
-    if !id.value.eq_ignore_ascii_case("class") {
+    if !pzoom_syntax::bytes_to_str(id.value).eq_ignore_ascii_case("class") {
         return None;
     }
 
@@ -2284,7 +2284,7 @@ fn resolve_class_id_from_expr(
                     Some(
                         analyzer
                             .interner
-                            .find(id.value())
+                            .find(pzoom_syntax::bytes_to_str(id.value()))
                             .unwrap_or(pzoom_str::StrId::EMPTY),
                     )
                 })
@@ -2297,7 +2297,7 @@ fn resolve_class_id_from_expr(
         Expression::MagicConstant(mc) => {
             if matches!(
                 mc,
-                mago_syntax::ast::ast::magic_constant::MagicConstant::Class(_)
+                mago_syntax::cst::cst::magic_constant::MagicConstant::Class(_)
             ) {
                 analyzer.get_declaring_class()
             } else {
@@ -2736,9 +2736,9 @@ fn find_undefined_class_string_literal_in_array_argument(
 
 fn get_literal_string_value(expr: &Expression<'_>) -> Option<String> {
     match expr.unparenthesized() {
-        Expression::Literal(Literal::String(string_literal)) => {
-            string_literal.value.map(ToString::to_string)
-        }
+        Expression::Literal(Literal::String(string_literal)) => string_literal
+            .value
+            .map(|value| pzoom_syntax::bytes_to_str(value).to_string()),
         Expression::Binary(binary)
             if matches!(binary.operator, BinaryOperator::StringConcat(_)) =>
         {
@@ -2827,7 +2827,7 @@ fn call_returns_by_ref(
                 .unwrap_or_else(|| {
                     analyzer
                         .interner
-                        .find(function_id.value())
+                        .find(pzoom_syntax::bytes_to_str(function_id.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY)
                 });
 
@@ -2843,7 +2843,7 @@ fn call_returns_by_ref(
 
             let method_name_id = analyzer
                 .interner
-                .find(method_id.value)
+                .find(pzoom_syntax::bytes_to_str(method_id.value))
                 .unwrap_or(pzoom_str::StrId::EMPTY);
             let Expression::Variable(Variable::Direct(direct)) =
                 method_call.object.unparenthesized()
@@ -2851,7 +2851,7 @@ fn call_returns_by_ref(
                 return false;
             };
 
-            let var_id = VarName::new(direct.name);
+            let var_id = VarName::new(pzoom_syntax::bytes_to_str(direct.name));
             let Some(object_type) = context.get_var_type(&var_id) else {
                 return false;
             };
@@ -2897,7 +2897,7 @@ pub(crate) fn check_by_ref_property_mutability(
 
     let property_id = analyzer
         .interner
-        .find(id.value)
+        .find(pzoom_syntax::bytes_to_str(id.value))
         .unwrap_or(pzoom_str::StrId::EMPTY);
 
     // Passing a property by reference is a write, so Psalm routes it through the
@@ -2971,7 +2971,7 @@ pub(crate) fn check_by_ref_property_mutability(
             analysis_data,
             arg_pos,
             IssueKind::InaccessibleProperty,
-            format!("{}::${} is marked readonly", class_name, id.value),
+            format!("{}::${} is marked readonly", class_name, pzoom_syntax::bytes_to_str(id.value)),
         );
         break;
     }
@@ -3960,7 +3960,7 @@ fn atomic_is_non_pure_callable(atomic: &TAtomic) -> bool {
 pub(crate) fn maybe_check_builtin_callable_arity(
     analyzer: &StatementsAnalyzer<'_>,
     func_name: &str,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     analysis_data: &mut FunctionAnalysisData,
     context: &BlockContext,

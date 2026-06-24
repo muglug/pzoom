@@ -2,8 +2,8 @@
 
 use std::rc::Rc;
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::r#try::Try;
-use mago_syntax::ast::ast::type_hint::Hint;
+use mago_syntax::cst::cst::r#try::Try;
+use mago_syntax::cst::cst::type_hint::Hint;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::combine_union_types;
@@ -122,7 +122,7 @@ pub fn analyze(
 
         // Add the exception variable to context if it exists
         if let Some(var) = &catch.variable {
-            let var_name = var.name;
+            let var_name = pzoom_syntax::bytes_to_str(var.name);
             let var_name_id = VarName::new(var_name);
             let mut catch_var_type = catch_var_type;
 

@@ -1,9 +1,9 @@
 //! Class constant fetch analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::ClassConstantAccess;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::access::ClassConstantAccess;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::expression::Expression;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::{ClassConstantInfo, Visibility};
@@ -116,6 +116,7 @@ pub fn analyze(
     // Get the constant name
     let const_name = match &access.constant {
         ClassLikeConstantSelector::Identifier(id) => Some(id.value),
+        ClassLikeConstantSelector::Missing(_) => None,
         ClassLikeConstantSelector::Expression(expr) => {
             // Dynamic constant selectors (`static::{$var}`, `E::{$var}`)
             // consume their inner expression (general use).
@@ -143,7 +144,7 @@ pub fn analyze(
 
     // Handle ::class pseudo-constant
     if let Some(const_name) = const_name {
-        if const_name.eq_ignore_ascii_case("class") {
+        if pzoom_syntax::bytes_to_str(const_name).eq_ignore_ascii_case("class") {
             // `$obj::class` (expression receiver): Psalm's ClassConstAnalyzer
             // types it `class-string<T>` from the receiver object's type.
             if class_id.is_none()
@@ -251,7 +252,7 @@ pub fn analyze(
     {
         let const_id = analyzer
             .interner
-            .find(const_name)
+            .find(pzoom_syntax::bytes_to_str(const_name))
             .unwrap_or(pzoom_str::StrId::EMPTY);
 
         if let Some(class_info) = analyzer.codebase.get_class(class_id) {
@@ -300,7 +301,7 @@ pub fn analyze(
                             IssueKind::InaccessibleClassConstant,
                             format!(
                                 "Cannot access private constant {}::{}",
-                                class_name, const_name
+                                class_name, pzoom_syntax::bytes_to_str(const_name)
                             ),
                             analyzer.file_path,
                             pos.0,
@@ -333,7 +334,7 @@ pub fn analyze(
                             IssueKind::InaccessibleClassConstant,
                             format!(
                                 "Cannot access protected constant {}::{}",
-                                class_name, const_name
+                                class_name, pzoom_syntax::bytes_to_str(const_name)
                             ),
                             analyzer.file_path,
                             pos.0,
@@ -349,7 +350,7 @@ pub fn analyze(
                     let (line, col) = analyzer.get_line_column(pos.0);
                     analysis_data.add_issue(Issue::new(
                         IssueKind::DeprecatedConstant,
-                        format!("Constant {}::{} is deprecated", class_name, const_name),
+                        format!("Constant {}::{} is deprecated", class_name, pzoom_syntax::bytes_to_str(const_name)),
                         analyzer.file_path,
                         pos.0,
                         pos.1,
@@ -368,7 +369,7 @@ pub fn analyze(
                 let (line, col) = analyzer.get_line_column(pos.0);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::UndefinedConstant,
-                    format!("Constant {}::{} does not exist", class_name, const_name),
+                    format!("Constant {}::{} does not exist", class_name, pzoom_syntax::bytes_to_str(const_name)),
                     analyzer.file_path,
                     pos.0,
                     pos.1,
@@ -416,13 +417,13 @@ fn get_resolved_class_id(
                 Some(
                     analyzer
                         .interner
-                        .find(id.value())
+                        .find(pzoom_syntax::bytes_to_str(id.value()))
                         .unwrap_or(pzoom_str::StrId::EMPTY),
                 )
             })?;
 
             if analyzer.codebase.get_class(resolved).is_none()
-                && id.value().eq_ignore_ascii_case("Attribute")
+                && pzoom_syntax::bytes_to_str(id.value()).eq_ignore_ascii_case("Attribute")
             {
                 resolved = StrId::ATTRIBUTE;
             }

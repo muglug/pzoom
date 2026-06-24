@@ -4,9 +4,9 @@
 //! `while_analyzer`.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::binary::BinaryOperator;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::r#loop::r#while::While;
+use mago_syntax::cst::cst::binary::BinaryOperator;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::r#loop::r#while::While;
 
 use crate::context::BlockContext;
 use crate::function_analysis_data::FunctionAnalysisData;
@@ -25,7 +25,7 @@ pub fn analyze(
     let condition = while_stmt.condition;
     let while_true = matches!(
         condition.unparenthesized(),
-        Expression::Literal(mago_syntax::ast::ast::literal::Literal::True(_))
+        Expression::Literal(mago_syntax::cst::cst::literal::Literal::True(_))
     );
 
     let mut while_context = context.clone();

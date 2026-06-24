@@ -1,12 +1,12 @@
 //! Analyzer for array access expressions ($arr[key]).
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::array::ArrayAccess;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::array::ArrayAccess;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::variable::Variable;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::data_flow::path::ArrayDataKind;
@@ -751,7 +751,7 @@ pub fn analyze(
                 // A string-offset read yields a single character (Psalm's
                 // TSingleLetter): `$s[0][1]` only accepts offset 0.
                 if literal_len.is_none()
-                    && let mago_syntax::ast::ast::expression::Expression::ArrayAccess(inner_access) =
+                    && let mago_syntax::cst::cst::expression::Expression::ArrayAccess(inner_access) =
                         access.array.unparenthesized()
                 {
                     let inner_span = mago_span::HasSpan::span(inner_access.array);
@@ -1567,6 +1567,7 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
             int_lit.value.map(|value| value.to_string())
         }
         Expression::Literal(Literal::String(string_lit)) => string_lit.value.map(|value| {
+            let value = pzoom_syntax::bytes_to_str(value);
             if let Ok(int_value) = value.parse::<i64>() {
                 int_value.to_string()
             } else {
@@ -1574,10 +1575,12 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
                 format!("'{}'", escaped)
             }
         }),
-        Expression::Variable(Variable::Direct(direct)) => Some(direct.name.to_string()),
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(pzoom_syntax::bytes_to_str(direct.name).to_string())
+        }
         Expression::Access(Access::ClassConstant(class_const_access)) => {
             let class_name = match class_const_access.class.unparenthesized() {
-                Expression::Identifier(identifier) => identifier.value().to_string(),
+                Expression::Identifier(identifier) => pzoom_syntax::bytes_to_str(identifier.value()).to_string(),
                 Expression::Self_(_) => "self".to_string(),
                 Expression::Static(_) => "static".to_string(),
                 Expression::Parent(_) => "parent".to_string(),
@@ -1585,7 +1588,9 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
             };
 
             let constant_name = match &class_const_access.constant {
-                ClassLikeConstantSelector::Identifier(identifier) => identifier.value,
+                ClassLikeConstantSelector::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value)
+                }
                 _ => return None,
             };
 
@@ -1598,8 +1603,8 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
         | Expression::Access(Access::Property(_))
         | Expression::Access(Access::NullSafeProperty(_))
         | Expression::Access(Access::StaticProperty(_))
-        | Expression::Call(mago_syntax::ast::ast::call::Call::Method(_))
-        | Expression::Call(mago_syntax::ast::ast::call::Call::NullSafeMethod(_)) => {
+        | Expression::Call(mago_syntax::cst::cst::call::Call::Method(_))
+        | Expression::Call(mago_syntax::cst::cst::call::Call::NullSafeMethod(_)) => {
             expression_identifier::get_expression_var_key(expr).map(|key| key.to_string())
         }
         _ => None,
@@ -1662,6 +1667,7 @@ fn get_literal_array_key_from_expr(expr: &Expression<'_>) -> Option<ArrayKey> {
             .and_then(|value| i64::try_from(value).ok())
             .map(ArrayKey::Int),
         Expression::Literal(Literal::String(string_lit)) => string_lit.value.map(|value| {
+            let value = pzoom_syntax::bytes_to_str(value);
             if let Ok(int_value) = value.parse::<i64>() {
                 ArrayKey::Int(int_value)
             } else {

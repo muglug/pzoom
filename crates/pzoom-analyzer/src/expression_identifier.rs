@@ -1,13 +1,13 @@
 //! Helpers for converting expressions into reconciler-compatible variable keys.
 
-use mago_syntax::ast::ast::access::{Access, ClassConstantAccess};
-use mago_syntax::ast::ast::call::Call;
-use mago_syntax::ast::ast::class_like::member::{
+use mago_syntax::cst::cst::access::{Access, ClassConstantAccess};
+use mago_syntax::cst::cst::call::Call;
+use mago_syntax::cst::cst::class_like::member::{
     ClassLikeConstantSelector, ClassLikeMemberSelector,
 };
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
-use mago_syntax::ast::ast::variable::Variable;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
+use mago_syntax::cst::cst::variable::Variable;
 use pzoom_code_info::VarName;
 
 /// Builds a variable key string for expressions that can be tracked in context.
@@ -15,13 +15,15 @@ use pzoom_code_info::VarName;
 /// Returned keys match the format expected by reconciler paths (e.g. `$a[0]`, `$this->prop`).
 pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<VarName> {
     match expr.unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => Some(VarName::new(direct.name)),
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
+        }
         // Psalm's getExtendedVarId resolves a plain assignment to its target,
         // so `($a = expr) instanceof C` narrows `$a`.
         Expression::Assignment(assignment)
             if matches!(
                 assignment.operator,
-                mago_syntax::ast::ast::assignment::AssignmentOperator::Assign(_)
+                mago_syntax::cst::cst::assignment::AssignmentOperator::Assign(_)
             ) =>
         {
             get_expression_var_key(assignment.lhs)
@@ -34,7 +36,9 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<VarName> {
         Expression::Access(Access::Property(property_access)) => {
             let base = get_expression_var_key(property_access.object)?;
             let prop_name = match &property_access.property {
-                ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
+                ClassLikeMemberSelector::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value)
+                }
                 _ => return None,
             };
             Some(format!("{}->{}", base, prop_name).into())
@@ -42,14 +46,18 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<VarName> {
         Expression::Access(Access::NullSafeProperty(property_access)) => {
             let base = get_expression_var_key(property_access.object)?;
             let prop_name = match &property_access.property {
-                ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
+                ClassLikeMemberSelector::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value)
+                }
                 _ => return None,
             };
             Some(format!("{}->{}", base, prop_name).into())
         }
         Expression::Access(Access::StaticProperty(static_property_access)) => {
             let class_name = match static_property_access.class.unparenthesized() {
-                Expression::Identifier(identifier) => identifier.value().to_string(),
+                Expression::Identifier(identifier) => {
+                    pzoom_syntax::bytes_to_str(identifier.value()).to_string()
+                }
                 Expression::Self_(_) => "self".to_string(),
                 Expression::Static(_) => "static".to_string(),
                 Expression::Parent(_) => "parent".to_string(),
@@ -57,7 +65,9 @@ pub fn get_expression_var_key(expr: &Expression<'_>) -> Option<VarName> {
             };
 
             let property_name = match &static_property_access.property {
-                Variable::Direct(direct) => direct.name.trim_start_matches('$'),
+                Variable::Direct(direct) => {
+                    pzoom_syntax::bytes_to_str(direct.name).trim_start_matches('$')
+                }
                 _ => return None,
             };
 
@@ -91,7 +101,9 @@ fn build_method_call_key(
 
     let base = get_expression_var_key(object)?;
     let method_name = match method {
-        ClassLikeMemberSelector::Identifier(identifier) => identifier.value,
+        ClassLikeMemberSelector::Identifier(identifier) => {
+            pzoom_syntax::bytes_to_str(identifier.value)
+        }
         _ => return None,
     };
 
@@ -107,10 +119,12 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
             int_lit.value.map(|value| value.to_string())
         }
         Expression::Literal(Literal::String(string_lit)) => string_lit.value.map(|value| {
-            let escaped = value.replace('\'', "\\'");
+            let escaped = pzoom_syntax::bytes_to_str(value).replace('\'', "\\'");
             format!("'{}'", escaped)
         }),
-        Expression::Variable(Variable::Direct(direct)) => Some(direct.name.to_string()),
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(pzoom_syntax::bytes_to_str(direct.name).to_string())
+        }
         Expression::Access(Access::ClassConstant(class_const_access)) => {
             build_class_constant_dim_key(class_const_access)
         }
@@ -128,7 +142,9 @@ fn get_array_index_key(expr: &Expression<'_>) -> Option<String> {
 
 fn build_class_constant_key(access: &ClassConstantAccess<'_>) -> Option<String> {
     let class_name = match access.class.unparenthesized() {
-        Expression::Identifier(identifier) => identifier.value().to_string(),
+        Expression::Identifier(identifier) => {
+            pzoom_syntax::bytes_to_str(identifier.value()).to_string()
+        }
         Expression::Self_(_) => "self".to_string(),
         Expression::Static(_) => "static".to_string(),
         Expression::Parent(_) => "parent".to_string(),
@@ -136,7 +152,9 @@ fn build_class_constant_key(access: &ClassConstantAccess<'_>) -> Option<String> 
     };
 
     let constant_name = match &access.constant {
-        ClassLikeConstantSelector::Identifier(identifier) => identifier.value,
+        ClassLikeConstantSelector::Identifier(identifier) => {
+            pzoom_syntax::bytes_to_str(identifier.value)
+        }
         _ => return None,
     };
 
@@ -149,7 +167,9 @@ fn build_class_constant_key(access: &ClassConstantAccess<'_>) -> Option<String> 
 
 fn build_class_constant_dim_key(access: &ClassConstantAccess<'_>) -> Option<String> {
     let class_name = match access.class.unparenthesized() {
-        Expression::Identifier(identifier) => identifier.value().to_string(),
+        Expression::Identifier(identifier) => {
+            pzoom_syntax::bytes_to_str(identifier.value()).to_string()
+        }
         Expression::Self_(_) => "self".to_string(),
         Expression::Static(_) => "static".to_string(),
         Expression::Parent(_) => "parent".to_string(),
@@ -157,7 +177,9 @@ fn build_class_constant_dim_key(access: &ClassConstantAccess<'_>) -> Option<Stri
     };
 
     let constant_name = match &access.constant {
-        ClassLikeConstantSelector::Identifier(identifier) => identifier.value,
+        ClassLikeConstantSelector::Identifier(identifier) => {
+            pzoom_syntax::bytes_to_str(identifier.value)
+        }
         _ => return None,
     };
 

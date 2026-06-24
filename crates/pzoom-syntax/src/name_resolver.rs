@@ -5,27 +5,27 @@
 //! stored in a map keyed by the identifier's start offset.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::Program;
-use mago_syntax::ast::Sequence;
-use mago_syntax::ast::ast::array::ArrayElement;
-use mago_syntax::ast::ast::attribute::AttributeList;
-use mago_syntax::ast::ast::call::{Call, StaticMethodCall};
-use mago_syntax::ast::ast::class_like::member::ClassLikeMember;
-use mago_syntax::ast::ast::class_like::property::Property;
-use mago_syntax::ast::ast::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
-use mago_syntax::ast::ast::construct::Construct;
-use mago_syntax::ast::ast::control_flow::r#match::MatchArm;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::function_like::function::Function;
-use mago_syntax::ast::ast::function_like::parameter::FunctionLikeParameter;
-use mago_syntax::ast::ast::identifier::Identifier;
-use mago_syntax::ast::ast::instantiation::Instantiation;
-use mago_syntax::ast::ast::namespace::{Namespace, NamespaceBody};
-use mago_syntax::ast::ast::statement::Statement;
-use mago_syntax::ast::ast::type_hint::Hint;
-use mago_syntax::ast::ast::r#use::{Use, UseItem, UseItems, UseType};
-use mago_syntax::ast::ast::r#yield::Yield;
-use mago_syntax::ast::node::Node;
+use mago_syntax::cst::Program;
+use mago_syntax::cst::Sequence;
+use mago_syntax::cst::cst::array::ArrayElement;
+use mago_syntax::cst::cst::attribute::AttributeList;
+use mago_syntax::cst::cst::call::{Call, StaticMethodCall};
+use mago_syntax::cst::cst::class_like::member::ClassLikeMember;
+use mago_syntax::cst::cst::class_like::property::Property;
+use mago_syntax::cst::cst::class_like::{AnonymousClass, Class, Enum, Interface, Trait};
+use mago_syntax::cst::cst::construct::Construct;
+use mago_syntax::cst::cst::control_flow::r#match::MatchArm;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::function_like::function::Function;
+use mago_syntax::cst::cst::function_like::parameter::FunctionLikeParameter;
+use mago_syntax::cst::cst::identifier::Identifier;
+use mago_syntax::cst::cst::instantiation::Instantiation;
+use mago_syntax::cst::cst::namespace::{Namespace, NamespaceBody};
+use mago_syntax::cst::cst::statement::Statement;
+use mago_syntax::cst::cst::type_hint::Hint;
+use mago_syntax::cst::cst::r#use::{Use, UseItem, UseItems, UseType};
+use mago_syntax::cst::cst::r#yield::Yield;
+use mago_syntax::cst::node::Node;
 use pzoom_str::{StrId, ThreadedInterner};
 use rustc_hash::FxHashMap;
 
@@ -359,7 +359,7 @@ impl<'a> NameResolver<'a> {
 
     fn visit_namespace(&mut self, ns: &Namespace<'_>) {
         // Set namespace context
-        let ns_name = ns.name.as_ref().map(|n| n.value());
+        let ns_name = ns.name.as_ref().map(|n| crate::bytes_to_str(n.value()));
         self.context.start_namespace(ns_name);
 
         // Visit statements in namespace
@@ -388,13 +388,13 @@ impl<'a> NameResolver<'a> {
             }
             UseItems::TypedList(list) => {
                 let kind = use_type_to_alias_kind(&list.r#type);
-                let prefix = normalize_use_name(list.namespace.value());
+                let prefix = normalize_use_name(crate::bytes_to_str(list.namespace.value()));
                 for item in &list.items {
                     self.add_use_alias(item, Some(prefix.as_str()), kind);
                 }
             }
             UseItems::MixedList(list) => {
-                let prefix = normalize_use_name(list.namespace.value());
+                let prefix = normalize_use_name(crate::bytes_to_str(list.namespace.value()));
                 for maybe_typed in &list.items {
                     let kind = maybe_typed
                         .r#type
@@ -408,7 +408,7 @@ impl<'a> NameResolver<'a> {
     }
 
     fn add_use_alias(&mut self, item: &UseItem<'_>, prefix: Option<&str>, kind: UseAliasKind) {
-        let name = normalize_use_name(item.name.value());
+        let name = normalize_use_name(crate::bytes_to_str(item.name.value()));
         let full_name = match prefix {
             Some(p) => format!("{}\\{}", p, name),
             None => name.clone(),
@@ -416,7 +416,7 @@ impl<'a> NameResolver<'a> {
 
         // Alias is either explicit or the last part of the name
         let alias = match &item.alias {
-            Some(alias) => alias.identifier.value.to_string(),
+            Some(alias) => crate::bytes_to_str(alias.identifier.value).to_string(),
             None => name
                 .split('\\')
                 .next_back()
@@ -483,9 +483,9 @@ impl<'a> NameResolver<'a> {
 
     fn visit_class_members(
         &mut self,
-        members: &mago_syntax::ast::Sequence<'_, ClassLikeMember<'_>>,
+        members: &mago_syntax::cst::Sequence<'_, ClassLikeMember<'_>>,
     ) {
-        use mago_syntax::ast::ast::class_like::method::MethodBody;
+        use mago_syntax::cst::cst::class_like::method::MethodBody;
 
         for member in members {
             match member {
@@ -566,7 +566,9 @@ impl<'a> NameResolver<'a> {
                 self.resolve_identifier(&attribute.name);
                 if let Some(argument_list) = &attribute.argument_list {
                     for arg in &argument_list.arguments {
-                        self.visit_expression(arg.value());
+                        if let Some(expr) = arg.value() {
+                            self.visit_expression(expr);
+                        }
                     }
                 }
             }
@@ -574,7 +576,7 @@ impl<'a> NameResolver<'a> {
     }
 
     fn visit_expression(&mut self, expr: &Expression<'_>) {
-        use mago_syntax::ast::ast::access::Access;
+        use mago_syntax::cst::cst::access::Access;
 
         match expr {
             Expression::Identifier(id) => {
@@ -719,7 +721,9 @@ impl<'a> NameResolver<'a> {
 
         if let Some(argument_list) = &anonymous_class.argument_list {
             for arg in &argument_list.arguments {
-                self.visit_expression(arg.value());
+                if let Some(expr) = arg.value() {
+                    self.visit_expression(expr);
+                }
             }
         }
 
@@ -864,21 +868,21 @@ impl<'a> NameResolver<'a> {
 
     fn resolve_identifier(&mut self, id: &Identifier<'_>) {
         let offset = id.span().start.offset;
-        let name = id.value();
+        let name = crate::bytes_to_str(id.value());
         let resolved = self.context.resolve_type_name(name, self.interner);
         self.resolved_names.insert(offset, resolved);
     }
 
     fn resolve_function_identifier(&mut self, id: &Identifier<'_>) {
         let offset = id.span().start.offset;
-        let name = id.value();
+        let name = crate::bytes_to_str(id.value());
         let resolved = self.context.resolve_function_name(name, self.interner);
         self.resolved_names.insert(offset, resolved);
     }
 
     fn resolve_constant_identifier(&mut self, id: &Identifier<'_>) {
         let offset = id.span().start.offset;
-        let name = id.value();
+        let name = crate::bytes_to_str(id.value());
         let resolved = self.context.resolve_constant_name(name, self.interner);
         self.resolved_names.insert(offset, resolved);
     }
@@ -908,7 +912,7 @@ pub fn resolve_names(program: &Program<'_>, interner: &ThreadedInterner) -> Reso
         Node::DirectVariable(var) => Some(var.name),
         _ => None,
     }) {
-        interner.intern(variable_name);
+        interner.intern(crate::bytes_to_str(variable_name));
     }
 
     let resolver = NameResolver::new(interner);

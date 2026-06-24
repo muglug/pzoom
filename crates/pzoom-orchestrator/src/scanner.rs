@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use crate::composer_autoload::ComposerAutoload;
-use bumpalo::Bump;
 use glob::Pattern;
 use pzoom_code_info::CodebaseInfo;
 use pzoom_code_info::class_type_alias::ClassTypeAlias;
@@ -14,7 +13,7 @@ use pzoom_code_info::codebase_info::FileInfo;
 use pzoom_str::{Interner, SharedInterner, StrId, ThreadedInterner};
 use pzoom_syntax::declaration_collector::CollectedDeclarations;
 use pzoom_syntax::{
-    DeclarationCollector, FileId, ResolvedNames, parse_file_content, resolve_names,
+    DeclarationCollector, FileId, LocalArena, ResolvedNames, parse_file_content, resolve_names,
 };
 use rust_embed::Embed;
 use rustc_hash::FxHashMap;
@@ -785,11 +784,11 @@ fn harvest_referenced_ids(
 ) -> FxHashSet<StrId> {
     let mut found = FxHashSet::default();
     for (file_id, contents) in files {
-        let arena = Bump::new();
+        let arena = LocalArena::new();
         let path = interner.lookup(*file_id);
-        let parse_id = FileId::new(&*path);
-        let (program, _) = parse_file_content(&arena, parse_id, contents);
-        let resolved = resolve_names(&program, interner);
+        let parse_id = FileId::new(path.as_bytes());
+        let program = parse_file_content(&arena, parse_id, contents.as_bytes());
+        let resolved = resolve_names(program, interner);
         found.extend(resolved.values().copied());
     }
     found
@@ -806,20 +805,20 @@ fn collect_file(
     scanning_stubs: bool,
 ) -> CollectedFile {
     let file_path_id = interner.intern(path);
-    let file_id = FileId::new(path);
+    let file_id = FileId::new(path.as_bytes());
 
     let is_stub = scanning_stubs || path.ends_with(".phpstub");
 
     // Create arena for parsing
-    let arena = Bump::new();
+    let arena = LocalArena::new();
 
     // Parse the file
-    let (program, parse_error) = parse_file_content(&arena, file_id, contents);
+    let program = parse_file_content(&arena, file_id, contents.as_bytes());
 
     // Record any parse errors
     let mut file_parse_errors: Vec<(u32, String)> = Vec::new();
     let mut scan_errors: Vec<ScanError> = Vec::new();
-    if let Some(error) = parse_error {
+    for error in program.errors {
         use pzoom_syntax::HasSpan;
         file_parse_errors.push((error.span().start.offset, format!("{}", error)));
         scan_errors.push(ScanError {
@@ -832,7 +831,7 @@ fn collect_file(
     // Resolve every name in the file now (interning through the threaded
     // interner), and persist the offset -> id map so analysis can reuse it
     // without re-resolving (analysis only holds a shared `&Interner`).
-    let resolved_names = resolve_names(&program, interner);
+    let resolved_names = resolve_names(program, interner);
 
     // Collect declarations
     let collector = DeclarationCollector::new(

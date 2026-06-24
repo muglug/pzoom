@@ -340,7 +340,7 @@ fn get_mixin_property_type(
 use crate::expr::call::function_call_analyzer;
 use crate::expression_identifier;
 use crate::internal_access::{can_access_internal, format_internal_scope_phrase};
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 use pzoom_code_info::TAtomic;
 use pzoom_code_info::class_like_info::ClassLikeKind;
 use pzoom_str::StrId;

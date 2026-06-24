@@ -1,7 +1,7 @@
 //! Constant fetch analyzer.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::ConstantAccess;
+use mago_syntax::cst::cst::access::ConstantAccess;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 
@@ -20,7 +20,7 @@ pub fn analyze(
     analysis_data: &mut FunctionAnalysisData,
     context: &mut BlockContext,
 ) {
-    let const_name = constant.name.value();
+    let const_name = pzoom_syntax::bytes_to_str(constant.name.value());
     let name_offset = constant.name.span().start.offset;
 
     // The standard streams are hardcoded as resources (Psalm's

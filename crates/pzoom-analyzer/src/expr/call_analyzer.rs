@@ -5,7 +5,7 @@
 //! its `expr/call_analyzer.rs` too).
 
 use itertools::Itertools;
-use mago_syntax::ast::ast::call::Call;
+use mago_syntax::cst::cst::call::Call;
 use pzoom_code_info::code_location::CodeLocation;
 use pzoom_code_info::ttype::template::get_relevant_bounds;
 use pzoom_code_info::{Issue, IssueKind, TemplateBound};

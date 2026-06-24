@@ -1,11 +1,11 @@
 //! Named function call handler.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::access::Access;
-use mago_syntax::ast::ast::call::FunctionCall;
-use mago_syntax::ast::ast::class_like::member::ClassLikeConstantSelector;
-use mago_syntax::ast::ast::expression::Expression;
-use mago_syntax::ast::ast::literal::Literal;
+use mago_syntax::cst::cst::access::Access;
+use mago_syntax::cst::cst::call::FunctionCall;
+use mago_syntax::cst::cst::class_like::member::ClassLikeConstantSelector;
+use mago_syntax::cst::cst::expression::Expression;
+use mago_syntax::cst::cst::literal::Literal;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
@@ -245,7 +245,7 @@ fn handle_dependent_type_function(
 }
 
 pub(crate) fn is_php_stream_literal_argument(
-    arg: &mago_syntax::ast::ast::argument::Argument<'_>,
+    arg: &mago_syntax::cst::cst::argument::Argument<'_>,
 ) -> bool {
     let expr = arg.value().unparenthesized();
     let Expression::Literal(Literal::String(string_lit)) = expr else {
@@ -256,7 +256,7 @@ pub(crate) fn is_php_stream_literal_argument(
         return false;
     };
 
-    let stream_name = value.to_ascii_lowercase();
+    let stream_name = pzoom_syntax::bytes_to_str(value).to_ascii_lowercase();
     stream_name == "php://input" || stream_name == "php://stdin"
 }
 
@@ -413,7 +413,7 @@ fn extract_class_alias_name(
             if !matches!(
                 class_const_access.constant,
                 ClassLikeConstantSelector::Identifier(identifier)
-                    if identifier.value.eq_ignore_ascii_case("class")
+                    if pzoom_syntax::bytes_to_str(identifier.value).eq_ignore_ascii_case("class")
             ) {
                 return None;
             }
@@ -421,7 +421,8 @@ fn extract_class_alias_name(
             resolve_aliasable_class_id(analyzer, class_const_access.class, context)
         }
         Expression::Literal(Literal::String(string_lit)) => {
-            let mut normalized = string_lit.value?.trim_start_matches('\\').to_string();
+            let mut normalized =
+                pzoom_syntax::bytes_to_str(string_lit.value?).trim_start_matches('\\').to_string();
             if !normalized.contains('\\') {
                 let span = string_lit.span();
                 let raw_literal = analyzer
@@ -445,7 +446,7 @@ fn extract_class_alias_name(
             let class_id = analyzer.get_resolved_name(offset).unwrap_or_else(|| {
                 analyzer
                     .interner
-                    .find(identifier.value())
+                    .find(pzoom_syntax::bytes_to_str(identifier.value()))
                     .unwrap_or(pzoom_str::StrId::EMPTY)
             });
             Some(
@@ -471,7 +472,7 @@ fn resolve_aliasable_class_id(
             analyzer.get_resolved_name(offset).unwrap_or_else(|| {
                 analyzer
                     .interner
-                    .find(id.value())
+                    .find(pzoom_syntax::bytes_to_str(id.value()))
                     .unwrap_or(pzoom_str::StrId::EMPTY)
             })
         }
@@ -537,10 +538,12 @@ fn dependent_arg_var_id(
     _analyzer: &StatementsAnalyzer<'_>,
     func_call: &FunctionCall<'_>,
 ) -> Option<VarName> {
-    use mago_syntax::ast::ast::variable::Variable;
+    use mago_syntax::cst::cst::variable::Variable;
     let first_arg = func_call.argument_list.arguments.first()?;
     match first_arg.value().unparenthesized() {
-        Expression::Variable(Variable::Direct(direct)) => Some(VarName::new(direct.name)),
+        Expression::Variable(Variable::Direct(direct)) => {
+            Some(VarName::new(pzoom_syntax::bytes_to_str(direct.name)))
+        }
         _ => None,
     }
 }
@@ -822,7 +825,7 @@ fn extract_literal_string_arg(expr: &Expression<'_>) -> Option<String> {
         return None;
     };
 
-    Some(string_lit.value?.to_ascii_lowercase())
+    Some(pzoom_syntax::bytes_to_str(string_lit.value?).to_ascii_lowercase())
 }
 
 fn extract_literal_string_value(expr: &Expression<'_>) -> Option<String> {
@@ -830,7 +833,7 @@ fn extract_literal_string_value(expr: &Expression<'_>) -> Option<String> {
         return None;
     };
 
-    Some(string_lit.value?.to_string())
+    Some(pzoom_syntax::bytes_to_str(string_lit.value?).to_string())
 }
 
 /// Psalm's `compact()` handling (NamedFunctionCallHandler): when every
@@ -961,7 +964,7 @@ fn analyze_compact_call(
         else {
             return None;
         };
-        let Some(var_name) = string_literal.value else {
+        let Some(var_name) = string_literal.value.map(pzoom_syntax::bytes_to_str) else {
             return None;
         };
 

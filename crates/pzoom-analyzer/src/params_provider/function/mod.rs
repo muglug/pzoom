@@ -10,7 +10,7 @@ mod array_multisort;
 mod array_u_array;
 mod min_max;
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::functionlike_info::ParamInfo;
 
 use crate::context::BlockContext;

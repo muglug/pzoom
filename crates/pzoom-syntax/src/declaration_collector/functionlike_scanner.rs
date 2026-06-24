@@ -4,7 +4,7 @@
 //! to [`DeclarationCollector`]; split out of the module root for organization.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::function_like::function::Function;
+use mago_syntax::cst::cst::function_like::function::Function;
 
 use pzoom_code_info::GenericParent;
 use pzoom_code_info::TUnion;
@@ -17,7 +17,7 @@ use super::{DeclarationCollector, TemplateMap};
 
 impl<'a, 'p> DeclarationCollector<'a, 'p> {
     pub(crate) fn visit_function(&mut self, func: &Function<'_>) {
-        let name = self.make_fqn(func.name.value);
+        let name = self.make_fqn(crate::bytes_to_str(func.name.value));
         let span = func.span();
 
         let mut signature_return_type = func
@@ -330,7 +330,7 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         let has_variadic_param = params.iter().any(|param| param.is_variadic);
 
         let declared_if_not_exists = {
-            let short_name = func.name.value.to_ascii_lowercase();
+            let short_name = crate::bytes_to_str(func.name.value).to_ascii_lowercase();
             self.current_not_exists_function_guards
                 .contains(&short_name)
         };
@@ -383,10 +383,10 @@ impl<'a, 'p> DeclarationCollector<'a, 'p> {
         for stmt in func.body.statements.iter() {
             if matches!(
                 stmt,
-                mago_syntax::ast::ast::statement::Statement::Class(_)
-                    | mago_syntax::ast::ast::statement::Statement::Interface(_)
-                    | mago_syntax::ast::ast::statement::Statement::Trait(_)
-                    | mago_syntax::ast::ast::statement::Statement::Enum(_)
+                mago_syntax::cst::cst::statement::Statement::Class(_)
+                    | mago_syntax::cst::cst::statement::Statement::Interface(_)
+                    | mago_syntax::cst::cst::statement::Statement::Trait(_)
+                    | mago_syntax::cst::cst::statement::Statement::Enum(_)
             ) {
                 self.visit_statement(stmt);
             }

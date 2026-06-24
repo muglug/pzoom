@@ -3,7 +3,7 @@
 //! (`handleByRefArrayAdjustment`), array_push/array_unshift
 //! (`handleAddition`) and array_splice (`handleSplice`).
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 use pzoom_code_info::t_atomic::ArrayKey;
 use pzoom_code_info::{TAtomic, TUnion, VarName, combine_union_types};
 
@@ -19,7 +19,7 @@ use crate::statements_analyzer::StatementsAnalyzer;
 pub(crate) fn handle_splice_by_ref(
     context: &mut BlockContext,
     analysis_data: &FunctionAnalysisData,
-    args: &[&mago_syntax::ast::ast::argument::Argument<'_>],
+    args: &[&mago_syntax::cst::cst::argument::Argument<'_>],
     arg_positions: &[Pos],
     var_name: &str,
 ) -> bool {

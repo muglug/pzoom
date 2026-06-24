@@ -3,7 +3,7 @@
 //! Analyzes function bodies with proper return type context.
 
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::function_like::function::Function;
+use mago_syntax::cst::cst::function_like::function::Function;
 
 use pzoom_code_info::VarName;
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion, VarId, VariableSourceKind};
@@ -36,7 +36,7 @@ pub fn analyze(
     let namespace = namespace_owned.as_deref();
 
     // Get the function name - use FQN if in a namespace
-    let func_name = func.name.value;
+    let func_name = pzoom_syntax::bytes_to_str(func.name.value);
     let fqn = match namespace {
         Some(ns) => format!("{}\\{}", ns, func_name),
         None => func_name.to_string(),
@@ -85,12 +85,12 @@ pub fn analyze(
     {
         let mut seen_param_names: FxHashSet<&str> = FxHashSet::default();
         for param in func.parameter_list.parameters.iter() {
-            if !seen_param_names.insert(param.variable.name) {
+            if !seen_param_names.insert(pzoom_syntax::bytes_to_str(param.variable.name)) {
                 let span = param.variable.span();
                 let (line, col) = analyzer.get_line_column(span.start.offset);
                 analysis_data.add_issue(Issue::new(
                     IssueKind::DuplicateParam,
-                    format!("Duplicate param {} in {}", param.variable.name, fqn),
+                    format!("Duplicate param {} in {}", pzoom_syntax::bytes_to_str(param.variable.name), fqn),
                     analyzer.file_path,
                     span.start.offset,
                     span.end.offset,
@@ -160,7 +160,7 @@ pub fn analyze(
 
     // Add parameters to context
     for (param_index, param) in func.parameter_list.parameters.iter().enumerate() {
-        let param_name = param.variable.name;
+        let param_name = pzoom_syntax::bytes_to_str(param.variable.name);
         let param_name_id = VarName::new(param_name);
 
         // Get parameter info from function info

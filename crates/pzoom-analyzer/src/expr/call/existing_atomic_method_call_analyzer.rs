@@ -3,7 +3,7 @@
 //! Mirrors Psalm/Hakana's split where the main method-call analyzer delegates
 //! method-template and `if_this_is` handling to a dedicated module.
 
-use mago_syntax::ast::ast::argument::Argument;
+use mago_syntax::cst::cst::argument::Argument;
 
 use pzoom_code_info::{Issue, IssueKind, TAtomic, TUnion};
 use pzoom_str::StrId;
@@ -25,7 +25,7 @@ use crate::type_comparator::{
     atomic_type_comparator, object_type_comparator, union_type_comparator,
 };
 use mago_span::HasSpan;
-use mago_syntax::ast::ast::expression::Expression;
+use mago_syntax::cst::cst::expression::Expression;
 use pzoom_code_info::TemplateResult;
 use pzoom_code_info::VarName;
 use pzoom_code_info::class_like_info::Visibility;

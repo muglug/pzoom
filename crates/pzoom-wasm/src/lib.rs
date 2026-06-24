@@ -36,11 +36,10 @@ impl ScannerAndAnalyzer {
         let shared_interner = self.interner.clone().into_shared();
         let threaded_interner = pzoom_str::ThreadedInterner::new(shared_interner.clone());
         let file_path_id = threaded_interner.intern(PLAYGROUND_FILE);
-        let file_id = pzoom_syntax::FileId::new(PLAYGROUND_FILE);
+        let file_id = pzoom_syntax::FileId::new(PLAYGROUND_FILE.as_bytes());
 
-        let arena = bumpalo::Bump::new();
-        let (program, _parse_error) =
-            pzoom_syntax::parse_file_content(&arena, file_id, &file_contents);
+        let arena = pzoom_syntax::LocalArena::new();
+        let program = pzoom_syntax::parse_file_content(&arena, file_id, file_contents.as_bytes());
 
         // Pre-wave (mirrors Scanner::scan_file): harvest type-alias
         // definitions first so `@psalm-import-type` resolves even when the
@@ -62,7 +61,7 @@ impl ScannerAndAnalyzer {
             }
         }
 
-        let resolved_names = pzoom_syntax::resolve_names(&program, &threaded_interner);
+        let resolved_names = pzoom_syntax::resolve_names(program, &threaded_interner);
 
         let collector = pzoom_syntax::DeclarationCollector::new(
             &threaded_interner,

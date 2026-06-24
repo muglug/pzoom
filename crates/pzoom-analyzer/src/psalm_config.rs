@@ -94,19 +94,33 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                         }
                     }
                     [.., "issueHandlers", issue_name] => {
-                        // Check if this issue is suppressed (errorLevel="suppress")
-                        if let Some(level) = get_attribute(e, "errorLevel")? {
-                            if level == "suppress" {
+                        // A handler exists for this type; Psalm reports it at
+                        // error by default (bypassing the level-based downgrade)
+                        // unless an explicit level says otherwise.
+                        config.note_issue_handler(issue_name);
+                        match get_attribute(e, "errorLevel")?.as_deref() {
+                            Some("suppress") => {
                                 config.suppressed_issues.insert(issue_name.to_string());
                             }
+                            Some(level @ ("info" | "error")) => {
+                                config.set_issue_handler_level(issue_name, level);
+                            }
+                            _ => {}
                         }
                     }
                     [.., "issueHandlers", issue_name, "errorLevel"] => {
                         let level = get_attribute(e, "type")?.or(get_attribute(e, "errorLevel")?);
-                        if level.as_deref() == Some("suppress") {
-                            active_issue_handler_suppression = Some(issue_name.to_string());
-                        } else {
-                            active_issue_handler_suppression = None;
+                        match level.as_deref() {
+                            Some("suppress") => {
+                                active_issue_handler_suppression = Some(issue_name.to_string());
+                            }
+                            Some(level @ ("info" | "error")) => {
+                                active_issue_handler_suppression = None;
+                                config.set_issue_handler_level(issue_name, level);
+                            }
+                            _ => {
+                                active_issue_handler_suppression = None;
+                            }
                         }
                     }
                     [.., "issueHandlers", issue_name, "errorLevel", "directory"] => {
@@ -194,16 +208,27 @@ pub fn parse_psalm_xml(xml: &str) -> Result<Config, PsalmConfigError> {
                         }
                     }
                     [.., "issueHandlers", issue_name] => {
-                        if let Some(level) = get_attribute(e, "errorLevel")? {
-                            if level == "suppress" {
+                        config.note_issue_handler(issue_name);
+                        match get_attribute(e, "errorLevel")?.as_deref() {
+                            Some("suppress") => {
                                 config.suppressed_issues.insert(issue_name.to_string());
                             }
+                            Some(level @ ("info" | "error")) => {
+                                config.set_issue_handler_level(issue_name, level);
+                            }
+                            _ => {}
                         }
                     }
                     [.., "issueHandlers", issue_name, "errorLevel"] => {
                         let level = get_attribute(e, "type")?.or(get_attribute(e, "errorLevel")?);
-                        if level.as_deref() == Some("suppress") {
-                            config.suppressed_issues.insert(issue_name.to_string());
+                        match level.as_deref() {
+                            Some("suppress") => {
+                                config.suppressed_issues.insert(issue_name.to_string());
+                            }
+                            Some(level @ ("info" | "error")) => {
+                                config.set_issue_handler_level(issue_name, level);
+                            }
+                            _ => {}
                         }
                     }
                     [.., "issueHandlers", issue_name, "errorLevel", "directory"] => {
@@ -648,6 +673,40 @@ mod tests {
         assert!(config.exclude_patterns.contains(&"legacy.php".to_string()));
         assert!(config.suppressed_issues.contains("MixedAssignment"));
         assert!(config.suppressed_issues.contains("MixedArgument"));
+    }
+
+    #[test]
+    fn test_parse_issue_handler_levels() {
+        use crate::config::ReportingLevel;
+
+        let xml = r#"<?xml version="1.0"?>
+<psalm errorLevel="5">
+    <projectFiles>
+        <directory name="src" />
+    </projectFiles>
+    <issueHandlers>
+        <MixedAssignment errorLevel="info" />
+        <PossiblyNullReference errorLevel="error" />
+        <InvalidArgument />
+    </issueHandlers>
+</psalm>"#;
+
+        let config = parse_psalm_xml(xml).unwrap();
+
+        // Explicit info/error overrides are recorded; a bare handler defaults to
+        // error (so the level-based downgrade is bypassed for that type).
+        assert_eq!(
+            config.issue_handler_levels.get("MixedAssignment"),
+            Some(&ReportingLevel::Info)
+        );
+        assert_eq!(
+            config.issue_handler_levels.get("PossiblyNullReference"),
+            Some(&ReportingLevel::Error)
+        );
+        assert_eq!(
+            config.issue_handler_levels.get("InvalidArgument"),
+            Some(&ReportingLevel::Error)
+        );
     }
 
     #[test]

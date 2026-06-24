@@ -1,14 +1,20 @@
 //! Configuration for the analyzer.
 
+use pzoom_code_info::issue::IssueKind;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Error level for analysis (Psalm-compatible).
+///
+/// Mirrors Psalm's `Config::$level` (1-8). A lower number is stricter: every
+/// issue whose [`IssueKind::error_level`] is a positive value below the
+/// configured level is downgraded from *error* to *info*. Psalm defaults to
+/// level 1 (`public int $level = 1;`), at which nothing is downgraded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ErrorLevel {
-    /// Most strict - report all issues.
-    Level1 = 1,
-    /// Default level.
+    /// Most strict - report all issues (Psalm's default).
     #[default]
+    Level1 = 1,
+    /// Less strict.
     Level2 = 2,
     /// Less strict.
     Level3 = 3,
@@ -38,6 +44,23 @@ impl ErrorLevel {
             _ => ErrorLevel::Level2,
         }
     }
+
+    /// The level as the comparable integer Psalm uses (`$this->level`).
+    pub fn as_int(self) -> i8 {
+        self as i8
+    }
+}
+
+/// How a single emitted issue should be surfaced, mirroring Psalm's
+/// `Config::REPORT_*` reporting levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportingLevel {
+    /// Reported as an error (fails the run / non-zero exit). Psalm `REPORT_ERROR`.
+    Error,
+    /// Reported as informational only (does not fail the run). Psalm `REPORT_INFO`.
+    Info,
+    /// Not reported at all. Psalm `REPORT_SUPPRESS`.
+    Suppress,
 }
 
 /// Configuration options for analysis.
@@ -58,6 +81,16 @@ pub struct Config {
     /// Per-issue `<referencedProperty name="Class::$prop"/>` suppressions from
     /// psalm.xml issue handlers (Psalm's `PropertyIssueHandlerType`).
     pub issue_property_suppressions: FxHashMap<String, Vec<String>>,
+
+    /// Unscoped per-issue reporting-level overrides declared by an
+    /// `<IssueName errorLevel="info|error"/>` handler (Psalm's
+    /// `IssueHandler::$error_level`). Presence of a key also means an issue
+    /// handler exists for that type, which — as in Psalm's
+    /// `Config::getReportingLevelForFile` — takes precedence over the
+    /// `ERROR_LEVEL`-vs-`level` downgrade. `errorLevel="suppress"` is recorded
+    /// in [`Self::suppressed_issues`]/[`Self::issue_handler_suppressions`]
+    /// instead, so only `Error`/`Info` ever appear here.
+    pub issue_handler_levels: FxHashMap<String, ReportingLevel>,
 
     /// PHP version to target (e.g., "8.2").
     pub php_version: String,
@@ -197,6 +230,7 @@ impl Default for Config {
             suppressed_issues: FxHashSet::default(),
             issue_handler_suppressions: FxHashMap::default(),
             issue_property_suppressions: FxHashMap::default(),
+            issue_handler_levels: FxHashMap::default(),
             php_version: "8.2".to_string(),
             php_version_explicit: false,
             ensure_override_attribute: false,
@@ -265,6 +299,63 @@ impl Config {
         })
     }
 
+    /// Compute the reporting level for an emitted issue, mirroring Psalm's
+    /// `Config::getReportingLevelForIssue` / `getReportingLevelForFile`.
+    ///
+    /// Precedence (matching Psalm):
+    /// 1. A path-scoped or global `errorLevel="suppress"` handler →
+    ///    [`ReportingLevel::Suppress`].
+    /// 2. An unscoped `<IssueName errorLevel="info|error"/>` handler wins over
+    ///    the level-based downgrade (Psalm delegates to the issue handler when
+    ///    one exists for the type).
+    /// 3. Otherwise the per-issue [`IssueKind::error_level`] is compared to the
+    ///    configured [`Self::error_level`]: a positive issue level strictly
+    ///    below the configured level is downgraded to [`ReportingLevel::Info`];
+    ///    everything else is an [`ReportingLevel::Error`].
+    ///
+    /// `file_path` is the display-relative path used for scoped handlers.
+    pub fn reporting_level_for_issue(&self, kind: IssueKind, file_path: &str) -> ReportingLevel {
+        let issue_type = format!("{kind:?}");
+
+        if self.is_issue_suppressed_for_path(&issue_type, file_path) {
+            return ReportingLevel::Suppress;
+        }
+
+        if let Some(level) = self.issue_handler_levels.get(&issue_type) {
+            return *level;
+        }
+
+        let issue_level = kind.error_level();
+        if issue_level > 0 && issue_level < self.error_level.as_int() {
+            return ReportingLevel::Info;
+        }
+
+        ReportingLevel::Error
+    }
+
+    /// Record an unscoped `<IssueName errorLevel="info|error"/>` handler level.
+    /// `"suppress"` is handled via the suppression maps, so it is ignored here.
+    pub fn set_issue_handler_level(&mut self, issue_type: &str, level: &str) {
+        let reporting = match level {
+            "info" => ReportingLevel::Info,
+            "error" => ReportingLevel::Error,
+            _ => return,
+        };
+        self.issue_handler_levels
+            .insert(issue_type.to_string(), reporting);
+    }
+
+    /// Record that an issue handler exists for `issue_type` without an explicit
+    /// unscoped level. Like Psalm's `IssueHandler::$error_level` default of
+    /// `REPORT_ERROR`, the mere presence of a handler makes the type report at
+    /// *error* regardless of the configured level (the level-based downgrade is
+    /// bypassed). A later explicit `info`/`error` override replaces this.
+    pub fn note_issue_handler(&mut self, issue_type: &str) {
+        self.issue_handler_levels
+            .entry(issue_type.to_string())
+            .or_insert(ReportingLevel::Error);
+    }
+
     /// Check if an issue type is suppressed for a specific property id
     /// (`Class::$prop`, declaring-class based) via `<referencedProperty>`.
     pub fn is_issue_suppressed_for_property(&self, issue_type: &str, property_id: &str) -> bool {
@@ -309,4 +400,91 @@ fn normalize_path(path: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod reporting_level_tests {
+    use super::{Config, ErrorLevel, ReportingLevel};
+    use pzoom_code_info::issue::IssueKind;
+
+    #[test]
+    fn default_level_is_one_like_psalm() {
+        // Psalm's `Config::$level` defaults to 1, at which nothing is downgraded.
+        assert_eq!(Config::default().error_level, ErrorLevel::Level1);
+    }
+
+    #[test]
+    fn level_one_reports_everything_as_error() {
+        let config = Config::default();
+        // MixedAssignment has ERROR_LEVEL 1; at level 1 it stays an error.
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::MixedAssignment, "src/A.php"),
+            ReportingLevel::Error,
+        );
+    }
+
+    #[test]
+    fn lower_level_issues_downgrade_to_info() {
+        let mut config = Config::default();
+        config.error_level = ErrorLevel::Level5;
+        // ERROR_LEVEL 1 < 5 -> info.
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::MixedAssignment, "src/A.php"),
+            ReportingLevel::Info,
+        );
+        // ERROR_LEVEL 3 < 5 -> info.
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::PossiblyInvalidArgument, "src/A.php"),
+            ReportingLevel::Info,
+        );
+        // ERROR_LEVEL 6 >= 5 -> still an error.
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::InvalidArgument, "src/A.php"),
+            ReportingLevel::Error,
+        );
+    }
+
+    #[test]
+    fn negative_level_issues_never_downgrade() {
+        let mut config = Config::default();
+        config.error_level = ErrorLevel::Level8;
+        // UndefinedClass inherits the -1 base; never downgraded even at level 8.
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::UndefinedClass, "src/A.php"),
+            ReportingLevel::Error,
+        );
+    }
+
+    #[test]
+    fn global_suppression_wins() {
+        let mut config = Config::default();
+        config.error_level = ErrorLevel::Level8;
+        config
+            .suppressed_issues
+            .insert("MixedAssignment".to_string());
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::MixedAssignment, "src/A.php"),
+            ReportingLevel::Suppress,
+        );
+    }
+
+    #[test]
+    fn unscoped_handler_level_overrides_downgrade() {
+        let mut config = Config::default();
+        config.error_level = ErrorLevel::Level8;
+
+        // A bare handler keeps the issue at error, bypassing the level downgrade.
+        config.note_issue_handler("MixedAssignment");
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::MixedAssignment, "src/A.php"),
+            ReportingLevel::Error,
+        );
+
+        // An explicit errorLevel="info" forces info regardless of level.
+        config.set_issue_handler_level("InvalidArgument", "info");
+        assert_eq!(
+            config.reporting_level_for_issue(IssueKind::InvalidArgument, "src/A.php"),
+            ReportingLevel::Info,
+        );
+    }
 }

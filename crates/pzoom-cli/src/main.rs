@@ -474,8 +474,9 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
 
     let mut baseline = load_error_baseline(config, &display_root);
 
-    // Filter out issues from stubs, globally suppressed issues, and baseline-covered issues.
-    let mut user_issues = Vec::new();
+    // Filter out issues from stubs, suppressed issues, and baseline-covered
+    // issues, tagging each survivor with its Psalm reporting level (error/info).
+    let mut user_issues: Vec<(&pzoom_code_info::Issue, bool)> = Vec::new();
     for issue in &result.issues {
         if stub_files.contains(&issue.location.file_path) {
             continue;
@@ -485,9 +486,13 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         let file_path = interner.lookup(issue.location.file_path);
         let display_file_path = format_display_path(&file_path, &display_root);
 
-        if config.is_issue_suppressed_for_path(&issue_name, &display_file_path) {
-            continue;
-        }
+        // Per-issue ERROR_LEVEL vs the configured errorLevel decides whether
+        // this is suppressed, downgraded to info, or a hard error.
+        let is_error = match config.reporting_level_for_issue(issue.kind, &display_file_path) {
+            pzoom_analyzer::ReportingLevel::Suppress => continue,
+            pzoom_analyzer::ReportingLevel::Info => false,
+            pzoom_analyzer::ReportingLevel::Error => true,
+        };
 
         if let Some(baseline) = baseline.as_mut() {
             let selected_text = extract_issue_selected_text(issue, &codebase);
@@ -497,7 +502,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
             }
         }
 
-        user_issues.push(issue);
+        user_issues.push((issue, is_error));
     }
 
     // Output results in Psalm's console report format.
@@ -509,7 +514,7 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
     // final tiebreak — emission order is analysis-order-dependent and
     // would otherwise vary run to run.
     let mut sorted_issues = user_issues;
-    sorted_issues.sort_by_cached_key(|issue| {
+    sorted_issues.sort_by_cached_key(|(issue, _)| {
         (
             format_display_path(&interner.lookup(issue.location.file_path), &display_root),
             issue.location.start_line,
@@ -519,17 +524,28 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         )
     });
 
-    let error_count = sorted_issues.len();
+    // Psalm counts errors and info-level ("other") issues separately; only
+    // errors fail the run.
+    let error_count = sorted_issues.iter().filter(|(_, is_error)| *is_error).count();
+    let info_count = sorted_issues.len() - error_count;
 
-    for issue in &sorted_issues {
+    for &(issue, is_error) in &sorted_issues {
         print!(
             "{}\n\n",
-            format_console_issue(issue, &codebase, &interner, &display_root, use_color)
+            format_console_issue(
+                issue,
+                &codebase,
+                &interner,
+                &display_root,
+                use_color,
+                is_error,
+            )
         );
     }
 
     // Psalm's IssueBuffer summary: dashes, error count (or success block),
-    // dashes, then the timing/memory line.
+    // then — when there are info-level issues — a second block reporting them
+    // as "other issues found", dashes, then the timing/memory line.
     println!("{}", "-".repeat(30));
     if error_count > 0 {
         if use_color {
@@ -539,6 +555,10 @@ fn analyze(config: &Config, paths: &[PathBuf]) -> ExitCode {
         }
     } else {
         print_success_message(use_color);
+    }
+    if info_count > 0 {
+        println!("{}", "-".repeat(30));
+        println!("{} other issues found.", info_count);
     }
     println!("{}\n", "-".repeat(30));
 
@@ -631,14 +651,21 @@ fn format_console_issue(
     interner: &pzoom_str::Interner,
     display_root: &Path,
     use_color: bool,
+    is_error: bool,
 ) -> String {
     let kind = format!("{:?}", issue.kind);
     let mut out = String::new();
 
-    if use_color {
-        out.push_str("\u{1b}[0;31mERROR\u{1b}[0m");
+    // Psalm's ConsoleReport: errors get a red "ERROR" header, info-level issues
+    // a plain "INFO" header.
+    if is_error {
+        if use_color {
+            out.push_str("\u{1b}[0;31mERROR\u{1b}[0m");
+        } else {
+            out.push_str("ERROR");
+        }
     } else {
-        out.push_str("ERROR");
+        out.push_str("INFO");
     }
 
     let issue_reference = match shortcodes::shortcode(&kind) {
@@ -678,7 +705,7 @@ fn format_console_issue(
             ));
         }
     } else {
-        if let Some(snippet) = format_snippet(&issue.location, codebase, use_color, true) {
+        if let Some(snippet) = format_snippet(&issue.location, codebase, use_color, is_error) {
             out.push_str(&snippet);
         }
 

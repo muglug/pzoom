@@ -629,6 +629,7 @@ fn format_number(value: f64, decimals: usize) -> String {
 }
 
 /// Peak resident set size in bytes (`memory_get_peak_usage` stand-in).
+#[cfg(not(windows))]
 fn peak_memory_bytes() -> u64 {
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
     if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {
@@ -639,6 +640,31 @@ fn peak_memory_bytes() -> u64 {
     return usage.ru_maxrss as u64;
     #[cfg(not(target_os = "macos"))]
     return (usage.ru_maxrss as u64) * 1024;
+}
+
+/// Peak resident set size in bytes (`memory_get_peak_usage` stand-in).
+#[cfg(windows)]
+fn peak_memory_bytes() -> u64 {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+
+    if unsafe {
+        GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            &mut counters,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+    } == 0
+    {
+        return 0;
+    }
+
+    counters.PeakWorkingSetSize as u64
 }
 
 /// Format one issue the way Psalm's `Report\ConsoleReport::format` does:
